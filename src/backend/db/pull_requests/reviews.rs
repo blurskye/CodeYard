@@ -100,10 +100,15 @@ pub(crate) fn budgeted_comment_ids(
     let mut ids = Vec::new();
     for &(id, size) in rows.iter().take(limit) {
         bytes = bytes.saturating_add(usize::try_from(size)?);
-        if bytes > budget { break; }
+        if bytes > budget {
+            break;
+        }
         ids.push(id);
     }
-    anyhow::ensure!(rows.is_empty() || !ids.is_empty(), "Review comment exceeds its page limit");
+    anyhow::ensure!(
+        rows.is_empty() || !ids.is_empty(),
+        "Review comment exceeds its page limit"
+    );
     Ok(ids)
 }
 

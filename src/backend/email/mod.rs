@@ -72,13 +72,25 @@ pub async fn send_test(
     secrets: Option<&SecretEncryptor>,
     session: &str,
 ) -> Result<String, TestMailError> {
-    let (config, _) = config::load(pool, secrets).await.map_err(TestMailError::Delivery)?
-        .ok_or_else(|| TestMailError::Delivery("Email is not set up. Save the settings first.".into()))?;
-    let admin = crate::backend::identity::sessions::administrator(pool, Some(session)).await
+    let (config, _) = config::load(pool, secrets)
+        .await
+        .map_err(TestMailError::Delivery)?
+        .ok_or_else(|| {
+            TestMailError::Delivery("Email is not set up. Save the settings first.".into())
+        })?;
+    let admin = crate::backend::identity::sessions::administrator(pool, Some(session))
+        .await
         .map_err(TestMailError::Authority)?;
-    let to = admin.email.as_deref().map(str::trim).filter(|email| !email.is_empty()).ok_or(TestMailError::NoAddress)?;
+    let to = admin
+        .email
+        .as_deref()
+        .map(str::trim)
+        .filter(|email| !email.is_empty())
+        .ok_or(TestMailError::NoAddress)?;
     let mail = messages::test_message();
-    send::send(&config, to, &mail.subject, &mail.body).await.map_err(TestMailError::Delivery)?;
+    send::send(&config, to, &mail.subject, &mail.body)
+        .await
+        .map_err(TestMailError::Delivery)?;
     Ok(to.to_owned())
 }
 
@@ -229,15 +241,28 @@ mod tests {
             None
         );
 
-        assert!(db::email::get_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"))
-            .await
-            .unwrap());
-        db::email::set_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"), false)
-            .await
-            .unwrap();
-        assert!(!db::email::get_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"))
-            .await
-            .unwrap());
+        assert!(db::email::get_email_notifications(
+            &f.pool,
+            f.admin,
+            &db::users::accounts::AccountCredential::Session("live")
+        )
+        .await
+        .unwrap());
+        db::email::set_email_notifications(
+            &f.pool,
+            f.admin,
+            &db::users::accounts::AccountCredential::Session("live"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(!db::email::get_email_notifications(
+            &f.pool,
+            f.admin,
+            &db::users::accounts::AccountCredential::Session("live")
+        )
+        .await
+        .unwrap());
         assert_eq!(
             db::email::notification_email_address(&f.pool, f.admin)
                 .await
@@ -270,12 +295,21 @@ mod tests {
         db::node_config::upsert_node_configuration(&f.pool, "public", true)
             .await
             .unwrap();
-        let early = db::users::signup_requests::create_signup_request(&f.pool, "carol", Some("carol@example.com"), "hash")
-            .await
-            .unwrap();
-        db::users::signup_requests::reject_signup_request(&f.pool, early.id, (f.admin, "live".to_owned()))
-            .await
-            .unwrap();
+        let early = db::users::signup_requests::create_signup_request(
+            &f.pool,
+            "carol",
+            Some("carol@example.com"),
+            "hash",
+        )
+        .await
+        .unwrap();
+        db::users::signup_requests::reject_signup_request(
+            &f.pool,
+            early.id,
+            (f.admin, "live".to_owned()),
+        )
+        .await
+        .unwrap();
         assert!(db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
@@ -287,12 +321,21 @@ mod tests {
             .unwrap();
         let mail = notification(Some("Body"), Some("/x")).await.unwrap();
         notify_user(&f.pool, &mail).await;
-        let later = db::users::signup_requests::create_signup_request(&f.pool, "dave", Some("dave@example.com"), "hash")
-            .await
-            .unwrap();
-        db::users::signup_requests::reject_signup_request(&f.pool, later.id, (f.admin, "live".to_owned()))
-            .await
-            .unwrap();
+        let later = db::users::signup_requests::create_signup_request(
+            &f.pool,
+            "dave",
+            Some("dave@example.com"),
+            "hash",
+        )
+        .await
+        .unwrap();
+        db::users::signup_requests::reject_signup_request(
+            &f.pool,
+            later.id,
+            (f.admin, "live".to_owned()),
+        )
+        .await
+        .unwrap();
         let first = db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
@@ -380,9 +423,16 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        db::email::mark_email_failed(&f.pool, two.id, two.attempts, "later", 3600, outbox::MAX_ATTEMPTS)
-            .await
-            .unwrap();
+        db::email::mark_email_failed(
+            &f.pool,
+            two.id,
+            two.attempts,
+            "later",
+            3600,
+            outbox::MAX_ATTEMPTS,
+        )
+        .await
+        .unwrap();
         assert!(
             db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
                 .await

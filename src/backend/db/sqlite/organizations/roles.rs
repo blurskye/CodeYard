@@ -17,9 +17,17 @@ pub async fn can_manage_security(pool: &SqlitePool, actor: i64, org: i64) -> Res
     manages_security(&mut *pool.acquire().await?, actor, org).await
 }
 /// Role membership remains meaningful for reads when organization writes are suspended.
-pub(crate) async fn holds_security_role(c: &mut SqliteConnection, actor: i64, org: i64) -> Result<bool> {
+pub(crate) async fn holds_security_role(
+    c: &mut SqliteConnection,
+    actor: i64,
+    org: i64,
+) -> Result<bool> {
     let condition = crate::backend::db::organizations::roles::security_role_condition("?1", "?2");
-    Ok(sqlx::query_scalar(&format!("SELECT {condition}")).bind(actor).bind(org).fetch_one(c).await?)
+    Ok(sqlx::query_scalar(&format!("SELECT {condition}"))
+        .bind(actor)
+        .bind(org)
+        .fetch_one(c)
+        .await?)
 }
 
 /// Whether `actor` holds the organization's security-manager role, directly or through a team.
@@ -28,8 +36,13 @@ pub(crate) async fn manages_security(
     actor: i64,
     org: i64,
 ) -> Result<bool> {
-    let condition = crate::backend::db::organizations::roles::security_manager_condition("?1", "?2");
-    Ok(sqlx::query_scalar(&format!("SELECT {condition}")).bind(actor).bind(org).fetch_one(c).await?)
+    let condition =
+        crate::backend::db::organizations::roles::security_manager_condition("?1", "?2");
+    Ok(sqlx::query_scalar(&format!("SELECT {condition}"))
+        .bind(actor)
+        .bind(org)
+        .fetch_one(c)
+        .await?)
 }
 pub async fn catalog(
     pool: &SqlitePool,
@@ -68,8 +81,12 @@ pub async fn users(
     let inherited: Vec<crate::backend::db::organizations::roles::InheritedTeam> = sqlx::query_as("SELECT m.user_id,t.* FROM teams t JOIN organization_role_assignments a ON a.team_id=t.id AND a.org_id=t.org_id AND a.role_id=?2 JOIN effective_team_memberships m ON m.team_id=t.id AND m.user_id IN (SELECT value FROM json_each(?3)) AND m.role IN ('member','maintainer') WHERE t.org_id=?1 AND t.privacy IN ('visible','secret') ORDER BY m.user_id,t.id")
         .bind(org).bind(role).bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
     let mut teams: std::collections::HashMap<i64, Vec<Team>> = std::collections::HashMap::new();
-    for row in inherited { teams.entry(row.user_id).or_default().push(row.team); }
-    for user in &mut users { user.inherited_from = teams.remove(&user.user.id).unwrap_or_default(); }
+    for row in inherited {
+        teams.entry(row.user_id).or_default().push(row.team);
+    }
+    for user in &mut users {
+        user.inherited_from = teams.remove(&user.user.id).unwrap_or_default();
+    }
     tx.commit().await?;
     Ok(Applied(users))
 }
@@ -106,7 +123,9 @@ pub async fn change(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
+    if !credential(&mut tx, &grant, org, "members").await? {
+        return Ok(Denied);
+    }
     let (user, team) = match target {
         RoleTarget::User(name) => {
             let id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE username=?1")

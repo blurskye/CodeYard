@@ -97,43 +97,87 @@ pub(super) async fn resolve(
         }
         "closingIssuesReferences" => {
             connection::validate(args)?;
-            if args.args.try_get("userLinkedOnly")?.deserialize::<bool>()? { return connection::slice(args, Vec::new()); }
-            let pull = db::pull_requests::records::get_pull_request_by_id(pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
-            request.authorize(pull.repo_id, "pull-requests", false).await?;
+            if args.args.try_get("userLinkedOnly")?.deserialize::<bool>()? {
+                return connection::slice(args, Vec::new());
+            }
+            let pull = db::pull_requests::records::get_pull_request_by_id(pool, id)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            request
+                .authorize(pull.repo_id, "pull-requests", false)
+                .await?;
             // As on GitHub, keywords close issues only when the pull request targets the default branch.
-            if pull.base_branch != repo.default_branch { return connection::slice(args, Vec::new()); }
+            if pull.base_branch != repo.default_branch {
+                return connection::slice(args, Vec::new());
+            }
             request.charge(pull.body.len() + pull.title.len())?;
             let owner = repository::owner(repo, request).await?;
             let mut groups = std::collections::BTreeMap::<(String, String), Vec<i32>>::new();
-            for (owner, name, number) in crate::backend::issues::closing::referenced_targets(&pull.body, &owner, &repo.name, &super::url("")) {
+            for (owner, name, number) in crate::backend::issues::closing::referenced_targets(
+                &pull.body,
+                &owner,
+                &repo.name,
+                &super::url(""),
+            ) {
                 request.charge(owner.len() + name.len() + 64)?;
                 groups.entry((owner, name)).or_default().push(number);
             }
             let mut targets = Vec::new();
             for ((target_owner, name), numbers) in groups {
-                let target = if target_owner.eq_ignore_ascii_case(&owner) && name.eq_ignore_ascii_case(&repo.name) { Some(repo.clone()) }
-                    else { db::repositories::records::get_repository(pool, &target_owner, &name).await.map_err(unavailable)? };
-                let Some(target) = target else { continue; };
-                if !repository::optional_authority(target.id, "issues", request).await? { continue; }
+                let target = if target_owner.eq_ignore_ascii_case(&owner)
+                    && name.eq_ignore_ascii_case(&repo.name)
+                {
+                    Some(repo.clone())
+                } else {
+                    db::repositories::records::get_repository(pool, &target_owner, &name)
+                        .await
+                        .map_err(unavailable)?
+                };
+                let Some(target) = target else {
+                    continue;
+                };
+                if !repository::optional_authority(target.id, "issues", request).await? {
+                    continue;
+                }
                 let viewer = request.private_viewer(target.id, "issues").await?;
                 for numbers in numbers.chunks(500) {
-                    let rows = db::issues::issue_ids_by_numbers(pool, target.id, viewer, numbers).await.map_err(unavailable)?;
+                    let rows = db::issues::issue_ids_by_numbers(pool, target.id, viewer, numbers)
+                        .await
+                        .map_err(unavailable)?;
                     request.charge(rows.len() * 32)?;
                     targets.extend(rows.into_iter().map(|(id, _)| (target.id, id)));
                 }
             }
             let page = connection::Page::new(args, targets.len() as i64)?;
-            let selected: Vec<_> = targets.into_iter().skip(page.offset as usize).take(page.limit as usize).collect();
+            let selected: Vec<_> = targets
+                .into_iter()
+                .skip(page.offset as usize)
+                .take(page.limit as usize)
+                .collect();
             let mut groups = std::collections::BTreeMap::<i64, Vec<(usize, i64)>>::new();
-            for (position, (repo, id)) in selected.iter().copied().enumerate() { groups.entry(repo).or_default().push((position, id)); }
+            for (position, (repo, id)) in selected.iter().copied().enumerate() {
+                groups.entry(repo).or_default().push((position, id));
+            }
             let mut nodes = vec![Value::Null; selected.len()];
             for (repo, positions) in groups {
                 let ids: Vec<_> = positions.iter().map(|(_, id)| *id).collect();
-                let rows = db::issues::get_issues_by_ids(pool, repo, &ids).await.map_err(unavailable)?;
-                for row in &rows { request.charge(row.body.len() + row.title.len())?; }
-                if !repository::optional_authority(repo, "issues", request).await? { continue; }
-                let rows: std::collections::HashMap<_, _> = rows.into_iter().map(|row| (row.id, row)).collect();
-                for (position, id) in positions { if let Some(row) = rows.get(&id) { nodes[position] = super::issue::object(row); } }
+                let rows = db::issues::get_issues_by_ids(pool, repo, &ids)
+                    .await
+                    .map_err(unavailable)?;
+                for row in &rows {
+                    request.charge(row.body.len() + row.title.len())?;
+                }
+                if !repository::optional_authority(repo, "issues", request).await? {
+                    continue;
+                }
+                let rows: std::collections::HashMap<_, _> =
+                    rows.into_iter().map(|row| (row.id, row)).collect();
+                for (position, id) in positions {
+                    if let Some(row) = rows.get(&id) {
+                        nodes[position] = super::issue::object(row);
+                    }
+                }
             }
             Ok(page.finish(nodes))
         }

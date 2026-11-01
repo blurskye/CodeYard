@@ -166,9 +166,16 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             None => None,
             _ => return Err(missing()),
         };
-        db::discussions::set_lock(pool, request.actor.clone(), repo.id, item, field == "lockLockable", reason)
-            .await
-            .map_err(|e| github::locking::error(e).graphql())?;
+        db::discussions::set_lock(
+            pool,
+            request.actor.clone(),
+            repo.id,
+            item,
+            field == "lockLockable",
+            reason,
+        )
+        .await
+        .map_err(|e| github::locking::error(e).graphql())?;
     } else {
         let label = field.contains("Labelable");
         let input_key = if label { "labelIds" } else { "assigneeIds" };
@@ -176,7 +183,13 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         let mut changes = metadata_mutations::ids(&input[input_key], prefix)?;
         changes.sort_unstable();
         changes.dedup();
-        if changes.len() > if label { db::labels::MAX_ISSUE_LABELS } else { db::assignees::MAX_ASSIGNEES as usize } {
+        if changes.len()
+            > if label {
+                db::labels::MAX_ISSUE_LABELS
+            } else {
+                db::assignees::MAX_ASSIGNEES as usize
+            }
+        {
             return Err(async_graphql::Error::new("Too many metadata IDs"));
         }
         let remove = field.starts_with("remove");
@@ -196,11 +209,24 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             for label_id in changes {
                 match item {
                     AssignedItem::Issue(id) => {
-                        db::labels::remove_issue_label(pool, authority.clone(), repo.id, id, label_id).await
+                        db::labels::remove_issue_label(
+                            pool,
+                            authority.clone(),
+                            repo.id,
+                            id,
+                            label_id,
+                        )
+                        .await
                     }
                     AssignedItem::PullRequest(id) => {
-                        db::labels::remove_pull_request_label(pool, authority.clone(), repo.id, id, label_id)
-                            .await
+                        db::labels::remove_pull_request_label(
+                            pool,
+                            authority.clone(),
+                            repo.id,
+                            id,
+                            label_id,
+                        )
+                        .await
                     }
                 }
                 .map_err(|e| github::labels::write_error(e).graphql())?;
@@ -210,19 +236,37 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             let mut ids = changes;
             ids.sort_unstable();
             ids.dedup();
-            let users = db::users::accounts::get_users_by_ids(pool, &ids).await.map_err(unavailable)?;
-            if users.len() != ids.len() { return Err(missing()); }
+            let users = db::users::accounts::get_users_by_ids(pool, &ids)
+                .await
+                .map_err(unavailable)?;
+            if users.len() != ids.len() {
+                return Err(missing());
+            }
             let owner = repository::owner(&repo, request).await?;
             let target = assignments::Target {
-                actor: &request.auth.user, repository: &repo, owner: &owner, item,
-                number: i32::try_from(value["number"].as_i64().ok_or_else(missing)?).map_err(|_| missing())?,
+                actor: &request.auth.user,
+                repository: &repo,
+                owner: &owner,
+                item,
+                number: i32::try_from(value["number"].as_i64().ok_or_else(missing)?)
+                    .map_err(|_| missing())?,
                 title: value["title"].as_str().ok_or_else(missing)?,
             };
             if remove {
                 let names: Vec<_> = users.into_iter().map(|user| user.username).collect();
-                assignments::unassign(pool, &target, authority, &names).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
+                assignments::unassign(pool, &target, authority, &names)
+                    .await
+                    .map_err(|e| github::issues::assignment_error(e).graphql())?;
             } else {
-                assignments::assign(pool, &request.state.notification_broadcaster, &target, authority, &users).await.map_err(|e| github::issues::assignment_error(e).graphql())?;
+                assignments::assign(
+                    pool,
+                    &request.state.notification_broadcaster,
+                    &target,
+                    authority,
+                    &users,
+                )
+                .await
+                .map_err(|e| github::issues::assignment_error(e).graphql())?;
             }
         }
     }

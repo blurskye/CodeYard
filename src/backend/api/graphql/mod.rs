@@ -1,11 +1,11 @@
 //! GitHub's compile-time GraphQL schema and domain-backed resolver families.
 mod arguments;
 mod bindings;
+mod checks;
 mod collaboration;
 mod collaboration_mutations;
 mod comment_mutations;
 mod commit_comment;
-mod checks;
 mod connection;
 mod discussions;
 mod gists;
@@ -59,7 +59,9 @@ struct RequestContext {
     nodes: AtomicUsize,
     /// Bytes of text the request has loaded or returned, bounded by `MAX_RESPONSE_BYTES`.
     bytes: AtomicUsize,
-    diffs: tokio::sync::Mutex<std::collections::HashMap<(i64, String, String), Arc<crate::backend::git::DiffInfo>>>,
+    diffs: tokio::sync::Mutex<
+        std::collections::HashMap<(i64, String, String), Arc<crate::backend::git::DiffInfo>>,
+    >,
     mergeability: tokio::sync::Mutex<std::collections::HashMap<(i64, String, String), bool>>,
     rate: db::graphql::RateLimit,
 }
@@ -106,7 +108,8 @@ impl RequestContext {
     async fn authorize(&self, repo: i64, scope: &str, write: bool) -> Result<()> {
         let pool = &self.state.pool;
         let live = db::users::tokens::token_user(pool, self.auth.token.id, write)
-            .await.map_err(unavailable)?;
+            .await
+            .map_err(unavailable)?;
         if live.is_none_or(|user| user.id != self.auth.user.id) {
             return Err(token_denied());
         }
@@ -114,28 +117,54 @@ impl RequestContext {
         // every scalar; personal bounds and job permissions still have to be live.
         if self.personal.is_some() {
             let grant = crate::backend::identity::fine_grained::grant(pool, self.auth.token.id)
-                .await.map_err(unavailable)?.ok_or_else(token_denied)?;
-            let permissions = grant.repository(pool, repo).await.map_err(unavailable)?
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(token_denied)?;
+            let permissions = grant
+                .repository(pool, repo)
+                .await
+                .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            if !crate::backend::identity::github_apps::allows(&permissions, &scope.replace('-', "_"), write) {
+            if !crate::backend::identity::github_apps::allows(
+                &permissions,
+                &scope.replace('-', "_"),
+                write,
+            ) {
                 return Err(token_denied());
             }
         } else if self.auth.is_job() {
-            self.auth.repository_scope(pool, repo, scope, write).await
+            self.auth
+                .repository_scope(pool, repo, scope, write)
+                .await
                 .map_err(|error| auth::scope_error(error).graphql())?;
-        } else if db::fine_grained_tokens::classic_refused_repository(pool, self.auth.token.id, repo)
-            .await.map_err(unavailable)? {
+        } else if db::fine_grained_tokens::classic_refused_repository(
+            pool,
+            self.auth.token.id,
+            repo,
+        )
+        .await
+        .map_err(unavailable)?
+        {
             return Err(token_denied());
         }
         // Check the live ACL even for cached scalars: ordinary PAT scope is not a read permit.
         if db::repositories::access::readable_repository_ids(pool, Some(self.auth.user.id), &[repo])
-            .await.map_err(unavailable)?.is_empty() {
+            .await
+            .map_err(unavailable)?
+            .is_empty()
+        {
             return Err(missing());
         }
-        if !write && self.oauth_scopes.as_ref().is_some_and(|scopes|
-            !crate::backend::identity::oauth_apps::has_scope(scopes, "repo")) {
+        if !write
+            && self.oauth_scopes.as_ref().is_some_and(|scopes| {
+                !crate::backend::identity::oauth_apps::has_scope(scopes, "repo")
+            })
+        {
             if db::repositories::access::readable_repository_ids(pool, None, &[repo])
-                .await.map_err(unavailable)?.is_empty() {
+                .await
+                .map_err(unavailable)?
+                .is_empty()
+            {
                 return Err(token_denied());
             }
             return Ok(());
@@ -152,7 +181,9 @@ impl RequestContext {
                 "repo" => Ok(()),
                 "workflow"
                     if crate::backend::identity::github_apps::allows(
-                        &Value::Object(grant.group(crate::backend::identity::fine_grained::Group::Repository)),
+                        &Value::Object(
+                            grant.group(crate::backend::identity::fine_grained::Group::Repository),
+                        ),
                         "workflows",
                         true,
                     ) =>
@@ -174,20 +205,33 @@ impl RequestContext {
     /// never through the anonymous-equivalent public fallback.
     async fn private_viewer(&self, repo: i64, scope: &str) -> Result<Option<i64>> {
         self.authorize(repo, scope, false).await?;
-        if self.oauth_scopes.as_ref().is_some_and(|scopes|
-            !crate::backend::identity::oauth_apps::has_scope(scopes, "repo")) {
+        if self
+            .oauth_scopes
+            .as_ref()
+            .is_some_and(|scopes| !crate::backend::identity::oauth_apps::has_scope(scopes, "repo"))
+        {
             return Ok(None);
         }
         if self.personal.is_some() {
-            let grant = crate::backend::identity::fine_grained::grant(&self.state.pool, self.auth.token.id)
-                .await.map_err(unavailable)?.ok_or_else(token_denied)?;
+            let grant =
+                crate::backend::identity::fine_grained::grant(&self.state.pool, self.auth.token.id)
+                    .await
+                    .map_err(unavailable)?
+                    .ok_or_else(token_denied)?;
             let row = db::repositories::records::get_repository_by_id(&self.state.pool, repo)
-                .await.map_err(unavailable)?.ok_or_else(missing)?;
-            if !grant.reaches(&self.state.pool, &row).await.map_err(unavailable)?
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            if !grant
+                .reaches(&self.state.pool, &row)
+                .await
+                .map_err(unavailable)?
                 || !crate::backend::identity::fine_grained::allows(
                     &grant.group(crate::backend::identity::fine_grained::Group::Repository),
-                    &scope.replace('-', "_"), false,
-                ) {
+                    &scope.replace('-', "_"),
+                    false,
+                )
+            {
                 return Ok(None);
             }
         }
@@ -195,13 +239,22 @@ impl RequestContext {
     }
 
     async fn account_permission(&self, key: &str, oauth_scope: &str) -> Result<bool> {
-        if self.auth.is_job() || db::users::tokens::token_user(&self.state.pool, self.auth.token.id, false)
-            .await.map_err(unavailable)?.is_none_or(|user| user.id != self.auth.user.id) {
+        if self.auth.is_job()
+            || db::users::tokens::token_user(&self.state.pool, self.auth.token.id, false)
+                .await
+                .map_err(unavailable)?
+                .is_none_or(|user| user.id != self.auth.user.id)
+        {
             return Ok(false);
         }
         if self.personal.is_some() {
-            return Ok(crate::backend::identity::fine_grained::grant(&self.state.pool, self.auth.token.id)
-                .await.map_err(unavailable)?.is_some_and(|grant| grant.account(self.auth.user.id, key, false)));
+            return Ok(crate::backend::identity::fine_grained::grant(
+                &self.state.pool,
+                self.auth.token.id,
+            )
+            .await
+            .map_err(unavailable)?
+            .is_some_and(|grant| grant.account(self.auth.user.id, key, false)));
         }
         Ok(self.require_oauth_scope(oauth_scope).is_ok())
     }
@@ -209,9 +262,13 @@ impl RequestContext {
     async fn authorize_organization(&self, org: i64) -> Result<()> {
         self.require_oauth_scope("read:org")?;
         if db::users::tokens::token_user(&self.state.pool, self.auth.token.id, false)
-            .await.map_err(unavailable)?.is_none_or(|user| user.id != self.auth.user.id)
+            .await
+            .map_err(unavailable)?
+            .is_none_or(|user| user.id != self.auth.user.id)
             || db::fine_grained_tokens::classic_refused(&self.state.pool, self.auth.token.id, org)
-                .await.map_err(unavailable)? {
+                .await
+                .map_err(unavailable)?
+        {
             return Err(token_denied());
         }
         Ok(())
@@ -323,7 +380,12 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
             repository::by_id(label.repo_id, request).await?;
-            let scope = repository::shared_read_scope(label.repo_id, &["issues", "pull-requests", "discussions"], request).await?;
+            let scope = repository::shared_read_scope(
+                label.repo_id,
+                &["issues", "pull-requests", "discussions"],
+                request,
+            )
+            .await?;
             let mut value = repository::label(&label);
             value["_scope"] = json!(scope);
             Ok(value)
@@ -346,10 +408,16 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             let comment = db::pull_requests::reviews::get_visible_pull_request_comment(
                 pool,
                 id,
-                request.private_viewer(
-                    db::graphql::node_repository(pool, "PRRC", id).await.map_err(unavailable)?.ok_or_else(missing)?,
-                    "pull-requests",
-                ).await?.unwrap_or(-1),
+                request
+                    .private_viewer(
+                        db::graphql::node_repository(pool, "PRRC", id)
+                            .await
+                            .map_err(unavailable)?
+                            .ok_or_else(missing)?,
+                        "pull-requests",
+                    )
+                    .await?
+                    .unwrap_or(-1),
             )
             .await
             .map_err(unavailable)?

@@ -101,11 +101,17 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .filter(|r| r.id == run.id)
-        .unwrap();
+    let run = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[actor],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .filter(|r| r.id == run.id)
+    .unwrap();
     let definitions = BTreeMap::from([(path.into(), b"name: Identity\npermissions: {id-token: write}\njobs:\n  writer: {}\n  production: {environment: 'Production:EU'}\n  reader: {permissions: {contents: read}}".to_vec())]);
     let credentials = ci::tokens::issue(f.pool(), &run, &definitions, false)
         .await
@@ -542,11 +548,17 @@ async fn organization_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .filter(|r| r.id == run.id)
-        .unwrap();
+    let run = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .filter(|r| r.id == run.id)
+    .unwrap();
     let definitions = BTreeMap::from([(
         path.into(),
         b"permissions: {id-token: write}\njobs: {deploy: {}}".to_vec(),

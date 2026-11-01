@@ -72,7 +72,8 @@ pub(crate) fn prepare_annotation(annotation: &Annotation) -> Result<Annotation> 
             && annotation.end_line >= annotation.start_line
             && match (annotation.start_column, annotation.end_column) {
                 (None, None) => true,
-                (Some(start), Some(end)) => annotation.start_line == annotation.end_line && start > 0 && end >= start,
+                (Some(start), Some(end)) =>
+                    annotation.start_line == annotation.end_line && start > 0 && end >= start,
                 _ => false,
             }
             && matches!(
@@ -85,16 +86,50 @@ pub(crate) fn prepare_annotation(annotation: &Annotation) -> Result<Annotation> 
     Ok(annotation)
 }
 
-pub(crate) fn validate_observed_state(state: &State, known: &[(String, i32, String)]) -> Result<()> {
+pub(crate) fn validate_observed_state(
+    state: &State,
+    known: &[(String, i32, String)],
+) -> Result<()> {
     let mut jobs = std::collections::HashMap::new();
     let mut variants = std::collections::HashMap::with_capacity(known.len());
     for (job, variant, status) in known {
         *jobs.entry(job.as_str()).or_insert(true) &= status == "completed";
         variants.insert((job.as_str(), *variant), status == "completed");
     }
-    anyhow::ensure!(state.jobs.keys().all(|job| jobs.get(job.as_str()) == Some(&true)), "state refers to an unobserved or unfinished job");
-    anyhow::ensure!(state.variants.iter().all(|(job, saved)| saved.keys().all(|variant| i32::try_from(*variant).ok().is_some_and(|variant| variants.get(&(job.as_str(), variant)) == Some(&true)))), "state refers to an unobserved or unfinished variant");
-    anyhow::ensure!(state.jobs.values().chain(state.variants.values().flat_map(|variants| variants.values())).all(|job| matches!(job.result.as_str(), "success" | "failure" | "cancelled" | "skipped")), "invalid job result");
+    anyhow::ensure!(
+        state
+            .jobs
+            .keys()
+            .all(|job| jobs.get(job.as_str()) == Some(&true)),
+        "state refers to an unobserved or unfinished job"
+    );
+    anyhow::ensure!(
+        state
+            .variants
+            .iter()
+            .all(
+                |(job, saved)| saved.keys().all(|variant| i32::try_from(*variant)
+                    .ok()
+                    .is_some_and(|variant| variants.get(&(job.as_str(), variant)) == Some(&true)))
+            ),
+        "state refers to an unobserved or unfinished variant"
+    );
+    anyhow::ensure!(
+        state
+            .jobs
+            .values()
+            .chain(
+                state
+                    .variants
+                    .values()
+                    .flat_map(|variants| variants.values())
+            )
+            .all(|job| matches!(
+                job.result.as_str(),
+                "success" | "failure" | "cancelled" | "skipped"
+            )),
+        "invalid job result"
+    );
     Ok(())
 }
 

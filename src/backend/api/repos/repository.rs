@@ -16,8 +16,8 @@ use crate::backend::api::repos::code::contents::{
 use crate::backend::api::repos::forms::{checkbox, field, repeated, with_status};
 use crate::backend::api::repos::labels::{label_write_error, parse_label_color};
 use crate::backend::api::repos::responses::{
-    lifecycle_error, lifecycle_status, repository_fork_counts, repository_owner, repository_topics, ForkParent,
-    RepoResponse,
+    lifecycle_error, lifecycle_status, repository_fork_counts, repository_owner, repository_topics,
+    ForkParent, RepoResponse,
 };
 use crate::backend::api::repos::settings::branch_protection;
 use crate::backend::app::AppState;
@@ -158,8 +158,10 @@ async fn repository_response(
         None
     };
 
-    let forks = repository_fork_counts(&state.pool, Some(headers), &[repository.id]).await?
-        .remove(&repository.id).unwrap_or_default();
+    let forks = repository_fork_counts(&state.pool, Some(headers), &[repository.id])
+        .await?
+        .remove(&repository.id)
+        .unwrap_or_default();
     check_repo_read_access(&state.pool, repository, headers).await?;
     let mut response = RepoResponse::new(repository, &owner, topics, forked_from, forks);
     response.default_branch = default_branch;
@@ -173,7 +175,10 @@ pub struct RenameRepoRequest {
 
 #[derive(Deserialize)]
 pub struct UpdateRepoRequest {
-    #[serde(default, deserialize_with = "db::repositories::records::nullable_change")]
+    #[serde(
+        default,
+        deserialize_with = "db::repositories::records::nullable_change"
+    )]
     pub description: Option<Option<String>>,
     pub is_private: Option<bool>,
     pub allow_merge_commit: Option<bool>,
@@ -196,7 +201,10 @@ pub async fn rename_repo(
     // DB alias; stable operation-owned storage is never moved or compensated.
     let updated = db::repositories::records::rename_repository(
         &state.pool,
-        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            user.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         repository.id,
         &req.new_name,
     )
@@ -223,7 +231,10 @@ pub async fn transfer_repo(
     let updated = lifecycle::transfer(
         &state.pool,
         state.cluster.as_ref(),
-        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            user.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         repository.id,
         &req.new_owner,
     )
@@ -314,7 +325,10 @@ pub async fn update_repo(
     // failed write leaves all of them unchanged.
     let updated = db::repositories::records::patch_repository(
         &state.pool,
-        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            user.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         repository.id,
         &db::repositories::records::RepositoryChanges {
             description: req.description.as_ref().map(|value| value.as_deref()),
@@ -326,7 +340,9 @@ pub async fn update_repo(
             },
             ..Default::default()
         },
-    ).await.map_err(repository_settings_error)?;
+    )
+    .await
+    .map_err(repository_settings_error)?;
 
     Ok(Json(repository_response(&state, &headers, &updated).await?))
 }
@@ -339,9 +355,17 @@ pub async fn delete_repo(
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
-    lifecycle::delete(&state.pool, state.cluster.as_ref(), crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())), repository.id)
-        .await
-        .map_err(lifecycle_error)?;
+    lifecycle::delete(
+        &state.pool,
+        state.cluster.as_ref(),
+        crate::backend::db::credentials::Actor::from((
+            actor.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
+        repository.id,
+    )
+    .await
+    .map_err(lifecycle_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -491,10 +515,16 @@ pub(super) async fn settings_model(
     }
     if tab == "secrets" {
         let per_page = db::environment_values::ENVIRONMENTS_PER_PAGE;
-        settings.environment_page = super::paging::number(ctx, "environment_page", 1, 1..=i64::MAX as usize / per_page)?;
+        settings.environment_page =
+            super::paging::number(ctx, "environment_page", 1, 1..=i64::MAX as usize / per_page)?;
         settings.environments = db::environment_values::environments(
-            &ctx.state.pool, viewer.id, loaded.repository.id, ((settings.environment_page - 1) * per_page) as i64,
-        ).await.map_err(|_| unavailable(ctx))?;
+            &ctx.state.pool,
+            viewer.id,
+            loaded.repository.id,
+            ((settings.environment_page - 1) * per_page) as i64,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?;
         settings.environments_more = settings.environments.len() > per_page;
         settings.environments.truncate(per_page);
         if let Some(name) = ctx.query.get("environment").filter(|name| !name.is_empty()) {
@@ -505,14 +535,21 @@ pub(super) async fn settings_model(
                     "Invalid environment name.",
                 )
             })?;
-            let name = db::environment_values::environment(&ctx.state.pool, viewer.id, loaded.repository.id, &key)
-                .await.map_err(|_| unavailable(ctx))?.ok_or_else(|| {
-                    ctx.repo_error(
-                        &loaded.chrome,
-                        StatusCode::NOT_FOUND,
-                        "Environment not found.",
-                    )
-                })?;
+            let name = db::environment_values::environment(
+                &ctx.state.pool,
+                viewer.id,
+                loaded.repository.id,
+                &key,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .ok_or_else(|| {
+                ctx.repo_error(
+                    &loaded.chrome,
+                    StatusCode::NOT_FOUND,
+                    "Environment not found.",
+                )
+            })?;
             let (secrets, variables) = tokio::try_join!(
                 db::environment_values::list(
                     &ctx.state.pool,
@@ -550,24 +587,33 @@ pub(super) async fn settings_model(
         }
         settings.secrets_enabled = ctx.state.secret_encryptor.is_some();
         if settings.environment.is_none() {
-            settings.variables = db::variables::list(&ctx.state.pool, viewer.id, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), loaded.repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .into_iter()
-                .map(|variable| view::settings::secrets::Variable {
-                    name: variable.name,
-                    value: variable.value,
-                })
-                .collect();
-            settings.secrets = db::secrets::list_secrets(&ctx.state.pool, viewer.id, loaded.repository.id)
-                .await
-                .map_err(|_| unavailable(ctx))?
-                .into_iter()
-                .map(|secret| view::settings::secrets::Secret {
-                    name: secret.name,
-                    updated_at: secret.updated_at.to_rfc3339(),
-                })
-                .collect();
+            settings.variables = db::variables::list(
+                &ctx.state.pool,
+                viewer.id,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                        .unwrap_or_default(),
+                ),
+                loaded.repository.id,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(|variable| view::settings::secrets::Variable {
+                name: variable.name,
+                value: variable.value,
+            })
+            .collect();
+            settings.secrets =
+                db::secrets::list_secrets(&ctx.state.pool, viewer.id, loaded.repository.id)
+                    .await
+                    .map_err(|_| unavailable(ctx))?
+                    .into_iter()
+                    .map(|secret| view::settings::secrets::Secret {
+                        name: secret.name,
+                        updated_at: secret.updated_at.to_rfc3339(),
+                    })
+                    .collect();
         }
     }
     if tab == "dependabot-secrets" {
@@ -652,7 +698,10 @@ pub(super) async fn settings_model(
         }
     }
     if tab == "releases" {
-        let (opted_in, enforced) = db::repositories::immutable_releases::policy(&ctx.state.pool, loaded.repository.id).await.map_err(|_| unavailable(ctx))?;
+        let (opted_in, enforced) =
+            db::repositories::immutable_releases::policy(&ctx.state.pool, loaded.repository.id)
+                .await
+                .map_err(|_| unavailable(ctx))?;
         settings.immutable_releases = Some(opted_in);
         settings.immutable_enforced = enforced;
     }
@@ -684,9 +733,18 @@ pub(super) async fn settings_model(
             csrf_token: &loaded.chrome.csrf_token,
             repository_id: Some(loaded.repository.id),
         };
-        let built = panel::build(&ctx.state.pool, viewer, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), &place, &ctx.query)
-            .await
-            .map_err(|error| webhook_page_error(ctx, loaded, error))?;
+        let built = panel::build(
+            &ctx.state.pool,
+            viewer,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                    .unwrap_or_default(),
+            ),
+            &place,
+            &ctx.query,
+        )
+        .await
+        .map_err(|error| webhook_page_error(ctx, loaded, error))?;
         settings.webhooks = Some(Box::new(built));
     }
     if tab == "properties" {
@@ -761,9 +819,13 @@ async fn branch_rules(
     ctx: &PageContext,
     loaded: &Loaded,
 ) -> Result<Vec<view::settings::BranchRule>, Response> {
-    let rules = branch_protection::authorized_rule_responses(&ctx.state.pool,
-        ctx.database_actor(ctx.require_user()?.id), loaded.repository.id)
-        .await.map_err(|(status, error)| ctx.error(status, &error.0.message))?;
+    let rules = branch_protection::authorized_rule_responses(
+        &ctx.state.pool,
+        ctx.database_actor(ctx.require_user()?.id),
+        loaded.repository.id,
+    )
+    .await
+    .map_err(|(status, error)| ctx.error(status, &error.0.message))?;
     let mut listed = Vec::with_capacity(rules.len());
     for rule in rules {
         listed.push(view::settings::BranchRule {
@@ -783,7 +845,11 @@ async fn branch_rules(
             restrict_pushes: rule.restrict_pushes,
             push_allowances: rule.push_allowances,
             push_team_allowances: rule.push_team_allowances,
-            push_app_allowances: rule.push_apps.into_iter().map(|id| format!("GitHub App #{id} (REST-managed)")).collect(),
+            push_app_allowances: rule
+                .push_apps
+                .into_iter()
+                .map(|id| format!("GitHub App #{id} (REST-managed)"))
+                .collect(),
             force_push_allowances: rule.force_push_allowances,
         });
     }
@@ -911,13 +977,8 @@ async fn protection_form(
     if action == "protection-delete" {
         let outcome = match confirmation(form) {
             Ok(()) => {
-                branch_protection::delete_rule(
-                    pool,
-                    actor,
-                    repository.id,
-                    &field(form, "pattern"),
-                )
-                .await
+                branch_protection::delete_rule(pool, actor, repository.id, &field(form, "pattern"))
+                    .await
             }
             Err(message) => Err((
                 StatusCode::BAD_REQUEST,
@@ -974,7 +1035,10 @@ async fn webhook_form(
         pool,
         ctx.state.secret_encryptor.as_deref(),
         actor,
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
         owner,
         action,
         form,
@@ -1111,7 +1175,13 @@ fn safe_submission(action: &str, values: &HashMap<String, String>) -> HashMap<St
         "autolink-delete" => &["autolink_id"],
         "remove-collaborator" | "remove-invited-collaborator" => &["username"],
         "label" => &["name", "color", "description"],
-        "edit-label" => &["label_id", "name", "color", "description", "original_description"],
+        "edit-label" => &[
+            "label_id",
+            "name",
+            "color",
+            "description",
+            "original_description",
+        ],
         "secret-pattern-publish" => &["pattern_id", "organization"],
         "delete-label" => &["label_id"],
         "delete" => &["confirmation"],
@@ -1687,30 +1757,39 @@ async fn mutate(
             } else {
                 Owner::Repository(repository.id)
             };
-            db::secret_scanning::publish_pattern(pool, actor.id, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), scope, id)
-                .await
-                .map_err(
-                    |error| match error.downcast_ref::<db::secret_scanning::Refusal>() {
-                        _ if error.is::<db::users::accounts::AccountRestricted>() => ApiError::failure(
-                            StatusCode::FORBIDDEN, "forbidden", "A live unrestricted credential is required.",
-                        ),
-                        Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
-                            StatusCode::FORBIDDEN,
-                            "forbidden",
-                            "Pattern administration required",
-                        ),
-                        Some(db::secret_scanning::Refusal::Missing) => ApiError::failure(
-                            StatusCode::NOT_FOUND,
-                            "not_found",
-                            "Pattern not found",
-                        ),
-                        _ => ApiError::failure(
-                            StatusCode::SERVICE_UNAVAILABLE,
-                            "unavailable",
-                            "Custom patterns unavailable",
-                        ),
-                    },
-                )?;
+            db::secret_scanning::publish_pattern(
+                pool,
+                actor.id,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                        .unwrap_or_default(),
+                ),
+                scope,
+                id,
+            )
+            .await
+            .map_err(|error| {
+                match error.downcast_ref::<db::secret_scanning::Refusal>() {
+                    _ if error.is::<db::users::accounts::AccountRestricted>() => ApiError::failure(
+                        StatusCode::FORBIDDEN,
+                        "forbidden",
+                        "A live unrestricted credential is required.",
+                    ),
+                    Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
+                        StatusCode::FORBIDDEN,
+                        "forbidden",
+                        "Pattern administration required",
+                    ),
+                    Some(db::secret_scanning::Refusal::Missing) => {
+                        ApiError::failure(StatusCode::NOT_FOUND, "not_found", "Pattern not found")
+                    }
+                    _ => ApiError::failure(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "unavailable",
+                        "Custom patterns unavailable",
+                    ),
+                }
+            })?;
             Ok(settings_section_url(&base, action))
         }
         "code-security" => {
@@ -1834,9 +1913,14 @@ async fn mutate(
                     site.job_memory_gib,
                 )?,
             };
-            db::actions::save_repo_actions_settings(pool, ctx.database_actor(actor.id), repository.id, &settings)
-                .await
-                .map_err(repository_settings_error)?;
+            db::actions::save_repo_actions_settings(
+                pool,
+                ctx.database_actor(actor.id),
+                repository.id,
+                &settings,
+            )
+            .await
+            .map_err(repository_settings_error)?;
             Ok(settings_section_url(&base, action))
         }
         "about" => {
@@ -2070,9 +2154,17 @@ async fn mutate(
             let id = label_id(form)?;
             let (name, color, description) = label_fields(form)?;
             db::labels::update_label_checked(
-                pool, ctx.database_actor(actor.id), repository.id, id,
-                (Some(&name), Some(&color),
-                    (serde_json::to_string(&description).unwrap_or_default() != field(form, "original_description")).then_some(Some(description.as_str()))),
+                pool,
+                ctx.database_actor(actor.id),
+                repository.id,
+                id,
+                (
+                    Some(&name),
+                    Some(&color),
+                    (serde_json::to_string(&description).unwrap_or_default()
+                        != field(form, "original_description"))
+                    .then_some(Some(description.as_str())),
+                ),
                 Some(&field(form, "original")),
             )
             .await

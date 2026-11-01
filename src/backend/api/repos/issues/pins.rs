@@ -37,7 +37,10 @@ pub(crate) async fn native_pin(
     db::pins::set_pin(
         &ctx.state.pool,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
         repo.record.id,
         item,
         comment,
@@ -100,8 +103,7 @@ pub(crate) async fn pinned_comment(
                 comment.pull_request_id == id
                     && comment.path.is_none()
                     && comment.review_id.is_none()
-            })
-            else {
+            }) else {
                 return Ok(None);
             };
             let href = crate::backend::repositories::pull_requests::comments::saved_comment_link(

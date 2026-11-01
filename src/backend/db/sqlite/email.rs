@@ -1,5 +1,7 @@
 use super::models::{EmailSettings, OutboxMessage};
-use crate::backend::db::email::{delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS};
+use crate::backend::db::email::{
+    delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS,
+};
 use anyhow::Result;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -168,7 +170,11 @@ pub async fn claim_due_email(
 }
 
 pub async fn delivery_allowed(pool: &SqlitePool, id: i64, attempt: i32) -> Result<bool> {
-    Ok(sqlx::query_scalar(&delivery_allowed_sql(false)).bind(id).bind(attempt).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar(&delivery_allowed_sql(false))
+        .bind(id)
+        .bind(attempt)
+        .fetch_one(pool)
+        .await?)
 }
 
 pub async fn mark_email_sent(pool: &SqlitePool, id: i64, attempt: i32) -> Result<()> {
@@ -216,7 +222,11 @@ pub async fn remove_old_email(pool: &SqlitePool, max_attempts: i32, days: i64) -
     .rows_affected())
 }
 
-pub async fn get_email_notifications(pool: &SqlitePool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool> {
+pub async fn get_email_notifications(
+    pool: &SqlitePool,
+    user_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::users::transitions::require_account(&mut tx, user_id, credential).await?;
     let enabled: bool = sqlx::query_scalar("SELECT email_notifications FROM users WHERE id = ?1")
@@ -227,7 +237,12 @@ pub async fn get_email_notifications(pool: &SqlitePool, user_id: i64, credential
     Ok(enabled)
 }
 
-pub async fn set_email_notifications(pool: &SqlitePool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()> {
+pub async fn set_email_notifications(
+    pool: &SqlitePool,
+    user_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    enabled: bool,
+) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::users::transitions::require_account(&mut tx, user_id, credential).await?;
     sqlx::query("UPDATE users SET email_notifications = ?2 WHERE id = ?1")
@@ -259,9 +274,16 @@ pub(in crate::backend::db) async fn notification_address(
     .await?)
 }
 
-pub(super) async fn lock_link_recipient(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, user: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1)")
-        .bind(user).fetch_one(&mut **tx).await?)
+pub(super) async fn lock_link_recipient(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    user: i64,
+) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1)")
+            .bind(user)
+            .fetch_one(&mut **tx)
+            .await?,
+    )
 }
 
 pub async fn save_email_token(pool: &SqlitePool, link: &EmailLink<'_>) -> Result<bool> {
@@ -270,8 +292,13 @@ pub async fn save_email_token(pool: &SqlitePool, link: &EmailLink<'_>) -> Result
         return Ok(false);
     }
     // A link goes only to the account's current address, and never to a banned account.
-    let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND email=?2 AND NOT is_banned)")
-        .bind(link.user_id).bind(link.email).fetch_one(&mut *tx).await?;
+    let current: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND email=?2 AND NOT is_banned)",
+    )
+    .bind(link.user_id)
+    .bind(link.email)
+    .fetch_one(&mut *tx)
+    .await?;
     if !current {
         return Ok(false);
     }

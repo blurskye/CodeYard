@@ -101,8 +101,7 @@ async fn change(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let Json(input) =
-        input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(super::json_error)?;
     if input.account_urls.is_empty() || input.account_urls.len() > 4 {
         return Err(Error::validation(
             "SocialAccount",

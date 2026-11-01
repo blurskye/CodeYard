@@ -243,11 +243,12 @@ async fn repository_license(
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("application/vnd.github.raw"))
     {
-        return contents::blob_response(
-            &headers, &owner, &name, reference, &revision, &path, blob,
-        ).await;
+        return contents::blob_response(&headers, &owner, &name, reference, &revision, &path, blob)
+            .await;
     }
-    let mut value = contents::entry(&owner, &name, reference, &revision, &path, &blob.id, blob.size, "file");
+    let mut value = contents::entry(
+        &owner, &name, reference, &revision, &path, &blob.id, blob.size, "file",
+    );
     value["encoding"] = json!("base64");
     value["content"] = json!(STANDARD.encode(&blob.bytes));
     value["license"] = templates::detect_license(&blob.bytes)
@@ -319,10 +320,22 @@ async fn markdown(
             .ok_or_else(|| Error::validation("Markdown", "context", "invalid"))?;
         let (repo, authentication) = repository(&state, &headers, owner, name, false).await?;
         if let Some(authentication) = authentication.as_ref() {
-            authentication.repository_scope(&state.pool, repo.id, "contents", false).await.map_err(super::auth::scope_error)?;
+            authentication
+                .repository_scope(&state.pool, repo.id, "contents", false)
+                .await
+                .map_err(super::auth::scope_error)?;
         }
         if input.mode.as_deref() == Some("gfm") {
-            references = resolve_references(&state, authentication.as_ref(), &repo, owner, name, &[&input.text], false).await?;
+            references = resolve_references(
+                &state,
+                authentication.as_ref(),
+                &repo,
+                owner,
+                name,
+                &[&input.text],
+                false,
+            )
+            .await?;
         }
     }
     render(input.text, references).await
@@ -336,10 +349,25 @@ pub(super) async fn resolve_references(
     texts: &[&str],
     document: bool,
 ) -> Result<crate::webui::components::references::References> {
-    super::super::repos::refs::references::resolve_references_with(&state.pool, state.cluster.as_ref(), repo, owner, name, texts, document, |records| async move {
-        let ids: Vec<_> = records.iter().map(|repo| repo.id).collect();
-        super::auth::readable_repositories(state, authentication, &ids, "contents").await.map_err(|error| anyhow::anyhow!("Reference audience could not be verified: {error:?}"))
-    }).await.map_err(Error::unavailable)
+    super::super::repos::refs::references::resolve_references_with(
+        &state.pool,
+        state.cluster.as_ref(),
+        repo,
+        owner,
+        name,
+        texts,
+        document,
+        |records| async move {
+            let ids: Vec<_> = records.iter().map(|repo| repo.id).collect();
+            super::auth::readable_repositories(state, authentication, &ids, "contents")
+                .await
+                .map_err(|error| {
+                    anyhow::anyhow!("Reference audience could not be verified: {error:?}")
+                })
+        },
+    )
+    .await
+    .map_err(Error::unavailable)
 }
 
 async fn raw_markdown(body: String) -> Result<Response> {

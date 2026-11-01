@@ -252,10 +252,15 @@ async fn deployment(
         .map_err(write_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let saved = deployments::get(&state.pool, auth.as_ref().map(|actor| actor.user.id), repo.id, id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let saved = deployments::get(
+        &state.pool,
+        auth.as_ref().map(|actor| actor.user.id),
+        repo.id,
+        id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
     Ok(Json(document(&state, &saved, &owner, &name).await?).into_response())
 }
 
@@ -292,9 +297,10 @@ async fn statuses(
             return Ok(Json(status_document(&state, &row, owner, name).await?).into_response());
         }
         let (offset, limit) = page.window()?;
-        let rows = deployments::statuses(&state.pool, viewer, id, offset as i64, (limit + 1) as i64)
-            .await
-            .map_err(Error::unavailable)?;
+        let rows =
+            deployments::statuses(&state.pool, viewer, id, offset as i64, (limit + 1) as i64)
+                .await
+                .map_err(Error::unavailable)?;
         let has_next = rows.len() > limit;
         let mut values = Vec::new();
         for row in rows.into_iter().take(limit) {
@@ -308,10 +314,9 @@ async fn statuses(
     let Json(input) = Json::<NewStatus>::from_request(request, &state)
         .await
         .map_err(|_| Error::validation("DeploymentStatus", "state", "invalid"))?;
-    let statuses =
-        deployments::create_status(&state.pool, credential, repo.id, saved.id, &input)
-            .await
-            .map_err(write_error)?;
+    let statuses = deployments::create_status(&state.pool, credential, repo.id, saved.id, &input)
+        .await
+        .map_err(write_error)?;
     let mut result = None;
     for (deployment, status) in statuses {
         let value = status_document(&state, &status, owner, name).await?;

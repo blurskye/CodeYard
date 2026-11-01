@@ -110,8 +110,13 @@ pub(super) async fn files(
 
 pub(super) async fn text(ctx: &Arguments, request: &RequestContext, file: &Value) -> Result<Value> {
     authorize(request).await?;
-    let limit = ctx.args.get("truncate").filter(|value| !value.is_null())
-        .map(|value| value.i64()).transpose()?.unwrap_or(1024 * 1024);
+    let limit = ctx
+        .args
+        .get("truncate")
+        .filter(|value| !value.is_null())
+        .map(|value| value.i64())
+        .transpose()?
+        .unwrap_or(1024 * 1024);
     if !(0..=1024 * 1024).contains(&limit) {
         return Err(Error::new("Text limit must be between 0 and 1048576"));
     }

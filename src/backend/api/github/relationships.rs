@@ -90,14 +90,18 @@ async fn list(
     let (mut scanned, mut skipped) = (0, 0);
     loop {
         let batch = db::relationships::list(&state.pool, viewer, root, kind, scanned, 100)
-            .await.map_err(Error::unavailable)?;
+            .await
+            .map_err(Error::unavailable)?;
         let done = batch.len() < 100;
         scanned += batch.len() as i64;
         let mut ids: Vec<_> = batch.iter().map(|link| link.repo_id).collect();
         ids.sort_unstable();
         ids.dedup();
         let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "issues").await?;
-        for row in batch.into_iter().filter(|link| readable.contains(&link.repo_id)) {
+        for row in batch
+            .into_iter()
+            .filter(|link| readable.contains(&link.repo_id))
+        {
             if kind != Kind::Parent && skipped < offset {
                 skipped += 1;
                 continue;
@@ -150,9 +154,16 @@ async fn apply(
     };
     // The linked issue's repository must be within the credential's reach before the change.
     document(state, Some(&auth), other).await?;
-    db::relationships::change_with_token(&state.pool, auth.user.id, repo.id, root, mutation, Some(auth.token.id))
-        .await
-        .map_err(error)?;
+    db::relationships::change_with_token(
+        &state.pool,
+        auth.user.id,
+        repo.id,
+        root,
+        mutation,
+        Some(auth.token.id),
+    )
+    .await
+    .map_err(error)?;
     document(state, Some(&auth), other).await
 }
 async fn add(

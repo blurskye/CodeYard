@@ -11,16 +11,37 @@ pub(in super::super) fn issue_type(item: &db::issue_attributes::Attribute, repo:
 pub(in super::super) async fn type_node(id: i64, request: &RequestContext) -> Result<Value> {
     let mut after = 0;
     loop {
-        let repositories = db::graphql::issue_type_repositories(&request.state.pool, id, after, request.auth.user.id).await.map_err(unavailable)?;
+        let repositories = db::graphql::issue_type_repositories(
+            &request.state.pool,
+            id,
+            after,
+            request.auth.user.id,
+        )
+        .await
+        .map_err(unavailable)?;
         let done = repositories.len() < 100;
         for repo in repositories {
             after = repo;
-            if !repository::optional_authority(repo, "issues", request).await? { continue; }
-            if let Some(item) = db::issue_attributes::catalog(&request.state.pool, repo, Some(request.auth.user.id), "type").await.map_err(unavailable)?.into_iter().find(|item| item.id == id) {
+            if !repository::optional_authority(repo, "issues", request).await? {
+                continue;
+            }
+            if let Some(item) = db::issue_attributes::catalog(
+                &request.state.pool,
+                repo,
+                Some(request.auth.user.id),
+                "type",
+            )
+            .await
+            .map_err(unavailable)?
+            .into_iter()
+            .find(|item| item.id == id)
+            {
                 return Ok(issue_type(&item, repo));
             }
         }
-        if done { return Err(missing()); }
+        if done {
+            return Err(missing());
+        }
     }
 }
 
@@ -43,7 +64,10 @@ pub(super) async fn resolve(
             .unwrap_or(Value::Null)),
         "subIssuesSummary" => {
             let (mut total, mut completed) = (0_i64, 0_i64);
-            for counts in db::relationships::summaries(pool, &[id]).await.map_err(unavailable)? {
+            for counts in db::relationships::summaries(pool, &[id])
+                .await
+                .map_err(unavailable)?
+            {
                 if repository::optional_authority(counts.repo_id, "issues", request).await? {
                     total += counts.total;
                     completed += counts.completed;
@@ -84,8 +108,14 @@ pub(super) async fn resolve(
                     visible.push(repo_id);
                 }
             }
-            let page = if field == "parent" { None } else { Some(Page::new(ctx, total)?) };
-            let (offset, limit) = page.as_ref().map_or((0, 1), |page| (page.offset, page.limit));
+            let page = if field == "parent" {
+                None
+            } else {
+                Some(Page::new(ctx, total)?)
+            };
+            let (offset, limit) = page
+                .as_ref()
+                .map_or((0, 1), |page| (page.offset, page.limit));
             let links = if limit == 0 || visible.is_empty() {
                 Vec::new()
             } else {
@@ -113,7 +143,13 @@ pub(super) async fn resolve(
                     .ok_or_else(missing)?;
                 repository::by_id(issue.repo_id, request).await?;
                 request.authorize(issue.repo_id, "issues", false).await?;
-                request.charge(issue.title.len().saturating_add(issue.body.len()).saturating_mul(4))?;
+                request.charge(
+                    issue
+                        .title
+                        .len()
+                        .saturating_add(issue.body.len())
+                        .saturating_mul(4),
+                )?;
                 nodes.push(object(&issue));
             }
             match page {
@@ -196,14 +232,29 @@ pub(super) async fn list(
         ] {
             if let Some(value) = filter[name].as_str() {
                 if value == "*" && matches!(name, "assignee" | "milestone" | "milestoneNumber") {
-                    add("-no", if name == "assignee" { "assignee" } else { "milestone" })?;
+                    add(
+                        "-no",
+                        if name == "assignee" {
+                            "assignee"
+                        } else {
+                            "milestone"
+                        },
+                    )?;
                 } else if name == "milestone" {
-                    let id = value.parse::<i64>().map_err(|_| Error::new("milestone must be a database ID or *"))?;
-                    let Some(milestone) = db::milestones::get_milestone_by_id(&request.state.pool, repo_id, id).await.map_err(unavailable)? else {
+                    let id = value
+                        .parse::<i64>()
+                        .map_err(|_| Error::new("milestone must be a database ID or *"))?;
+                    let Some(milestone) =
+                        db::milestones::get_milestone_by_id(&request.state.pool, repo_id, id)
+                            .await
+                            .map_err(unavailable)?
+                    else {
                         return connection::slice(args, Vec::new());
                     };
                     add(key, &milestone.milestone.number.to_string())?;
-                } else { add(key, value)?; }
+                } else {
+                    add(key, value)?;
+                }
             }
         }
         if let Some(value) = filter["labels"].as_str() {
@@ -236,7 +287,10 @@ pub(super) async fn list(
     }
     if let Some(states) = args.args.get("states").filter(|v| !v.is_null()) {
         let values: Value = states.deserialize()?;
-        let values = super::super::metadata_mutations::list(&values).iter().map(|value| value.as_str().ok_or_else(missing)).collect::<Result<Vec<_>>>()?;
+        let values = super::super::metadata_mutations::list(&values)
+            .iter()
+            .map(|value| value.as_str().ok_or_else(missing))
+            .collect::<Result<Vec<_>>>()?;
         add_states(&mut query, values.into_iter());
     }
     let (mut sort, mut ascending) = (Sort::Created, false);
@@ -321,15 +375,35 @@ async fn results(
                 .await?;
             let value = if pull {
                 let Some(row) = db::pull_requests::records::get_pull_request_by_id(pool, id)
-                    .await.map_err(unavailable)? else { continue };
-                request.authorize(row.repo_id, "pull-requests", false).await?;
-                request.charge(row.title.len().saturating_add(row.body.len()).saturating_mul(4))?;
+                    .await
+                    .map_err(unavailable)?
+                else {
+                    continue;
+                };
+                request
+                    .authorize(row.repo_id, "pull-requests", false)
+                    .await?;
+                request.charge(
+                    row.title
+                        .len()
+                        .saturating_add(row.body.len())
+                        .saturating_mul(4),
+                )?;
                 pull_object(&row)
             } else {
                 let Some(row) = db::issues::get_issue_by_id(pool, id)
-                    .await.map_err(unavailable)? else { continue };
+                    .await
+                    .map_err(unavailable)?
+                else {
+                    continue;
+                };
                 request.authorize(row.repo_id, "issues", false).await?;
-                request.charge(row.title.len().saturating_add(row.body.len()).saturating_mul(4))?;
+                request.charge(
+                    row.title
+                        .len()
+                        .saturating_add(row.body.len())
+                        .saturating_mul(4),
+                )?;
                 object(&row)
             };
             nodes.push(value);

@@ -15,7 +15,16 @@ pub async fn delete_organization(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
-    if role != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
+    if role != OrgRole::Owner
+        || !super::super::credentials::organization(
+            &mut tx,
+            &owner,
+            org,
+            "organization_administration",
+            true,
+        )
+        .await?
+    {
         return Ok(Denied);
     }
     if repository_count(&mut tx, org).await? > 0 {
@@ -63,7 +72,16 @@ pub async fn list_organization_deletion_repositories(
     let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
+    if require_org!(tx, actor, org) != OrgRole::Owner
+        || !super::super::credentials::organization(
+            &mut tx,
+            &owner,
+            org,
+            "organization_administration",
+            true,
+        )
+        .await?
+    {
         return Ok(Denied);
     }
     let repository = sqlx::query_scalar(
@@ -87,7 +105,16 @@ pub async fn delete_organization_repository(
     let actor = owner.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
+    if require_org!(tx, actor, org) != OrgRole::Owner
+        || !super::super::credentials::organization(
+            &mut tx,
+            &owner,
+            org,
+            "organization_administration",
+            true,
+        )
+        .await?
+    {
         return Ok(Denied);
     }
     let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=?1 ORDER BY a.file_id")

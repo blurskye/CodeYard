@@ -20,9 +20,14 @@ pub(crate) fn identities(authors: &[(String, String)]) -> Vec<(String, &str, &st
         digest.update((name.len() as u64).to_be_bytes());
         digest.update(name.as_bytes());
         digest.update(email.as_bytes());
-        rows.insert(format!("{:x}", digest.finalize()), (name.as_str(), email.as_str()));
+        rows.insert(
+            format!("{:x}", digest.finalize()),
+            (name.as_str(), email.as_str()),
+        );
     }
-    rows.into_iter().map(|(digest, (name, email))| (digest, name, email)).collect()
+    rows.into_iter()
+        .map(|(digest, (name, email))| (digest, name, email))
+        .collect()
 }
 
 native_operation!(crate::backend::db::postgres::import_authors::record,

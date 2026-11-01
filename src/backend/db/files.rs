@@ -13,16 +13,33 @@ pub struct FileAuthority {
     pub session: Option<String>,
 }
 impl From<i64> for FileAuthority {
-    fn from(user_id: i64) -> Self { Self { user_id: Some(user_id), session: None } }
+    fn from(user_id: i64) -> Self {
+        Self {
+            user_id: Some(user_id),
+            session: None,
+        }
+    }
 }
 impl From<Option<i64>> for FileAuthority {
-    fn from(user_id: Option<i64>) -> Self { Self { user_id, session: None } }
+    fn from(user_id: Option<i64>) -> Self {
+        Self {
+            user_id,
+            session: None,
+        }
+    }
 }
 impl From<(i64, String)> for FileAuthority {
-    fn from((user_id, session): (i64, String)) -> Self { Self { user_id: Some(user_id), session: Some(session) } }
+    fn from((user_id, session): (i64, String)) -> Self {
+        Self {
+            user_id: Some(user_id),
+            session: Some(session),
+        }
+    }
 }
 impl From<(Option<i64>, Option<String>)> for FileAuthority {
-    fn from((user_id, session): (Option<i64>, Option<String>)) -> Self { Self { user_id, session } }
+    fn from((user_id, session): (Option<i64>, Option<String>)) -> Self {
+        Self { user_id, session }
+    }
 }
 
 pub const MAX_UPLOAD_BYTES: i64 = crate::backend::storage::MAX_OBJECT_BYTES;

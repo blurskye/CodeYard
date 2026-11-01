@@ -1,7 +1,7 @@
 //! Action loading and handlers following actions/runner's `Runner.Worker/ActionManager.cs` and `Handlers/`.
 use super::*;
-use serde::Deserialize;
 use anyhow::ensure;
+use serde::Deserialize;
 use std::sync::OnceLock;
 
 #[derive(Clone, Default, Deserialize)]
@@ -44,7 +44,10 @@ struct Runs {
     env: BTreeMap<String, String>,
 }
 
-pub(super) enum ActionStage<'a> { Prepare(&'a crate::workflow::EnvironmentTemplate), Main }
+pub(super) enum ActionStage<'a> {
+    Prepare(&'a crate::workflow::EnvironmentTemplate),
+    Main,
+}
 
 pub(super) struct PreparedAction {
     runtime: String,
@@ -52,7 +55,10 @@ pub(super) struct PreparedAction {
     post: Option<usize>,
 }
 
-enum PostRuntime { Node(String), Docker { image: String, args: Vec<String> } }
+enum PostRuntime {
+    Node(String),
+    Docker { image: String, args: Vec<String> },
+}
 
 /// Looks up an input. Input names compare without case, as on GitHub.
 fn input<'a>(inputs: &'a BTreeMap<String, String>, name: &str) -> Option<&'a str> {
@@ -73,7 +79,10 @@ fn export_inputs(env: &mut BTreeMap<String, String>, inputs: &BTreeMap<String, S
 
 /// A Docker action's main entrypoint: `runs.entrypoint`, else the `entrypoint` input, which is
 /// how `docker://` steps and actions without one set it on GitHub.
-fn docker_entrypoint(configured: Option<&str>, inputs: &BTreeMap<String, String>) -> Option<String> {
+fn docker_entrypoint(
+    configured: Option<&str>,
+    inputs: &BTreeMap<String, String>,
+) -> Option<String> {
     [configured, input(inputs, "entrypoint")]
         .into_iter()
         .flatten()
@@ -83,10 +92,16 @@ fn docker_entrypoint(configured: Option<&str>, inputs: &BTreeMap<String, String>
 
 /// A Docker action's arguments for every stage: the evaluated `runs.args` when the action sets
 /// them, even as an empty list, else the `args` input split like a command line.
-fn docker_args(configured: Option<Vec<String>>, inputs: &BTreeMap<String, String>) -> Result<Vec<String>> {
+fn docker_args(
+    configured: Option<Vec<String>>,
+    inputs: &BTreeMap<String, String>,
+) -> Result<Vec<String>> {
     match configured {
         Some(args) => Ok(args),
-        None => Ok(input(inputs, "args").map(commands::words).transpose()?.unwrap_or_default()),
+        None => Ok(input(inputs, "args")
+            .map(commands::words)
+            .transpose()?
+            .unwrap_or_default()),
     }
 }
 
@@ -107,12 +122,20 @@ pub(super) struct Post {
 }
 
 async fn cache_lock(path: PathBuf) -> Result<std::fs::File> {
-    let file = tokio::task::spawn_blocking(move || std::fs::OpenOptions::new()
-        .create(true).truncate(false).write(true).open(path)).await??;
+    let file = tokio::task::spawn_blocking(move || {
+        std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(path)
+    })
+    .await??;
     loop {
         match file.try_lock() {
             Ok(()) => return Ok(file),
-            Err(std::fs::TryLockError::WouldBlock) => tokio::time::sleep(Duration::from_millis(50)).await,
+            Err(std::fs::TryLockError::WouldBlock) => {
+                tokio::time::sleep(Duration::from_millis(50)).await
+            }
             Err(std::fs::TryLockError::Error(error)) => return Err(error.into()),
         }
     }
@@ -124,13 +147,29 @@ pub(crate) struct ActionReference<'a> {
 }
 impl<'a> ActionReference<'a> {
     pub(crate) fn parse(reference: &'a str) -> Result<Self> {
-        let (repository_path, version) = reference.split_once('@').context("Expected owner/repo[/path]@ref")?;
+        let (repository_path, version) = reference
+            .split_once('@')
+            .context("Expected owner/repo[/path]@ref")?;
         let components: Vec<_> = repository_path.split('/').collect();
-        ensure!(components.len() >= 2 && components.iter().all(|part| {
-            !part.is_empty() && *part != "." && *part != ".."
-                && part.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
-        }) && !version.is_empty() && !version.starts_with('-') && !version.contains(['@', '\0', '\n', '\r']), "Invalid action reference '{reference}'");
-        Ok(Self { components, version })
+        ensure!(
+            components.len() >= 2
+                && components.iter().all(|part| {
+                    !part.is_empty()
+                        && *part != "."
+                        && *part != ".."
+                        && part
+                            .chars()
+                            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-' | '.'))
+                })
+                && !version.is_empty()
+                && !version.starts_with('-')
+                && !version.contains(['@', '\0', '\n', '\r']),
+            "Invalid action reference '{reference}'"
+        );
+        Ok(Self {
+            components,
+            version,
+        })
     }
 }
 
@@ -148,11 +187,20 @@ async fn git(directory: &Path, args: &[&str], credential: Option<(&str, &str)>) 
         .kill_on_drop(true);
     if let Some((origin, token)) = credential {
         use base64::Engine;
-        let authorization = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{token}"));
-        command.env("GIT_CONFIG_COUNT", "2")
-            .env("GIT_CONFIG_KEY_0", format!("http.{}/.extraheader", origin.trim_end_matches('/')))
-            .env("GIT_CONFIG_VALUE_0", format!("Authorization: Basic {authorization}"))
-            .env("GIT_CONFIG_KEY_1", "http.followRedirects").env("GIT_CONFIG_VALUE_1", "false");
+        let authorization =
+            base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{token}"));
+        command
+            .env("GIT_CONFIG_COUNT", "2")
+            .env(
+                "GIT_CONFIG_KEY_0",
+                format!("http.{}/.extraheader", origin.trim_end_matches('/')),
+            )
+            .env(
+                "GIT_CONFIG_VALUE_0",
+                format!("Authorization: Basic {authorization}"),
+            )
+            .env("GIT_CONFIG_KEY_1", "http.followRedirects")
+            .env("GIT_CONFIG_VALUE_1", "false");
     }
     let output = process::output(&mut command, Duration::from_secs(120))
         .await
@@ -169,18 +217,28 @@ async fn git(directory: &Path, args: &[&str], credential: Option<(&str, &str)>) 
 impl Job {
     fn retain_action_bytes(&mut self, bytes: usize) -> Result<()> {
         self.action_bytes = self.action_bytes.saturating_add(bytes);
-        ensure!(self.action_bytes <= 64 * 1024 * 1024, "Action lifecycle state exceeds its retention budget");
+        ensure!(
+            self.action_bytes <= 64 * 1024 * 1024,
+            "Action lifecycle state exceeds its retention budget"
+        );
         Ok(())
     }
 
     fn retain_state(&mut self, state: &BTreeMap<String, String>) -> Result<()> {
-        self.retain_action_bytes(state.iter().map(|(key, value)| 64 + key.len() + value.len()).sum())
+        self.retain_action_bytes(
+            state
+                .iter()
+                .map(|(key, value)| 64 + key.len() + value.len())
+                .sum(),
+        )
     }
 
     fn retain_post(&mut self, env: &BTreeMap<String, String>, metadata: usize) -> Result<()> {
         let mut bytes = metadata.saturating_add(256);
         for values in [env, &self.saved_env] {
-            for (key, value) in values { bytes = bytes.saturating_add(64 + key.len() + value.len()); }
+            for (key, value) in values {
+                bytes = bytes.saturating_add(64 + key.len() + value.len());
+            }
         }
         let mut pending: Vec<_> = self.contexts.values.values().collect();
         while let Some(value) = pending.pop() {
@@ -189,72 +247,168 @@ impl Job {
                 Value::String(value) => bytes = bytes.saturating_add(value.len()),
                 Value::Array(values) => pending.extend(values.iter()),
                 Value::Object(values) => {
-                    for (key, value) in values { bytes = bytes.saturating_add(key.len()); pending.push(value); }
+                    for (key, value) in values {
+                        bytes = bytes.saturating_add(key.len());
+                        pending.push(value);
+                    }
                 }
                 _ => {}
             }
-            ensure!(bytes <= 64 * 1024 * 1024, "Action lifecycle context exceeds its retention budget");
+            ensure!(
+                bytes <= 64 * 1024 * 1024,
+                "Action lifecycle context exceeds its retention budget"
+            );
         }
         self.retain_action_bytes(bytes)
     }
 
-    pub(super) fn prepare_step<'a>(&'a mut self, step: &'a Step, index: usize, depth: usize)
-        -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
+    pub(super) fn prepare_step<'a>(
+        &'a mut self,
+        step: &'a Step,
+        index: usize,
+        depth: usize,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
             ensure!(depth <= 20, "Composite actions nested more than 20 levels");
-            let StepAction::Uses { reference, with } = &step.action else { return Ok(()); };
+            let StepAction::Uses { reference, with } = &step.action else {
+                return Ok(());
+            };
             // Local actions exist only after checkout, so they are read when their step runs.
-            if reference.starts_with("./") || reference.starts_with("docker://") { return Ok(()); }
+            if reference.starts_with("./") || reference.starts_with("docker://") {
+                return Ok(());
+            }
             self.retain_action_bytes(256)?;
-            if depth == 0 { self.checkpoint_scope(); }
+            if depth == 0 {
+                self.checkpoint_scope();
+            }
             let outer_env = self.contexts.values.get("env").cloned();
             let mut env = self.env.clone();
             env.extend(self.saved_env.clone());
             self.contexts.values.insert("env".into(), object(&env));
             self.action_path.push(index);
             let mut outputs = BTreeMap::new();
-            let result = self.uses(reference, with, env, self.deadline, depth, &mut outputs, ActionStage::Prepare(&step.env)).await;
+            let result = self
+                .uses(
+                    reference,
+                    with,
+                    env,
+                    self.deadline,
+                    depth,
+                    &mut outputs,
+                    ActionStage::Prepare(&step.env),
+                )
+                .await;
             self.action_path.pop();
-            match outer_env { Some(env) => { self.contexts.values.insert("env".into(), env); }, None => { self.contexts.values.remove("env"); } }
-            if depth == 0 { self.scope = None; }
+            match outer_env {
+                Some(env) => {
+                    self.contexts.values.insert("env".into(), env);
+                }
+                None => {
+                    self.contexts.values.remove("env");
+                }
+            }
+            if depth == 0 {
+                self.scope = None;
+            }
             ensure!(result?, "Action pre handler failed");
             Ok(())
         })
     }
 
-    async fn fetch_action_repository(&self, reference: &str, components: &[&str], version: &str, source: &url::Url, token: Option<&str>) -> Result<(PathBuf, String)> {
+    async fn fetch_action_repository(
+        &self,
+        reference: &str,
+        components: &[&str],
+        version: &str,
+        source: &url::Url,
+        token: Option<&str>,
+    ) -> Result<(PathBuf, String)> {
         // The source URL participates in immutable cache identity, including forge base paths.
-        let encoded = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(format!("{source}\0{version}")));
-        let directory = self.cache.join("actions").join(components[0]).join(components[1]).join(encoded);
-        let parent = directory.parent().context("Invalid action cache directory")?;
+        let encoded = format!(
+            "{:x}",
+            <sha2::Sha256 as sha2::Digest>::digest(format!("{source}\0{version}"))
+        );
+        let directory = self
+            .cache
+            .join("actions")
+            .join(components[0])
+            .join(components[1])
+            .join(encoded);
+        let parent = directory
+            .parent()
+            .context("Invalid action cache directory")?;
         std::fs::create_dir_all(parent)?;
         type Selection = Arc<tokio::sync::Mutex<Option<String>>>;
-        static FETCHED: OnceLock<tokio::sync::Mutex<BTreeMap<PathBuf, Selection>>> = OnceLock::new();
-        let selection = FETCHED.get_or_init(|| tokio::sync::Mutex::new(Default::default()))
-            .lock().await.entry(directory.clone()).or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None))).clone();
+        static FETCHED: OnceLock<tokio::sync::Mutex<BTreeMap<PathBuf, Selection>>> =
+            OnceLock::new();
+        let selection = FETCHED
+            .get_or_init(|| tokio::sync::Mutex::new(Default::default()))
+            .lock()
+            .await
+            .entry(directory.clone())
+            .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None)))
+            .clone();
         let mut selected = selection.lock().await;
         let _lock = cache_lock(directory.with_extension("lock")).await?;
-        if let Some(token) = token { self.log.masker.add(&format!("x-access-token:{token}")); }
+        if let Some(token) = token {
+            self.log.masker.add(&format!("x-access-token:{token}"));
+        }
         let credential = token.map(|token| (source.as_str(), token));
         if selected.is_none() && !directory.join(".git").exists() {
-            ensure!(!self.options.action_offline_mode, "Action '{reference}' is not available in the offline cache");
-            let staging = tempfile::Builder::new().prefix("download-").tempdir_in(parent)?;
+            ensure!(
+                !self.options.action_offline_mode,
+                "Action '{reference}' is not available in the offline cache"
+            );
+            let staging = tempfile::Builder::new()
+                .prefix("download-")
+                .tempdir_in(parent)?;
             git(staging.path(), &["init", "--quiet"], None).await?;
             let mut url = source.clone();
-            url.set_path(&format!("{}/{}/{}.git", source.path().trim_end_matches('/'), components[0], components[1]));
-            git(staging.path(), &["remote", "add", "origin", url.as_str()], None).await?;
-            git(staging.path(), &["fetch", "--depth=1", "origin", version], credential).await?;
-            git(staging.path(), &["checkout", "--force", "--detach", "FETCH_HEAD"], None).await?;
+            url.set_path(&format!(
+                "{}/{}/{}.git",
+                source.path().trim_end_matches('/'),
+                components[0],
+                components[1]
+            ));
+            git(
+                staging.path(),
+                &["remote", "add", "origin", url.as_str()],
+                None,
+            )
+            .await?;
+            git(
+                staging.path(),
+                &["fetch", "--depth=1", "origin", version],
+                credential,
+            )
+            .await?;
+            git(
+                staging.path(),
+                &["checkout", "--force", "--detach", "FETCH_HEAD"],
+                None,
+            )
+            .await?;
             std::fs::rename(staging.path(), &directory)?;
         } else if selected.is_none() && !self.options.action_offline_mode {
-            git(&directory, &["fetch", "--depth=1", "origin", version], credential).await?;
+            git(
+                &directory,
+                &["fetch", "--depth=1", "origin", version],
+                credential,
+            )
+            .await?;
         }
         if selected.is_none() {
             let commit = git_value(&directory, &["rev-parse", "FETCH_HEAD"]).await;
-            ensure!(!commit.is_empty(), "Cached action '{reference}' has no fetched revision");
+            ensure!(
+                !commit.is_empty(),
+                "Cached action '{reference}' has no fetched revision"
+            );
             *selected = Some(commit);
         }
-        Ok((directory, selected.as_ref().expect("selected revision").clone()))
+        Ok((
+            directory,
+            selected.as_ref().expect("selected revision").clone(),
+        ))
     }
 
     async fn action_directory(&self, reference: &str) -> Result<PathBuf> {
@@ -270,39 +424,100 @@ impl Job {
             }
             return Ok(directory);
         }
-        let ActionReference { components, version } = ActionReference::parse(reference)?;
-        let origin = self.contexts.values.get("github").and_then(|github| match github {
-            Value::Object(github) => github.get("server_url").map(Value::to_text), _ => None,
-        }).filter(|origin| !origin.is_empty()).unwrap_or_else(|| "https://github.com".into());
+        let ActionReference {
+            components,
+            version,
+        } = ActionReference::parse(reference)?;
+        let origin = self
+            .contexts
+            .values
+            .get("github")
+            .and_then(|github| match github {
+                Value::Object(github) => github.get("server_url").map(Value::to_text),
+                _ => None,
+            })
+            .filter(|origin| !origin.is_empty())
+            .unwrap_or_else(|| "https://github.com".into());
         let origin = url::Url::parse(&origin).context("Invalid action forge URL")?;
-        ensure!(matches!(origin.scheme(), "http" | "https") && origin.host_str().is_some()
-            && origin.username().is_empty() && origin.password().is_none() && origin.query().is_none() && origin.fragment().is_none(), "Invalid action forge URL");
+        ensure!(
+            matches!(origin.scheme(), "http" | "https")
+                && origin.host_str().is_some()
+                && origin.username().is_empty()
+                && origin.password().is_none()
+                && origin.query().is_none()
+                && origin.fragment().is_none(),
+            "Invalid action forge URL"
+        );
         let mut sources = vec![origin.clone()];
-        if self.options.github_action_fallback && origin.as_str().trim_end_matches('/') != "https://github.com" {
+        if self.options.github_action_fallback
+            && origin.as_str().trim_end_matches('/') != "https://github.com"
+        {
             sources.push(url::Url::parse("https://github.com")?);
         }
-        let token = self.contexts.values.get("github").and_then(|github| match github {
-            Value::Object(github) => github.get("token").map(Value::to_text), _ => None,
-        }).filter(|token| !token.is_empty());
+        let token = self
+            .contexts
+            .values
+            .get("github")
+            .and_then(|github| match github {
+                Value::Object(github) => github.get("token").map(Value::to_text),
+                _ => None,
+            })
+            .filter(|token| !token.is_empty());
         let mut resolved = None;
         let mut last = None;
         for (index, source) in sources.iter().enumerate() {
-            if index > 0 { self.log.line("Warning: Using explicitly permitted GitHub action fallback"); }
-            match self.fetch_action_repository(reference, &components, version, source,
-                (source == &origin).then_some(token.as_deref()).flatten()).await {
-                Ok(selection) => { resolved = Some(selection); break; }
+            if index > 0 {
+                self.log
+                    .line("Warning: Using explicitly permitted GitHub action fallback");
+            }
+            match self
+                .fetch_action_repository(
+                    reference,
+                    &components,
+                    version,
+                    source,
+                    (source == &origin).then_some(token.as_deref()).flatten(),
+                )
+                .await
+            {
+                Ok(selection) => {
+                    resolved = Some(selection);
+                    break;
+                }
                 Err(error) => last = Some(error),
             }
         }
-        let (directory, commit) = resolved.ok_or_else(|| last.unwrap_or_else(|| anyhow::anyhow!("Action source is unavailable")))?;
-        let checkout_key = format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(format!("{}\0{commit}", directory.display())));
+        let (directory, commit) = resolved.ok_or_else(|| {
+            last.unwrap_or_else(|| anyhow::anyhow!("Action source is unavailable"))
+        })?;
+        let checkout_key = format!(
+            "{:x}",
+            <sha2::Sha256 as sha2::Digest>::digest(format!("{}\0{commit}", directory.display()))
+        );
         let checkout = self.temp.path().join(format!("action-{checkout_key}"));
         if let Ok(info) = std::fs::symlink_metadata(&checkout) {
             ensure!(info.is_dir(), "Action checkout is not a directory");
         } else {
             let staging = crate::fs::private_tempdir("action-", Some(self.temp.path()))?;
-            git(staging.path(), &["clone", "--quiet", "--shared", "--no-checkout", &directory.display().to_string(), "."], None).await?;
-            git(staging.path(), &["checkout", "--quiet", "--detach", &commit], None).await?;
+            git(
+                staging.path(),
+                &[
+                    "clone",
+                    "--quiet",
+                    "--shared",
+                    "--no-checkout",
+                    &directory.display().to_string(),
+                    ".",
+                ],
+                None,
+            )
+            .await?;
+            git(
+                staging.path(),
+                &["checkout", "--quiet", "--detach", &commit],
+                None,
+            )
+            .await?;
             std::fs::rename(staging.path(), &checkout)?;
         }
         let action = components[2..]
@@ -317,7 +532,10 @@ impl Job {
         Ok(action)
     }
 
-    #[expect(clippy::too_many_arguments, reason = "An action runs with the caller's inputs, environment, deadline, nesting depth, outputs and stage.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "An action runs with the caller's inputs, environment, deadline, nesting depth, outputs and stage."
+    )]
     pub(super) async fn uses(
         &mut self,
         reference: &str,
@@ -330,10 +548,16 @@ impl Job {
     ) -> Result<bool> {
         let setup = matches!(stage, ActionStage::Prepare(_));
         let templates = supplied.clone();
-        let mut supplied = if setup { templates } else {
-            self.evaluate(deadline, move |contexts, status| templates.iter()
-                .map(|(key, template)| Ok((key.clone(), text(template, contexts, status)?)))
-                .collect::<Result<BTreeMap<_, _>>>()).await?
+        let mut supplied = if setup {
+            templates
+        } else {
+            self.evaluate(deadline, move |contexts, status| {
+                templates
+                    .iter()
+                    .map(|(key, template)| Ok((key.clone(), text(template, contexts, status)?)))
+                    .collect::<Result<BTreeMap<_, _>>>()
+            })
+            .await?
         };
         if reference.starts_with("docker://") {
             export_inputs(&mut env, &supplied);
@@ -362,23 +586,39 @@ impl Job {
         // runner read, and show in an error, another file of the host.
         let root = directory.canonicalize();
         let metadata: Metadata = match file {
-            Some(file) => until_deadline(deadline, async move {
-                tokio::task::spawn_blocking(move || -> Result<Metadata> {
-                    use std::io::Read;
-                    let file = file.canonicalize()?;
-                    anyhow::ensure!(file.starts_with(root?), "The action's metadata file must be inside the action");
-                    let mut options = std::fs::OpenOptions::new();
-                    options.read(true);
-                    #[cfg(unix)]
-                    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK | libc::O_NOFOLLOW);
-                    let file = options.open(file)?;
-                    anyhow::ensure!(file.metadata()?.is_file(), "Action metadata must be a regular file");
-                    let mut content = String::new();
-                    file.take(1024 * 1024 + 1).read_to_string(&mut content)?;
-                    anyhow::ensure!(content.len() <= 1024 * 1024, "Action metadata is too large");
-                    Ok(serde_yaml::from_str(&content)?)
-                }).await?
-            }).await?,
+            Some(file) => {
+                until_deadline(deadline, async move {
+                    tokio::task::spawn_blocking(move || -> Result<Metadata> {
+                        use std::io::Read;
+                        let file = file.canonicalize()?;
+                        anyhow::ensure!(
+                            file.starts_with(root?),
+                            "The action's metadata file must be inside the action"
+                        );
+                        let mut options = std::fs::OpenOptions::new();
+                        options.read(true);
+                        #[cfg(unix)]
+                        std::os::unix::fs::OpenOptionsExt::custom_flags(
+                            &mut options,
+                            libc::O_NONBLOCK | libc::O_NOFOLLOW,
+                        );
+                        let file = options.open(file)?;
+                        anyhow::ensure!(
+                            file.metadata()?.is_file(),
+                            "Action metadata must be a regular file"
+                        );
+                        let mut content = String::new();
+                        file.take(1024 * 1024 + 1).read_to_string(&mut content)?;
+                        anyhow::ensure!(
+                            content.len() <= 1024 * 1024,
+                            "Action metadata is too large"
+                        );
+                        Ok(serde_yaml::from_str(&content)?)
+                    })
+                    .await?
+                })
+                .await?
+            }
             // A directory with only a Dockerfile is a Docker action without inputs.
             None if directory.join("Dockerfile").is_file() => Metadata {
                 runs: Runs {
@@ -391,26 +631,57 @@ impl Job {
             None => bail!("Can't find 'action.yml', 'action.yaml' or 'Dockerfile' for action"),
         };
         if setup {
-            if matches!(metadata.runs.using.as_str(), "node12" | "node16" | "node20" | "node24") && metadata.runs.pre.is_none() {
-                let runtime = until_deadline(deadline, self.node_runtime(&metadata.runs.using, &env)).await?;
+            if matches!(
+                metadata.runs.using.as_str(),
+                "node12" | "node16" | "node20" | "node24"
+            ) && metadata.runs.pre.is_none()
+            {
+                let runtime =
+                    until_deadline(deadline, self.node_runtime(&metadata.runs.using, &env)).await?;
                 self.retain_action_bytes(runtime.len() + self.action_path.len() * 8 + 128)?;
-                self.prepared_actions.insert(self.action_path.clone(), PreparedAction { runtime, state: BTreeMap::new(), post: None });
+                self.prepared_actions.insert(
+                    self.action_path.clone(),
+                    PreparedAction {
+                        runtime,
+                        state: BTreeMap::new(),
+                        post: None,
+                    },
+                );
                 return Ok(true);
             }
-            if metadata.runs.using == "docker" && metadata.runs.pre_entrypoint.is_none() { return Ok(true); }
+            if metadata.runs.using == "docker" && metadata.runs.pre_entrypoint.is_none() {
+                return Ok(true);
+            }
             if let ActionStage::Prepare(template) = stage {
                 let template = template.clone();
-                env.extend(self.evaluate(deadline, move |contexts, status| template.resolve(contexts, status)).await?);
+                env.extend(
+                    self.evaluate(deadline, move |contexts, status| {
+                        template.resolve(contexts, status)
+                    })
+                    .await?,
+                );
                 self.contexts.values.insert("env".into(), object(&env));
             }
             let templates = supplied;
-            supplied = self.evaluate(deadline, move |contexts, status| templates.iter()
-                .map(|(key, template)| Ok((key.clone(), text(template, contexts, status)?)))
-                .collect::<Result<BTreeMap<_, _>>>()).await?;
+            supplied = self
+                .evaluate(deadline, move |contexts, status| {
+                    templates
+                        .iter()
+                        .map(|(key, template)| Ok((key.clone(), text(template, contexts, status)?)))
+                        .collect::<Result<BTreeMap<_, _>>>()
+                })
+                .await?;
         }
         let composite_steps = if metadata.runs.using == "composite" {
-            metadata.runs.steps.iter().map(workflow::parse_step).collect::<Result<Vec<_>>>()?
-        } else { Vec::new() };
+            metadata
+                .runs
+                .steps
+                .iter()
+                .map(workflow::parse_step)
+                .collect::<Result<Vec<_>>>()?
+        } else {
+            Vec::new()
+        };
         let old_inputs = self.contexts.values.get("inputs").cloned();
         let mut old_action = BTreeMap::new();
         if let Some(Value::Object(github)) = self.contexts.values.get_mut("github") {
@@ -705,18 +976,35 @@ impl Job {
             for name in [format!("node{major}"), "node".into()] {
                 let candidate = if self.podman.job.is_some() {
                     let args = ["-c".into(), "command -v \"$1\"".into(), "sh".into(), name];
-                    let output = process::output(&mut self.podman.exec(&effective, &self.options.directory, "/bin/sh", &args), Duration::from_secs(10)).await;
+                    let output = process::output(
+                        &mut self.podman.exec(
+                            &effective,
+                            &self.options.directory,
+                            "/bin/sh",
+                            &args,
+                        ),
+                        Duration::from_secs(10),
+                    )
+                    .await;
                     match output {
-                        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout).trim().to_owned(),
+                        Ok(output) if output.status.success() => {
+                            String::from_utf8_lossy(&output.stdout).trim().to_owned()
+                        }
                         _ => continue,
                     }
                 } else {
                     let Some(path) = std::env::split_paths(&self.runtime_path)
-                        .filter(|path| path.is_absolute()).map(|path| path.join(&name))
-                        .find_map(|path| path.canonicalize().ok().filter(|path| path.is_file())) else { continue; };
+                        .filter(|path| path.is_absolute())
+                        .map(|path| path.join(&name))
+                        .find_map(|path| path.canonicalize().ok().filter(|path| path.is_file()))
+                    else {
+                        continue;
+                    };
                     path.display().to_string()
                 };
-                if !Path::new(&candidate).is_absolute() { continue; }
+                if !Path::new(&candidate).is_absolute() {
+                    continue;
+                }
                 let args = ["--version".into()];
                 let mut command = if self.podman.job.is_some() {
                     self.podman
@@ -787,8 +1075,14 @@ impl Job {
     pub(super) async fn post(&mut self, mut post: Post) -> Result<bool> {
         let outer_contexts = self.contexts.clone();
         match post.contexts.values.get("secrets") {
-            Some(secrets) => { self.contexts.values.insert("secrets".into(), secrets.clone()); }
-            None => { self.contexts.values.remove("secrets"); }
+            Some(secrets) => {
+                self.contexts
+                    .values
+                    .insert("secrets".into(), secrets.clone());
+            }
+            None => {
+                self.contexts.values.remove("secrets");
+            }
         }
         for name in ["github", "inputs", "steps"] {
             if let Some(value) = post.contexts.values.get(name) {
@@ -797,11 +1091,20 @@ impl Job {
         }
         let mut post_env = post.env.clone();
         for (key, value) in &self.saved_env {
-            if post.exported.get(key) != Some(value) { post_env.insert(key.clone(), value.clone()); }
+            if post.exported.get(key) != Some(value) {
+                post_env.insert(key.clone(), value.clone());
+            }
         }
         self.contexts.values.insert("env".into(), object(&post_env));
         let condition = post.condition.clone();
-        match self.evaluate(self.deadline, move |contexts, status| Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await {
+        match self
+            .evaluate(self.deadline, move |contexts, status| {
+                Ok(expressions::evaluate_condition(
+                    &condition, contexts, status,
+                )?)
+            })
+            .await
+        {
             Ok(true) => {}
             condition => {
                 self.contexts = outer_contexts;
@@ -828,15 +1131,30 @@ impl Job {
         let mut outputs = BTreeMap::new();
         let result = match self.prepare_files() {
             Ok(()) => match post.runtime {
-                PostRuntime::Node(runtime) => self.node(
-                    (&post.directory, &post.script, &runtime),
-                    (post.env, &post.exported), deadline, &mut outputs, &mut post.state,
-                ).await,
-                PostRuntime::Docker { image, args } => self.docker(
-                    &image, &post.directory, post_env, Some(&post.script), &args,
-                    deadline, &mut outputs, Some(&mut post.state),
-                ).await,
-            }
+                PostRuntime::Node(runtime) => {
+                    self.node(
+                        (&post.directory, &post.script, &runtime),
+                        (post.env, &post.exported),
+                        deadline,
+                        &mut outputs,
+                        &mut post.state,
+                    )
+                    .await
+                }
+                PostRuntime::Docker { image, args } => {
+                    self.docker(
+                        &image,
+                        &post.directory,
+                        post_env,
+                        Some(&post.script),
+                        &args,
+                        deadline,
+                        &mut outputs,
+                        Some(&mut post.state),
+                    )
+                    .await
+                }
+            },
             Err(error) => Err(error),
         };
         self.cancel = original;
@@ -848,7 +1166,10 @@ impl Job {
         Ok(true)
     }
 
-    #[expect(clippy::too_many_arguments, reason = "A step's process takes its command, directory, environment, deadline and output maps one by one.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A step's process takes its command, directory, environment, deadline and output maps one by one."
+    )]
     async fn docker(
         &mut self,
         image: &str,
@@ -862,9 +1183,14 @@ impl Job {
     ) -> Result<bool> {
         let mut env = self.environment(env);
         if let Some(state) = state.as_ref() {
-            for (key, value) in state.iter() { env.insert(format!("STATE_{key}"), value.clone()); }
+            for (key, value) in state.iter() {
+                env.insert(format!("STATE_{key}"), value.clone());
+            }
         }
-        env.insert("GITHUB_EVENT_PATH".into(), self.restore_event()?.display().to_string());
+        env.insert(
+            "GITHUB_EVENT_PATH".into(),
+            self.restore_event()?.display().to_string(),
+        );
         let files = self.active_files.clone();
         // Building the action's image stops with the step: on its deadline or a cancellation.
         let mut cancel = self.cancel.clone();
@@ -896,21 +1222,29 @@ impl Job {
             &mut commands,
             &mut self.cancel,
             deadline,
-            env.get("ACTIONS_ALLOW_UNSECURE_COMMANDS").is_some_and(|value| value.eq_ignore_ascii_case("true")),
+            env.get("ACTIONS_ALLOW_UNSECURE_COMMANDS")
+                .is_some_and(|value| value.eq_ignore_ascii_case("true")),
             false,
         )
         .await;
         let cleaned = self.podman.cleanup_action(&container).await;
         if !cleaned {
-            self.options.containment_lost.store(true, std::sync::atomic::Ordering::Release);
+            self.options
+                .containment_lost
+                .store(true, std::sync::atomic::Ordering::Release);
         }
         self.command_stopped = commands.stopped.take();
         self.matchers = commands.matchers;
         commands::update_outputs(outputs, commands.outputs);
         self.export_env(commands.env);
         self.paths.extend(commands.paths);
-        if let Some(state) = state.as_mut() { state.extend(commands.state); }
-        anyhow::ensure!(cleaned, "Docker action cleanup failed; refusing further execution");
+        if let Some(state) = state.as_mut() {
+            state.extend(commands.state);
+        }
+        anyhow::ensure!(
+            cleaned,
+            "Docker action cleanup failed; refusing further execution"
+        );
         self.read_files(&files, outputs, state)?;
         result
     }

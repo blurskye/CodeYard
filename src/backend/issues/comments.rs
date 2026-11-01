@@ -80,7 +80,11 @@ async fn require_change(
             message: "This repository is archived and read-only.".to_owned(),
         });
     }
-    if issue.locked && !crate::backend::repositories::access::can_write(pool, user, repository).await.map_err(database_error)? {
+    if issue.locked
+        && !crate::backend::repositories::access::can_write(pool, user, repository)
+            .await
+            .map_err(database_error)?
+    {
         return Err(OperationError::Denied {
             code: "conversation_locked",
             message: "This conversation is locked.".to_owned(),
@@ -89,7 +93,10 @@ async fn require_change(
     Ok(())
 }
 
-#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn create_issue_comment(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
@@ -119,10 +126,16 @@ pub async fn create_issue_comment(
             message: "The comment target changed. Reload before submitting.".into(),
         });
     }
-    let comment =
-        db::issues::add_issue_comment(pool, repository.id, issue.id, user.id, &req.body, credential)
-            .await
-            .map_err(super::write_error)?;
+    let comment = db::issues::add_issue_comment(
+        pool,
+        repository.id,
+        issue.id,
+        user.id,
+        &req.body,
+        credential,
+    )
+    .await
+    .map_err(super::write_error)?;
 
     let base = format!("/{}/{}/issues/{}", owner, repo, issue.number);
     let link = format!("{base}?comment={}#comment-{}", comment.id, comment.id);
@@ -177,8 +190,15 @@ pub async fn create_issue_comment(
             issue
         }
     };
-    emit_comment_webhook(pool, &repository, &commented, &comment, user.id, ("created", None))
-        .await;
+    emit_comment_webhook(
+        pool,
+        &repository,
+        &commented,
+        &comment,
+        user.id,
+        ("created", None),
+    )
+    .await;
     Ok(comment)
 }
 
@@ -191,7 +211,8 @@ async fn emit_comment_webhook(
     sender_id: i64,
     (action, previous_body): (&'static str, Option<String>),
 ) {
-    let (issue, comment, repository_for_hook) = (issue.clone(), comment.clone(), repository.clone());
+    let (issue, comment, repository_for_hook) =
+        (issue.clone(), comment.clone(), repository.clone());
     let (issue_author_id, comment_author_id) = (issue.author_id, comment.author_id);
     webhooks::emit(
         pool,
@@ -242,7 +263,11 @@ pub async fn edit_issue_comment(
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
     require_change(pool, &user, &repository, &issue).await?;
     let previous = issue_comment(pool, &issue, comment_id).await?;
-    if previous.author_id != user.id && !crate::backend::repositories::access::can_write(pool, &user, &repository).await.map_err(database_error)? {
+    if previous.author_id != user.id
+        && !crate::backend::repositories::access::can_write(pool, &user, &repository)
+            .await
+            .map_err(database_error)?
+    {
         return Err(OperationError::Denied {
             code: "comment_forbidden",
             message: "Only the author or a repository writer can edit this comment.".to_owned(),
@@ -355,6 +380,14 @@ pub async fn delete_issue_comment(
             message: "You cannot delete this comment.".to_owned(),
         });
     };
-    emit_comment_webhook(pool, &repository, &issue, &removed, user.id, ("deleted", None)).await;
+    emit_comment_webhook(
+        pool,
+        &repository,
+        &issue,
+        &removed,
+        user.id,
+        ("deleted", None),
+    )
+    .await;
     Ok(())
 }

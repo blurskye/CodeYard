@@ -1128,7 +1128,9 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
         pool,
         pr_id,
         world.bob_id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, world.bob_id).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, world.bob_id).await,
+        ),
         "commented",
         None,
         Some(head.as_str()),
@@ -1147,7 +1149,9 @@ async fn writes_recheck_the_pull_request_and_the_pending_review(pg: bool) {
         pool,
         pr_id,
         world.bob_id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, world.bob_id).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, world.bob_id).await,
+        ),
         "commented",
         Some("Summary"),
         Some(head.as_str()),
@@ -1277,7 +1281,9 @@ async fn reviews_past_the_old_limit_stay_on_the_conversation(pg: bool) {
             pool,
             pr_id,
             world.bob_id,
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, world.bob_id).await),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(pool, world.bob_id).await,
+            ),
             "commented",
             Some(body.as_str()),
             Some(head.as_str()),

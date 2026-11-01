@@ -1,13 +1,21 @@
+use crate::backend::db::credentials::Actor;
 use crate::backend::db::environments::{validate_branch, Branch, Environment, Refusal, Update};
 use anyhow::Result;
-use sqlx::{SqlitePool, Sqlite, Transaction};
-use crate::backend::db::credentials::Actor;
+use sqlx::{Sqlite, SqlitePool, Transaction};
 
-async fn write(pool: &SqlitePool, actor: impl Into<Actor>, repo: i64) -> Result<Transaction<'_, Sqlite>> {
+async fn write(
+    pool: &SqlitePool,
+    actor: impl Into<Actor>,
+    repo: i64,
+) -> Result<Transaction<'_, Sqlite>> {
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    anyhow::ensure!(super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
-        && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
+            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
+                .await?,
+        Refusal::Denied
+    );
     Ok(tx)
 }
 
@@ -83,13 +91,27 @@ pub async fn upsert(
     Ok(row)
 }
 
-pub async fn delete(pool: &SqlitePool, actor: impl Into<Actor>, repo: i64, name: &str) -> Result<()> {
+pub async fn delete(
+    pool: &SqlitePool,
+    actor: impl Into<Actor>,
+    repo: i64,
+    name: &str,
+) -> Result<()> {
     let mut tx = write(pool, actor, repo).await?;
     let waiting: Vec<i64> = sqlx::query_scalar("SELECT c.id FROM ci_runs c JOIN ci_deployments d ON d.run_id=c.id WHERE d.repo_id=?1 AND d.environment_key=?2 AND d.status IN ('pending','approved') AND c.status='queued' ORDER BY c.id")
         .bind(repo).bind(name.to_lowercase()).fetch_all(&mut *tx).await?;
     for id in waiting {
-        let run = sqlx::query_as("SELECT * FROM ci_runs WHERE id=?1").bind(id).fetch_one(&mut *tx).await?;
-        super::ci::finish_in_tx(&mut tx, &run, "failed", Some("Deployment environment was deleted")).await?;
+        let run = sqlx::query_as("SELECT * FROM ci_runs WHERE id=?1")
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?;
+        super::ci::finish_in_tx(
+            &mut tx,
+            &run,
+            "failed",
+            Some("Deployment environment was deleted"),
+        )
+        .await?;
     }
     sqlx::query("UPDATE deployment_protection_gates SET state='disabled' WHERE rule_id IN (SELECT p.id FROM deployment_protection_rules p JOIN deployment_environments e ON e.id=p.environment_id WHERE e.repo_id=?1 AND e.name_key=?2) AND state IN ('pending','rejected')")
         .bind(repo).bind(name.to_lowercase()).execute(&mut *tx).await?;

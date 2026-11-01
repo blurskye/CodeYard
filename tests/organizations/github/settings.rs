@@ -381,13 +381,17 @@ async fn contract(pg: bool) {
     assert!(db::projects::list(
         f.pool(),
         None,
-        &db::projects::ListFilter { owner: Some(db::projects::Owner::Organization(orgs[0].id)), ..Default::default() },
+        &db::projects::ListFilter {
+            owner: Some(db::projects::Owner::Organization(orgs[0].id)),
+            ..Default::default()
+        },
         0,
         50,
     )
     .await
     .unwrap()
-    .1.is_empty());
+    .1
+    .is_empty());
     assert!(db::projects::get(
         f.pool(),
         Some(owner),

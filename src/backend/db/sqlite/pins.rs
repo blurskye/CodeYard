@@ -14,11 +14,7 @@ pub async fn get_pin(pool: &SqlitePool, item: AssignedItem) -> Result<Option<Pin
     .fetch_optional(pool)
     .await?)
 }
-pub async fn get_pins(
-    pool: &SqlitePool,
-    pull_requests: bool,
-    ids: &[i64],
-) -> Result<Vec<ItemPin>> {
+pub async fn get_pins(pool: &SqlitePool, pull_requests: bool, ids: &[i64]) -> Result<Vec<ItemPin>> {
     anyhow::ensure!(ids.len() <= 500, "Pin batch exceeds its limit");
     if ids.is_empty() {
         return Ok(Vec::new());
@@ -49,7 +45,14 @@ pub async fn set_pin(
     let permission = if s.pull { "pull_requests" } else { "issues" };
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &crate::backend::db::credentials::Actor::from((actor, credential)), repo, permission, true).await?,
+            && super::credentials::repository(
+                &mut tx,
+                &crate::backend::db::credentials::Actor::from((actor, credential)),
+                repo,
+                permission,
+                true
+            )
+            .await?,
         PinRefusal::Denied
     );
     let present: bool = sqlx::query_scalar(&format!(

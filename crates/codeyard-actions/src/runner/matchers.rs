@@ -74,7 +74,11 @@ fn consumes(expr: &fancy_regex::Expr) -> bool {
         Expr::Alt(children) => !children.is_empty() && children.iter().all(consumes),
         Expr::Group(child) | Expr::AtomicGroup(child) => consumes(child),
         Expr::Repeat { child, lo, .. } => *lo > 0 && consumes(child),
-        Expr::Conditional { true_branch, false_branch, .. } => consumes(true_branch) && consumes(false_branch),
+        Expr::Conditional {
+            true_branch,
+            false_branch,
+            ..
+        } => consumes(true_branch) && consumes(false_branch),
         _ => false,
     }
 }
@@ -84,15 +88,25 @@ fn validate_repetitions(expr: &fancy_regex::Expr) -> Result<()> {
     match expr {
         Expr::Repeat { child, lo, hi, .. } => {
             // The VM's backtrack counter does not charge successful zero-width iterations.
-            ensure!(consumes(child) || (*lo <= 1 && (*hi == usize::MAX || *hi <= 1)),
-                "Counted repetition of a possibly empty matcher expression is unsupported");
+            ensure!(
+                consumes(child) || (*lo <= 1 && (*hi == usize::MAX || *hi <= 1)),
+                "Counted repetition of a possibly empty matcher expression is unsupported"
+            );
             validate_repetitions(child)?;
         }
         Expr::Concat(children) | Expr::Alt(children) => {
-            for child in children { validate_repetitions(child)?; }
+            for child in children {
+                validate_repetitions(child)?;
+            }
         }
-        Expr::Group(child) | Expr::AtomicGroup(child) | Expr::LookAround(child, _) => validate_repetitions(child)?,
-        Expr::Conditional { condition, true_branch, false_branch } => {
+        Expr::Group(child) | Expr::AtomicGroup(child) | Expr::LookAround(child, _) => {
+            validate_repetitions(child)?
+        }
+        Expr::Conditional {
+            condition,
+            true_branch,
+            false_branch,
+        } => {
             validate_repetitions(condition)?;
             validate_repetitions(true_branch)?;
             validate_repetitions(false_branch)?;
@@ -129,7 +143,8 @@ impl Matcher {
                 pattern.regexp.len() <= 128 * 1024,
                 "Matcher regexp is too large"
             );
-            let tree = fancy_regex::Expr::parse_tree(&pattern.regexp).context("Invalid matcher regexp")?;
+            let tree =
+                fancy_regex::Expr::parse_tree(&pattern.regexp).context("Invalid matcher regexp")?;
             validate_repetitions(&tree.expr)?;
             let regex = RegexBuilder::new(&pattern.regexp)
                 .backtrack_limit(100_000)
@@ -145,9 +160,24 @@ impl Matcher {
             }
             // .NET numbers unnamed captures first, followed by named captures.
             let order: Vec<_> = std::iter::once(0)
-                .chain(regex.capture_names().enumerate().skip(1).filter_map(|(index, name)| name.is_none().then_some(index)))
-                .chain(regex.capture_names().enumerate().skip(1).filter_map(|(index, name)| name.is_some().then_some(index))).collect();
-            for group in pattern.groups.values_mut() { *group = order[*group]; }
+                .chain(
+                    regex
+                        .capture_names()
+                        .enumerate()
+                        .skip(1)
+                        .filter_map(|(index, name)| name.is_none().then_some(index)),
+                )
+                .chain(
+                    regex
+                        .capture_names()
+                        .enumerate()
+                        .skip(1)
+                        .filter_map(|(index, name)| name.is_some().then_some(index)),
+                )
+                .collect();
+            for group in pattern.groups.values_mut() {
+                *group = order[*group];
+            }
             patterns.push((regex, pattern));
         }
         ensure!(fields.contains("message"), "Matcher must set message");
@@ -187,7 +217,10 @@ impl Matcher {
                         oversized = true;
                         break;
                     }
-                    issue.0.entry(field.clone()).or_insert_with(|| value.to_owned());
+                    issue
+                        .0
+                        .entry(field.clone())
+                        .or_insert_with(|| value.to_owned());
                 }
                 if oversized {
                     self.state.fill(None);
@@ -240,7 +273,10 @@ impl Matchers {
         ensure!(config.matchers.len() <= 64, "Too many problem matchers");
         let mut owners = BTreeSet::new();
         for definition in &config.matchers {
-            ensure!(owners.insert(definition.owner.clone()), "Duplicate matcher owner");
+            ensure!(
+                owners.insert(definition.owner.clone()),
+                "Duplicate matcher owner"
+            );
         }
         ensure!(
             self.0
@@ -251,7 +287,11 @@ impl Matchers {
                 <= 64,
             "Too many problem matchers"
         );
-        let added = config.matchers.into_iter().map(Matcher::new).collect::<Result<Vec<_>>>()?;
+        let added = config
+            .matchers
+            .into_iter()
+            .map(Matcher::new)
+            .collect::<Result<Vec<_>>>()?;
         self.0.retain(|matcher| !owners.contains(&matcher.owner));
         self.0.extend(added);
         Ok(())
@@ -280,16 +320,22 @@ impl Matchers {
     pub fn matches(&mut self, line: &str, stderr: bool) -> Result<Option<Issue>> {
         // The runner ignores ANSI formatting when matching tool output.
         static ANSI: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-        let ansi = ANSI
-            .get_or_init(|| regex::Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))").expect("ANSI regexp"));
+        let ansi = ANSI.get_or_init(|| {
+            regex::Regex::new(r"\x1b(?:\[[0-?]*[ -/]*[@-~]|\][^\x07\x1b]*(?:\x07|\x1b\\))")
+                .expect("ANSI regexp")
+        });
         let line = ansi.replace_all(line, "");
         let mut index = 0;
         let mut failed = None;
         while index < self.0.len() {
             let matcher = &mut self.0[index];
-            if stderr { std::mem::swap(&mut matcher.state, &mut matcher.stderr_state); }
+            if stderr {
+                std::mem::swap(&mut matcher.state, &mut matcher.stderr_state);
+            }
             let matched = matcher.matches(&line);
-            if stderr { std::mem::swap(&mut matcher.state, &mut matcher.stderr_state); }
+            if stderr {
+                std::mem::swap(&mut matcher.state, &mut matcher.stderr_state);
+            }
             let matched = match matched {
                 Ok(matched) => matched,
                 Err(error) => {
@@ -300,18 +346,29 @@ impl Matchers {
             };
             if let Some(issue) = matched.filter(|issue| {
                 severity(issue.0.get("severity").map_or("", String::as_str)).is_some()
-                    && issue.0.get("message").is_some_and(|message| !message.trim().is_empty())
+                    && issue
+                        .0
+                        .get("message")
+                        .is_some_and(|message| !message.trim().is_empty())
             }) {
                 for (other, matcher) in self.0.iter_mut().enumerate() {
                     if index != other {
-                        if stderr { matcher.stderr_state.fill(None); } else { matcher.state.fill(None); }
+                        if stderr {
+                            matcher.stderr_state.fill(None);
+                        } else {
+                            matcher.state.fill(None);
+                        }
                     }
                 }
                 return Ok(Some(issue));
             }
             index += 1;
         }
-        if let Some(error) = failed { Err(error) } else { Ok(None) }
+        if let Some(error) = failed {
+            Err(error)
+        } else {
+            Ok(None)
+        }
     }
 }
 

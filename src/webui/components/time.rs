@@ -1,13 +1,17 @@
 //! A time shown as a date before hydration and a live age after mounting.
-use super::{compact_date, relative_age};
 #[cfg(target_arch = "wasm32")]
 use super::current_time;
+use super::{compact_date, relative_age};
 use dioxus::prelude::*;
 
 /// The exact time for a hover text: "Oct 2, 2026, 09:30 UTC".
 pub fn exact_time(value: &str) -> String {
     chrono::DateTime::parse_from_rfc3339(value)
-        .map(|time| time.with_timezone(&chrono::Utc).format("%b %-d, %Y, %H:%M UTC").to_string())
+        .map(|time| {
+            time.with_timezone(&chrono::Utc)
+                .format("%b %-d, %Y, %H:%M UTC")
+                .to_string()
+        })
         .unwrap_or_else(|_| value.to_owned())
 }
 
@@ -21,7 +25,9 @@ pub fn LiveTime(value: String, #[props(default)] title: Option<String>) -> Eleme
 #[component]
 fn AgeClock(value: String, title: Option<String>) -> Element {
     let mut now = use_signal(|| None::<chrono::DateTime<chrono::Utc>>);
-    let then = chrono::DateTime::parse_from_rfc3339(&value).ok().map(|time| time.with_timezone(&chrono::Utc));
+    let then = chrono::DateTime::parse_from_rfc3339(&value)
+        .ok()
+        .map(|time| time.with_timezone(&chrono::Utc));
     use_future(move || async move {
         #[cfg(target_arch = "wasm32")]
         if let Some(then) = then {

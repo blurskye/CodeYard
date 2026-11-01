@@ -1,6 +1,6 @@
 //! A Markdown body as one plain line, for list rows such as a notification or a search result.
-use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 use super::markdown_html::{decode_references, pieces, Piece};
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 const MAX_CHARS: usize = 160;
 
@@ -17,7 +17,10 @@ pub fn body_preview(body: &str) -> String {
                 for piece in pieces(&part) {
                     match piece {
                         Piece::Text(part) => text.push_str(&decode_references(part).0),
-                        Piece::Close { name: "p" | "div" | "li" | "br", .. } => text.push(' '),
+                        Piece::Close {
+                            name: "p" | "div" | "li" | "br",
+                            ..
+                        } => text.push(' '),
                         _ => {}
                     }
                 }

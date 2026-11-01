@@ -14,7 +14,7 @@ use tokio::sync::watch;
 
 const MAX_LINE: usize = 16 * 1024;
 #[cfg(test)]
-use codeyard_actions::process::{OMITTED_LINE, KILL_GRACE};
+use codeyard_actions::process::{KILL_GRACE, OMITTED_LINE};
 
 /// A command with a minimal environment in its own process group.
 pub(super) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
@@ -70,9 +70,13 @@ pub(super) struct Grace {
 }
 
 pub(super) async fn run_with_grace<F, Fut>(
-    mut command: Command, timeout: Duration, grace: Grace,
-    scope: Option<&codeyard_actions::process::Cgroup>, force: watch::Receiver<bool>,
-    cancel: watch::Receiver<bool>, on_line: F,
+    mut command: Command,
+    timeout: Duration,
+    grace: Grace,
+    scope: Option<&codeyard_actions::process::Cgroup>,
+    force: watch::Receiver<bool>,
+    cancel: watch::Receiver<bool>,
+    on_line: F,
 ) -> Result<ExitStatus>
 where
     F: Fn(String, bool) -> Fut,
@@ -118,8 +122,12 @@ where
         let (_, status) = tokio::try_join!(&mut forwarding, async {
             let status = child.wait().await?;
             // Kill independently grouped descendants before waiting for inherited output pipes.
-            if let Some(scope) = scope { group.disarm(); scope.kill()?; }
-            else { group.stop(&mut child).await?; }
+            if let Some(scope) = scope {
+                group.disarm();
+                scope.kill()?;
+            } else {
+                group.stop(&mut child).await?;
+            }
             Ok::<_, anyhow::Error>(status)
         })?;
         Ok::<_, anyhow::Error>(status)
@@ -143,16 +151,24 @@ where
             }
         }
         let graceful = async {
-            if let Some(scope) = scope { scope.stop(&mut child, &mut group, grace.terminate).await }
-            else { group.stop(&mut child).await.map_err(anyhow::Error::from) }
+            if let Some(scope) = scope {
+                scope.stop(&mut child, &mut group, grace.terminate).await
+            } else {
+                group.stop(&mut child).await.map_err(anyhow::Error::from)
+            }
         };
         tokio::select! {
             result = graceful => return result,
             _ = cancelled(force) => {}
         }
-        if let Some(scope) = scope { group.disarm(); scope.kill()?; }
-        else if child.id().is_some() { group.kill(); }
-        else { group.disarm(); }
+        if let Some(scope) = scope {
+            group.disarm();
+            scope.kill()?;
+        } else if child.id().is_some() {
+            group.kill();
+        } else {
+            group.disarm();
+        }
         tokio::time::timeout(codeyard_actions::process::KILL_GRACE, child.wait()).await??;
         Ok(())
     };
@@ -167,7 +183,9 @@ where
         }
     }
     if result.is_ok() {
-        if let Ok(error) = error_rx.try_recv() { return Err(error); }
+        if let Ok(error) = error_rx.try_recv() {
+            return Err(error);
+        }
     }
     result
 }
@@ -193,8 +211,12 @@ where
     };
     let mut reader = BufReader::new(reader);
     while let Some(line) = codeyard_actions::process::read_line(
-        &mut reader, MAX_LINE, Some((b"::codeyard-progress::", 1024 * 1024)),
-    ).await? {
+        &mut reader,
+        MAX_LINE,
+        Some((b"::codeyard-progress::", 1024 * 1024)),
+    )
+    .await?
+    {
         on_line(line, stderr).await?;
     }
     Ok(())
@@ -220,7 +242,10 @@ pub(super) mod tests {
         Fut: Future<Output = Result<()>>,
     {
         let (_tx, force) = watch::channel(false);
-        let grace = Grace { interrupt: Duration::ZERO, terminate: TERM_GRACE };
+        let grace = Grace {
+            interrupt: Duration::ZERO,
+            terminate: TERM_GRACE,
+        };
         run_with_grace(command, timeout, grace, None, force, cancel, on_line).await
     }
 
@@ -338,8 +363,10 @@ pub(super) mod tests {
             })
             .await
             .unwrap();
-            let _cleanup =
-                crate::backend::git::repository::process::ProcessGroup::new(Some(numbers[0] as u32), Duration::ZERO);
+            let _cleanup = crate::backend::git::repository::process::ProcessGroup::new(
+                Some(numbers[0] as u32),
+                Duration::ZERO,
+            );
             if matches!(reason, "cancel" | "abort") {
                 for &pid in &numbers {
                     assert_eq!(
@@ -535,13 +562,24 @@ pub(super) mod tests {
             .arg(&ready);
         let (tx, cancel) = watch::channel(false);
         let (_force_tx, force) = watch::channel(false);
-        let grace = Grace { interrupt: Duration::from_secs(20), terminate: TERM_GRACE };
+        let grace = Grace {
+            interrupt: Duration::from_secs(20),
+            terminate: TERM_GRACE,
+        };
         let lines = std::sync::Mutex::new(Vec::new());
         let (result, cancelled_at) = tokio::join!(
-            run_with_grace(child, Duration::from_secs(60), grace, None, force, cancel, |line, _| {
-                lines.lock().unwrap().push(line);
-                async { Ok(()) }
-            }),
+            run_with_grace(
+                child,
+                Duration::from_secs(60),
+                grace,
+                None,
+                force,
+                cancel,
+                |line, _| {
+                    lines.lock().unwrap().push(line);
+                    async { Ok(()) }
+                }
+            ),
             async {
                 while !ready.exists() {
                     tokio::time::sleep(Duration::from_millis(20)).await;

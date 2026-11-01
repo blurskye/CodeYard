@@ -72,7 +72,9 @@ async fn set_value(
 ) -> Result<Json<Value>> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?;
-    let input: Subscription = super::super::optional_json::decode(&body).map_err(|_| Error::invalid("Invalid subscription"))?.unwrap_or_default();
+    let input: Subscription = super::super::optional_json::decode(&body)
+        .map_err(|_| Error::invalid("Invalid subscription"))?
+        .unwrap_or_default();
     let subscribed = input.subscribed.unwrap_or(false);
     let ignored = input.ignored.unwrap_or(false);
     if subscribed && ignored {
@@ -103,9 +105,15 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?;
-    engagement::set_level(&state.pool, actor.database_actor(), repo.id, "participating", &[])
-        .await
-        .map_err(engagement_error)?;
+    engagement::set_level(
+        &state.pool,
+        actor.database_actor(),
+        repo.id,
+        "participating",
+        &[],
+    )
+    .await
+    .map_err(engagement_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn watchers(
@@ -156,8 +164,18 @@ async fn collection(
     .map_err(Error::unavailable)?;
     let mut items = Vec::new();
     let has_next = rows.len() > limit;
-    let readable = auth::readable_repositories(&state, viewer.as_ref(), &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(), "metadata").await?;
-    for repo in rows.iter().take(limit).filter(|repo| readable.contains(&repo.id)) {
+    let readable = auth::readable_repositories(
+        &state,
+        viewer.as_ref(),
+        &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(),
+        "metadata",
+    )
+    .await?;
+    for repo in rows
+        .iter()
+        .take(limit)
+        .filter(|repo| readable.contains(&repo.id))
+    {
         items.push(super::super::repos::document(&state, repo, viewer.as_ref()).await?);
     }
     page.response(&uri, items, has_next)

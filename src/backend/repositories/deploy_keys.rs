@@ -132,7 +132,16 @@ pub async fn settings_panel(
     after: i64,
 ) -> Result<DeployKeyPanel, DeployKeyError> {
     require_admin(pool, actor, repo).await?;
-    let mut keys = db::deploy_keys::list_deploy_keys(pool, actor.id, repo.id, place.credential.clone(), after, 51).await.map_err(refusal)?;
+    let mut keys = db::deploy_keys::list_deploy_keys(
+        pool,
+        actor.id,
+        repo.id,
+        place.credential.clone(),
+        after,
+        51,
+    )
+    .await
+    .map_err(refusal)?;
     let more = keys.len() > 50;
     keys.truncate(50);
     let next = more.then(|| format!("{}&keys_after={}", place.base, keys.last().unwrap().id));

@@ -131,22 +131,42 @@ impl WebhookPatch {
     /// Resolve event deltas against the row locked by the webhook's write transaction.
     pub(crate) fn changed_events(&self, current: &str) -> Result<Option<String>, InvalidEvents> {
         use crate::backend::webhooks::events;
-        if self.events.is_none() && self.add_events.is_empty() && self.remove_events.is_empty() { return Ok(None); }
-        for delta in [&self.add_events, &self.remove_events] {
-            if !delta.is_empty() { events::subscription(delta).map_err(InvalidEvents)?; }
+        if self.events.is_none() && self.add_events.is_empty() && self.remove_events.is_empty() {
+            return Ok(None);
         }
-        let mut selected: Vec<_> = self.events.as_deref().unwrap_or(current).split(',').filter(|name| !name.is_empty()).map(str::to_owned).collect();
+        for delta in [&self.add_events, &self.remove_events] {
+            if !delta.is_empty() {
+                events::subscription(delta).map_err(InvalidEvents)?;
+            }
+        }
+        let mut selected: Vec<_> = self
+            .events
+            .as_deref()
+            .unwrap_or(current)
+            .split(',')
+            .filter(|name| !name.is_empty())
+            .map(str::to_owned)
+            .collect();
         for event in &self.add_events {
-            if !selected.contains(event) { selected.push(event.clone()); }
+            if !selected.contains(event) {
+                selected.push(event.clone());
+            }
         }
         selected.retain(|event| !self.remove_events.contains(event));
-        events::subscription(&selected).map(Some).map_err(InvalidEvents)
+        events::subscription(&selected)
+            .map(Some)
+            .map_err(InvalidEvents)
     }
 
     /// Refuses the patch with `HookExists` when hook `id` would then duplicate another of the
     /// owner's `hooks`. `Ok(false)` means `hooks` has no hook `id`.
     /// `events` is the subscription the patch resolves to, or `None` to keep the current one.
-    pub(crate) fn check_distinct(&self, hooks: &[Webhook], id: i64, events: Option<&str>) -> Result<bool> {
+    pub(crate) fn check_distinct(
+        &self,
+        hooks: &[Webhook],
+        id: i64,
+        events: Option<&str>,
+    ) -> Result<bool> {
         let Some(current) = hooks.iter().find(|hook| hook.id == id) else {
             return Ok(false);
         };
@@ -154,7 +174,9 @@ impl WebhookPatch {
             hooks,
             Some(id),
             self.payload_url.as_deref().unwrap_or(&current.payload_url),
-            self.content_type.as_deref().unwrap_or(&current.content_type),
+            self.content_type
+                .as_deref()
+                .unwrap_or(&current.content_type),
             self.ssl_verify.unwrap_or(current.ssl_verify),
             events.unwrap_or(&current.events),
         )?;
@@ -221,7 +243,9 @@ impl DeliveryWindow {
         match self.outcome {
             None => "",
             Some(DeliveryOutcome::Success) => " AND status_code BETWEEN 200 AND 299",
-            Some(DeliveryOutcome::Failure) => " AND (status_code IS NULL OR status_code NOT BETWEEN 200 AND 299)",
+            Some(DeliveryOutcome::Failure) => {
+                " AND (status_code IS NULL OR status_code NOT BETWEEN 200 AND 299)"
+            }
         }
     }
 }

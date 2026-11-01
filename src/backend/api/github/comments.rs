@@ -33,12 +33,27 @@ pub(super) struct Comment {
 
 impl From<db::issues::ConversationComment> for Comment {
     fn from(row: db::issues::ConversationComment) -> Self {
-        Self { id: row.id, item: if row.pull_request { AssignedItem::PullRequest(row.item_id) } else { AssignedItem::Issue(row.item_id) }, number: row.number, author_id: row.author_id, body: row.body, created_at: row.created_at, updated_at: row.updated_at }
+        Self {
+            id: row.id,
+            item: if row.pull_request {
+                AssignedItem::PullRequest(row.item_id)
+            } else {
+                AssignedItem::Issue(row.item_id)
+            },
+            number: row.number,
+            author_id: row.author_id,
+            body: row.body,
+            created_at: row.created_at,
+            updated_at: row.updated_at,
+        }
     }
 }
 
 fn item_key(item: AssignedItem) -> (bool, i64) {
-    match item { AssignedItem::Issue(id) => (false, id), AssignedItem::PullRequest(id) => (true, id) }
+    match item {
+        AssignedItem::Issue(id) => (false, id),
+        AssignedItem::PullRequest(id) => (true, id),
+    }
 }
 
 pub(super) async fn find(pool: &db::DbPool, repo_id: i64, id: i64) -> Result<Comment> {
@@ -95,94 +110,220 @@ pub(super) async fn document(
     owner: &str,
     comment: &Comment,
 ) -> Result<Value> {
-    documents(pool, repo, owner, std::slice::from_ref(comment)).await?.pop().ok_or_else(Error::missing)
+    documents(pool, repo, owner, std::slice::from_ref(comment))
+        .await?
+        .pop()
+        .ok_or_else(Error::missing)
 }
 
-async fn documents(pool: &db::DbPool, repo: &db::models::Repository, owner: &str, comments: &[Comment]) -> Result<Vec<Value>> {
-    if comments.len() > 100 { return Err(Error::unavailable("Comment page exceeds its bound")); }
-    if comments.is_empty() { return Ok(Vec::new()); }
+async fn documents(
+    pool: &db::DbPool,
+    repo: &db::models::Repository,
+    owner: &str,
+    comments: &[Comment],
+) -> Result<Vec<Value>> {
+    if comments.len() > 100 {
+        return Err(Error::unavailable("Comment page exceeds its bound"));
+    }
+    if comments.is_empty() {
+        return Ok(Vec::new());
+    }
     let mut pins = HashMap::new();
     for pull in [false, true] {
-        let mut ids: Vec<_> = comments.iter().map(|comment| item_key(comment.item)).filter(|(kind, _)| *kind == pull).map(|(_, id)| id).collect();
+        let mut ids: Vec<_> = comments
+            .iter()
+            .map(|comment| item_key(comment.item))
+            .filter(|(kind, _)| *kind == pull)
+            .map(|(_, id)| id)
+            .collect();
         ids.sort_unstable();
         ids.dedup();
-        for pin in db::pins::get_pins(pool, pull, &ids).await.map_err(Error::unavailable)? { pins.insert((pull, pin.item_id), pin.pin); }
+        for pin in db::pins::get_pins(pool, pull, &ids)
+            .await
+            .map_err(Error::unavailable)?
+        {
+            pins.insert((pull, pin.item_id), pin.pin);
+        }
     }
     let mut authors: Vec<_> = comments.iter().map(|comment| comment.author_id).collect();
     authors.sort_unstable();
     authors.dedup();
-    let associations = crate::backend::repositories::access::author_associations(pool, repo, &authors).await.map_err(Error::unavailable)?;
+    let associations =
+        crate::backend::repositories::access::author_associations(pool, repo, &authors)
+            .await
+            .map_err(Error::unavailable)?;
     let mut ids = authors;
     ids.extend(pins.values().filter_map(|pin| pin.pinned_by));
     ids.sort_unstable();
     ids.dedup();
-    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(pool, &ids).await.map_err(Error::unavailable)?.into_iter().map(|user| (user.id, user)).collect();
+    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(pool, &ids)
+        .await
+        .map_err(Error::unavailable)?
+        .into_iter()
+        .map(|user| (user.id, user))
+        .collect();
     let mut values = Vec::with_capacity(comments.len());
     for comment in comments {
-        let user = users.get(&comment.author_id).ok_or_else(|| Error::unavailable(()))?;
+        let user = users
+            .get(&comment.author_id)
+            .ok_or_else(|| Error::unavailable(()))?;
         let author = payloads::Person::of(user);
-        let mut value = payloads::conversation_comment(comment.id, &comment.body, &author, (comment.created_at, comment.updated_at), payloads::Scope { repo, owner, sender: &author }, comment.number, matches!(comment.item, AssignedItem::PullRequest(_)));
+        let mut value = payloads::conversation_comment(
+            comment.id,
+            &comment.body,
+            &author,
+            (comment.created_at, comment.updated_at),
+            payloads::Scope {
+                repo,
+                owner,
+                sender: &author,
+            },
+            comment.number,
+            matches!(comment.item, AssignedItem::PullRequest(_)),
+        );
         value["user"] = payloads::user(user);
-        value["author_association"] = serde_json::json!(associations.get(&user.id).map_or("NONE", String::as_str));
-        value["pin"] = pins.get(&item_key(comment.item)).filter(|pin| pin.comment_id == comment.id).map_or(Value::Null, |pin| payloads::comment_pin(pin, pin.pinned_by.and_then(|id| users.get(&id))));
+        value["author_association"] =
+            serde_json::json!(associations.get(&user.id).map_or("NONE", String::as_str));
+        value["pin"] = pins
+            .get(&item_key(comment.item))
+            .filter(|pin| pin.comment_id == comment.id)
+            .map_or(Value::Null, |pin| {
+                payloads::comment_pin(pin, pin.pinned_by.and_then(|id| users.get(&id)))
+            });
         values.push(value);
     }
     Ok(values)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Representation { Raw, Text, Html, Full }
+enum Representation {
+    Raw,
+    Text,
+    Html,
+    Full,
+}
 
 fn representation(headers: &HeaderMap) -> Representation {
     let mut selected = (0.0_f32, Representation::Raw);
     for header in headers.get_all(axum::http::header::ACCEPT).iter() {
-        let Ok(header) = header.to_str() else { continue };
+        let Ok(header) = header.to_str() else {
+            continue;
+        };
         for range in header.split(',') {
             let mut parts = range.split(';').map(str::trim);
             let media = parts.next().unwrap_or("").to_ascii_lowercase();
             let profile = match media.as_str() {
-                "application/vnd.github.text+json" | "application/vnd.github.v3.text+json" => Representation::Text,
-                "application/vnd.github.html+json" | "application/vnd.github.v3.html+json" => Representation::Html,
-                "application/vnd.github.full+json" | "application/vnd.github.v3.full+json" => Representation::Full,
-                "application/vnd.github.raw+json" | "application/vnd.github.v3.raw+json" | "application/vnd.github+json" | "application/json" | "*/*" => Representation::Raw,
+                "application/vnd.github.text+json" | "application/vnd.github.v3.text+json" => {
+                    Representation::Text
+                }
+                "application/vnd.github.html+json" | "application/vnd.github.v3.html+json" => {
+                    Representation::Html
+                }
+                "application/vnd.github.full+json" | "application/vnd.github.v3.full+json" => {
+                    Representation::Full
+                }
+                "application/vnd.github.raw+json"
+                | "application/vnd.github.v3.raw+json"
+                | "application/vnd.github+json"
+                | "application/json"
+                | "*/*" => Representation::Raw,
                 _ => continue,
             };
-            let weight = parts.find_map(|part| part.strip_prefix("q=")).map_or(1.0, |weight| weight.parse::<f32>().unwrap_or(0.0));
-            if weight > selected.0 && weight <= 1.0 { selected = (weight, profile); }
+            let weight = parts
+                .find_map(|part| part.strip_prefix("q="))
+                .map_or(1.0, |weight| weight.parse::<f32>().unwrap_or(0.0));
+            if weight > selected.0 && weight <= 1.0 {
+                selected = (weight, profile);
+            }
         }
     }
     selected.1
 }
 
-async fn represent(state: &AppState, headers: &HeaderMap, repo: &db::models::Repository, owner: &str, mut values: Vec<Value>) -> Result<Vec<Value>> {
+async fn represent(
+    state: &AppState,
+    headers: &HeaderMap,
+    repo: &db::models::Repository,
+    owner: &str,
+    mut values: Vec<Value>,
+) -> Result<Vec<Value>> {
     let profile = representation(headers);
-    if profile == Representation::Raw { return Ok(values); }
+    if profile == Representation::Raw {
+        return Ok(values);
+    }
     let html = matches!(profile, Representation::Html | Representation::Full);
     let text = matches!(profile, Representation::Text | Representation::Full);
     let references = if html {
         let authentication = auth::authenticate(state, headers, false).await?;
-        let texts: Vec<_> = values.iter().filter_map(|value| value["body"].as_str()).collect();
-        super::meta::resolve_references(state, authentication.as_ref(), repo, owner, &repo.name, &texts, false).await?
-    } else { Default::default() };
+        let texts: Vec<_> = values
+            .iter()
+            .filter_map(|value| value["body"].as_str())
+            .collect();
+        super::meta::resolve_references(
+            state,
+            authentication.as_ref(),
+            repo,
+            owner,
+            &repo.name,
+            &texts,
+            false,
+        )
+        .await?
+    } else {
+        Default::default()
+    };
     tokio::task::spawn_blocking(move || {
         let mut size = 0_usize;
         for value in &mut values {
             let body = value["body"].as_str().unwrap_or_default();
-            let rendered_html = html.then(|| crate::webui::components::parse_markdown(body, &references));
+            let rendered_html =
+                html.then(|| crate::webui::components::parse_markdown(body, &references));
             let rendered_text = text.then(|| crate::webui::components::markdown_text(body));
-            size = size.saturating_add(if profile == Representation::Full { body.len() } else { 0 }).saturating_add(rendered_html.as_ref().map_or(0, String::len)).saturating_add(rendered_text.as_ref().map_or(0, String::len));
-            if size > 16 * 1024 * 1024 { return Err(Error::new(StatusCode::PAYLOAD_TOO_LARGE, "Rendered comment page is too large")); }
-            if profile != Representation::Full { value.as_object_mut().ok_or_else(|| Error::unavailable(()))?.remove("body"); }
-            if let Some(html) = rendered_html { value["body_html"] = Value::String(html); }
-            if let Some(text) = rendered_text { value["body_text"] = Value::String(text); }
+            size = size
+                .saturating_add(if profile == Representation::Full {
+                    body.len()
+                } else {
+                    0
+                })
+                .saturating_add(rendered_html.as_ref().map_or(0, String::len))
+                .saturating_add(rendered_text.as_ref().map_or(0, String::len));
+            if size > 16 * 1024 * 1024 {
+                return Err(Error::new(
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "Rendered comment page is too large",
+                ));
+            }
+            if profile != Representation::Full {
+                value
+                    .as_object_mut()
+                    .ok_or_else(|| Error::unavailable(()))?
+                    .remove("body");
+            }
+            if let Some(html) = rendered_html {
+                value["body_html"] = Value::String(html);
+            }
+            if let Some(text) = rendered_text {
+                value["body_text"] = Value::String(text);
+            }
         }
         Ok(values)
-    }).await.map_err(Error::unavailable)?
+    })
+    .await
+    .map_err(Error::unavailable)?
 }
 
-async fn response_document(state: &AppState, headers: &HeaderMap, repo: &db::models::Repository, owner: &str, comment: &Comment) -> Result<Value> {
+async fn response_document(
+    state: &AppState,
+    headers: &HeaderMap,
+    repo: &db::models::Repository,
+    owner: &str,
+    comment: &Comment,
+) -> Result<Value> {
     let value = document(&state.pool, repo, owner, comment).await?;
-    represent(state, headers, repo, owner, vec![value]).await?.pop().ok_or_else(Error::missing)
+    represent(state, headers, repo, owner, vec![value])
+        .await?
+        .pop()
+        .ok_or_else(Error::missing)
 }
 
 async fn read(
@@ -354,16 +495,14 @@ async fn remove(
         comment_id: comment.id,
     };
     match comment.item {
-        AssignedItem::Issue(_) => {
-            crate::backend::issues::comments::delete_issue_comment(
-                &state.pool,
-                actor.id,
-                &credential,
-                target,
-            )
-                .await
-                .map_err(issues::operation_error)?
-        }
+        AssignedItem::Issue(_) => crate::backend::issues::comments::delete_issue_comment(
+            &state.pool,
+            actor.id,
+            &credential,
+            target,
+        )
+        .await
+        .map_err(issues::operation_error)?,
         AssignedItem::PullRequest(_) => {
             comments::delete_pull_request_comment(&state.pool, actor.id, target)
                 .await

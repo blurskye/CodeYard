@@ -86,7 +86,8 @@ impl SecretEncryptor {
         ciphertext: &[u8],
         nonce: &[u8],
     ) -> Result<crypto_box::SecretKey, SecretError> {
-        let bytes: [u8; 32] = self.decrypt(ciphertext, nonce)?
+        let bytes: [u8; 32] = self
+            .decrypt(ciphertext, nonce)?
             .try_into()
             .map_err(|_| SecretError::DecryptionFailed)?;
         Ok(crypto_box::SecretKey::from(bytes))

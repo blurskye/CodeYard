@@ -89,8 +89,16 @@ fn public_url_host(value: &str) -> Result<ConfiguredHost> {
 
 impl S3Config {
     pub fn optional_from_env() -> Result<Option<Self>> {
-        if ["S3_ENDPOINT", "S3_PUBLIC_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET", "S3_REGION"]
-            .iter().any(|name| std::env::var_os(name).is_some())
+        if [
+            "S3_ENDPOINT",
+            "S3_PUBLIC_ENDPOINT",
+            "S3_ACCESS_KEY",
+            "S3_SECRET_KEY",
+            "S3_BUCKET",
+            "S3_REGION",
+        ]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
         {
             Self::from_env().map(Some)
         } else {
@@ -222,12 +230,27 @@ impl S3Store {
         })
     }
 
-    pub async fn open_range(&self, key: &str, offset: u64, length: u64) -> Result<Box<dyn tokio::io::AsyncRead + Unpin + Send>> {
+    pub async fn open_range(
+        &self,
+        key: &str,
+        offset: u64,
+        length: u64,
+    ) -> Result<Box<dyn tokio::io::AsyncRead + Unpin + Send>> {
         use tokio::io::AsyncReadExt;
-        ensure!(valid_key(key) && length > 0 && offset.checked_add(length).is_some(), "invalid range");
-        let result = tokio::time::timeout(Duration::from_secs(60), self.client.get_object()
-            .bucket(self.bucket()).key(key)
-            .range(format!("bytes={offset}-{}", offset + length - 1)).send()).await??;
+        ensure!(
+            valid_key(key) && length > 0 && offset.checked_add(length).is_some(),
+            "invalid range"
+        );
+        let result = tokio::time::timeout(
+            Duration::from_secs(60),
+            self.client
+                .get_object()
+                .bucket(self.bucket())
+                .key(key)
+                .range(format!("bytes={offset}-{}", offset + length - 1))
+                .send(),
+        )
+        .await??;
         Ok(Box::new(result.body.into_async_read().take(length)))
     }
 
@@ -240,7 +263,10 @@ impl S3Store {
     }
 
     pub async fn read_object(&self, key: &str, length: usize) -> Result<Vec<u8>> {
-        ensure!(valid_key(key) && length <= MAX_OBJECT_BYTES as usize, "invalid object read");
+        ensure!(
+            valid_key(key) && length <= MAX_OBJECT_BYTES as usize,
+            "invalid object read"
+        );
         self.object_bytes(key, length, None).await
     }
 
@@ -248,22 +274,43 @@ impl S3Store {
         let read = async {
             let mut request = self.client.get_object().bucket(self.bucket()).key(key);
             if let Some(offset) = offset {
-                let end = offset.checked_add(length as u64).and_then(|end| end.checked_sub(1)).context("invalid object range")?;
+                let end = offset
+                    .checked_add(length as u64)
+                    .and_then(|end| end.checked_sub(1))
+                    .context("invalid object range")?;
                 request = request.range(format!("bytes={offset}-{end}"));
             }
             let result = request.send().await?;
-            ensure!(result.content_length() == Some(length as i64), "object length differs from requested length");
+            ensure!(
+                result.content_length() == Some(length as i64),
+                "object length differs from requested length"
+            );
             if let Some(offset) = offset {
                 let prefix = format!("bytes {offset}-{}", offset + length as u64 - 1);
-                ensure!(result.content_range().is_some_and(|range| range.strip_prefix(&format!("{prefix}/"))
-                    .and_then(|total| total.parse::<u64>().ok()).is_some_and(|total| total >= offset + length as u64)), "S3 did not honor the requested range");
+                ensure!(
+                    result.content_range().is_some_and(|range| range
+                        .strip_prefix(&format!("{prefix}/"))
+                        .and_then(|total| total.parse::<u64>().ok())
+                        .is_some_and(|total| total >= offset + length as u64)),
+                    "S3 did not honor the requested range"
+                );
             }
             let mut bytes = Vec::with_capacity(length.min(64 * 1024));
-            result.body.into_async_read().take(length as u64 + 1).read_to_end(&mut bytes).await?;
-            ensure!(bytes.len() == length, "object response length differs from requested length");
+            result
+                .body
+                .into_async_read()
+                .take(length as u64 + 1)
+                .read_to_end(&mut bytes)
+                .await?;
+            ensure!(
+                bytes.len() == length,
+                "object response length differs from requested length"
+            );
             anyhow::Ok(bytes)
         };
-        tokio::time::timeout(Duration::from_secs(60), read).await.context("object read timed out")?
+        tokio::time::timeout(Duration::from_secs(60), read)
+            .await
+            .context("object read timed out")?
     }
 
     pub fn bucket(&self) -> &str {
@@ -302,11 +349,24 @@ impl S3Store {
     }
 
     async fn reconcile_cors(&self) -> Result<()> {
-        match self.client.get_bucket_cors().bucket(self.bucket()).send().await {
+        match self
+            .client
+            .get_bucket_cors()
+            .bucket(self.bucket())
+            .send()
+            .await
+        {
             Ok(config) if !config.cors_rules().is_empty() => return Ok(()),
-            Ok(_) => {},
-            Err(error) if error.as_service_error().is_some_and(|error| matches!(error.code(), Some("NoSuchCORSConfiguration" | "NotFound"))) => {},
-            Err(error) if error.as_service_error().is_some_and(|error| matches!(error.code(), Some("NotImplemented" | "MethodNotAllowed"))) => {
+            Ok(_) => {}
+            Err(error)
+                if error.as_service_error().is_some_and(|error| {
+                    matches!(error.code(), Some("NoSuchCORSConfiguration" | "NotFound"))
+                }) => {}
+            Err(error)
+                if error.as_service_error().is_some_and(|error| {
+                    matches!(error.code(), Some("NotImplemented" | "MethodNotAllowed"))
+                }) =>
+            {
                 tracing::warn!(%error, "S3 CORS API unsupported; configure browser access on the object endpoint");
                 return Ok(());
             }
@@ -319,7 +379,9 @@ impl S3Store {
         let Some(public_url) = optional_env("PUBLIC_URL")? else {
             return Ok(());
         };
-        let origin = crate::backend::api::http::config::parse_public_url(&public_url)?.origin().ascii_serialization();
+        let origin = crate::backend::api::http::config::parse_public_url(&public_url)?
+            .origin()
+            .ascii_serialization();
         let rule = CorsRule::builder()
             .allowed_origins(origin)
             .allowed_methods("PUT")
@@ -328,11 +390,20 @@ impl S3Store {
             .expose_headers("ETag")
             .max_age_seconds(3600)
             .build()?;
-        match self.client.put_bucket_cors().bucket(self.bucket())
-            .cors_configuration(CorsConfiguration::builder().cors_rules(rule).build()?).send().await
+        match self
+            .client
+            .put_bucket_cors()
+            .bucket(self.bucket())
+            .cors_configuration(CorsConfiguration::builder().cors_rules(rule).build()?)
+            .send()
+            .await
         {
             Ok(_) => Ok(()),
-            Err(error) if error.as_service_error().is_some_and(|error| matches!(error.code(), Some("NotImplemented" | "MethodNotAllowed"))) => {
+            Err(error)
+                if error.as_service_error().is_some_and(|error| {
+                    matches!(error.code(), Some("NotImplemented" | "MethodNotAllowed"))
+                }) =>
+            {
                 tracing::warn!(%error, "S3 CORS API unsupported; configure browser access on the object endpoint");
                 Ok(())
             }
@@ -400,7 +471,12 @@ impl S3Store {
 
     /// Uploads bytes this server holds itself, with the same constraints a presigned
     /// upload carries: size, type and SHA-256, and no replacing an existing object.
-    pub(super) async fn put_object(&self, upload: &Upload<'_>, bytes: Vec<u8>, guard: std::sync::Arc<tokio::sync::OwnedSemaphorePermit>) -> Result<()> {
+    pub(super) async fn put_object(
+        &self,
+        upload: &Upload<'_>,
+        bytes: Vec<u8>,
+        guard: std::sync::Arc<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<()> {
         ensure!(valid_key(upload.key), "invalid object key");
         ensure!(
             (0..=MAX_OBJECT_BYTES).contains(&upload.bytes),
@@ -410,8 +486,14 @@ impl S3Store {
             bytes.len() as i64 == upload.bytes,
             "upload is not the declared size"
         );
-        let (checksum, bytes, _guard) = tokio::task::spawn_blocking(move || (hex::encode(Sha256::digest(&bytes)), bytes, guard)).await?;
-        ensure!(checksum == upload.sha256_hex, "upload checksum does not match");
+        let (checksum, bytes, _guard) = tokio::task::spawn_blocking(move || {
+            (hex::encode(Sha256::digest(&bytes)), bytes, guard)
+        })
+        .await?;
+        ensure!(
+            checksum == upload.sha256_hex,
+            "upload checksum does not match"
+        );
         ensure!(
             media_signature_matches(upload.content_type, &bytes),
             "upload content does not match its type"
@@ -516,9 +598,22 @@ impl S3Store {
 
     pub async fn delete(&self, key: &str) -> Result<()> {
         ensure!(valid_key(key), "invalid object key");
-        match self.client.head_object().bucket(self.bucket()).key(key).send().await {
-            Ok(_) => {},
-            Err(error) if error.as_service_error().is_some_and(|error| error.is_not_found()) => return Ok(()),
+        match self
+            .client
+            .head_object()
+            .bucket(self.bucket())
+            .key(key)
+            .send()
+            .await
+        {
+            Ok(_) => {}
+            Err(error)
+                if error
+                    .as_service_error()
+                    .is_some_and(|error| error.is_not_found()) =>
+            {
+                return Ok(())
+            }
             Err(error) => return Err(error.into()),
         }
         self.client

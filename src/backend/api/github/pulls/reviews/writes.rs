@@ -75,18 +75,37 @@ async fn create(
             "Review the current pull request head",
         ));
     }
-    let position_diff = if input.comments.iter().any(|comment| comment.position.is_some() && comment.line.is_none()) {
-        Some(crate::backend::repositories::store::repo_store(&repo, state.cluster.as_ref()).diff(pull.diff_base(), &pull.head_sha).await.map_err(super::super::store_error)?)
-    } else { None };
+    let position_diff = if input
+        .comments
+        .iter()
+        .any(|comment| comment.position.is_some() && comment.line.is_none())
+    {
+        Some(
+            crate::backend::repositories::store::repo_store(&repo, state.cluster.as_ref())
+                .diff(pull.diff_base(), &pull.head_sha)
+                .await
+                .map_err(super::super::store_error)?,
+        )
+    } else {
+        None
+    };
     let mut prepared = Vec::new();
     for mut comment in input.comments {
         crate::backend::issues::validate_body(&comment.body, true)
             .map_err(Error::invalid_simple)?;
         comment.commit_id = Some(commit.clone());
         prepared.push(
-            comments::prepare_with_diff(&state, &headers, &repo, &pull, comment, true, position_diff.as_ref())
-                .await
-                .map_err(|e| Error::invalid_simple(e.1))?,
+            comments::prepare_with_diff(
+                &state,
+                &headers,
+                &repo,
+                &pull,
+                comment,
+                true,
+                position_diff.as_ref(),
+            )
+            .await
+            .map_err(|e| Error::invalid_simple(e.1))?,
         );
     }
     if review_state.is_some() && prepared.is_empty() {
@@ -110,12 +129,25 @@ async fn create(
         return Ok(Json(document(&state, &owner, &repo, &pull, &review).await?));
     }
     let review = domain::create_pull_request_review_batch(
-        &state.pool, state.cluster.as_ref(), &state.notification_broadcaster, actor.id, &auth.credential(), (owner.clone(), name, number),
+        &state.pool,
+        state.cluster.as_ref(),
+        &state.notification_broadcaster,
+        actor.id,
+        &auth.credential(),
+        (owner.clone(), name, number),
         domain::CreatePullRequestReviewBatchRequest {
-            review: domain::CreatePullRequestReviewRequest { state: review_state, body: input.body, commit_sha: Some(commit), review_id: None, token: Some(auth.token.id) },
+            review: domain::CreatePullRequestReviewRequest {
+                state: review_state,
+                body: input.body,
+                commit_sha: Some(commit),
+                review_id: None,
+                token: Some(auth.token.id),
+            },
             comments: prepared,
         },
-    ).await.map_err(failure)?;
+    )
+    .await
+    .map_err(failure)?;
     Ok(Json(document(&state, &owner, &repo, &pull, &review).await?))
 }
 
@@ -132,8 +164,7 @@ async fn update(
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let input: Body =
-        serde_json::from_slice(&body).map_err(json_parse_error)?;
+    let input: Body = serde_json::from_slice(&body).map_err(json_parse_error)?;
     let review = domain::edit_review(
         &state.pool,
         &state.notification_broadcaster,
@@ -187,8 +218,7 @@ async fn submit(
     let auth = viewer.ok_or_else(auth::required)?;
     let actor = &auth.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let input: Submit =
-        serde_json::from_slice(&body).map_err(json_parse_error)?;
+    let input: Submit = serde_json::from_slice(&body).map_err(json_parse_error)?;
     let draft = db::pull_requests::reviews::get_pull_request_review_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
@@ -240,8 +270,7 @@ async fn change_reviewers(
     {
         return Err(Error::new(StatusCode::FORBIDDEN, "Repository write denied"));
     }
-    let input: Reviewers =
-        serde_json::from_slice(&body).map_err(json_parse_error)?;
+    let input: Reviewers = serde_json::from_slice(&body).map_err(json_parse_error)?;
     if input.reviewers.is_none() && input.team_reviewers.is_none() {
         return Err(Error::invalid("reviewers or team_reviewers is required"));
     }

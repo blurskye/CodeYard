@@ -52,7 +52,10 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::list_vi
     fn list_visible_forks(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, repo: i64, limit: i64, offset: i64) -> Result<Vec<Repository>>);
 
 /// Audience-independent repository projections never include private children.
-pub async fn public_fork_counts(pool: &DbPool, ids: &[i64]) -> Result<std::collections::HashMap<i64, i32>> {
+pub async fn public_fork_counts(
+    pool: &DbPool,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, i32>> {
     let mut counts = std::collections::HashMap::new();
     for ids in ids.chunks(100) {
         counts.extend(visible_fork_counts(pool, None, None, ids).await?);
@@ -104,7 +107,10 @@ impl<'a> RepositorySearch<'a> {
 pub fn repository_order_by(sort: RepositorySort) -> String {
     match sort {
         RepositorySort::Stars => "r.stars_count DESC, r.updated_at DESC, r.id DESC".into(),
-        RepositorySort::Forks => format!("{} DESC, r.updated_at DESC, r.id DESC", public_fork_count_sql("r")),
+        RepositorySort::Forks => format!(
+            "{} DESC, r.updated_at DESC, r.id DESC",
+            public_fork_count_sql("r")
+        ),
         RepositorySort::Updated => "r.updated_at DESC, r.id DESC".into(),
         RepositorySort::Recent => "r.created_at DESC, r.id DESC".into(),
     }

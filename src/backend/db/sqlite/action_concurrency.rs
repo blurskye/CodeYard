@@ -23,14 +23,24 @@ pub(crate) async fn record(
 }
 
 pub(crate) async fn eligible(connection: &mut SqliteConnection, run: &CiRun) -> Result<bool> {
-    let request: Option<(String, i64)> =
-        sqlx::query_as("SELECT name_key,request_order FROM actions_run_concurrency WHERE run_id=?1")
-            .bind(run.id)
-            .fetch_optional(&mut *connection)
-            .await?;
-    let Some((key, order)) = request else { return Ok(true) };
+    let request: Option<(String, i64)> = sqlx::query_as(
+        "SELECT name_key,request_order FROM actions_run_concurrency WHERE run_id=?1",
+    )
+    .bind(run.id)
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some((key, order)) = request else {
+        return Ok(true);
+    };
     let sql = crate::backend::db::action_concurrency::blockers_sql(false);
-    let blocked: bool = sqlx::query_scalar(&sql).bind(run.repo_id).bind(&key).bind(order).bind(Some(run.id)).bind(None::<i64>).fetch_one(&mut *connection).await?;
+    let blocked: bool = sqlx::query_scalar(&sql)
+        .bind(run.repo_id)
+        .bind(&key)
+        .bind(order)
+        .bind(Some(run.id))
+        .bind(None::<i64>)
+        .fetch_one(&mut *connection)
+        .await?;
     if blocked {
         return Ok(false);
     }
@@ -92,7 +102,14 @@ pub(crate) async fn admit_job(
         return Ok(Some(true));
     }
     let sql = crate::backend::db::action_concurrency::blockers_sql(false);
-    let blocked: bool = sqlx::query_scalar(&sql).bind(run.repo_id).bind(&key).bind(order).bind(None::<i64>).bind(Some(job)).fetch_one(&mut *connection).await?;
+    let blocked: bool = sqlx::query_scalar(&sql)
+        .bind(run.repo_id)
+        .bind(&key)
+        .bind(order)
+        .bind(None::<i64>)
+        .bind(Some(job))
+        .fetch_one(&mut *connection)
+        .await?;
     if blocked {
         return Ok(None);
     }
@@ -106,9 +123,17 @@ pub(crate) async fn admit_job(
 
 pub async fn groups(pool: &SqlitePool, repo: i64, run: Option<i64>) -> Result<Vec<Group>> {
     let sql = crate::backend::db::action_concurrency::groups_sql(false);
-    Ok(sqlx::query_as(&sql).bind(repo).bind(run).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&sql)
+        .bind(repo)
+        .bind(run)
+        .fetch_all(pool)
+        .await?)
 }
 pub async fn members(pool: &SqlitePool, repo: i64, group: &str) -> Result<Vec<Member>> {
     let sql = crate::backend::db::action_concurrency::members_sql(false);
-    Ok(sqlx::query_as(&sql).bind(repo).bind(group.to_lowercase()).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&sql)
+        .bind(repo)
+        .bind(group.to_lowercase())
+        .fetch_all(pool)
+        .await?)
 }

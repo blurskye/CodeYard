@@ -903,6 +903,13 @@ pub fn render(page: Page) -> Element {
             code_scanning,
             check_page,
             more_checks,
-        } => pulls::checks_page(&repository, &item, &runs, &statuses, &code_scanning, (check_page, more_checks)),
+        } => pulls::checks_page(
+            &repository,
+            &item,
+            &runs,
+            &statuses,
+            &code_scanning,
+            (check_page, more_checks),
+        ),
     }
 }

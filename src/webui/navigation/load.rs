@@ -1,12 +1,19 @@
 //! Authorized page-model transport and decoding.
 
 #[cfg(target_arch = "wasm32")]
-pub(crate) async fn with_abort_timeout<F: std::future::Future>(operation: F, controller: &web_sys::AbortController, milliseconds: u32) -> Result<F::Output, ()> {
+pub(crate) async fn with_abort_timeout<F: std::future::Future>(
+    operation: F,
+    controller: &web_sys::AbortController,
+    milliseconds: u32,
+) -> Result<F::Output, ()> {
     let timeout = gloo_timers::future::TimeoutFuture::new(milliseconds);
     futures_util::pin_mut!(operation, timeout);
     match futures_util::future::select(operation, timeout).await {
         futures_util::future::Either::Left((result, _)) => Ok(result),
-        futures_util::future::Either::Right(_) => { controller.abort(); Err(()) }
+        futures_util::future::Either::Right(_) => {
+            controller.abort();
+            Err(())
+        }
     }
 }
 #[cfg(any(target_arch = "wasm32", test))]
@@ -129,18 +136,27 @@ async fn decode_page_response(response: gloo_net::http::Response) -> Result<Page
     }
     use wasm_bindgen::JsCast;
     let stream = response.body().ok_or(LoadError::InvalidModel)?;
-    let reader = stream.get_reader().dyn_into::<web_sys::ReadableStreamDefaultReader>()
+    let reader = stream
+        .get_reader()
+        .dyn_into::<web_sys::ReadableStreamDefaultReader>()
         .map_err(|_| LoadError::Transport("The page response could not be read."))?;
     let mut bytes = Vec::new();
     loop {
-        let chunk = wasm_bindgen_futures::JsFuture::from(reader.read()).await
+        let chunk = wasm_bindgen_futures::JsFuture::from(reader.read())
+            .await
             .map_err(|_| LoadError::Transport("The page response was interrupted."))?;
-        if js_sys::Reflect::get(&chunk, &"done".into()).ok().and_then(|v| v.as_bool()) == Some(true) {
+        if js_sys::Reflect::get(&chunk, &"done".into())
+            .ok()
+            .and_then(|v| v.as_bool())
+            == Some(true)
+        {
             break;
         }
-        let value = js_sys::Reflect::get(&chunk, &"value".into())
+        let value =
+            js_sys::Reflect::get(&chunk, &"value".into()).map_err(|_| LoadError::InvalidModel)?;
+        let value = value
+            .dyn_into::<js_sys::Uint8Array>()
             .map_err(|_| LoadError::InvalidModel)?;
-        let value = value.dyn_into::<js_sys::Uint8Array>().map_err(|_| LoadError::InvalidModel)?;
         let length = value.length() as usize;
         if length > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES.saturating_sub(bytes.len()) {
             let _ = reader.cancel();

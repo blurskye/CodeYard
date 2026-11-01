@@ -8,34 +8,62 @@ use crate::backend::{
 use serde_json::Value;
 use sqlx::SqlitePool;
 
-async fn prune(c: &mut sqlx::SqliteConnection, org: i64, configurations: &mut [Configuration]) -> Result<(), RegistryError> {
-    let ids: Vec<i64> = configurations.iter().flat_map(|config| config.selected_repository_ids.iter().flatten().copied()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
+async fn prune(
+    c: &mut sqlx::SqliteConnection,
+    org: i64,
+    configurations: &mut [Configuration],
+) -> Result<(), RegistryError> {
+    let ids: Vec<i64> = configurations
+        .iter()
+        .flat_map(|config| config.selected_repository_ids.iter().flatten().copied())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect();
     let mut owned = std::collections::HashSet::<i64>::new();
     for chunk in ids.chunks(500) {
         owned.extend(sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND owner_user_id IS NULL AND id IN (SELECT value FROM json_each($2))")
             .bind(org).bind(serde_json::to_string(chunk)?).fetch_all(&mut *c).await?);
     }
     for config in configurations {
-        if let Some(selected) = config.selected_repository_ids.as_mut() { selected.retain(|id| owned.contains(id)); }
+        if let Some(selected) = config.selected_repository_ids.as_mut() {
+            selected.retain(|id| owned.contains(id));
+        }
     }
     Ok(())
 }
 
-pub async fn list(pool: &SqlitePool, actor: i64, org: i64, name: Option<&str>, offset: i64, limit: i64) -> Result<(i64, Vec<Registry>), RegistryError> {
-    if offset < 0 || !(1..=101).contains(&limit) { return Err(RegistryError::Invalid("page")); }
+pub async fn list(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    name: Option<&str>,
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<Registry>), RegistryError> {
+    if offset < 0 || !(1..=101).contains(&limit) {
+        return Err(RegistryError::Invalid("page"));
+    }
     let mut tx = super::dependabot::authorized(pool, actor, org, false).await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM org_private_registries WHERE org_id=$1 AND ($2 IS NULL OR lower(name)=lower($2))")
         .bind(org).bind(name).fetch_one(&mut *tx).await?;
     let mut registries: Vec<Registry> = sqlx::query_as("SELECT name,configuration,created_at,updated_at FROM org_private_registries WHERE org_id=$1 AND ($2 IS NULL OR lower(name)=lower($2)) ORDER BY name LIMIT $3 OFFSET $4")
         .bind(org).bind(name).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
-    let mut configurations = registries.iter().map(|registry| serde_json::from_str::<Configuration>(&registry.configuration)).collect::<Result<Vec<_>, _>>()?;
+    let mut configurations = registries
+        .iter()
+        .map(|registry| serde_json::from_str::<Configuration>(&registry.configuration))
+        .collect::<Result<Vec<_>, _>>()?;
     prune(&mut tx, org, &mut configurations).await?;
-    for (registry, config) in registries.iter_mut().zip(configurations) { registry.configuration = serde_json::to_string(&config)?; }
+    for (registry, config) in registries.iter_mut().zip(configurations) {
+        registry.configuration = serde_json::to_string(&config)?;
+    }
     tx.commit().await?;
     Ok((total, registries))
 }
 
-#[expect(clippy::too_many_arguments, reason = "Saving binds the actor's credential, the registry's fields and its secret.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Saving binds the actor's credential, the registry's fields and its secret."
+)]
 pub async fn save(
     pool: &SqlitePool,
     encryptor: Option<&SecretEncryptor>,
@@ -60,7 +88,10 @@ pub async fn save(
         ),
         None => None,
     };
-    if input.as_object().is_some_and(|input| !input.contains_key("selected_repository_ids")) {
+    if input
+        .as_object()
+        .is_some_and(|input| !input.contains_key("selected_repository_ids"))
+    {
         if let Some(document) = stored.as_mut() {
             let mut config: Configuration = serde_json::from_str(document)?;
             prune(&mut tx, org, std::slice::from_mut(&mut config)).await?;

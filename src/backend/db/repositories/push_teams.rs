@@ -5,7 +5,10 @@ use crate::backend::db::{models::Team, DbPool};
 use anyhow::Result;
 
 pub(crate) fn validate_count(len: usize) -> Result<()> {
-    anyhow::ensure!(len <= super::protection::MAX_ALLOWANCE_ACTORS, ProtectionWriteRefusal::InvalidPushTeams);
+    anyhow::ensure!(
+        len <= super::protection::MAX_ALLOWANCE_ACTORS,
+        ProtectionWriteRefusal::InvalidPushTeams
+    );
     Ok(())
 }
 
@@ -23,7 +26,9 @@ pub async fn resolve_names(pool: &DbPool, repo: i64, names: &[String]) -> Result
     validate_count(names.len())?;
     let mut names = names.to_vec();
     anyhow::ensure!(
-        names.iter().all(|name| crate::backend::identity::credentials::validate_namespace(name, 1).is_ok()),
+        names
+            .iter()
+            .all(|name| crate::backend::identity::credentials::validate_namespace(name, 1).is_ok()),
         ProtectionWriteRefusal::InvalidPushTeams
     );
     names.sort_unstable();

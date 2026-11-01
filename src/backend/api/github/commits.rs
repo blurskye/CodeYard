@@ -6,7 +6,9 @@ use super::{
 use crate::backend::{
     app::AppState,
     db,
-    repositories::store::{repo_store, CommitFilter, CommitInfo, DiffFileInfo, DiffInfo, RepoStore},
+    repositories::store::{
+        repo_store, CommitFilter, CommitInfo, DiffFileInfo, DiffInfo, RepoStore,
+    },
     webhooks::payloads::{self, Person},
 };
 use axum::{
@@ -104,7 +106,13 @@ pub(super) async fn read_document(
         .ok_or_else(|| Error::unavailable(()))
 }
 
-pub(super) fn file_status(status: &str) -> &str { if status == "type_changed" { "changed" } else { status } }
+pub(super) fn file_status(status: &str) -> &str {
+    if status == "type_changed" {
+        "changed"
+    } else {
+        status
+    }
+}
 
 /// One page of a comparison's files with their patches; the totals cover every file.
 pub(super) struct FilePage {
@@ -145,13 +153,18 @@ pub(super) async fn file_page(
     match store.diff(base_ref, head_ref).await {
         Ok(diff) => Ok(file_page_of(diff, offset, limit)),
         Err(error) if error.is_response_too_large() => {
-            let stats = store.diff_stats(base_ref, head_ref).await.map_err(store_error)?;
+            let stats = store
+                .diff_stats(base_ref, head_ref)
+                .await
+                .map_err(store_error)?;
             let mut page = file_page_of(stats, offset, limit);
             for file in &mut page.files {
                 match store.diff_file(base_ref, head_ref, &file.filename).await {
                     Ok(one) => {
-                        if let Some(found) =
-                            one.files.into_iter().find(|found| found.filename == file.filename)
+                        if let Some(found) = one
+                            .files
+                            .into_iter()
+                            .find(|found| found.filename == file.filename)
                         {
                             file.patch = found.patch;
                         }
@@ -205,7 +218,18 @@ async fn read(
     let store = repo_store(&repo, state.cluster.as_ref());
     let commit = store.commit(reference).await.map_err(store_error)?;
     if route.as_str().contains("/git/commits/") {
-        return Ok(Json(git_document(&state, &mut Default::default(), &commit, owner, name, repo.id).await?).into_response());
+        return Ok(Json(
+            git_document(
+                &state,
+                &mut Default::default(),
+                &commit,
+                owner,
+                name,
+                repo.id,
+            )
+            .await?,
+        )
+        .into_response());
     }
     if let Some(media) = super::diff_media::requested(&headers) {
         let diff = store.commit_diff(&commit.sha).await.map_err(store_error)?;
@@ -224,7 +248,16 @@ async fn read(
         ),
     };
     value["stats"] = json!({"additions":files.additions,"deletions":files.deletions,"total":files.additions + files.deletions});
-    value["files"] = json!(diff_files(files.files, owner, name, &commit.sha, commit.parents.first().map(|sha| (owner.as_str(), name.as_str(), sha.as_str()))));
+    value["files"] = json!(diff_files(
+        files.files,
+        owner,
+        name,
+        &commit.sha,
+        commit
+            .parents
+            .first()
+            .map(|sha| (owner.as_str(), name.as_str(), sha.as_str()))
+    ));
     Ok((page.headers(&uri, files.has_next)?, Json(value)).into_response())
 }
 
@@ -246,9 +279,18 @@ async fn identity_emails(pool: &db::DbPool, value: Option<&str>) -> Result<Optio
         Some(address) if address.contains('@') => Ok(Some(vec![address.to_owned()])),
         Some(username) => {
             let Some(user) = db::users::accounts::get_user_by_username(pool, username)
-                .await.map_err(Error::unavailable)? else { return Ok(None) };
-            let mut emails = db::users::emails::list_emails(pool, user.id).await.map_err(Error::unavailable)?
-                .into_iter().filter(|address| address.verified).map(|address| address.email).collect::<Vec<_>>();
+                .await
+                .map_err(Error::unavailable)?
+            else {
+                return Ok(None);
+            };
+            let mut emails = db::users::emails::list_emails(pool, user.id)
+                .await
+                .map_err(Error::unavailable)?
+                .into_iter()
+                .filter(|address| address.verified)
+                .map(|address| address.email)
+                .collect::<Vec<_>>();
             emails.extend(user.email.clone().filter(|_| user.email_verified));
             emails.push(user.noreply_email());
             Ok(Some(emails))
@@ -273,7 +315,8 @@ async fn list(
     let Some(author_emails) = identity_emails(&state.pool, query.author.as_deref()).await? else {
         return page.response(&uri, Vec::new(), false);
     };
-    let Some(committer_emails) = identity_emails(&state.pool, query.committer.as_deref()).await? else {
+    let Some(committer_emails) = identity_emails(&state.pool, query.committer.as_deref()).await?
+    else {
         return page.response(&uri, Vec::new(), false);
     };
     let store = repo_store(&repo, state.cluster.as_ref());
@@ -325,7 +368,11 @@ async fn blob(
         .blob_by_id(&sha)
         .await
         .map_err(store_error)?;
-    if headers.get(header::ACCEPT).and_then(|value| value.to_str().ok()).is_some_and(|value| value.contains("application/vnd.github.raw")) {
+    if headers
+        .get(header::ACCEPT)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|value| value.contains("application/vnd.github.raw"))
+    {
         return Ok(([(header::CONTENT_TYPE, "application/octet-stream")], bytes).into_response());
     }
     Ok(Json(

@@ -5,7 +5,10 @@
 //! rules are judged. Unsupported evaluate definitions cannot be saved; historical unsupported
 //! rules produce an indeterminate verdict, never a successful evaluation.
 use super::{
-    git_sessions::{validation::{RefUpdate, ZERO_SHA}, ReceiveCredential},
+    git_sessions::{
+        validation::{RefUpdate, ZERO_SHA},
+        ReceiveCredential,
+    },
     protection::History,
 };
 use crate::backend::{
@@ -15,8 +18,8 @@ use crate::backend::{
         models::{AccessLevel, OrgRole, Repository, User},
         organizations::OrganizationOutcome,
         rulesets::{
-            ActorType, BypassMode, Enforcement, Evaluation, Owner, Rule, RuleResult, Ruleset,
-            RuleSource, SourceType, Suite, SuiteEnforcement, SuiteResult,
+            ActorType, BypassMode, Enforcement, Evaluation, Owner, Rule, RuleResult, RuleSource,
+            Ruleset, SourceType, Suite, SuiteEnforcement, SuiteResult,
         },
     },
 };
@@ -47,8 +50,11 @@ async fn exempted(
     if actor.is_banned || actor.must_change_password {
         return Ok(HashSet::new());
     }
-    let entries: Vec<_> = rulesets.iter().flat_map(|r| &r.definition.bypass_actors)
-        .filter(|entry| entry.bypass_mode == BypassMode::Exempt).collect();
+    let entries: Vec<_> = rulesets
+        .iter()
+        .flat_map(|r| &r.definition.bypass_actors)
+        .filter(|entry| entry.bypass_mode == BypassMode::Exempt)
+        .collect();
     let deploy_key = matches!(credential, Some(ReceiveCredential::DeployKey(_)));
     let has = |kind| !deploy_key && entries.iter().any(|entry| entry.actor_type == kind);
     let role = if has(ActorType::RepositoryRole) {
@@ -58,31 +64,51 @@ async fn exempted(
     };
     let org_admin = if has(ActorType::OrganizationAdmin) && repository.owner_kind == "org" {
         if let Some(org) = repository.owner_org_id {
-            matches!(db::organizations::membership::get_organization_role(pool, actor.id, org).await?,
-                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin))
-        } else { false }
-    } else { false };
+            matches!(
+                db::organizations::membership::get_organization_role(pool, actor.id, org).await?,
+                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
+            )
+        } else {
+            false
+        }
+    } else {
+        false
+    };
     let mut teams = HashSet::new();
     if has(ActorType::Team) {
-        let ids: HashSet<_> = entries.iter().filter(|entry| entry.actor_type == ActorType::Team)
-            .filter_map(|entry| entry.actor_id).collect();
+        let ids: HashSet<_> = entries
+            .iter()
+            .filter(|entry| entry.actor_type == ActorType::Team)
+            .filter_map(|entry| entry.actor_id)
+            .collect();
         let ids: Vec<_> = ids.into_iter().collect();
         for batch in ids.chunks(500) {
             teams.extend(db::rulesets::bypass_teams(pool, repository.id, actor.id, batch).await?);
         }
     }
-    Ok(rulesets.iter().filter(|ruleset| {
-        ruleset.definition.bypass_actors.iter().any(|entry| {
-            entry.bypass_mode == BypassMode::Exempt && match entry.actor_type {
-                ActorType::DeployKey => deploy_key,
-                ActorType::User => !deploy_key && entry.actor_id == Some(actor.id),
-                ActorType::OrganizationAdmin => org_admin,
-                ActorType::RepositoryRole => !deploy_key && entry.actor_id
-                    .is_some_and(|minimum| i64::from(role as i16) >= minimum),
-                ActorType::Team => !deploy_key && entry.actor_id.is_some_and(|id| teams.contains(&id)),
-            }
+    Ok(rulesets
+        .iter()
+        .filter(|ruleset| {
+            ruleset.definition.bypass_actors.iter().any(|entry| {
+                entry.bypass_mode == BypassMode::Exempt
+                    && match entry.actor_type {
+                        ActorType::DeployKey => deploy_key,
+                        ActorType::User => !deploy_key && entry.actor_id == Some(actor.id),
+                        ActorType::OrganizationAdmin => org_admin,
+                        ActorType::RepositoryRole => {
+                            !deploy_key
+                                && entry
+                                    .actor_id
+                                    .is_some_and(|minimum| i64::from(role as i16) >= minimum)
+                        }
+                        ActorType::Team => {
+                            !deploy_key && entry.actor_id.is_some_and(|id| teams.contains(&id))
+                        }
+                    }
+            })
         })
-    }).map(|ruleset| ruleset.id).collect())
+        .map(|ruleset| ruleset.id)
+        .collect())
 }
 
 fn outcome(failed: bool, message: &'static str) -> Outcome {
@@ -119,7 +145,11 @@ async fn evaluate(
     evaluated
 }
 
-async fn evaluate_uncached(rule: &Rule, update: &RefUpdate, history: &History<'_>) -> Result<Outcome> {
+async fn evaluate_uncached(
+    rule: &Rule,
+    update: &RefUpdate,
+    history: &History<'_>,
+) -> Result<Outcome> {
     let old = (update.old != ZERO_SHA).then_some(update.old.as_str());
     let new = (update.new != ZERO_SHA).then_some(update.new.as_str());
     Ok(match rule {
@@ -208,19 +238,23 @@ pub(crate) async fn record_push(
                 },
             };
             for rule in &ruleset.definition.rules {
-                let (result, details, metadata) = match evaluate(rule, update, history, &mut checks).await {
-                    Outcome::Skipped => continue,
-                    Outcome::Pass => (RuleResult::Pass, None, None),
-                    Outcome::Fail(message) => {
-                        failed = true;
-                        (RuleResult::Fail, Some(message.to_string()), None)
-                    }
-                    Outcome::Unavailable(message) => {
-                        incomplete = true;
-                        (RuleResult::Fail, Some(message.to_string()),
-                            Some(serde_json::json!({ "evaluation_error": true })))
-                    }
-                };
+                let (result, details, metadata) =
+                    match evaluate(rule, update, history, &mut checks).await {
+                        Outcome::Skipped => continue,
+                        Outcome::Pass => (RuleResult::Pass, None, None),
+                        Outcome::Fail(message) => {
+                            failed = true;
+                            (RuleResult::Fail, Some(message.to_string()), None)
+                        }
+                        Outcome::Unavailable(message) => {
+                            incomplete = true;
+                            (
+                                RuleResult::Fail,
+                                Some(message.to_string()),
+                                Some(serde_json::json!({ "evaluation_error": true })),
+                            )
+                        }
+                    };
                 evaluations.push(Evaluation {
                     rule_source: source.clone(),
                     enforcement: SuiteEnforcement::Evaluate,

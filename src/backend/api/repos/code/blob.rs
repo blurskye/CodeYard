@@ -8,8 +8,8 @@ use crate::backend::api::repos::chrome::{
 use crate::backend::api::repos::paging::number;
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::app::AppState;
-use crate::backend::git::{MAX_BLAME_FILE_BYTES, MAX_BLAME_LINES};
 use crate::backend::git::repository::{PREVIEW_BYTES, PREVIEW_LINES};
+use crate::backend::git::{MAX_BLAME_FILE_BYTES, MAX_BLAME_LINES};
 use crate::backend::repositories::files;
 use crate::backend::repositories::store::{
     repo_store, BlobBytes, BlobRange, RepoError, RepoStore, MAX_EDITOR_BYTES,
@@ -245,11 +245,26 @@ async fn preview_at(
     offset: u64,
     target: Option<usize>,
 ) -> Result<(BlobBytes, usize), RepoError> {
-    let chunk = store.blob_range(reference, path, BlobRange::Preview {
-        offset, line: target.map(|line| line as u32),
-    }).await?;
-    let line = chunk.preview.as_ref().map(|metadata| metadata.first_line)
-        .ok_or_else(|| RepoError::new(crate::backend::repositories::store::ErrorKind::Unavailable, "Preview metadata is unavailable"))?;
+    let chunk = store
+        .blob_range(
+            reference,
+            path,
+            BlobRange::Preview {
+                offset,
+                line: target.map(|line| line as u32),
+            },
+        )
+        .await?;
+    let line = chunk
+        .preview
+        .as_ref()
+        .map(|metadata| metadata.first_line)
+        .ok_or_else(|| {
+            RepoError::new(
+                crate::backend::repositories::store::ErrorKind::Unavailable,
+                "Preview metadata is unavailable",
+            )
+        })?;
     Ok((chunk, line))
 }
 

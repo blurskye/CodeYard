@@ -70,11 +70,16 @@ fn submitted(
     }
     let expected = field(form, "expected").to_owned();
     anyhow::ensure!(
-        id.is_none()
-            || crate::git_ids::is_full_commit_id(&expected),
+        id.is_none() || crate::git_ids::is_full_commit_id(&expected),
         InvalidInput("Reload the gist before editing; its revision is missing.")
     );
-    let too_large = bytes > 2 * EDITOR_BYTES || files.iter().filter_map(|file| file.content.as_ref()).map(|content| content.replace("\r\n", "\n").len()).sum::<usize>() > EDITOR_BYTES;
+    let too_large = bytes > 2 * EDITOR_BYTES
+        || files
+            .iter()
+            .filter_map(|file| file.content.as_ref())
+            .map(|content| content.replace("\r\n", "\n").len())
+            .sum::<usize>()
+            > EDITOR_BYTES;
     Ok(view::Editor {
         id,
         description,
@@ -177,7 +182,8 @@ pub(super) async fn create(
         }
     }
     if files.values().map(String::len).sum::<usize>() > EDITOR_BYTES {
-        editor.message = Some("This editor accepts at most 1 MiB of text. Use Git for larger files.".into());
+        editor.message =
+            Some("This editor accepts at most 1 MiB of text. Use Git for larger files.".into());
         return render_editor(&ctx, StatusCode::UNPROCESSABLE_ENTITY, editor);
     }
     match domain::create(
@@ -239,7 +245,9 @@ pub(super) async fn edit(
             return render_editor(&ctx, status, editor);
         }
     };
-    input.description = input.description.map(|description| native_text(description, &loaded.gist.description));
+    input.description = input
+        .description
+        .map(|description| native_text(description, &loaded.gist.description));
     // Browsers submit textareas with CRLF; keep each file's own line breaks.
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
     for (name, change) in input.files.iter_mut() {
@@ -264,8 +272,16 @@ pub(super) async fn edit(
         };
         *content = native_text(std::mem::take(content), &String::from_utf8_lossy(&original));
     }
-    if input.files.values().filter_map(|change| change.as_ref().and_then(|change| change.content.as_ref())).map(String::len).sum::<usize>() > EDITOR_BYTES {
-        editor.message = Some("This editor accepts at most 1 MiB of text. Use Git for larger files.".into());
+    if input
+        .files
+        .values()
+        .filter_map(|change| change.as_ref().and_then(|change| change.content.as_ref()))
+        .map(String::len)
+        .sum::<usize>()
+        > EDITOR_BYTES
+    {
+        editor.message =
+            Some("This editor accepts at most 1 MiB of text. Use Git for larger files.".into());
         return render_editor(&ctx, StatusCode::UNPROCESSABLE_ENTITY, editor);
     }
     match domain::update(
@@ -315,7 +331,10 @@ async fn detail_error(
     }
 }
 async fn ready_gist(ctx: &PageContext, id: &str) -> anyhow::Result<db::gists::Gist> {
-    db::gists::get(&ctx.state.pool, id).await?.filter(|gist| gist.ready).ok_or_else(|| db::gists::GistRefusal::Missing.into())
+    db::gists::get(&ctx.state.pool, id)
+        .await?
+        .filter(|gist| gist.ready)
+        .ok_or_else(|| db::gists::GistRefusal::Missing.into())
 }
 
 pub(super) async fn star(
@@ -421,10 +440,16 @@ pub(super) async fn comment(
     )
     .await
     {
-        Ok(comment) => match db::gists::comment_position(&ctx.state.pool, gist.repo_id, comment.id).await {
-            Ok(position) => ctx.redirect(&format!("/gists/{id}?comments_page={}#comment-{}", position.saturating_sub(1) as usize / PAGE_SIZE + 1, comment.id)),
-            Err(failure) => error(&ctx, failure),
-        },
+        Ok(comment) => {
+            match db::gists::comment_position(&ctx.state.pool, gist.repo_id, comment.id).await {
+                Ok(position) => ctx.redirect(&format!(
+                    "/gists/{id}?comments_page={}#comment-{}",
+                    position.saturating_sub(1) as usize / PAGE_SIZE + 1,
+                    comment.id
+                )),
+                Err(failure) => error(&ctx, failure),
+            }
+        }
         Err(failure) => {
             detail_error(
                 &ctx,

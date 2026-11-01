@@ -108,9 +108,17 @@ async fn metadata_contract(pg: bool) {
             ("Closed", true, true),
             ("Private", false, false),
         ] {
-            let p = store::create(f.pool(), alice, &alice_credential, owner, title, None, public)
-                .await
-                .unwrap();
+            let p = store::create(
+                f.pool(),
+                alice,
+                &alice_credential,
+                owner,
+                title,
+                None,
+                public,
+            )
+            .await
+            .unwrap();
             if closed {
                 store::save(
                     f.pool(),
@@ -154,9 +162,15 @@ async fn metadata_contract(pg: bool) {
     store::link_repository(f.pool(), bob, &bob_credential, hidden.id, repo.id, true)
         .await
         .unwrap();
-    store::add_item(f.pool(), bob, &bob_credential, hidden.id, &store::Content::Issue(issue.id))
-        .await
-        .unwrap();
+    store::add_item(
+        f.pool(),
+        bob,
+        &bob_credential,
+        hidden.id,
+        &store::Content::Issue(issue.id),
+    )
+    .await
+    .unwrap();
     store::add_item(
         f.pool(),
         bob,
@@ -373,9 +387,16 @@ async fn metadata_contract(pg: bool) {
         )
         .await
         .unwrap();
-        store::archive_item(f.pool(), alice, &alice_credential, project.id, item.id, true)
-            .await
-            .unwrap();
+        store::archive_item(
+            f.pool(),
+            alice,
+            &alice_credential,
+            project.id,
+            item.id,
+            true,
+        )
+        .await
+        .unwrap();
         new_items.push((item.id, option.clone()));
     }
     for (text, key, number, index) in [

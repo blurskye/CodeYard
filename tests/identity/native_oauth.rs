@@ -141,7 +141,9 @@ async fn sqlite_native_oauth_routes_bind_the_new_callback() {
     if std::env::var_os(CHILD).is_some() {
         browser_routes(false).await;
     } else {
-        run_with_provider_settings("native_oauth::sqlite_native_oauth_routes_bind_the_new_callback");
+        run_with_provider_settings(
+            "native_oauth::sqlite_native_oauth_routes_bind_the_new_callback",
+        );
     }
 }
 
@@ -150,6 +152,8 @@ async fn postgres_native_oauth_routes_bind_the_new_callback() {
     if std::env::var_os(CHILD).is_some() {
         browser_routes(true).await;
     } else {
-        run_with_provider_settings("native_oauth::postgres_native_oauth_routes_bind_the_new_callback");
+        run_with_provider_settings(
+            "native_oauth::postgres_native_oauth_routes_bind_the_new_callback",
+        );
     }
 }

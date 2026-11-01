@@ -121,9 +121,7 @@ async fn page_hits(
         return Ok(Vec::new());
     };
     if query.code {
-        let matches = store
-            .search_code(tip, query.needle, offset, limit)
-            .await?;
+        let matches = store.search_code(tip, query.needle, offset, limit).await?;
         return Ok(matches
             .into_iter()
             .map(|hit| {

@@ -30,9 +30,14 @@ impl PublicationCredential {
     pub fn retain(actor: crate::backend::db::credentials::Actor) -> Option<Self> {
         actor.credential.is_some().then_some(Self(actor))
     }
-    pub fn into_actor(self, expected: i64) -> Result<crate::backend::db::credentials::Actor, RepoError> {
+    pub fn into_actor(
+        self,
+        expected: i64,
+    ) -> Result<crate::backend::db::credentials::Actor, RepoError> {
         let Self(actor) = self;
-        if actor.user_id != expected { return Err(invalid("publication credential actor mismatch")); }
+        if actor.user_id != expected {
+            return Err(invalid("publication credential actor mismatch"));
+        }
         Ok(actor)
     }
 }
@@ -43,25 +48,40 @@ impl PublicationCredential {
 #[serde(untagged)]
 pub enum PublicationText {
     Legacy(String),
-    Retained { value: String, authority: crate::backend::db::credentials::Actor },
+    Retained {
+        value: String,
+        authority: crate::backend::db::credentials::Actor,
+    },
 }
 impl From<&str> for PublicationText {
-    fn from(value: &str) -> Self { Self::Legacy(value.into()) }
+    fn from(value: &str) -> Self {
+        Self::Legacy(value.into())
+    }
 }
 impl From<String> for PublicationText {
-    fn from(value: String) -> Self { Self::Legacy(value) }
+    fn from(value: String) -> Self {
+        Self::Legacy(value)
+    }
 }
 impl PublicationText {
     pub fn retain(value: &str, authority: crate::backend::db::credentials::Actor) -> Self {
         if authority.credential.is_none() {
             return Self::Legacy(value.into());
         }
-        Self::Retained { value: value.into(), authority }
+        Self::Retained {
+            value: value.into(),
+            authority,
+        }
     }
-    pub fn into_parts(self, actor: i64) -> Result<(crate::backend::db::credentials::Actor, String), RepoError> {
+    pub fn into_parts(
+        self,
+        actor: i64,
+    ) -> Result<(crate::backend::db::credentials::Actor, String), RepoError> {
         match self {
             Self::Legacy(value) => Ok((actor.into(), value)),
-            Self::Retained { value, authority } => Ok((PublicationCredential(authority).into_actor(actor)?, value)),
+            Self::Retained { value, authority } => {
+                Ok((PublicationCredential(authority).into_actor(actor)?, value))
+            }
         }
     }
 }
@@ -75,10 +95,14 @@ pub enum FilePathQuery {
     Filtered { reference: String, query: String },
 }
 impl From<&str> for FilePathQuery {
-    fn from(reference: &str) -> Self { Self::Reference(reference.into()) }
+    fn from(reference: &str) -> Self {
+        Self::Reference(reference.into())
+    }
 }
 impl From<String> for FilePathQuery {
-    fn from(reference: String) -> Self { Self::Reference(reference) }
+    fn from(reference: String) -> Self {
+        Self::Reference(reference)
+    }
 }
 impl FilePathQuery {
     pub fn into_parts(self) -> (String, String) {
@@ -128,12 +152,16 @@ pub enum Operation {
     SizeBytes,
     RefreshStorageSize,
     Refs,
-    MatchingRefs { prefix: String },
+    MatchingRefs {
+        prefix: String,
+    },
     /// The same refs as `Refs`, answered only by the primary. For a caller that writes the
     /// answer into the database.
     PrimaryRefs,
     /// Default-branch statistics are computed and cached by the owning primary.
-    PrimaryLanguages { git_ref: String },
+    PrimaryLanguages {
+        git_ref: String,
+    },
     BranchPublication {
         repository_id: i64,
         reference: String,
@@ -340,7 +368,9 @@ pub enum Operation {
         path: String,
     },
     Contributors,
-    BranchContributors { branch: String },
+    BranchContributors {
+        branch: String,
+    },
     CommitStatistics {
         branch: String,
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
@@ -393,7 +423,10 @@ pub enum Operation {
     TransferRepository {
         new_owner: PublicationText,
     },
-    #[serde(rename = "ConfigureDependencySecurityWithAuthority", alias = "ConfigureDependencySecurity")]
+    #[serde(
+        rename = "ConfigureDependencySecurityWithAuthority",
+        alias = "ConfigureDependencySecurity"
+    )]
     ConfigureDependencySecurity {
         credential: crate::backend::db::users::accounts::OwnedAccountCredential,
         feature: crate::backend::db::repositories::dependencies::Feature,
@@ -429,7 +462,10 @@ pub enum Operation {
     PublishFile {
         prepared: PreparedFile,
     },
-    #[serde(rename = "PublishDependencyUpdateWithAuthority", alias = "PublishDependencyUpdate")]
+    #[serde(
+        rename = "PublishDependencyUpdateWithAuthority",
+        alias = "PublishDependencyUpdate"
+    )]
     PublishDependencyUpdate {
         prepared: PreparedFile,
         publication: Box<crate::backend::db::repositories::dependencies::Publication>,
@@ -460,7 +496,10 @@ pub enum Operation {
     PublishAsyncMerge {
         request: AsyncMergePublication,
     },
-    #[serde(rename = "PublishBranchMergeWithAuthority", alias = "PublishBranchMerge")]
+    #[serde(
+        rename = "PublishBranchMergeWithAuthority",
+        alias = "PublishBranchMerge"
+    )]
     PublishBranchMerge {
         publication: crate::backend::repositories::store::BranchMergePublication,
     },

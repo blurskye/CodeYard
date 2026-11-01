@@ -99,7 +99,10 @@ async fn target(
         (params["owner"].clone(), params["repo"].clone())
     };
     let (repo, auth) = super::repository(state, headers, &owner, &name, false).await?;
-    if params.get("repository_id").is_some_and(|id| id.parse::<i64>().ok() != Some(repo.id)) {
+    if params
+        .get("repository_id")
+        .is_some_and(|id| id.parse::<i64>().ok() != Some(repo.id))
+    {
         return Err(Error::missing());
     }
     let auth = auth.ok_or_else(auth::required)?;
@@ -117,7 +120,13 @@ async fn target(
     }
     Ok((repo, auth))
 }
-pub(super) fn base_document(kind: Kind, name: &str, value: &str, created_at: &chrono::DateTime<chrono::Utc>, updated_at: &chrono::DateTime<chrono::Utc>) -> Value {
+pub(super) fn base_document(
+    kind: Kind,
+    name: &str,
+    value: &str,
+    created_at: &chrono::DateTime<chrono::Utc>,
+    updated_at: &chrono::DateTime<chrono::Utc>,
+) -> Value {
     let mut body = json!({"name":name,"created_at":created_at,"updated_at":updated_at});
     if kind == Kind::Variable {
         body["value"] = json!(value);
@@ -125,7 +134,13 @@ pub(super) fn base_document(kind: Kind, name: &str, value: &str, created_at: &ch
     body
 }
 fn document(kind: Kind, row: &EnvironmentValue) -> Value {
-    base_document(kind, &row.name, &row.value, &row.created_at, &row.updated_at)
+    base_document(
+        kind,
+        &row.name,
+        &row.value,
+        &row.created_at,
+        &row.updated_at,
+    )
 }
 async fn list(
     State(state): State<Arc<AppState>>,
@@ -218,7 +233,9 @@ async fn public_key(
     )
     .await
     .map_err(super::action_secrets::error)?;
-    Ok(Json(super::action_secrets::public_key_document(&key_id, &key)))
+    Ok(Json(super::action_secrets::public_key_document(
+        &key_id, &key,
+    )))
 }
 
 #[derive(Deserialize)]

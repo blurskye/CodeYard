@@ -34,7 +34,9 @@ impl From<anyhow::Error> for AdmissionError {
             Err(error) => error,
         };
         match error.downcast::<db::ci::CiAdmissionRefusal>() {
-            Ok(db::ci::CiAdmissionRefusal::WorkflowDisabled) => Self::WorkflowDisabled("Workflow is disabled"),
+            Ok(db::ci::CiAdmissionRefusal::WorkflowDisabled) => {
+                Self::WorkflowDisabled("Workflow is disabled")
+            }
             Ok(db::ci::CiAdmissionRefusal::Missing(message)) => Self::Missing(message),
             Ok(db::ci::CiAdmissionRefusal::Denied(message)) => Self::Denied(message),
             Ok(db::ci::CiAdmissionRefusal::Conflict(message)) => Self::Conflict(message),
@@ -188,7 +190,8 @@ pub(super) async fn resolve(
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
-    if !rerun && actor.username == db::ci_tokens::BOT
+    if !rerun
+        && actor.username == db::ci_tokens::BOT
         && !matches!(
             request.event.as_str(),
             "workflow_dispatch" | "repository_dispatch"
@@ -289,7 +292,9 @@ pub(super) async fn resolve(
     } else {
         false
     };
-    let accepted_event = event_payload.is_some() && super::events::is_repository_event(&request.event) && request.head_sha.is_some();
+    let accepted_event = event_payload.is_some()
+        && super::events::is_repository_event(&request.event)
+        && request.head_sha.is_some();
     let configured_cd = config.workflow_cd.clone();
     if pr_revision && request.head_sha.is_none() {
         return Err(AdmissionError::Invalid(
@@ -416,8 +421,12 @@ pub(super) async fn resolve(
                         )
                     ) {
                         if kind == Some(dispatch_inputs::InputKind::Number) {
-                            value.parse::<f64>().ok().and_then(serde_json::Number::from_f64)
-                                .map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
+                            value
+                                .parse::<f64>()
+                                .ok()
+                                .and_then(serde_json::Number::from_f64)
+                                .map(serde_json::Value::Number)
+                                .unwrap_or(serde_json::Value::Null)
                         } else {
                             serde_json::Value::Bool(value == "true")
                         }
@@ -527,7 +536,9 @@ pub(super) async fn resolve(
     }
     merge_scheduling(&mut scheduling, called.scheduling)?;
     if called.files.keys().any(|path| blobs.contains_key(path)) {
-        return Err(AdmissionError::Invalid("Called workflow path collides with root workflow"));
+        return Err(AdmissionError::Invalid(
+            "Called workflow path collides with root workflow",
+        ));
     }
     blobs.extend(called.files);
     if serde_json::to_vec(&blobs)
@@ -611,12 +622,19 @@ pub(super) async fn parse_admission_workflow(
             ));
         }
         for id in jobs.keys() {
-            if !id.as_str().is_some_and(codeyard_actions::workflow::valid_identifier) {
+            if !id
+                .as_str()
+                .is_some_and(codeyard_actions::workflow::valid_identifier)
+            {
                 return Err(AdmissionError::Invalid("CI job identifier is invalid"));
             }
         }
         for job in jobs.values() {
-            if job.get("steps").and_then(serde_yaml::Value::as_sequence).is_some_and(|steps| steps.len() > codeyard_actions::workflow::MAX_JOB_STEPS) {
+            if job
+                .get("steps")
+                .and_then(serde_yaml::Value::as_sequence)
+                .is_some_and(|steps| steps.len() > codeyard_actions::workflow::MAX_JOB_STEPS)
+            {
                 return Err(AdmissionError::Invalid("CI job has too many steps"));
             }
             if let Some(value) = job.get("environment") {
@@ -666,8 +684,7 @@ pub fn is_safe_ref(value: &str) -> bool {
     } else {
         format!("refs/heads/{value}")
     };
-    !value.starts_with('-')
-        && crate::backend::git::ref_names::is_canonical_ref(&reference)
+    !value.starts_with('-') && crate::backend::git::ref_names::is_canonical_ref(&reference)
 }
 
 pub fn is_safe_workflow_path(value: &str) -> bool {

@@ -47,13 +47,17 @@ impl async_graphql::ScalarType for CustomPropertyValue {
         if <Self as async_graphql::ScalarType>::is_valid(&value) {
             Ok(Self(value))
         } else {
-            Err(async_graphql::InputValueError::custom("expected a string or string array"))
+            Err(async_graphql::InputValueError::custom(
+                "expected a string or string array",
+            ))
         }
     }
     fn is_valid(value: &async_graphql::Value) -> bool {
         match value {
             async_graphql::Value::String(_) => true,
-            async_graphql::Value::List(values) => values.iter().all(|value| matches!(value, async_graphql::Value::String(_))),
+            async_graphql::Value::List(values) => values
+                .iter()
+                .all(|value| matches!(value, async_graphql::Value::String(_))),
             _ => false,
         }
     }
@@ -108,7 +112,9 @@ impl async_graphql::ScalarType for GitObjectID {
         if <Self as async_graphql::ScalarType>::is_valid(&value) {
             Ok(Self(value))
         } else {
-            Err(async_graphql::InputValueError::custom("expected a full hexadecimal object ID"))
+            Err(async_graphql::InputValueError::custom(
+                "expected a full hexadecimal object ID",
+            ))
         }
     }
     fn is_valid(value: &async_graphql::Value) -> bool {

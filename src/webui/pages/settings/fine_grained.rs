@@ -169,7 +169,10 @@ fn expiry_fields(choice: &str, date: &str, never_allowed: bool) -> Element {
 pub fn render(model: Model) -> Element {
     let token = model.csrf_token.clone();
     let body = match &model.view {
-        View::List { tokens, next_before } => list(tokens, *next_before),
+        View::List {
+            tokens,
+            next_before,
+        } => list(tokens, *next_before),
         View::New { draft, choices } => new(&token, draft, choices),
         View::Show {
             token: detail,

@@ -37,7 +37,10 @@ impl Identity {
     pub fn fingerprint(&self, salt: &str) -> Result<String> {
         let key = hex::decode(salt)?;
         ensure!(key.len() == 32, "Invalid traffic privacy key");
-        Ok(hex::encode(crate::backend::crypto::hmac_sha256(&key, self.0.as_bytes())))
+        Ok(hex::encode(crate::backend::crypto::hmac_sha256(
+            &key,
+            self.0.as_bytes(),
+        )))
     }
 }
 #[derive(Clone)]

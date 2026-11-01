@@ -54,8 +54,16 @@ pub(crate) fn refresh_link(notification: &mut Notification, owner: &str, name: &
     }
     if let Some(link) = notification.link.as_mut() {
         if let Some(path) = link.strip_prefix('/') {
-            let suffix = path.splitn(3, '/').nth(2).map(|suffix| format!("/{suffix}")).unwrap_or_default();
-            *link = format!("/{}/{}{suffix}", crate::webui::encode_component(owner), crate::webui::encode_component(name));
+            let suffix = path
+                .splitn(3, '/')
+                .nth(2)
+                .map(|suffix| format!("/{suffix}"))
+                .unwrap_or_default();
+            *link = format!(
+                "/{}/{}{suffix}",
+                crate::webui::encode_component(owner),
+                crate::webui::encode_component(name)
+            );
         }
     }
 }

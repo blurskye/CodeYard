@@ -1685,7 +1685,11 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     .await
     .unwrap();
     let claim = queue
-        .claim(&worker, CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .claim(
+            &worker,
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1938,11 +1942,15 @@ async fn keyed_storage_node(pool: &DbPool, name: &str) -> (i64, String) {
 }
 
 async fn report_in(pool: &DbPool, key: &str) {
-    assert!(
-        db::cluster::record_node_heartbeat(pool, key, "test", "{}", Some(1024 * 1024 * 1024 * 1024))
-            .await
-            .unwrap()
-    );
+    assert!(db::cluster::record_node_heartbeat(
+        pool,
+        key,
+        "test",
+        "{}",
+        Some(1024 * 1024 * 1024 * 1024)
+    )
+    .await
+    .unwrap());
 }
 
 /// `node` holds a copy of `repo` that has applied `applied` writes.
@@ -2448,7 +2456,9 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
     std::fs::write(stale.join("config"), b"[broken").unwrap();
     // These are not the copy's own leftovers.
     let other_name = aside.join("abc");
-    let other_copy = quarantines.join("other.git").join(Uuid::new_v4().to_string());
+    let other_copy = quarantines
+        .join("other.git")
+        .join(Uuid::new_v4().to_string());
     let regular_file = aside.join(Uuid::new_v4().to_string());
     for directory in [&other_name, &other_copy] {
         std::fs::create_dir_all(directory).unwrap();
@@ -2500,7 +2510,9 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
     std::fs::create_dir_all(&stale).unwrap();
     std::fs::write(stale.join("config"), b"[broken").unwrap();
     let decoy = aside.join("abc");
-    let other_copy = quarantines.join("other.git").join(Uuid::new_v4().to_string());
+    let other_copy = quarantines
+        .join("other.git")
+        .join(Uuid::new_v4().to_string());
     for directory in [&decoy, &other_copy] {
         std::fs::create_dir_all(directory).unwrap();
         std::fs::write(directory.join("keep"), b"x").unwrap();
@@ -3793,7 +3805,11 @@ async fn a_node_without_a_copy_row_refuses_reads() {
         .await
         .unwrap();
     assert_eq!(
-        reply.result.as_ref().ok().and_then(|refs| refs.get("refs/heads/main")),
+        reply
+            .result
+            .as_ref()
+            .ok()
+            .and_then(|refs| refs.get("refs/heads/main")),
         Some(&serde_json::Value::String(head)),
         "{:?}",
         reply.result

@@ -28,8 +28,15 @@ pub struct EventEntry {
 /// The originating credential remains part of private activity selection.
 #[derive(Clone, Copy)]
 pub enum EventViewer<'a> {
-    Token { user: i64, token: i64 },
-    Feed { user: i64, token: i64, value: &'a str },
+    Token {
+        user: i64,
+        token: i64,
+    },
+    Feed {
+        user: i64,
+        token: i64,
+        value: &'a str,
+    },
 }
 impl<'a> EventViewer<'a> {
     pub(crate) fn parts(self) -> (i64, i64, Option<&'a str>) {

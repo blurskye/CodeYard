@@ -79,8 +79,10 @@ async fn run_usage(
     )
     .await
     .map_err(Error::unavailable)?;
-    let elapsed = db::action_jobs::elapsed(&state.pool, repo.id, run.workflow_run_id.unwrap_or(run.id))
-        .await.map_err(Error::unavailable)?;
+    let elapsed =
+        db::action_jobs::elapsed(&state.pool, repo.id, run.workflow_run_id.unwrap_or(run.id))
+            .await
+            .map_err(Error::unavailable)?;
     Ok(Json(document(jobs, Some(elapsed))))
 }
 

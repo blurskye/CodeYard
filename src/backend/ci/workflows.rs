@@ -1,9 +1,12 @@
 use super::config::CiPipelineKind;
-pub use codeyard_actions::workflow::events::{WorkflowEventFilter, WorkflowTriggers};
-#[cfg(test)]
-use codeyard_actions::workflow::{dispatch_inputs::InputKind, events::{MAX_WORKFLOW_FILTER_PATTERNS, MAX_WORKFLOW_PATTERN_BYTES}};
 use crate::backend::repositories::store::{ErrorKind, RepoError, RepoStore, MAX_CI_WORKFLOW_BYTES};
 use anyhow::{ensure, Context, Result};
+pub use codeyard_actions::workflow::events::{WorkflowEventFilter, WorkflowTriggers};
+#[cfg(test)]
+use codeyard_actions::workflow::{
+    dispatch_inputs::InputKind,
+    events::{MAX_WORKFLOW_FILTER_PATTERNS, MAX_WORKFLOW_PATTERN_BYTES},
+};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
@@ -16,13 +19,19 @@ use tracing::warn;
 
 pub(super) static PARSING_SLOTS: Semaphore = Semaphore::const_new(2);
 
-pub(super) async fn parse_definitions(definitions: &BTreeMap<String, Vec<u8>>) -> Result<BTreeMap<String, Value>> {
+pub(super) async fn parse_definitions(
+    definitions: &BTreeMap<String, Vec<u8>>,
+) -> Result<BTreeMap<String, Value>> {
     let permit = PARSING_SLOTS.acquire().await?;
     let definitions = definitions.clone();
     tokio::task::spawn_blocking(move || {
         let _permit = permit;
-        definitions.into_iter().map(|(path, bytes)| Ok((path, parse_yaml(&bytes)?))).collect()
-    }).await?
+        definitions
+            .into_iter()
+            .map(|(path, bytes)| Ok((path, parse_yaml(&bytes)?)))
+            .collect()
+    })
+    .await?
 }
 static DISCOVERY_SLOTS: Semaphore = Semaphore::const_new(2);
 static DISCOVERY_PAYLOADS: Semaphore = Semaphore::const_new(4);
@@ -369,11 +378,14 @@ pub async fn list_workflows_for_ref(
         struct Budget(usize);
         impl std::io::Write for Budget {
             fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-                self.0 = self.0.checked_sub(bytes.len())
-                    .ok_or_else(|| std::io::Error::other("Workflow definitions exceed size limit"))?;
+                self.0 = self.0.checked_sub(bytes.len()).ok_or_else(|| {
+                    std::io::Error::other("Workflow definitions exceed size limit")
+                })?;
                 Ok(bytes.len())
             }
-            fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
         }
         let mut budget = Budget(WORKFLOW_CACHE_BYTES - 2);
         let mut workflows = Vec::new();
@@ -528,7 +540,9 @@ pub(super) fn workflow_definition_from_yaml(
 ) -> Result<WorkflowDefinition> {
     let name = workflow_name(yaml, path)?;
     let triggers = codeyard_actions::workflow::events::parse(yaml.get("on"))?;
-    for cron in &triggers.schedules { super::schedule::parse(cron)?; }
+    for cron in &triggers.schedules {
+        super::schedule::parse(cron)?;
+    }
 
     Ok(WorkflowDefinition {
         path: path.to_string(),
@@ -1522,7 +1536,10 @@ on: [push, pull_request]
                 .collect::<Vec<_>>(),
             // A workflow without a name is shown by its path, as on GitHub.
             vec![
-                (".github/workflows/build linux.yml", ".github/workflows/build linux.yml"),
+                (
+                    ".github/workflows/build linux.yml",
+                    ".github/workflows/build linux.yml"
+                ),
                 (".github/workflows/雪.yaml", ".github/workflows/雪.yaml"),
                 ("Alpha", ".github/workflows/z.yml"),
                 ("Limit", ".github/workflows/limit.yml"),
@@ -1811,8 +1828,10 @@ mod push_parser_tests {
             &["src/lib.rs".to_owned()],
             None
         ));
-        assert!(
-            parse_workflow_definition(".github/workflows/ci.yml", "on:\n  push:\n    paths: 99").is_err()
-        );
+        assert!(parse_workflow_definition(
+            ".github/workflows/ci.yml",
+            "on:\n  push:\n    paths: 99"
+        )
+        .is_err());
     }
 }

@@ -252,7 +252,11 @@ async fn contract(pg: bool) {
         .unwrap();
     }
     let deleted = service
-        .dispatch_run(actor, dispatch("new", "push", ".github/workflows/ci.yml"), None)
+        .dispatch_run(
+            actor,
+            dispatch("new", "push", ".github/workflows/ci.yml"),
+            None,
+        )
         .await
         .unwrap();
     assert_eq!(deleted.branch, "new");

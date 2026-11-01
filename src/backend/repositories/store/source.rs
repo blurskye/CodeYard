@@ -121,7 +121,10 @@ fn advertisement(mut input: &[u8]) -> Result<(HashMap<String, String>, Option<St
         );
     }
     ensure!(input.is_empty(), "Unexpected Git advertisement data");
-    ensure!(!refs.is_empty() || head_sha.is_none(), "Detached HEAD without named refs cannot be preserved by an import");
+    ensure!(
+        !refs.is_empty() || head_sha.is_none(),
+        "Detached HEAD without named refs cannot be preserved by an import"
+    );
     // Without the symref capability, the default is a branch at the commit that HEAD names.
     if default_branch.is_none() {
         default_branch = head_sha.and_then(|head| {
@@ -143,8 +146,13 @@ fn unpack(mut input: Vec<u8>) -> Result<Vec<u8>> {
         ensure!(input.len() - read >= 4, "Truncated Git packet");
         let size = usize::from_str_radix(std::str::from_utf8(&input[read..read + 4])?, 16)?;
         read += 4;
-        if size == 0 { continue; }
-        ensure!((4..=65520).contains(&size) && input.len() - read >= size - 4, "Invalid Git packet");
+        if size == 0 {
+            continue;
+        }
+        ensure!(
+            (4..=65520).contains(&size) && input.len() - read >= size - 4,
+            "Invalid Git packet"
+        );
         let end = read + size - 4;
         if !acknowledged {
             ensure!(&input[read..end] == b"NAK\n", "Invalid Git acknowledgement");
@@ -153,7 +161,10 @@ fn unpack(mut input: Vec<u8>) -> Result<Vec<u8>> {
             match input.get(read).filter(|_| read < end) {
                 Some(1) => {
                     let length = end - read - 1;
-                    ensure!(length <= MAX_IMPORT_PACK_BYTES - written, "Git pack exceeds import size limit");
+                    ensure!(
+                        length <= MAX_IMPORT_PACK_BYTES - written,
+                        "Git pack exceeds import size limit"
+                    );
                     input.copy_within(read + 1..end, written);
                     written += length;
                 }
@@ -216,11 +227,7 @@ pub(crate) async fn fetch(
             &mut body,
             &format!(
                 "want {sha}{}\n",
-                if index == 0 {
-                    " side-band-64k"
-                } else {
-                    ""
-                }
+                if index == 0 { " side-band-64k" } else { "" }
             ),
         );
     }

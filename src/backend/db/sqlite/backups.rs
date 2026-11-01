@@ -4,9 +4,13 @@ use sqlx::SqlitePool;
 
 pub async fn snapshot_repositories(path: &std::path::Path) -> Result<Vec<Repository>> {
     use sqlx::Connection;
-    let options = sqlx::sqlite::SqliteConnectOptions::new().filename(path).read_only(true);
+    let options = sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .read_only(true);
     let mut connection = sqlx::SqliteConnection::connect_with(&options).await?;
-    Ok(sqlx::query_as("SELECT * FROM repositories ORDER BY id").fetch_all(&mut connection).await?)
+    Ok(sqlx::query_as("SELECT * FROM repositories ORDER BY id")
+        .fetch_all(&mut connection)
+        .await?)
 }
 
 pub async fn list_repositories(pool: &SqlitePool) -> Result<Vec<Repository>> {

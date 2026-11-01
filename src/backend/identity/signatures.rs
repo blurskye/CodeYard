@@ -61,12 +61,18 @@ impl Signers {
         if let Some(key) = self.primaries.get(&(user, id)) {
             return Ok(key.clone());
         }
-        let key = db::users::gpg_keys::get_gpg_key(pool, user, id).await?.map(Arc::new);
+        let key = db::users::gpg_keys::get_gpg_key(pool, user, id)
+            .await?
+            .map(Arc::new);
         remember(&mut self.primaries, (user, id), key.clone());
         Ok(key)
     }
 
-    async fn ssh_key(&mut self, pool: &DbPool, fingerprint: &str) -> Result<Option<SigningKeyOwner>> {
+    async fn ssh_key(
+        &mut self,
+        pool: &DbPool,
+        fingerprint: &str,
+    ) -> Result<Option<SigningKeyOwner>> {
         if let Some(key) = self.ssh.get(fingerprint) {
             return Ok(key.clone());
         }
@@ -100,7 +106,11 @@ pub struct Signed<'a> {
 }
 
 /// The `verification` object of commit and tag documents.
-pub async fn verification(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>) -> Result<Value> {
+pub async fn verification(
+    pool: &DbPool,
+    signers: &mut Signers,
+    signed: Signed<'_>,
+) -> Result<Value> {
     let (reason, verified_at) = recorded_check(pool, signers, signed).await?;
     let verified = reason == "valid";
     Ok(json!({
@@ -111,26 +121,40 @@ pub async fn verification(pool: &DbPool, signers: &mut Signers, signed: Signed<'
 }
 
 /// GitHub's verification reason; `valid` is the only verified one.
-pub async fn check(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>) -> Result<&'static str> {
+pub async fn check(
+    pool: &DbPool,
+    signers: &mut Signers,
+    signed: Signed<'_>,
+) -> Result<&'static str> {
     Ok(recorded_check(pool, signers, signed).await?.0)
 }
 
 fn input_hash(signed: Signed<'_>) -> Option<String> {
     use sha2::{Digest, Sha256};
     let signature = signed.signature?;
-    if signature.len() > MAX_SIGNATURE { return None; }
+    if signature.len() > MAX_SIGNATURE {
+        return None;
+    }
     let payload = signed.payload?;
     let mut hash = Sha256::new();
     hash.update(b"codeyard.signature-verification.v1\0");
     // Length framing binds the exact signature, signed bytes and asserted identity.
-    for part in [signature.as_bytes(), payload, signed.email.unwrap_or_default().as_bytes()] {
+    for part in [
+        signature.as_bytes(),
+        payload,
+        signed.email.unwrap_or_default().as_bytes(),
+    ] {
         hash.update((part.len() as u64).to_be_bytes());
         hash.update(part);
     }
     Some(hex::encode(hash.finalize()))
 }
 
-async fn recorded_check(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>) -> Result<(&'static str, Option<chrono::DateTime<chrono::Utc>>)> {
+async fn recorded_check(
+    pool: &DbPool,
+    signers: &mut Signers,
+    signed: Signed<'_>,
+) -> Result<(&'static str, Option<chrono::DateTime<chrono::Utc>>)> {
     let input = input_hash(signed);
     if let Some(input) = &input {
         if let Some(at) = db::signature_verifications::verified_at(pool, input).await? {
@@ -139,13 +163,19 @@ async fn recorded_check(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>
     }
     let reason = check_current(pool, signers, signed).await?;
     let at = match (reason, input) {
-        ("valid", Some(input)) => Some(db::signature_verifications::record_verified(pool, &input).await?),
+        ("valid", Some(input)) => {
+            Some(db::signature_verifications::record_verified(pool, &input).await?)
+        }
         _ => None,
     };
     Ok((reason, at))
 }
 
-async fn check_current(pool: &DbPool, signers: &mut Signers, signed: Signed<'_>) -> Result<&'static str> {
+async fn check_current(
+    pool: &DbPool,
+    signers: &mut Signers,
+    signed: Signed<'_>,
+) -> Result<&'static str> {
     let Some(signature) = signed.signature else {
         return Ok("unsigned");
     };
@@ -186,7 +216,12 @@ pub async fn addresses(pool: &DbPool, user: &User) -> Result<Vec<(String, bool)>
     Ok(addresses)
 }
 
-async fn owner_address(pool: &DbPool, signers: &mut Signers, owner: i64, email: &str) -> Result<&'static str> {
+async fn owner_address(
+    pool: &DbPool,
+    signers: &mut Signers,
+    owner: i64,
+    email: &str,
+) -> Result<&'static str> {
     let Some(addresses) = signers.owner_addresses(pool, owner).await? else {
         return Ok("no_user");
     };
@@ -217,15 +252,40 @@ fn pgp_verifies(signature: &DetachedSignature, public_key: &str, payload: &[u8])
     }
 }
 
-async fn gpg(pool: &DbPool, signers: &mut Signers, armored: &str, payload: &[u8], email: &str) -> Result<&'static str> {
+async fn gpg(
+    pool: &DbPool,
+    signers: &mut Signers,
+    armored: &str,
+    payload: &[u8],
+    email: &str,
+) -> Result<&'static str> {
     let armored = armored.to_owned();
-    let Some(signature) = super::gpg::crypto(move || DetachedSignature::from_string(&armored).ok().map(|(signature, _)| signature)).await? else {
+    let Some(signature) = super::gpg::crypto(move || {
+        DetachedSignature::from_string(&armored)
+            .ok()
+            .map(|(signature, _)| signature)
+    })
+    .await?
+    else {
         return Ok("malformed_signature");
     };
-    if !matches!(signature.signature.typ(), Some(SignatureType::Binary | SignatureType::Text)) {
+    if !matches!(
+        signature.signature.typ(),
+        Some(SignatureType::Binary | SignatureType::Text)
+    ) {
         return Ok("unknown_signature_type");
     }
-    if !matches!(signature.signature.hash_alg(), Some(HashAlgorithm::Sha224 | HashAlgorithm::Sha256 | HashAlgorithm::Sha384 | HashAlgorithm::Sha512 | HashAlgorithm::Sha3_256 | HashAlgorithm::Sha3_512)) {
+    if !matches!(
+        signature.signature.hash_alg(),
+        Some(
+            HashAlgorithm::Sha224
+                | HashAlgorithm::Sha256
+                | HashAlgorithm::Sha384
+                | HashAlgorithm::Sha512
+                | HashAlgorithm::Sha3_256
+                | HashAlgorithm::Sha3_512
+        )
+    ) {
         return Ok("invalid");
     }
     let issuer = match signature.signature.issuer_fingerprint().first() {
@@ -242,11 +302,18 @@ async fn gpg(pool: &DbPool, signers: &mut Signers, armored: &str, payload: &[u8]
     if keys.is_empty() {
         return Ok("unknown_key");
     }
-    let signed_at = signature.signature.created().map(|created| i64::from(created.as_secs()));
+    let signed_at = signature
+        .signature
+        .created()
+        .map(|created| i64::from(created.as_secs()));
     let payload = payload.to_owned();
     let candidates = keys.clone();
-    let Some(index) = super::gpg::crypto(move || candidates.iter()
-        .position(|key| pgp_verifies(&signature, &key.material.public_key, &payload))).await?
+    let Some(index) = super::gpg::crypto(move || {
+        candidates
+            .iter()
+            .position(|key| pgp_verifies(&signature, &key.material.public_key, &payload))
+    })
+    .await?
     else {
         return Ok("invalid");
     };
@@ -271,22 +338,42 @@ async fn gpg(pool: &DbPool, signers: &mut Signers, armored: &str, payload: &[u8]
     if expired(key.material.expires_at) || expired(primary.material.expires_at) {
         return Ok("expired_key");
     }
-    let Some(at) = signed_at.filter(|_| primary.material.raw_key.is_some()) else { return Ok("bad_email") };
+    let Some(at) = signed_at.filter(|_| primary.material.raw_key.is_some()) else {
+        return Ok("bad_email");
+    };
     let identity = email.to_owned();
-    if !super::gpg::crypto(move || primary.material.raw_key.as_deref()
-        .is_some_and(|raw| super::gpg::certifies_email(raw, &identity, at))).await? {
+    if !super::gpg::crypto(move || {
+        primary
+            .material
+            .raw_key
+            .as_deref()
+            .is_some_and(|raw| super::gpg::certifies_email(raw, &identity, at))
+    })
+    .await?
+    {
         return Ok("bad_email");
     }
     owner_address(pool, signers, key.user_id, email).await
 }
 
-async fn ssh(pool: &DbPool, signers: &mut Signers, armored: &str, payload: &[u8], email: &str) -> Result<&'static str> {
+async fn ssh(
+    pool: &DbPool,
+    signers: &mut Signers,
+    armored: &str,
+    payload: &[u8],
+    email: &str,
+) -> Result<&'static str> {
     let armored = armored.to_owned();
-    let Some(signature) = super::gpg::crypto(move || ssh_key::SshSig::from_pem(&armored).ok()).await? else {
+    let Some(signature) =
+        super::gpg::crypto(move || ssh_key::SshSig::from_pem(&armored).ok()).await?
+    else {
         return Ok("malformed_signature");
     };
     // ssh-key verifies SK signature mathematics but does not enforce user presence.
-    if matches!(signature.public_key(), ssh_key::public::KeyData::SkEd25519(_) | ssh_key::public::KeyData::SkEcdsaSha2NistP256(_)) {
+    if matches!(
+        signature.public_key(),
+        ssh_key::public::KeyData::SkEd25519(_) | ssh_key::public::KeyData::SkEcdsaSha2NistP256(_)
+    ) {
         return Ok("unknown_signature_type");
     }
     let fingerprint = signature
@@ -298,8 +385,12 @@ async fn ssh(pool: &DbPool, signers: &mut Signers, armored: &str, payload: &[u8]
     };
     let public = key.key.clone();
     let payload = payload.to_owned();
-    if !super::gpg::crypto(move || ssh_key::PublicKey::from_openssh(&public)
-        .is_ok_and(|public_key| public_key.verify("git", &payload, &signature).is_ok())).await? {
+    if !super::gpg::crypto(move || {
+        ssh_key::PublicKey::from_openssh(&public)
+            .is_ok_and(|public_key| public_key.verify("git", &payload, &signature).is_ok())
+    })
+    .await?
+    {
         return Ok("invalid");
     }
     owner_address(pool, signers, key.user_id, email).await

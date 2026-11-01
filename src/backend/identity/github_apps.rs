@@ -49,13 +49,19 @@ pub enum RegistrationKeyError {
 }
 
 /// Native registration and credential recovery share one account key-generation budget.
-pub async fn registration_key(pool: &DbPool, actor: i64) -> Result<(String, String), RegistrationKeyError> {
-    super::admission::admit_operation(pool, None, "app-register", &actor.to_string()).await
+pub async fn registration_key(
+    pool: &DbPool,
+    actor: i64,
+) -> Result<(String, String), RegistrationKeyError> {
+    super::admission::admit_operation(pool, None, "app-register", &actor.to_string())
+        .await
         .map_err(|error| match error {
             super::admission::AdmissionError::Limited => RegistrationKeyError::Limited,
             super::admission::AdmissionError::Unavailable => RegistrationKeyError::Unavailable,
         })?;
-    generate_key().await.map_err(|_| RegistrationKeyError::Unavailable)
+    generate_key()
+        .await
+        .map_err(|_| RegistrationKeyError::Unavailable)
 }
 
 #[derive(Clone)]
@@ -85,9 +91,7 @@ pub fn manifest(value: &Value) -> Option<Manifest> {
     }
     let name = valid_name(object.get("name")?.as_str()?)?;
     let homepage = object.get("url")?.as_str()?;
-    if homepage.len() > 2048
-        || !super::oauth_apps::valid_url(homepage)
-    {
+    if homepage.len() > 2048 || !super::oauth_apps::valid_url(homepage) {
         return None;
     }
     let description = object
@@ -240,9 +244,9 @@ pub fn subset(requested: &Value, granted: &Value) -> Option<Value> {
     requested
         .iter()
         .all(|(key, value)| {
-            granted
-                .get(key)
-                .is_some_and(|grant| grant == "admin" || grant == "write" && value != "admin" || grant == value)
+            granted.get(key).is_some_and(|grant| {
+                grant == "admin" || grant == "write" && value != "admin" || grant == value
+            })
         })
         .then_some(Value::Object(requested))
 }
@@ -253,9 +257,10 @@ pub fn allows(permissions: &Value, key: &str, write: bool) -> bool {
         .is_some_and(|level| level == "admin" || level == "write" || (!write && level == "read"))
 }
 pub fn write(permissions: &Value) -> bool {
-    permissions
-        .as_object()
-        .is_some_and(|map| map.values().any(|value| value == "write" || value == "admin"))
+    permissions.as_object().is_some_and(|map| {
+        map.values()
+            .any(|value| value == "write" || value == "admin")
+    })
 }
 
 /// Only RS256, with a maximum ten-minute lifetime. Private signing keys never persist.
@@ -488,7 +493,14 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         }
         Some("actions") => match parts.get(4).copied() {
             Some("permissions") => Some("administration"),
-            Some("cache") if matches!(parts.get(5).copied(), Some("storage-limit" | "retention-limit")) => Some("administration"),
+            Some("cache")
+                if matches!(
+                    parts.get(5).copied(),
+                    Some("storage-limit" | "retention-limit")
+                ) =>
+            {
+                Some("administration")
+            }
             Some("runs" | "workflows" | "jobs" | "artifacts" | "caches" | "cache") => {
                 Some("actions")
             }

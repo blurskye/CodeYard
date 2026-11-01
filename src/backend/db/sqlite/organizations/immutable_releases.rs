@@ -10,11 +10,7 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use OrganizationOutcome::{Applied, Conflict, Denied};
 
-pub async fn get(
-    pool: &SqlitePool,
-    actor: i64,
-    org: i64,
-) -> Result<OrganizationOutcome<Settings>> {
+pub async fn get(pool: &SqlitePool, actor: i64, org: i64) -> Result<OrganizationOutcome<Settings>> {
     let mut tx = begin_read(pool).await?;
     if require_read_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
@@ -27,17 +23,45 @@ pub async fn get(
     .await?
     .unwrap_or_else(|| "none".to_owned());
     tx.commit().await?;
-    Ok(Applied(Settings { enforced_repositories }))
+    Ok(Applied(Settings {
+        enforced_repositories,
+    }))
 }
 
-pub async fn repositories(pool: &SqlitePool, actor: i64, org: i64, offset: i64, limit: i64) -> Result<OrganizationOutcome<(i64, Vec<crate::backend::db::repository_stats::RepositorySnapshot>)>> {
-    anyhow::ensure!(offset >= 0 && (1..=100).contains(&limit), "Invalid repository page");
+pub async fn repositories(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    offset: i64,
+    limit: i64,
+) -> Result<
+    OrganizationOutcome<(
+        i64,
+        Vec<crate::backend::db::repository_stats::RepositorySnapshot>,
+    )>,
+> {
+    anyhow::ensure!(
+        offset >= 0 && (1..=100).contains(&limit),
+        "Invalid repository page"
+    );
     let mut tx = begin_read(pool).await?;
-    if require_read_org!(tx, actor, org) != OrgRole::Owner { return Ok(Denied); }
+    if require_read_org!(tx, actor, org) != OrgRole::Owner {
+        return Ok(Denied);
+    }
     let selection = "FROM organization_immutable_release_repositories s JOIN repositories r ON r.id=s.repo_id JOIN organizations o ON o.id=r.owner_org_id WHERE s.org_id=?1 AND r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL";
-    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) {selection}")).bind(org).fetch_one(&mut *tx).await?;
-    let rows = sqlx::query_as(&format!("SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT ?2 OFFSET ?3", crate::backend::db::sqlite::repository_stats::DOCUMENT_FACTS))
-        .bind(org).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    let count = sqlx::query_scalar(&format!("SELECT COUNT(*) {selection}"))
+        .bind(org)
+        .fetch_one(&mut *tx)
+        .await?;
+    let rows = sqlx::query_as(&format!(
+        "SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT ?2 OFFSET ?3",
+        crate::backend::db::sqlite::repository_stats::DOCUMENT_FACTS
+    ))
+    .bind(org)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(Applied((count, rows)))
 }

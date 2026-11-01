@@ -50,20 +50,24 @@ impl NodeContext {
                     },
                 )
                 .await;
-            if !request.operation.is_read_only() || !cannot_serve(first.as_ref().ok().map(|(reply, _)| reply), true) {
+            if !request.operation.is_read_only()
+                || !cannot_serve(first.as_ref().ok().map(|(reply, _)| reply), true)
+            {
                 return first;
             }
-            let mut candidates = self.read_copies(request.repository, node_id).await.into_iter().peekable();
+            let mut candidates = self
+                .read_copies(request.repository, node_id)
+                .await
+                .into_iter()
+                .peekable();
             while let Some((copy, moved)) = candidates.next() {
-                let candidate_deadline = if candidates.peek().is_none() { deadline } else { attempt_deadline(deadline) };
+                let candidate_deadline = if candidates.peek().is_none() {
+                    deadline
+                } else {
+                    attempt_deadline(deadline)
+                };
                 let answer = self
-                    .exchange(
-                        copy,
-                        &header,
-                        body,
-                        response_body_limit,
-                        candidate_deadline,
-                    )
+                    .exchange(copy, &header, body, response_body_limit, candidate_deadline)
                     .await;
                 if !cannot_serve(answer.as_ref().ok().map(|(reply, _)| reply), moved) {
                     log_failover(request.repository, node_id, copy);
@@ -105,8 +109,11 @@ impl NodeContext {
                 Ok::<_, anyhow::Error>(())
             };
             let receiving = async {
-                let reply: Reply = serde_json::from_slice(&read_frame(&mut link.reader, MAX_JSON).await?)?;
-                let body = if reply.result.is_err() { Vec::new() } else {
+                let reply: Reply =
+                    serde_json::from_slice(&read_frame(&mut link.reader, MAX_JSON).await?)?;
+                let body = if reply.result.is_err() {
+                    Vec::new()
+                } else {
                     read_frame(&mut link.reader, response_body_limit).await?
                 };
                 Ok::<_, anyhow::Error>((reply, body))
@@ -209,7 +216,9 @@ impl NodeContext {
                 .map(|id| (id, false))
                 .collect();
         };
-        db::cluster::read_candidates(pool, &repository.to_string(), primary).await.unwrap_or_default()
+        db::cluster::read_candidates(pool, &repository.to_string(), primary)
+            .await
+            .unwrap_or_default()
     }
 }
 
@@ -228,7 +237,9 @@ pub(super) fn cannot_serve(reply: Option<&Reply>, moved_primary: bool) -> bool {
         None => true,
         Some(reply) => match &reply.result {
             Err(Failure::Repository(error)) if moved_primary => error.is_storage_node_unavailable(),
-            Err(Failure::Repository(error)) => matches!(error.kind, ErrorKind::Unavailable | ErrorKind::NotFound),
+            Err(Failure::Repository(error)) => {
+                matches!(error.kind, ErrorKind::Unavailable | ErrorKind::NotFound)
+            }
             _ => false,
         },
     }

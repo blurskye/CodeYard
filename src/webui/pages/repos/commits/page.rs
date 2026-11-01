@@ -104,7 +104,11 @@ fn commit_people(commit: &Commit) -> (Vec<String>, usize) {
         let name = value.split('<').next()?.trim();
         (!name.is_empty()).then_some(name)
     }) {
-        if people.len() < 4 { people.push(name.to_owned()); } else { omitted += 1; }
+        if people.len() < 4 {
+            people.push(name.to_owned());
+        } else {
+            omitted += 1;
+        }
     }
     (people, omitted)
 }

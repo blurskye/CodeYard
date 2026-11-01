@@ -6,7 +6,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 pub(crate) fn readable_condition(viewer: &str) -> String {
-    format!("p.deleted_at IS NULL AND {}", readable_owner_condition(viewer))
+    format!(
+        "p.deleted_at IS NULL AND {}",
+        readable_owner_condition(viewer)
+    )
 }
 
 pub(crate) fn readable_owner_condition(viewer: &str) -> String {
@@ -115,7 +118,10 @@ pub struct ListFilter {
 }
 impl ListFilter {
     pub fn search(owner: Option<Owner>, query: &str) -> Self {
-        let mut filter = Self { owner, ..Default::default() };
+        let mut filter = Self {
+            owner,
+            ..Default::default()
+        };
         for word in query.split_whitespace() {
             match word {
                 "is:open" => filter.open = true,
@@ -132,18 +138,28 @@ impl ListFilter {
             let (kind, id) = owner.parts();
             let kind = sql.bind(kind);
             let id = sql.bind(id.to_string());
-            conditions.push(format!("p.owner_kind={kind} AND p.owner_id=CAST({id} AS BIGINT)"));
+            conditions.push(format!(
+                "p.owner_kind={kind} AND p.owner_id=CAST({id} AS BIGINT)"
+            ));
         }
         if let Some(repo) = self.repo {
             let repo = sql.bind(repo.to_string());
-            let readable = if postgres { super::postgres::repositories::access::readable_condition() } else { super::sqlite::repositories::access::readable_condition() };
+            let readable = if postgres {
+                super::postgres::repositories::access::readable_condition()
+            } else {
+                super::sqlite::repositories::access::readable_condition()
+            };
             let viewer = sql.placeholder(1);
             conditions.push(format!("EXISTS(SELECT 1 FROM project_repositories pr JOIN repositories r ON r.id=pr.repo_id LEFT JOIN users u ON u.id={viewer} WHERE pr.project_id=p.id AND pr.repo_id=CAST({repo} AS BIGINT) AND ({readable}))"));
         }
         if let Some((issue, id)) = self.content {
             let id = sql.bind(id.to_string());
             let column = if issue { "issue_id" } else { "pull_request_id" };
-            let readable = if postgres { super::postgres::repositories::access::readable_condition() } else { super::sqlite::repositories::access::readable_condition() };
+            let readable = if postgres {
+                super::postgres::repositories::access::readable_condition()
+            } else {
+                super::sqlite::repositories::access::readable_condition()
+            };
             let viewer = sql.placeholder(1);
             conditions.push(format!("EXISTS(SELECT 1 FROM project_items i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id={viewer} WHERE i.project_id=p.id AND i.{column}=CAST({id} AS BIGINT) AND ({readable}))"));
         }
@@ -155,21 +171,37 @@ impl ListFilter {
             let before = sql.bind(before.to_string());
             conditions.push(format!("p.id<CAST({before} AS BIGINT)"));
         }
-        for title in &self.titles { conditions.push(sql.matches("p.title", title)); }
-        if self.open { conditions.push("p.closed_at IS NULL".into()); }
-        if self.closed { conditions.push("p.closed_at IS NOT NULL".into()); }
+        for title in &self.titles {
+            conditions.push(sql.matches("p.title", title));
+        }
+        if self.open {
+            conditions.push("p.closed_at IS NULL".into());
+        }
+        if self.closed {
+            conditions.push("p.closed_at IS NOT NULL".into());
+        }
         if self.writable {
             let viewer = sql.placeholder(1);
             conditions.push(format!("EXISTS(SELECT 1 FROM users active WHERE active.id={viewer} AND NOT active.is_banned AND NOT active.must_change_password) AND (p.owner_user_id={viewer} OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id={viewer} AND m.role IN ('owner','admin') AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users u ON u.id=owners.user_id WHERE owners.org_id=p.owner_org_id AND owners.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)))"));
         }
-        sql.prefix = format!("FROM projects p WHERE {}", conditions.into_iter().map(|s| format!("({s})")).collect::<Vec<_>>().join(" AND "));
+        sql.prefix = format!(
+            "FROM projects p WHERE {}",
+            conditions
+                .into_iter()
+                .map(|s| format!("({s})"))
+                .collect::<Vec<_>>()
+                .join(" AND ")
+        );
         sql
     }
     pub(crate) fn order(&self, postgres: bool) -> String {
         let field = match self.order {
-            ListOrder::Id => "p.id", ListOrder::Number => "p.number",
+            ListOrder::Id => "p.id",
+            ListOrder::Number => "p.number",
             ListOrder::Title if postgres => "p.title COLLATE \"C\"",
-            ListOrder::Title => "p.title", ListOrder::Created => "p.created_at", ListOrder::Updated => "p.updated_at",
+            ListOrder::Title => "p.title",
+            ListOrder::Created => "p.created_at",
+            ListOrder::Updated => "p.updated_at",
         };
         let direction = if self.descending { "DESC" } else { "ASC" };
         format!("{field} {direction},p.id {direction}")
@@ -232,22 +264,44 @@ pub fn valid_name(name: &str) -> bool {
 }
 
 #[derive(Clone, Copy)]
-pub enum BuiltInField { Assignees, Labels, LinkedPullRequests, Milestone, Repository, Reviewers }
+pub enum BuiltInField {
+    Assignees,
+    Labels,
+    LinkedPullRequests,
+    Milestone,
+    Repository,
+    Reviewers,
+}
 impl BuiltInField {
-    pub const ALL: [Self; 6] = [Self::Assignees, Self::Labels, Self::LinkedPullRequests, Self::Milestone, Self::Repository, Self::Reviewers];
+    pub const ALL: [Self; 6] = [
+        Self::Assignees,
+        Self::Labels,
+        Self::LinkedPullRequests,
+        Self::Milestone,
+        Self::Repository,
+        Self::Reviewers,
+    ];
     pub fn name(self) -> &'static str {
         match self {
-            Self::Assignees => "Assignees", Self::Labels => "Labels",
-            Self::LinkedPullRequests => "Linked pull requests", Self::Milestone => "Milestone",
-            Self::Repository => "Repository", Self::Reviewers => "Reviewers",
+            Self::Assignees => "Assignees",
+            Self::Labels => "Labels",
+            Self::LinkedPullRequests => "Linked pull requests",
+            Self::Milestone => "Milestone",
+            Self::Repository => "Repository",
+            Self::Reviewers => "Reviewers",
         }
     }
 }
 
 impl NewField {
     pub(crate) fn configuration(&self) -> Result<String> {
-        anyhow::ensure!(valid_name(&self.name)
-            && !BuiltInField::ALL.iter().any(|field| field.name().eq_ignore_ascii_case(self.name.trim())), Refusal::Invalid);
+        anyhow::ensure!(
+            valid_name(&self.name)
+                && !BuiltInField::ALL
+                    .iter()
+                    .any(|field| field.name().eq_ignore_ascii_case(self.name.trim())),
+            Refusal::Invalid
+        );
         let value = match self.data_type.as_str() {
             "text" | "number" | "date" => {
                 anyhow::ensure!(
@@ -383,8 +437,12 @@ impl Item {
         if field.data_type == "title" {
             return Ok(json!(self.title));
         }
-        let values = self.parsed_values.get_or_init(|| serde_json::from_str(&self.field_values).map_err(|error| error.to_string()));
-        let values = values.as_ref().map_err(|error| anyhow::anyhow!(error.clone()))?;
+        let values = self.parsed_values.get_or_init(|| {
+            serde_json::from_str(&self.field_values).map_err(|error| error.to_string())
+        });
+        let values = values
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!(error.clone()))?;
         Ok(values[field.id.to_string()].clone())
     }
 }

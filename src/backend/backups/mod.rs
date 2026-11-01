@@ -12,7 +12,7 @@ mod repair;
 
 pub use repair::{rebuild, verify};
 
-use crate::backend::{db, git::mirror, fs::private_dir};
+use crate::backend::{db, fs::private_dir, git::mirror};
 use anyhow::{bail, ensure, Context, Result};
 use std::collections::{BTreeSet, HashSet};
 use std::io::Write;
@@ -72,7 +72,11 @@ fn repositories_in(root: &Path) -> Result<Vec<(String, PathBuf)>> {
     let mut repositories = Vec::new();
     for entry in entries {
         let entry = entry?;
-        ensure!(!entry.file_type()?.is_symlink(), "repository directory contains an unsupported symlink: {}", entry.path().display());
+        ensure!(
+            !entry.file_type()?.is_symlink(),
+            "repository directory contains an unsupported symlink: {}",
+            entry.path().display()
+        );
         let path = entry.path();
         if let Some(name) = path.file_name().and_then(|name| name.to_str()) {
             if name.ends_with(".git") && path.join("HEAD").is_file() {
@@ -152,7 +156,18 @@ fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
         resolved(&dir.join(mirror::DELETED_DIR))?,
         resolved(&dir.join(UPLOADS_DIR))?,
     ];
-    for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR, SQLITE_FILE, POSTGRES_FILE, NODE_KEY, "release.key", "database.sqlite.partial", "database.pgdump.partial", "backup.lock"] {
+    for name in [
+        REPOSITORIES_DIR,
+        mirror::DELETED_DIR,
+        UPLOADS_DIR,
+        SQLITE_FILE,
+        POSTGRES_FILE,
+        NODE_KEY,
+        "release.key",
+        "database.sqlite.partial",
+        "database.pgdump.partial",
+        "backup.lock",
+    ] {
         reject_symlink(&dir.join(name))?;
     }
     if !places.database_url.is_empty() {
@@ -161,8 +176,19 @@ fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
                 let mut path = database.as_os_str().to_owned();
                 path.push(suffix);
                 let source = resolved(Path::new(&path))?;
-                for target in targets.iter().cloned().chain([dir.join(SQLITE_FILE), dir.join("database.sqlite.partial"), dir.join(POSTGRES_FILE), dir.join("database.pgdump.partial"), dir.join(NODE_KEY), dir.join("release.key"), dir.join("backup.lock")]) {
-                    ensure!(!source.starts_with(&target), "backup destination collides with the live SQLite database or its sidecars");
+                for target in targets.iter().cloned().chain([
+                    dir.join(SQLITE_FILE),
+                    dir.join("database.sqlite.partial"),
+                    dir.join(POSTGRES_FILE),
+                    dir.join("database.pgdump.partial"),
+                    dir.join(NODE_KEY),
+                    dir.join("release.key"),
+                    dir.join("backup.lock"),
+                ]) {
+                    ensure!(
+                        !source.starts_with(&target),
+                        "backup destination collides with the live SQLite database or its sidecars"
+                    );
                 }
             }
         }
@@ -191,8 +217,12 @@ fn check_destination(dir: &Path, places: &Places<'_>) -> Result<()> {
 /// interrupted copy never leaves a short file behind.
 fn reject_symlink(path: &Path) -> Result<()> {
     match std::fs::symlink_metadata(path) {
-        Ok(metadata) => ensure!(!metadata.is_symlink(), "unsupported symlink {}; use a bind mount instead", path.display()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
+        Ok(metadata) => ensure!(
+            !metadata.is_symlink(),
+            "unsupported symlink {}; use a bind mount instead",
+            path.display()
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error.into()),
     }
     Ok(())
@@ -214,7 +244,11 @@ fn copy_tree(source: &Path, copy: &Path, stale: &mut Vec<PathBuf>) -> Result<usi
         present.insert(name.clone());
         let (from, to) = (entry.path(), copy.join(&name));
         let kind = entry.file_type()?;
-        ensure!(!kind.is_symlink(), "unsupported source symlink {}; use a bind mount instead", from.display());
+        ensure!(
+            !kind.is_symlink(),
+            "unsupported source symlink {}; use a bind mount instead",
+            from.display()
+        );
         reject_symlink(&to)?;
         if kind.is_dir() {
             changed |= !to.is_dir();
@@ -302,9 +336,17 @@ fn libpq_url(database_url: &str) -> Result<(String, Option<String>)> {
     if query.is_empty() {
         url.set_query(None);
     } else {
-        let query = query.into_iter().map(|(name, value)| {
-            format!("{}={}", crate::webui::encode_component(&name), crate::webui::encode_component(&value))
-        }).collect::<Vec<_>>().join("&");
+        let query = query
+            .into_iter()
+            .map(|(name, value)| {
+                format!(
+                    "{}={}",
+                    crate::webui::encode_component(&name),
+                    crate::webui::encode_component(&value)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("&");
         url.set_query(Some(&query));
     }
     Ok((url.to_string(), password))
@@ -345,10 +387,17 @@ fn lock_destination(dir: &Path) -> Result<std::fs::File> {
     use std::os::fd::AsRawFd;
     let path = dir.join("backup.lock");
     reject_symlink(&path)?;
-    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(path)?;
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path)?;
     // SAFETY: the owned descriptor remains open for the whole backup or restore.
-    ensure!(unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
-        "another backup or restore is using {}", dir.display());
+    ensure!(
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+        "another backup or restore is using {}",
+        dir.display()
+    );
     Ok(file)
 }
 
@@ -361,14 +410,21 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
     let s3 = crate::backend::storage::s3::S3Config::optional_from_env()?.is_some();
     let started = std::time::Instant::now();
     let before = db::backups::list_repositories(pool).await?;
-    ensure!(before.iter().all(|repo| repo.storage_node_id.is_none()), "single-node backup cannot include repositories assigned to storage nodes");
+    ensure!(
+        before.iter().all(|repo| repo.storage_node_id.is_none()),
+        "single-node backup cannot include repositories assigned to storage nodes"
+    );
     check_destination(dir, places)?;
     for repo in &before {
         let source = resolved(Path::new(&repo.disk_path))?;
         let root = resolved(dir)?;
         for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR] {
             let target = resolved(&root.join(name))?;
-            ensure!(!source.starts_with(&target) && !target.starts_with(&source), "backup destination overlaps repository {}", repo.id);
+            ensure!(
+                !source.starts_with(&target) && !target.starts_with(&source),
+                "backup destination overlaps repository {}",
+                repo.id
+            );
         }
     }
     private_dir(dir)?;
@@ -390,13 +446,21 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
             db::backups::sqlite_snapshot_repositories(&partial).await?
         }
         db::DbPool::Postgres(_) => {
-            let (snapshot_tx, snapshot, repositories) = db::backups::postgres_snapshot(pool).await?;
+            let (snapshot_tx, snapshot, repositories) =
+                db::backups::postgres_snapshot(pool).await?;
             let snapshot = format!("--snapshot={snapshot}");
             let target = format!("--file={}", partial.display());
             postgres_tool(
                 "pg_dump",
                 places.database_url,
-                &["--format=custom", "--no-owner", "--no-privileges", "--lock-wait-timeout=30s", &snapshot, &target],
+                &[
+                    "--format=custom",
+                    "--no-owner",
+                    "--no-privileges",
+                    "--lock-wait-timeout=30s",
+                    &snapshot,
+                    &target,
+                ],
             )
             .await?;
             snapshot_tx.commit().await?;
@@ -408,12 +472,19 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
 
     // The exact snapshot inventory is authoritative, including rows created and removed while
     // the snapshot ran. Missing required storage refuses publication rather than losing it.
-    ensure!(after.iter().all(|repo| repo.storage_node_id.is_none()), "snapshot contains placed repositories; single-node backup refused");
+    ensure!(
+        after.iter().all(|repo| repo.storage_node_id.is_none()),
+        "snapshot contains placed repositories; single-node backup refused"
+    );
     for repository in &after {
         let source = resolved(Path::new(&repository.disk_path))?;
         for name in [REPOSITORIES_DIR, mirror::DELETED_DIR, UPLOADS_DIR] {
             let target = resolved(&dir.join(name))?;
-            ensure!(!source.starts_with(&target) && !target.starts_with(&source), "backup destination overlaps repository {}", repository.id);
+            ensure!(
+                !source.starts_with(&target) && !target.starts_with(&source),
+                "backup destination overlaps repository {}",
+                repository.id
+            );
         }
     }
     // A repository's directory can sit outside REPOS_PATH, so its parent is a root too.
@@ -435,11 +506,17 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
             let parent = path.parent().context("repository path has no parent")?;
             let copies = match deleted.entry(parent.to_owned()) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(mirror::deleted_copies(parent)?),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(mirror::deleted_copies(parent)?)
+                }
             };
             path = copies.get(&name).cloned().unwrap_or_default();
         }
-        ensure!(path.is_dir(), "snapshot repository {} is missing; backup not published", repository.id);
+        ensure!(
+            path.is_dir(),
+            "snapshot repository {} is missing; backup not published",
+            repository.id
+        );
         reject_symlink(&path)?;
         repositories.push((name, path));
     }
@@ -475,7 +552,9 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
         let mut temporary = tempfile::NamedTempFile::new_in(dir)?;
         writeln!(temporary, "{}", key.secret_hex())?;
         temporary.as_file().sync_all()?;
-        temporary.persist(dir.join(NODE_KEY)).map_err(|error| error.error)?;
+        temporary
+            .persist(dir.join(NODE_KEY))
+            .map_err(|error| error.error)?;
         sync_dir(dir)?;
     }
     let signer = places.state_dir.join("release.key");
@@ -485,9 +564,16 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
     }
     // Publish the new database last. Until this rename the previous backup is still complete:
     // nothing it names has been removed yet.
-    ensure!(started.elapsed().as_secs() < db::files::RESTORE_WINDOW_SECONDS as u64, "backup exceeded the object retention window; refusing publication");
+    ensure!(
+        started.elapsed().as_secs() < db::files::RESTORE_WINDOW_SECONDS as u64,
+        "backup exceeded the object retention window; refusing publication"
+    );
     std::fs::rename(&partial, dir.join(file))?;
-    let opposite = dir.join(if file == SQLITE_FILE { POSTGRES_FILE } else { SQLITE_FILE });
+    let opposite = dir.join(if file == SQLITE_FILE {
+        POSTGRES_FILE
+    } else {
+        SQLITE_FILE
+    });
     match std::fs::remove_file(opposite) {
         Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
         _ => {}
@@ -507,29 +593,46 @@ pub async fn backup(pool: &db::DbPool, places: &Places<'_>, dir: &Path) -> Resul
 pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
     let s3 = crate::backend::storage::s3::S3Config::optional_from_env()?.is_some();
     let _lock = lock_destination(dir)?;
-    let key = std::env::var_os("NODE_KEY_FILE").map(PathBuf::from)
+    let key = std::env::var_os("NODE_KEY_FILE")
+        .map(PathBuf::from)
         .unwrap_or_else(|| places.state_dir.join(NODE_KEY));
     let backup_key = dir.join(NODE_KEY);
     if backup_key.is_file() {
-        let saved = crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(&backup_key)?)?;
+        let saved =
+            crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(&backup_key)?)?;
         let existing = if key.exists() || std::env::var_os("NODE_KEY").is_some() {
             crate::backend::cluster::load_existing(places.state_dir)?
         } else {
             None
         };
-        ensure!(existing.is_none_or(|key| key.public_hex() == saved.public_hex()), "existing node identity conflicts with backup; neither key has been overwritten");
+        ensure!(
+            existing.is_none_or(|key| key.public_hex() == saved.public_hex()),
+            "existing node identity conflicts with backup; neither key has been overwritten"
+        );
     }
-    ensure!(!(dir.join(SQLITE_FILE).exists() && dir.join(POSTGRES_FILE).exists()), "backup contains ambiguous mixed-engine snapshots");
+    ensure!(
+        !(dir.join(SQLITE_FILE).exists() && dir.join(POSTGRES_FILE).exists()),
+        "backup contains ambiguous mixed-engine snapshots"
+    );
     let source_objects = resolved(&dir.join(UPLOADS_DIR))?;
     let target_objects = resolved(&places.state_dir.join(UPLOADS_DIR))?;
-    ensure!(!source_objects.starts_with(&target_objects) && !target_objects.starts_with(&source_objects), "restore object source and destination overlap");
+    ensure!(
+        !source_objects.starts_with(&target_objects)
+            && !target_objects.starts_with(&source_objects),
+        "restore object source and destination overlap"
+    );
     // Never silently retain an unrelated release signer from an earlier installation.
     let saved_signer = dir.join("release.key");
     let current_signer = places.state_dir.join("release.key");
     if saved_signer.exists() && current_signer.exists() {
-        let saved = crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(saved_signer)?)?;
-        let current = crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(current_signer)?)?;
-        ensure!(saved.public_hex() == current.public_hex(), "restore would replace a different release signing identity");
+        let saved =
+            crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(saved_signer)?)?;
+        let current =
+            crate::backend::cluster::NodeKey::parse(&std::fs::read_to_string(current_signer)?)?;
+        ensure!(
+            saved.public_hex() == current.public_hex(),
+            "restore would replace a different release signing identity"
+        );
     }
     ensure!(
         directory_empty(places.repos_path)?,
@@ -558,11 +661,16 @@ pub async fn restore(places: &Places<'_>, dir: &Path) -> Result<db::DbPool> {
             if let Some(parent) = path.parent() {
                 std::fs::create_dir_all(parent)?;
             }
-            let parent = path.parent().filter(|path| !path.as_os_str().is_empty()).unwrap_or(Path::new("."));
+            let parent = path
+                .parent()
+                .filter(|path| !path.as_os_str().is_empty())
+                .unwrap_or(Path::new("."));
             let mut partial = tempfile::NamedTempFile::new_in(parent)?;
             std::io::copy(&mut std::fs::File::open(&source)?, partial.as_file_mut())?;
             partial.as_file().sync_all()?;
-            partial.persist_noclobber(&path).map_err(|error| error.error)?;
+            partial
+                .persist_noclobber(&path)
+                .map_err(|error| error.error)?;
             if let Some(parent) = std::path::absolute(&path)?.parent() {
                 sync_dir(parent)?;
             }

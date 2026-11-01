@@ -1228,7 +1228,8 @@ fn every_document_heading_with_an_id_has_one_empty_permalink_to_it() {
 
 #[test]
 fn prefixed_raw_heading_ids_are_escaped_at_both_attribute_sinks() {
-    let source = "<h1 id=\"user-content-&quot;&gt;&lt;img src=https://attacker.test/pixel&gt;\">Title</h1>";
+    let source =
+        "<h1 id=\"user-content-&quot;&gt;&lt;img src=https://attacker.test/pixel&gt;\">Title</h1>";
     let id = "user-content-&quot;&gt;&lt;img src=https://attacker.test/pixel&gt;";
     let html = parse_document(source);
     assert!(html.contains(&format!("id=\"{id}\"")), "{html}");

@@ -21,7 +21,10 @@ const CSRF_TTL_SECONDS: i64 = 2 * 60 * 60;
 
 fn admission_redirect(page: &str, location: &str) -> String {
     if super::origin::safe_redirect_path(location) {
-        format!("{page}?redirect={}", crate::webui::encode_component(location))
+        format!(
+            "{page}?redirect={}",
+            crate::webui::encode_component(location)
+        )
     } else {
         page.to_owned()
     }
@@ -93,7 +96,11 @@ pub struct PageContext {
 
 impl PageContext {
     pub(crate) fn database_actor(&self, user_id: i64) -> db::credentials::Actor {
-        (user_id, session::extract_session_id(&self.headers).unwrap_or_default()).into()
+        (
+            user_id,
+            session::extract_session_id(&self.headers).unwrap_or_default(),
+        )
+            .into()
     }
 
     pub async fn load(
@@ -181,9 +188,19 @@ impl PageContext {
             let (verified_session, pending_session_cookie) = match existing_session {
                 Some(s) => (s, None),
                 None => {
-                    match crate::backend::identity::admission::admit_anonymous_session(&state.pool, session::client_address(&headers)).await {
-                        Ok(()) => {},
-                        Err(crate::backend::identity::admission::AdmissionError::Limited) => return Err(public_error(StatusCode::TOO_MANY_REQUESTS, "Too many sign-in page requests. Try again later.")),
+                    match crate::backend::identity::admission::admit_anonymous_session(
+                        &state.pool,
+                        session::client_address(&headers),
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
+                            return Err(public_error(
+                                StatusCode::TOO_MANY_REQUESTS,
+                                "Too many sign-in page requests. Try again later.",
+                            ))
+                        }
                         Err(_) => return Err(unavailable()),
                     }
                     // Never adopt an attacker-supplied unknown cookie ID.
@@ -261,7 +278,9 @@ impl PageContext {
         reason = "The shared HTML helper contract returns complete Axum responses without boxing."
     )]
     pub fn require_user(&self) -> Result<&User, Response> {
-        self.user.as_ref().ok_or_else(|| self.redirect(&admission_redirect("/login", &self.location)))
+        self.user
+            .as_ref()
+            .ok_or_else(|| self.redirect(&admission_redirect("/login", &self.location)))
     }
 
     /// The signed-in account when it may use administrator pages.

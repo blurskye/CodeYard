@@ -205,9 +205,14 @@ async fn contract(pg: bool) {
     )
     .await;
 
-    let before = db::users::tokens::list_tokens(f.pool(), owner, &crate::support::live_session(f.pool(), owner).await, 0)
-        .await
-        .unwrap();
+    let before = db::users::tokens::list_tokens(
+        f.pool(),
+        owner,
+        &crate::support::live_session(f.pool(), owner).await,
+        0,
+    )
+    .await
+    .unwrap();
     // Only owners manage token grants; with no fine-grained tokens the lists are empty and a
     // named grant or request is missing.
     for (operation, method, suffix, body, found) in [
@@ -304,9 +309,14 @@ async fn contract(pg: bool) {
             }
         }
     }
-    let after = db::users::tokens::list_tokens(f.pool(), owner, &crate::support::live_session(f.pool(), owner).await, 0)
-        .await
-        .unwrap();
+    let after = db::users::tokens::list_tokens(
+        f.pool(),
+        owner,
+        &crate::support::live_session(f.pool(), owner).await,
+        0,
+    )
+    .await
+    .unwrap();
     assert_eq!(
         before.iter().map(|t| t.id).collect::<Vec<_>>(),
         after.iter().map(|t| t.id).collect::<Vec<_>>()

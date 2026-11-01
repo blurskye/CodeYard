@@ -406,12 +406,14 @@ async fn contract(pg: bool) {
     .await
     .unwrap_err()
     .is::<db::users::accounts::AccountRestricted>());
-    assert!(
-        db::users::emails::list_account_emails(f.pool(), alice, &AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await))
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(db::users::emails::list_account_emails(
+        f.pool(),
+        alice,
+        &AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await)
+    )
+    .await
+    .unwrap()
+    .is_empty());
 }
 
 #[tokio::test]

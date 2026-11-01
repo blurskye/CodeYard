@@ -199,7 +199,11 @@ async fn contract(pg: bool) {
         notifications: Arc::new(NotificationBroadcaster::new(f.pool())),
     };
     let claimed = queue
-        .claim("slot-1", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .expect("the dispatched run");
@@ -727,7 +731,11 @@ async fn rest_settings(pg: bool) {
         )
         .await;
         let claim = queue
-            .claim("settings", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+            .claim(
+                "settings",
+                CiExecutionMode::Local,
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -862,7 +870,11 @@ async fn rest_settings(pg: bool) {
         queued + 1
     );
     let claim = queue
-        .claim("settings", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .claim(
+            "settings",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();

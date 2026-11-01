@@ -7,7 +7,11 @@ use serde_yaml::{Mapping, Value as Yaml};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub(super) fn job_order(workflow: &Workflow) -> Result<Vec<String>> {
-    let jobs: BTreeMap<_, _> = workflow.jobs.iter().map(|(id, job)| (id.to_ascii_lowercase(), (id, job))).collect();
+    let jobs: BTreeMap<_, _> = workflow
+        .jobs
+        .iter()
+        .map(|(id, job)| (id.to_ascii_lowercase(), (id, job)))
+        .collect();
     let mut result = Vec::new();
     let mut visiting = BTreeSet::new();
     let mut done = BTreeSet::new();
@@ -20,12 +24,19 @@ pub(super) fn job_order(workflow: &Workflow) -> Result<Vec<String>> {
                 result.push(id);
                 continue;
             }
-            if done.contains(&id) { continue; }
-            ensure!(visiting.insert(id.clone()), "jobs.{id}.needs: The workflow contains a cycle in its job dependencies");
+            if done.contains(&id) {
+                continue;
+            }
+            ensure!(
+                visiting.insert(id.clone()),
+                "jobs.{id}.needs: The workflow contains a cycle in its job dependencies"
+            );
             pending.push((id.clone(), true));
             let (_, job) = jobs[&id.to_ascii_lowercase()];
             for need in needs(job)?.into_iter().rev() {
-                let (canonical, _) = jobs.get(&need.to_ascii_lowercase()).with_context(|| format!("jobs.{id}.needs: Job '{id}' needs unknown job '{need}'"))?;
+                let (canonical, _) = jobs.get(&need.to_ascii_lowercase()).with_context(|| {
+                    format!("jobs.{id}.needs: Job '{id}' needs unknown job '{need}'")
+                })?;
                 pending.push(((*canonical).clone(), false));
             }
         }
@@ -113,13 +124,27 @@ fn json_argument(template: &str) -> Option<&str> {
 
 fn json_numbers(value: Yaml) -> Result<Yaml> {
     match value {
-        Yaml::Mapping(map) if map.len() == 1 && map.contains_key("$serde_json::private::Number") => {
-            let number = map["$serde_json::private::Number"].as_str().context("Invalid JSON number")?.parse::<f64>()?;
+        Yaml::Mapping(map)
+            if map.len() == 1 && map.contains_key("$serde_json::private::Number") =>
+        {
+            let number = map["$serde_json::private::Number"]
+                .as_str()
+                .context("Invalid JSON number")?
+                .parse::<f64>()?;
             ensure!(number.is_finite(), "Invalid JSON number");
             yaml_value(Value::Number(number))
         }
-        Yaml::Mapping(map) => Ok(Yaml::Mapping(map.into_iter().map(|(key, value)| Ok((key, json_numbers(value)?))).collect::<Result<_>>()?)),
-        Yaml::Sequence(values) => Ok(Yaml::Sequence(values.into_iter().map(json_numbers).collect::<Result<_>>()?)),
+        Yaml::Mapping(map) => Ok(Yaml::Mapping(
+            map.into_iter()
+                .map(|(key, value)| Ok((key, json_numbers(value)?)))
+                .collect::<Result<_>>()?,
+        )),
+        Yaml::Sequence(values) => Ok(Yaml::Sequence(
+            values
+                .into_iter()
+                .map(json_numbers)
+                .collect::<Result<_>>()?,
+        )),
         value => Ok(value),
     }
 }
@@ -131,7 +156,9 @@ fn resolve(value: &Yaml, contexts: &Contexts, status: Status) -> Result<Yaml> {
             // The JSON parser reads it straight into the ordered YAML value, escapes included.
             if let Some(argument) = json_argument(template) {
                 if let Value::String(source) = evaluate(argument, contexts, status)? {
-                    return json_numbers(serde_json::from_str::<Yaml>(&source).context("Error parsing fromJSON")?);
+                    return json_numbers(
+                        serde_json::from_str::<Yaml>(&source).context("Error parsing fromJSON")?,
+                    );
                 }
             }
             yaml_value(interpolate(template, contexts, status)?)
@@ -183,7 +210,10 @@ fn number_value(value: Option<&Yaml>, default: f64, path: &str) -> Result<f64> {
 // Filters compare every leaf, using expression equality (including case folding and coercion).
 fn matches(actual: Option<&Yaml>, expected: &Yaml, work: &mut u32) -> Result<bool> {
     *work += 1;
-    ensure!(*work <= MAX_MATRIX_VISITS, "strategy.matrix: Matrix is too large to expand (work budget exceeded)");
+    ensure!(
+        *work <= MAX_MATRIX_VISITS,
+        "strategy.matrix: Matrix is too large to expand (work budget exceeded)"
+    );
     match expected {
         Yaml::Mapping(map) => {
             for (key, expected) in map {
@@ -211,16 +241,17 @@ fn matches(actual: Option<&Yaml>, expected: &Yaml, work: &mut u32) -> Result<boo
             Ok(true)
         }
         _ => {
-            let Some(actual) = actual else { return Ok(false); };
-            if std::mem::discriminant(actual) != std::mem::discriminant(expected) { return Ok(false); }
+            let Some(actual) = actual else {
+                return Ok(false);
+            };
+            if std::mem::discriminant(actual) != std::mem::discriminant(expected) {
+                return Ok(false);
+            }
             let mut contexts = Contexts::default();
             contexts.values.insert(
                 "matrix".into(),
                 Value::Object(BTreeMap::from([
-                    (
-                        "actual".into(),
-                        expression_value(actual)?,
-                    ),
+                    ("actual".into(), expression_value(actual)?),
                     ("expected".into(), expression_value(expected)?),
                 ])),
             );
@@ -290,7 +321,10 @@ fn cross_product(
     );
     for filter in exclude {
         *visits += 1;
-        ensure!(*visits <= MAX_MATRIX_VISITS, "strategy.matrix: Matrix is too large to expand (work budget exceeded)");
+        ensure!(
+            *visits <= MAX_MATRIX_VISITS,
+            "strategy.matrix: Matrix is too large to expand (work budget exceeded)"
+        );
         if filter.keys().all(|key| product.contains_key(key))
             && matches(
                 Some(&Yaml::Mapping(product.clone())),
@@ -411,7 +445,10 @@ fn matrix(value: Option<&Yaml>) -> Result<Vec<Combination>> {
     }
     for (i, filter) in include.iter().enumerate() {
         if !matched[i] {
-            ensure!(result.len() < 256, "strategy.matrix: Matrix cannot generate more than 256 jobs");
+            ensure!(
+                result.len() < 256,
+                "strategy.matrix: Matrix cannot generate more than 256 jobs"
+            );
             // Unmatched includes do not extend one another. Names list vector keys first.
             let mut ordered = Mapping::new();
             for (key, _) in &axes {
@@ -575,9 +612,15 @@ pub(super) fn expand(
     let combinations =
         matrix(strategy.and_then(|s| s.get("matrix"))).with_context(|| path.clone())?;
     let total = combinations.len();
-    let steps = if job.contains_key("uses") { Vec::new() } else {
-        job.get("steps").and_then(Yaml::as_sequence).context("steps: Expected a sequence")?
-            .iter().map(parse_step).collect::<Result<Vec<_>>>()?
+    let steps = if job.contains_key("uses") {
+        Vec::new()
+    } else {
+        job.get("steps")
+            .and_then(Yaml::as_sequence)
+            .context("steps: Expected a sequence")?
+            .iter()
+            .map(parse_step)
+            .collect::<Result<Vec<_>>>()?
     };
     let mut result = Vec::new();
     for (index, combination) in combinations.into_iter().enumerate() {
@@ -646,8 +689,10 @@ pub(super) fn expand(
         let concurrency = resolved(job, "concurrency", &contexts, status)?
             .map(|value| job_concurrency(&value, &format!("{path}.concurrency")))
             .transpose()?;
-        let env = vec![environment_template(workflow.fields.get("env"), "env")?,
-            environment_template(job.get("env"), &format!("{path}.env"))?];
+        let env = vec![
+            environment_template(workflow.fields.get("env"), "env")?,
+            environment_template(job.get("env"), &format!("{path}.env"))?,
+        ];
         let (shell, directory) = defaults(&workflow.fields)?;
         let (job_shell, job_directory) = defaults(job)?;
         let container = job

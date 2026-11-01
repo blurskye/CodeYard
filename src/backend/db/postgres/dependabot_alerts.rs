@@ -22,7 +22,9 @@ async fn global_in(tx: &mut Transaction<'_, Postgres>, keys: Option<&str>) -> Re
     let published: Vec<Advisory> = sqlx::query_as("SELECT a.* FROM repository_advisories a JOIN repositories r ON r.id=a.repo_id WHERE a.state='published' AND NOT r.is_private AND NOT EXISTS (SELECT 1 FROM global_advisories g WHERE g.ghsa_id=a.ghsa_id) ORDER BY a.ghsa_id").fetch_all(&mut **tx).await?;
     for row in published {
         match dependabot_alerts::published(row) {
-            Ok(value) => { documents.insert(value["ghsa_id"].as_str().unwrap().to_owned(), value); }
+            Ok(value) => {
+                documents.insert(value["ghsa_id"].as_str().unwrap().to_owned(), value);
+            }
             Err(_) => tracing::warn!("Invalid published advisory excluded from catalogue"),
         }
     }
@@ -33,19 +35,31 @@ async fn global_in(tx: &mut Transaction<'_, Postgres>, keys: Option<&str>) -> Re
     Ok(documents.into_values().collect())
 }
 /// Page identifiers under one read snapshot without retaining the catalogue's documents.
-pub async fn global_page(pool: &PgPool, query: &dependabot_alerts::CatalogueQuery) -> Result<dependabot_alerts::CataloguePage> {
+pub async fn global_page(
+    pool: &PgPool,
+    query: &dependabot_alerts::CatalogueQuery,
+) -> Result<dependabot_alerts::CataloguePage> {
     use futures_util::TryStreamExt;
-    ensure!((1..=100).contains(&query.limit) && query.offset <= 1_000_000, Refusal::Invalid);
+    ensure!(
+        (1..=100).contains(&query.limit) && query.offset <= 1_000_000,
+        Refusal::Invalid
+    );
     let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
     let (statement, args, offset_applied) = dependabot_alerts::catalogue_statement(true, query);
     let mut selected = dependabot_alerts::CatalogueSelection::new(query, offset_applied);
     {
         let mut candidates = sqlx::query_as::<_, (String, String)>(&statement);
-        for value in &args { candidates = candidates.bind(value); }
+        for value in &args {
+            candidates = candidates.bind(value);
+        }
         let mut candidates = candidates.fetch(&mut *tx);
         while let Some((id, metadata)) = candidates.try_next().await? {
-            if !selected.push(id, serde_json::from_str(&metadata)?) { break; }
+            if !selected.push(id, serde_json::from_str(&metadata)?) {
+                break;
+            }
         }
     }
     let (ids, previous, next) = selected.finish();
@@ -54,12 +68,18 @@ pub async fn global_page(pool: &PgPool, query: &dependabot_alerts::CatalogueQuer
         match global_one_in(&mut tx, &id).await {
             Ok(Some(value)) => documents.push(value),
             Ok(None) => (),
-            Err(error) if error.downcast_ref::<Refusal>().is_some() => tracing::warn!(%id, "Invalid published advisory excluded from catalogue"),
+            Err(error) if error.downcast_ref::<Refusal>().is_some() => {
+                tracing::warn!(%id, "Invalid published advisory excluded from catalogue")
+            }
             Err(error) => return Err(error),
         }
     }
     tx.commit().await?;
-    Ok(dependabot_alerts::CataloguePage { documents, previous, next })
+    Ok(dependabot_alerts::CataloguePage {
+        documents,
+        previous,
+        next,
+    })
 }
 
 /// The whole advisory catalogue.
@@ -97,7 +117,10 @@ pub async fn global_one(pool: &PgPool, ghsa_id: &str) -> Result<Option<Value>> {
     let mut connection = pool.acquire().await?;
     global_one_in(&mut connection, ghsa_id).await
 }
-async fn global_one_in(connection: &mut sqlx::PgConnection, ghsa_id: &str) -> Result<Option<Value>> {
+async fn global_one_in(
+    connection: &mut sqlx::PgConnection,
+    ghsa_id: &str,
+) -> Result<Option<Value>> {
     let imported: Option<String> =
         sqlx::query_scalar("SELECT document FROM global_advisories WHERE ghsa_id=$1")
             .bind(ghsa_id)
@@ -132,15 +155,27 @@ pub async fn import(pool: &PgPool, actor: impl Into<Actor>, value: &Value) -> Re
     tx.commit().await?;
     Ok(value)
 }
-pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64, pinned_sha: Option<&str>) -> Result<()> {
-    let (branch, archived): (String, bool) = sqlx::query_as("SELECT default_branch,is_archived FROM repositories WHERE id=$1")
-        .bind(repo).fetch_one(&mut **tx).await?;
+pub(crate) async fn refresh(
+    tx: &mut Transaction<'_, Postgres>,
+    repo: i64,
+    pinned_sha: Option<&str>,
+) -> Result<()> {
+    let (branch, archived): (String, bool) =
+        sqlx::query_as("SELECT default_branch,is_archived FROM repositories WHERE id=$1")
+            .bind(repo)
+            .fetch_one(&mut **tx)
+            .await?;
     if archived || !super::dependency_graph::enabled_in(tx, repo).await? {
         return Ok(());
     }
     let reference = format!("refs/heads/{branch}");
-    let sha: Option<String> = sqlx::query_scalar(&format!("SELECT {}", crate::backend::db::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL))
-        .bind(repo).fetch_one(&mut **tx).await?;
+    let sha: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT {}",
+        crate::backend::db::dependency_graph::DEFAULT_SNAPSHOT_SHA_SQL
+    ))
+    .bind(repo)
+    .fetch_one(&mut **tx)
+    .await?;
     if let (Some(pinned), Some(current)) = (pinned_sha, sha.as_ref()) {
         if !pinned.eq_ignore_ascii_case(current) {
             return Ok(());
@@ -148,7 +183,8 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64, pinne
     }
     // No inventory is not evidence of a fix. All contributing detectors share one revision.
     let Some(sha) = sha else { return Ok(()) };
-    let snapshots = super::dependency_graph::snapshots_in(tx, repo, Some(&reference), Some(&sha)).await?;
+    let snapshots =
+        super::dependency_graph::snapshots_in(tx, repo, Some(&reference), Some(&sha)).await?;
     for snapshot in &snapshots {
         snapshot.validate()?;
     }
@@ -161,8 +197,11 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64, pinne
     .fetch_all(&mut **tx)
     .await?;
     let (mut osv, aliases) = dependabot_alerts::osv_records(rows)?;
-    let overrides: Vec<(String, Option<String>)> = sqlx::query_as("SELECT document,osv_id FROM global_advisories WHERE ghsa_id=ANY($1)")
-        .bind(&aliases).fetch_all(&mut **tx).await?;
+    let overrides: Vec<(String, Option<String>)> =
+        sqlx::query_as("SELECT document,osv_id FROM global_advisories WHERE ghsa_id=ANY($1)")
+            .bind(&aliases)
+            .fetch_all(&mut **tx)
+            .await?;
     dependabot_alerts::catalogue_for_records(&mut advisories, &mut osv, overrides)?;
     let matches = dependabot_alerts::matches(&snapshots, &advisories, &osv)?;
     let now = Utc::now();
@@ -171,10 +210,38 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64, pinne
             .bind(repo)
             .fetch_all(&mut **tx)
             .await?;
-    let matched: std::collections::HashSet<_> = matches.iter().map(|(p, a, _)| (a["ghsa_id"].as_str().unwrap(), p.manifest.as_str(), p.ecosystem.as_str(), p.name.as_str())).collect();
-    let known: std::collections::HashMap<_, _> = previous.iter().map(|row| ((row.ghsa_id.as_str(), row.manifest.as_str(), row.ecosystem.as_str(), row.package.as_str()), row)).collect();
+    let matched: std::collections::HashSet<_> = matches
+        .iter()
+        .map(|(p, a, _)| {
+            (
+                a["ghsa_id"].as_str().unwrap(),
+                p.manifest.as_str(),
+                p.ecosystem.as_str(),
+                p.name.as_str(),
+            )
+        })
+        .collect();
+    let known: std::collections::HashMap<_, _> = previous
+        .iter()
+        .map(|row| {
+            (
+                (
+                    row.ghsa_id.as_str(),
+                    row.manifest.as_str(),
+                    row.ecosystem.as_str(),
+                    row.package.as_str(),
+                ),
+                row,
+            )
+        })
+        .collect();
     for row in &previous {
-        let found = matched.contains(&(row.ghsa_id.as_str(), row.manifest.as_str(), row.ecosystem.as_str(), row.package.as_str()));
+        let found = matched.contains(&(
+            row.ghsa_id.as_str(),
+            row.manifest.as_str(),
+            row.ecosystem.as_str(),
+            row.package.as_str(),
+        ));
         if !found && row.state == "open" {
             sqlx::query("UPDATE dependabot_alerts SET state='fixed',fixed_at=$3,updated_at=$3 WHERE repo_id=$1 AND number=$2").bind(repo).bind(row.number).bind(now).execute(&mut **tx).await?;
         }
@@ -182,7 +249,14 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64, pinne
     drop(matched);
     let mut next = previous.last().map_or(1, |r| r.number + 1);
     for (p, a, v) in matches {
-        let old = known.get(&(a["ghsa_id"].as_str().unwrap(), p.manifest.as_str(), p.ecosystem.as_str(), p.name.as_str())).copied();
+        let old = known
+            .get(&(
+                a["ghsa_id"].as_str().unwrap(),
+                p.manifest.as_str(),
+                p.ecosystem.as_str(),
+                p.name.as_str(),
+            ))
+            .copied();
         let number = old.map_or(next, |r| r.number);
         if old.is_none() {
             next += 1;
@@ -203,10 +277,16 @@ pub(crate) async fn refresh(tx: &mut Transaction<'_, Postgres>, repo: i64, pinne
     }
     Ok(())
 }
-async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: &Actor, repo: i64, write: bool) -> Result<()> {
+async fn authorize(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &Actor,
+    repo: i64,
+    write: bool,
+) -> Result<()> {
     ensure!(
         super::discussions::lock_security_authority(tx, actor.user_id, repo, write).await?
-            && super::credentials::repository(tx, actor, repo, "vulnerability_alerts", write).await?,
+            && super::credentials::repository(tx, actor, repo, "vulnerability_alerts", write)
+                .await?,
         Refusal::Denied
     );
     let settings: Option<String> = sqlx::query_scalar(
@@ -268,7 +348,10 @@ pub async fn organization_repositories(pool: &PgPool, actor: i64, org: i64) -> R
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users active ON active.id=owners.user_id WHERE owners.org_id=m.org_id AND owners.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))").bind(org).bind(actor).fetch_one(&mut *tx).await?;
-    ensure!(allowed || super::organizations::roles::manages_security(&mut tx, actor, org).await?, Refusal::Denied);
+    ensure!(
+        allowed || super::organizations::roles::manages_security(&mut tx, actor, org).await?,
+        Refusal::Denied
+    );
     let rows = sqlx::query_scalar(
         "SELECT r.id FROM repositories r LEFT JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND COALESCE(s.security_and_analysis::jsonb #>> '{dependabot_alerts,status}', '') <> 'disabled' ORDER BY r.id",
     )

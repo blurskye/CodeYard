@@ -754,7 +754,8 @@ pub(crate) async fn upload_asset(
     };
     let label = field(&fields, "label");
     let label = label.trim();
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     match releases::add_asset(
         &ctx.state.pool,
         &ctx.state.storage,

@@ -86,7 +86,9 @@ pub async fn list(
     let access = super::repositories::access::USER_REPO_ACCESS_SQL;
     let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "c");
     let phase = crate::backend::db::action_runs::state_sql(false, "c");
-    let filter = format!("{FILTER} AND (json_array_length($6)=0 OR ({phase}) IN (SELECT value FROM json_each($6)))");
+    let filter = format!(
+        "{FILTER} AND (json_array_length($6)=0 OR ({phase}) IN (SELECT value FROM json_each($6)))"
+    );
     let readable:bool=sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND (NOT r.is_private OR (NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=1))))")).bind(repo).bind(actor).fetch_one(&mut *tx).await?;
     if !readable {
         return Ok(None);

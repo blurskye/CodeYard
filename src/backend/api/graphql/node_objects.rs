@@ -20,7 +20,8 @@ pub(super) async fn review(
     let repo = repository::by_id(pull.repo_id, request).await?;
     request.authorize(repo.id, "pull-requests", false).await?;
     if row.state == "pending"
-        && request.private_viewer(repo.id, "pull-requests").await? != Some(row.author_id) {
+        && request.private_viewer(repo.id, "pull-requests").await? != Some(row.author_id)
+    {
         return Err(missing());
     }
     Ok(
@@ -53,7 +54,8 @@ pub(super) async fn review_comment(
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
         if review.state == "pending"
-            && request.private_viewer(repo.id, "pull-requests").await? != Some(review.author_id) {
+            && request.private_viewer(repo.id, "pull-requests").await? != Some(review.author_id)
+        {
             return Err(missing());
         }
     }
@@ -70,9 +72,7 @@ pub(super) async fn review_comment(
 pub(super) async fn release(row: &db::models::Release, request: &RequestContext) -> Result<Value> {
     let repo = repository::by_id(row.repo_id, request).await?;
     request.authorize(repo.id, "contents", false).await?;
-    if row.is_draft
-        && !super::release::drafts_visible(&repo, request).await?
-    {
+    if row.is_draft && !super::release::drafts_visible(&repo, request).await? {
         return Err(missing());
     }
     Ok(
@@ -115,8 +115,11 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         .map_err(unavailable)?
         .ok_or_else(missing)?;
     let repo = repository::by_id(repo_id, request).await?;
-    let scope = if kind == "M" { repository::shared_read_scope(repo.id, &["issues", "pull-requests"], request).await? }
-        else { "contents" };
+    let scope = if kind == "M" {
+        repository::shared_read_scope(repo.id, &["issues", "pull-requests"], request).await?
+    } else {
+        "contents"
+    };
     request
         .authorize(
             repo.id,
@@ -167,11 +170,16 @@ pub(super) async fn database(kind: &str, id: i64, request: &RequestContext) -> R
         "PRRC" => {
             review_comment(
                 &db::pull_requests::reviews::get_visible_pull_request_comment(
-                    pool, id, request.private_viewer(repo.id, "pull-requests").await?.unwrap_or(-1),
+                    pool,
+                    id,
+                    request
+                        .private_viewer(repo.id, "pull-requests")
+                        .await?
+                        .unwrap_or(-1),
                 )
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?,
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?,
                 request,
             )
             .await

@@ -31,20 +31,35 @@ pub struct CreatePullRequestCommentRequest {
     pub review_id: Option<i64>,
 }
 
-pub(super) type DiffCache = std::collections::HashMap<(String, String, String), std::sync::Arc<crate::backend::git::DiffInfo>>;
+pub(super) type DiffCache = std::collections::HashMap<
+    (String, String, String),
+    std::sync::Arc<crate::backend::git::DiffInfo>,
+>;
 
 pub(super) struct PreparedComment {
     pub request: CreatePullRequestCommentRequest,
     reply_parent: Option<(i64, i64)>,
 }
 impl PreparedComment {
-    pub(super) fn input<'a>(&'a self, pull: &'a db::models::PullRequest, author: i64) -> db::pull_requests::reviews::NewPullRequestComment<'a> {
+    pub(super) fn input<'a>(
+        &'a self,
+        pull: &'a db::models::PullRequest,
+        author: i64,
+    ) -> db::pull_requests::reviews::NewPullRequestComment<'a> {
         let req = &self.request;
         db::pull_requests::reviews::NewPullRequestComment {
-            pr_id: pull.id, author_id: author, body: &req.body, path: req.path.as_deref(), line: req.line, side: req.side.as_deref(),
-            start_line: req.start_line, start_side: req.start_side.as_deref(), commit_sha: req.commit_sha.as_deref(),
+            pr_id: pull.id,
+            author_id: author,
+            body: &req.body,
+            path: req.path.as_deref(),
+            line: req.line,
+            side: req.side.as_deref(),
+            start_line: req.start_line,
+            start_side: req.start_side.as_deref(),
+            commit_sha: req.commit_sha.as_deref(),
             in_reply_to_comment_id: req.in_reply_to_comment_id,
-            expected_revisions: (req.path.is_some() && req.in_reply_to_comment_id.is_none()).then_some((pull.head_sha.as_str(), pull.base_sha.as_str())),
+            expected_revisions: (req.path.is_some() && req.in_reply_to_comment_id.is_none())
+                .then_some((pull.head_sha.as_str(), pull.base_sha.as_str())),
         }
     }
 }
@@ -300,16 +315,45 @@ async fn check_diff_anchor(
     }
     // Only the selected file's patch is read, so another file's size cannot block this comment.
     // It starts where the diff page starts, at a retargeted stack layer's fork point.
-    let key = (pull_request.diff_base().to_owned(), head.to_owned(), path.to_owned());
+    let key = (
+        pull_request.diff_base().to_owned(),
+        head.to_owned(),
+        path.to_owned(),
+    );
     if !cache.contains_key(&key) {
-        let diff = repo_store(repository, cluster).diff_file(&key.0, &key.1, path).await.map_err(|error| {
-            if error.is_response_too_large() { OperationError::TooLarge { code: "response_too_large", message: "The diff of this file is too large to comment on.".to_owned() } }
-            else { OperationError::Unavailable { code: "git_unavailable", message: "The pull request diff is temporarily unavailable".to_owned() } }
-        })?;
-        let bytes = |diff: &crate::backend::git::DiffInfo| diff.files.iter().map(|file| file.patch.len() + file.filename.len() + file.previous_filename.as_ref().map_or(0, String::len) + 512).sum::<usize>();
+        let diff = repo_store(repository, cluster)
+            .diff_file(&key.0, &key.1, path)
+            .await
+            .map_err(|error| {
+                if error.is_response_too_large() {
+                    OperationError::TooLarge {
+                        code: "response_too_large",
+                        message: "The diff of this file is too large to comment on.".to_owned(),
+                    }
+                } else {
+                    OperationError::Unavailable {
+                        code: "git_unavailable",
+                        message: "The pull request diff is temporarily unavailable".to_owned(),
+                    }
+                }
+            })?;
+        let bytes = |diff: &crate::backend::git::DiffInfo| {
+            diff.files
+                .iter()
+                .map(|file| {
+                    file.patch.len()
+                        + file.filename.len()
+                        + file.previous_filename.as_ref().map_or(0, String::len)
+                        + 512
+                })
+                .sum::<usize>()
+        };
         let held = cache.values().map(|diff| bytes(diff)).sum::<usize>();
         if held.saturating_add(bytes(&diff)) > 16 * 1024 * 1024 {
-            return Err(OperationError::TooLarge { code: "response_too_large", message: "The review's selected patches exceed the validation budget.".into() });
+            return Err(OperationError::TooLarge {
+                code: "response_too_large",
+                message: "The review's selected patches exceed the validation budget.".into(),
+            });
         }
         cache.insert(key.clone(), std::sync::Arc::new(diff));
     }
@@ -417,8 +461,25 @@ pub async fn create_pull_request_comment(
             message: "Pull request not found".to_owned(),
         })?;
 
-    let prepared = prepare_comment(pool, cluster, &repository, &pull_request, req, &mut DiffCache::new()).await?;
-    save_comment(pool, broadcaster, &user, &repository, &pull_request, (owner, repo), prepared).await
+    let prepared = prepare_comment(
+        pool,
+        cluster,
+        &repository,
+        &pull_request,
+        req,
+        &mut DiffCache::new(),
+    )
+    .await?;
+    save_comment(
+        pool,
+        broadcaster,
+        &user,
+        &repository,
+        &pull_request,
+        (owner, repo),
+        prepared,
+    )
+    .await
 }
 
 pub(super) async fn prepare_comment(
@@ -430,7 +491,12 @@ pub(super) async fn prepare_comment(
     cache: &mut DiffCache,
 ) -> Result<PreparedComment, OperationError> {
     if req.repository_id.is_some_and(|id| id != repository.id) {
-        return Err(OperationError::Conflict { code: "revision_conflict", message: "The repository changed after this comment was started. Reload before commenting.".into() });
+        return Err(OperationError::Conflict {
+            code: "revision_conflict",
+            message:
+                "The repository changed after this comment was started. Reload before commenting."
+                    .into(),
+        });
     }
     if let Err(message) = crate::backend::issues::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
@@ -627,7 +693,10 @@ pub(super) async fn prepare_comment(
     req.commit_sha = commit_sha;
     req.in_reply_to_comment_id = reply_root;
     req.pending = pending;
-    Ok(PreparedComment { request: req, reply_parent })
+    Ok(PreparedComment {
+        request: req,
+        reply_parent,
+    })
 }
 
 async fn save_comment(
@@ -644,8 +713,14 @@ async fn save_comment(
     let pending = req.pending;
     let reply_parent = prepared.reply_parent;
     let input = prepared.input(pull_request, user.id);
-    let (comment, deferred) = db::pull_requests::reviews::insert_comment(pool, input, pending || req.review_id.is_some(), req.review_id)
-        .await.map_err(super::write_error)?;
+    let (comment, deferred) = db::pull_requests::reviews::insert_comment(
+        pool,
+        input,
+        pending || req.review_id.is_some(),
+        req.review_id,
+    )
+    .await
+    .map_err(super::write_error)?;
     // Submission owns publication for every comment that was pending when inserted.
     if deferred {
         return Ok(comment);
@@ -710,15 +785,7 @@ async fn save_comment(
     crate::backend::notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
         .await;
 
-    emit_comment_webhook(
-        pool,
-        repository,
-        pull_request,
-        &comment,
-        "created",
-        user.id,
-    )
-    .await;
+    emit_comment_webhook(pool, repository, pull_request, &comment, "created", user.id).await;
     Ok(comment)
 }
 
@@ -868,7 +935,11 @@ pub async fn edit_pull_request_comment(
     if repository.is_archived {
         return Err(archived_refusal());
     }
-    if previous.author_id != user.id && !crate::backend::repositories::access::can_write(pool, &user, &repository).await.map_err(database_error)? {
+    if previous.author_id != user.id
+        && !crate::backend::repositories::access::can_write(pool, &user, &repository)
+            .await
+            .map_err(database_error)?
+    {
         return Err(OperationError::Denied {
             code: "comment_forbidden",
             message: "Only the author or a repository writer can edit this comment.".to_owned(),

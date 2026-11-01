@@ -1,36 +1,69 @@
 use crate::backend::{
     db::dependency_graph::{
-        self, GraphError, Reader, Submission, SBOM_REPORTS_PER_REPOSITORY, SBOM_REPORT_LIFETIME_SECONDS,
+        self, GraphError, Reader, Submission, SBOM_REPORTS_PER_REPOSITORY,
+        SBOM_REPORT_LIFETIME_SECONDS,
     },
     dependency_graph::Snapshot,
 };
 use sqlx::SqlitePool;
 
-pub(super) async fn enabled_in(connection: &mut sqlx::SqliteConnection, repo: i64) -> Result<bool, sqlx::Error> {
-    sqlx::query_scalar(&format!("SELECT {}", dependency_graph::enabled_sql(false, "$1")))
-        .bind(repo).fetch_one(connection).await
+pub(super) async fn enabled_in(
+    connection: &mut sqlx::SqliteConnection,
+    repo: i64,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(&format!(
+        "SELECT {}",
+        dependency_graph::enabled_sql(false, "$1")
+    ))
+    .bind(repo)
+    .fetch_one(connection)
+    .await
 }
 
-async fn authorize_in(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, reader: &Reader, repo: i64) -> Result<(), GraphError> {
+async fn authorize_in(
+    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    reader: &Reader,
+    repo: i64,
+) -> Result<(), GraphError> {
     match reader {
         Reader::Viewer(Some(actor)) => {
-            if !super::repositories::access::lock_readable_repository_in_transaction(tx, actor.user_id, repo).await.map_err(GraphError::Authority)?
-                || !super::credentials::repository(tx, actor, repo, "contents", false).await.map_err(GraphError::Authority)? {
+            if !super::repositories::access::lock_readable_repository_in_transaction(
+                tx,
+                actor.user_id,
+                repo,
+            )
+            .await
+            .map_err(GraphError::Authority)?
+                || !super::credentials::repository(tx, actor, repo, "contents", false)
+                    .await
+                    .map_err(GraphError::Authority)?
+            {
                 return Err(GraphError::Denied);
             }
         }
         Reader::Viewer(None) | Reader::Scan(_) => {
             let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON FALSE WHERE r.id=$1 AND NOT r.is_gist AND ($2 OR {}) AND (NOT $2 OR NOT r.is_archived))", super::repositories::access::readable_condition()))
                 .bind(repo).bind(matches!(reader, Reader::Scan(_))).fetch_one(&mut **tx).await?;
-            if !visible { return Err(GraphError::Denied); }
+            if !visible {
+                return Err(GraphError::Denied);
+            }
         }
     }
     if let Reader::Scan(generation) = reader {
-        let job: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM vulnerability_jobs WHERE repo_id=$1 AND generation=$2)")
-            .bind(repo).bind(generation).fetch_one(&mut **tx).await?;
-        if !job { return Err(GraphError::Denied); }
+        let job: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM vulnerability_jobs WHERE repo_id=$1 AND generation=$2)",
+        )
+        .bind(repo)
+        .bind(generation)
+        .fetch_one(&mut **tx)
+        .await?;
+        if !job {
+            return Err(GraphError::Denied);
+        }
     }
-    if !enabled_in(tx, repo).await? { return Err(GraphError::Disabled); }
+    if !enabled_in(tx, repo).await? {
+        return Err(GraphError::Disabled);
+    }
     Ok(())
 }
 
@@ -75,16 +108,27 @@ pub async fn submit(
     {
         return Err(GraphError::Denied);
     }
-    if !super::credentials::repository(&mut tx, &credential, repo, "contents", true).await.map_err(GraphError::Authority)? {
+    if !super::credentials::repository(&mut tx, &credential, repo, "contents", true)
+        .await
+        .map_err(GraphError::Authority)?
+    {
         return Err(GraphError::Denied);
     }
-    if !enabled_in(&mut tx, repo).await? { return Err(GraphError::Disabled); }
+    if !enabled_in(&mut tx, repo).await? {
+        return Err(GraphError::Disabled);
+    }
     let mut submission: Submission = sqlx::query_as("INSERT INTO dependency_snapshots(repo_id,sha,reference,correlator,detector,scanned,body) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id,created_at")
         .bind(repo).bind(snapshot.sha.to_ascii_lowercase()).bind(&snapshot.reference)
         .bind(&snapshot.job.correlator).bind(&snapshot.detector.name).bind(snapshot.scanned)
         .bind(serde_json::to_string(snapshot)?).fetch_one(&mut *tx).await?;
     drop_replaced_snapshots(&mut tx, repo, snapshot).await?;
-    let _ = bounded_snapshot_ids(&mut tx, repo, Some(&snapshot.reference), Some(&snapshot.sha.to_ascii_lowercase())).await?;
+    let _ = bounded_snapshot_ids(
+        &mut tx,
+        repo,
+        Some(&snapshot.reference),
+        Some(&snapshot.sha.to_ascii_lowercase()),
+    )
+    .await?;
     submission.updated = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM dependency_snapshots WHERE repo_id=$1 AND reference=$2 AND correlator=$3 AND detector=$4 AND scanned>$5)")
         .bind(repo).bind(&snapshot.reference).bind(&snapshot.job.correlator).bind(&snapshot.detector.name).bind(snapshot.scanned).fetch_one(&mut *tx).await?;
     tx.commit().await?;
@@ -93,21 +137,39 @@ pub async fn submit(
 
 /// The caller retains its read snapshot or BEGIN IMMEDIATE reservation through payload loading.
 pub(super) async fn bounded_snapshot_ids(
-    connection: &mut sqlx::SqliteConnection, repo: i64, reference: Option<&str>, sha: Option<&str>,
+    connection: &mut sqlx::SqliteConnection,
+    repo: i64,
+    reference: Option<&str>,
+    sha: Option<&str>,
 ) -> Result<Vec<i64>, GraphError> {
-    let rows: Vec<(i64, i64)> = sqlx::query_as(&dependency_graph::snapshot_candidates_sql(false, reference.is_some(), sha.is_some()))
-        .bind(repo).bind(reference).bind(sha).fetch_all(connection).await?;
+    let rows: Vec<(i64, i64)> = sqlx::query_as(&dependency_graph::snapshot_candidates_sql(
+        false,
+        reference.is_some(),
+        sha.is_some(),
+    ))
+    .bind(repo)
+    .bind(reference)
+    .bind(sha)
+    .fetch_all(connection)
+    .await?;
     dependency_graph::snapshot_ids(rows)
 }
 
 pub(super) async fn snapshots_in(
-    connection: &mut sqlx::SqliteConnection, repo: i64, reference: Option<&str>, sha: Option<&str>,
+    connection: &mut sqlx::SqliteConnection,
+    repo: i64,
+    reference: Option<&str>,
+    sha: Option<&str>,
 ) -> Result<Vec<Snapshot>, GraphError> {
     let ids = bounded_snapshot_ids(connection, repo, reference, sha).await?;
-    if ids.is_empty() { return Ok(Vec::new()); }
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
     let rows: Vec<String> = sqlx::query_scalar("SELECT body FROM dependency_snapshots WHERE id IN (SELECT value FROM json_each($1)) ORDER BY body")
         .bind(serde_json::to_string(&ids)?).fetch_all(connection).await?;
-    rows.into_iter().map(|body| serde_json::from_str(&body).map_err(GraphError::Stored)).collect()
+    rows.into_iter()
+        .map(|body| serde_json::from_str(&body).map_err(GraphError::Stored))
+        .collect()
 }
 
 pub async fn snapshots(
@@ -125,7 +187,12 @@ pub async fn snapshots(
 }
 
 /// The latest submitted revision is one coherent stored inventory, not per-correlator tips.
-pub async fn latest_snapshots(pool: &SqlitePool, reader: &Reader, repo: i64, reference: &str) -> Result<Vec<Snapshot>, GraphError> {
+pub async fn latest_snapshots(
+    pool: &SqlitePool,
+    reader: &Reader,
+    repo: i64,
+    reference: &str,
+) -> Result<Vec<Snapshot>, GraphError> {
     let mut tx = pool.begin().await?;
     authorize_in(&mut tx, reader, repo).await?;
     let sha: Option<String> = sqlx::query_scalar("SELECT sha FROM dependency_snapshots WHERE repo_id=?1 AND reference=?2 ORDER BY id DESC LIMIT 1")
@@ -172,7 +239,12 @@ pub async fn prune_expired_reports(pool: &SqlitePool) -> Result<u64, GraphError>
         .rows_affected())
 }
 
-pub async fn report(pool: &SqlitePool, reader: &Reader, repo: i64, id: &str) -> Result<Option<String>, GraphError> {
+pub async fn report(
+    pool: &SqlitePool,
+    reader: &Reader,
+    repo: i64,
+    id: &str,
+) -> Result<Option<String>, GraphError> {
     let mut tx = pool.begin().await?;
     authorize_in(&mut tx, reader, repo).await?;
     let body = sqlx::query_scalar("SELECT body FROM dependency_sbom_reports WHERE repo_id=$1 AND id=$2 AND created_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-' || $3 || ' seconds')")

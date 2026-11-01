@@ -3,15 +3,29 @@ use crate::backend::db::repositories::access::CollaboratorChange;
 use anyhow::Result;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
-pub async fn git_access(pool: &SqlitePool, user_id: i64, repo_id: i64, write: bool) -> Result<AccessLevel> {
+pub async fn git_access(
+    pool: &SqlitePool,
+    user_id: i64,
+    repo_id: i64,
+    write: bool,
+) -> Result<AccessLevel> {
     let level: Option<i16> = sqlx::query_scalar(&format!("SELECT CASE WHEN u.is_banned OR u.must_change_password OR ($3 AND r.is_archived) THEN 0 WHEN r.is_gist THEN CASE WHEN EXISTS(SELECT 1 FROM gists g JOIN users own ON own.id=r.owner_user_id WHERE g.repo_id=r.id AND g.ready AND NOT own.is_banned) THEN CASE WHEN r.owner_user_id=u.id THEN 6 WHEN NOT $3 THEN 1 ELSE 0 END ELSE 0 END WHEN r.owner_kind='user' AND u.is_admin THEN 6 ELSE ({USER_REPO_ACCESS_SQL}) END FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2"))
         .bind(user_id).bind(repo_id).bind(write).fetch_optional(pool).await?;
     Ok(AccessLevel::from(level.unwrap_or(0)))
 }
 
-pub async fn author_associations(pool: &SqlitePool, repo_id: i64, users: &[i64]) -> Result<Vec<(i64, String)>> {
-    anyhow::ensure!(users.len() <= 500, "Author association batch exceeds its limit");
-    if users.is_empty() { return Ok(Vec::new()); }
+pub async fn author_associations(
+    pool: &SqlitePool,
+    repo_id: i64,
+    users: &[i64],
+) -> Result<Vec<(i64, String)>> {
+    anyhow::ensure!(
+        users.len() <= 500,
+        "Author association batch exceeds its limit"
+    );
+    if users.is_empty() {
+        return Ok(Vec::new());
+    }
     Ok(sqlx::query_as(&format!("SELECT u.id,CASE WHEN r.owner_kind='user' AND r.owner_user_id=u.id THEN 'OWNER' WHEN NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships m JOIN organizations o ON o.id=m.org_id WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) THEN 'MEMBER' WHEN ({USER_REPO_ACCESS_SQL}) >= CASE WHEN EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level>0) THEN 1 ELSE 3 END THEN 'COLLABORATOR' ELSE 'NONE' END FROM repositories r CROSS JOIN users u WHERE r.id=?1 AND u.id IN (SELECT value FROM json_each(?2))"))
         .bind(repo_id).bind(serde_json::to_string(users)?).fetch_all(pool).await?)
 }
@@ -161,7 +175,9 @@ pub(crate) fn readable_condition() -> String {
 /// Read-only callers retain one snapshot; effectful callers reserve BEGIN IMMEDIATE first.
 /// Archival and interaction restrictions do not remove repository read access.
 pub(crate) async fn lock_readable_repository_in_transaction(
-    connection: &mut sqlx::SqliteConnection, user_id: i64, repo_id: i64,
+    connection: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    repo_id: i64,
 ) -> Result<bool> {
     Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", readable_condition()))
         .bind(user_id).bind(repo_id).fetch_one(connection).await?)

@@ -64,11 +64,17 @@ fn deleted_entries(root: &Path) -> Result<Vec<(u64, String, PathBuf)>> {
 pub(crate) fn deleted_copies(root: &Path) -> Result<std::collections::HashMap<String, PathBuf>> {
     let mut copies = std::collections::HashMap::<String, (u64, PathBuf)>::new();
     for (seconds, name, path) in deleted_entries(root)? {
-        if copies.get(&name).is_none_or(|(previous, _)| seconds >= *previous) {
+        if copies
+            .get(&name)
+            .is_none_or(|(previous, _)| seconds >= *previous)
+        {
             copies.insert(name, (seconds, path));
         }
     }
-    Ok(copies.into_iter().map(|(name, (_, path))| (name, path)).collect())
+    Ok(copies
+        .into_iter()
+        .map(|(name, (_, path))| (name, path))
+        .collect())
 }
 
 /// Removes the kept deleted repositories under `root` older than `window`.
@@ -87,7 +93,10 @@ pub(crate) fn remove_expired_deleted(root: &Path, window: Duration) -> Result<us
             }
         }
     }
-    ensure!(failed == 0, "Could not expire {failed} retained repositories; removed {removed}");
+    ensure!(
+        failed == 0,
+        "Could not expire {failed} retained repositories; removed {removed}"
+    );
     Ok(removed)
 }
 
@@ -168,16 +177,26 @@ async fn head_resolves(path: &Path) -> Result<bool> {
     let mut command = git(path)?;
     command.args(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
     let output = process::run(command, b"", OUTPUT_LIMIT, TIMEOUT).await?;
-    if output.status.success() { return Ok(true); }
-    ensure!(output.status.code() == Some(1), "Git could not resolve backup HEAD");
+    if output.status.success() {
+        return Ok(true);
+    }
+    ensure!(
+        output.status.code() == Some(1),
+        "Git could not resolve backup HEAD"
+    );
     let mut symbolic = git(path)?;
     symbolic.args(["symbolic-ref", "-q", "HEAD"]);
     let reference = run(symbolic, b"").await?;
-    let reference = std::str::from_utf8(&reference)?.strip_suffix('\n').context("Invalid symbolic HEAD")?;
+    let reference = std::str::from_utf8(&reference)?
+        .strip_suffix('\n')
+        .context("Invalid symbolic HEAD")?;
     let mut exists = git(path)?;
     exists.args(["show-ref", "--verify", "--quiet", reference]);
     let output = process::run(exists, b"", OUTPUT_LIMIT, TIMEOUT).await?;
-    ensure!(output.status.code() == Some(1), "Backup HEAD is not a verified unborn branch");
+    ensure!(
+        output.status.code() == Some(1),
+        "Backup HEAD is not a verified unborn branch"
+    );
     Ok(false)
 }
 
@@ -191,7 +210,9 @@ const PACK_ATTEMPTS: usize = 4;
 /// that replaced one being copied is not missed.
 fn copy_missing_objects(objects: &Path, copy: &Path) -> Result<()> {
     std::fs::create_dir_all(copy)?;
-    if let Some(parent) = copy.parent() { std::fs::File::open(parent)?.sync_all()?; }
+    if let Some(parent) = copy.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
     for entry in std::fs::read_dir(objects)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -221,7 +242,9 @@ fn copy_new_files(from: &Path, to: &Path) -> Result<bool> {
         Err(error) => return Err(error.into()),
     };
     std::fs::create_dir_all(to)?;
-    if let Some(parent) = to.parent() { std::fs::File::open(parent)?.sync_all()?; }
+    if let Some(parent) = to.parent() {
+        std::fs::File::open(parent)?.sync_all()?;
+    }
     let mut changed = false;
     for entry in entries {
         let entry = entry?;
@@ -275,17 +298,29 @@ pub(crate) async fn check(path: &Path) -> Result<Option<String>> {
 }
 
 /// Resolve commit IDs in bounded batches, retaining the supplied identity for annotated tags.
-pub(crate) async fn existing_commits(path: &Path, ids: &[String]) -> Result<std::collections::HashSet<String>> {
+pub(crate) async fn existing_commits(
+    path: &Path,
+    ids: &[String],
+) -> Result<std::collections::HashSet<String>> {
     let mut found = std::collections::HashSet::new();
     for batch in ids.chunks(1024) {
-        anyhow::ensure!(batch.iter().all(crate::backend::git::is_full_commit_id), "invalid commit ID");
-        let input = batch.iter().map(|id| format!("{id}^{{commit}}\n")).collect::<String>();
+        anyhow::ensure!(
+            batch.iter().all(crate::backend::git::is_full_commit_id),
+            "invalid commit ID"
+        );
+        let input = batch
+            .iter()
+            .map(|id| format!("{id}^{{commit}}\n"))
+            .collect::<String>();
         let mut command = git(path)?;
         command.args(["cat-file", "--batch-check"]);
         let output = run(command, input.as_bytes()).await?;
         let output = String::from_utf8(output)?;
         let lines = output.lines().collect::<Vec<_>>();
-        anyhow::ensure!(lines.len() == batch.len(), "incomplete commit existence response");
+        anyhow::ensure!(
+            lines.len() == batch.len(),
+            "incomplete commit existence response"
+        );
         for (id, line) in batch.iter().zip(lines) {
             if line.split_whitespace().nth(1) == Some("commit") {
                 found.insert(id.clone());
@@ -308,7 +343,10 @@ pub(crate) async fn head_branch(path: &Path) -> Result<Option<String>> {
     let mut command = git(path)?;
     command.args(["symbolic-ref", "-q", "HEAD"]);
     let output = process::run(command, b"", OUTPUT_LIMIT, TIMEOUT).await?;
-    let target = String::from_utf8_lossy(&output.stdout).strip_suffix('\n').unwrap_or_default().to_owned();
+    let target = String::from_utf8_lossy(&output.stdout)
+        .strip_suffix('\n')
+        .unwrap_or_default()
+        .to_owned();
     let Some(branch) = target.strip_prefix("refs/heads/") else {
         return Ok(None);
     };
@@ -444,7 +482,10 @@ mod tests {
         repack.args(["repack", "-a", "-d", "-q"]);
         run(repack, b"").await.unwrap();
         mirror(&source, &copy).await.unwrap();
-        assert_eq!(packs(&copy), packs(&source).union(&first_packs).cloned().collect());
+        assert_eq!(
+            packs(&copy),
+            packs(&source).union(&first_packs).cloned().collect()
+        );
         assert!(git2::Repository::open_bare(&copy)
             .unwrap()
             .find_commit(first)
@@ -460,7 +501,10 @@ mod tests {
 
         retire(&repository).unwrap();
         assert!(!repository.exists());
-        let kept = deleted_copies(root.path()).unwrap().remove("one.git").unwrap();
+        let kept = deleted_copies(root.path())
+            .unwrap()
+            .remove("one.git")
+            .unwrap();
         assert!(kept.join("HEAD").is_file());
         assert_eq!(deleted_copies(root.path()).unwrap().remove("two.git"), None);
         // Retiring a repository that is already gone is not an error.

@@ -233,7 +233,11 @@ async fn native_propose(
             let label = labels
                 .iter()
                 .find(|l| l.name == target)
-                .or_else(|| labels.iter().find(|l| l.name.to_lowercase() == target.to_lowercase()))
+                .or_else(|| {
+                    labels
+                        .iter()
+                        .find(|l| l.name.to_lowercase() == target.to_lowercase())
+                })
                 .ok_or_else(invalid)?;
             Some(label.id)
         }
@@ -267,12 +271,23 @@ async fn native_propose(
         rationale: Some(field(form, "rationale")).filter(|s| !s.is_empty()),
         confidence: Some(field(form, "confidence")).filter(|s| !s.is_empty()),
     };
-    db::suggestions::propose(&ctx.state.pool, repo.id, actor, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), issue, &p, None)
-        .await
-        .map_err(|error| {
-            let (status, message) = failure(&error);
-            ctx.error(status, &message)
-        })?;
+    db::suggestions::propose(
+        &ctx.state.pool,
+        repo.id,
+        actor,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
+        issue,
+        &p,
+        None,
+    )
+    .await
+    .map_err(|error| {
+        let (status, message) = failure(&error);
+        ctx.error(status, &message)
+    })?;
     Ok(())
 }
 pub(crate) async fn native_change(
@@ -310,7 +325,10 @@ pub(crate) async fn native_change(
             &ctx.state.pool,
             repo.record.id,
             actor.id,
-            &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                    .unwrap_or_default(),
+            ),
             field(&form, "enabled") == "true",
         )
         .await
@@ -333,7 +351,10 @@ pub(crate) async fn native_change(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 actor,
-                &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                        .unwrap_or_default(),
+                ),
                 (&repo.record, &owner),
                 (shown.id, id),
                 action == "approve",
@@ -397,19 +418,32 @@ pub async fn agent_propose(
         )
             .into_response()
     };
-    auth.repository_scope(&state.pool, repo.id, "issues", true).await.map_err(|error| {
-        use crate::backend::api::github::auth::ScopeError;
-        let status = match error {
-            ScopeError::Missing => StatusCode::NOT_FOUND,
-            ScopeError::Denied => StatusCode::FORBIDDEN,
-            ScopeError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
-        };
-        (status, Json(ApiError::new("token_scope", "Resource not accessible by token"))).into_response()
-    })?;
+    auth.repository_scope(&state.pool, repo.id, "issues", true)
+        .await
+        .map_err(|error| {
+            use crate::backend::api::github::auth::ScopeError;
+            let status = match error {
+                ScopeError::Missing => StatusCode::NOT_FOUND,
+                ScopeError::Denied => StatusCode::FORBIDDEN,
+                ScopeError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            (
+                status,
+                Json(ApiError::new(
+                    "token_scope",
+                    "Resource not accessible by token",
+                )),
+            )
+                .into_response()
+        })?;
     let scoped = db::oauth_apps::token(&state.pool, auth.token.id)
-        .await.map_err(unavailable)?.map(|token| {
+        .await
+        .map_err(unavailable)?
+        .map(|token| {
             crate::backend::identity::oauth_apps::allows(
-                &token.scopes, &format!("/repos/{owner}/{name}/issues/{number}/comments"), true,
+                &token.scopes,
+                &format!("/repos/{owner}/{name}/issues/{number}/comments"),
+                true,
             )
         });
     if scoped == Some(false) {
@@ -450,20 +484,42 @@ pub async fn agent_propose(
     })?;
     let target_repository = if action == Action::CloseIssue {
         if let Some(id) = input.target_id {
-            let missing = || (StatusCode::NOT_FOUND, Json(ApiError::new("not_found", "Issue not found"))).into_response();
-            let target = db::issues::get_issue_by_id(&state.pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
-            auth.repository_scope(&state.pool, target.repo_id, "issues", false).await.map_err(|error| {
-                match error {
-                    crate::backend::api::github::auth::ScopeError::Unavailable => unavailable(anyhow::anyhow!("Token policy unavailable")),
+            let missing = || {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError::new("not_found", "Issue not found")),
+                )
+                    .into_response()
+            };
+            let target = db::issues::get_issue_by_id(&state.pool, id)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            auth.repository_scope(&state.pool, target.repo_id, "issues", false)
+                .await
+                .map_err(|error| match error {
+                    crate::backend::api::github::auth::ScopeError::Unavailable => {
+                        unavailable(anyhow::anyhow!("Token policy unavailable"))
+                    }
                     _ => missing(),
-                }
-            })?;
-            let readable = db::repositories::access::readable_repository_ids(&state.pool, Some(auth.user.id), &[target.repo_id])
-                .await.map_err(unavailable)?;
-            if !readable.contains(&target.repo_id) { return Err(missing()); }
+                })?;
+            let readable = db::repositories::access::readable_repository_ids(
+                &state.pool,
+                Some(auth.user.id),
+                &[target.repo_id],
+            )
+            .await
+            .map_err(unavailable)?;
+            if !readable.contains(&target.repo_id) {
+                return Err(missing());
+            }
             Some(target.repo_id)
-        } else { None }
-    } else { None };
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let row = db::suggestions::propose(
         &state.pool,
         repo.id,

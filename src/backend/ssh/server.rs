@@ -30,11 +30,18 @@ fn open_host_key_file(path: &str) -> Result<std::fs::File> {
     let path = std::path::absolute(path)?;
     let uid = crate::backend::repositories::git_sessions::private_files::effective_uid();
     crate::backend::repositories::git_sessions::private_files::ancestors(
-        path.parent().context("Host key parent required")?, uid,
+        path.parent().context("Host key parent required")?,
+        uid,
     )?;
-    let file = std::fs::OpenOptions::new().read(true).custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(path)?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
     let meta = file.metadata()?;
-    anyhow::ensure!(meta.is_file() && meta.nlink() == 1 && (meta.uid() == uid || meta.uid() == 0), "Unsafe host key file");
+    anyhow::ensure!(
+        meta.is_file() && meta.nlink() == 1 && (meta.uid() == uid || meta.uid() == 0),
+        "Unsafe host key file"
+    );
     if meta.mode() & 0o077 != 0 {
         file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
@@ -56,7 +63,10 @@ fn write_host_key_file(path: &str, key_pem: &str) -> Result<()> {
     crate::backend::repositories::git_sessions::private_files::ancestors(parent, uid)?;
     match open_host_key_file(path) {
         Ok(_) => {}
-        Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
         Err(error) => return Err(error),
     }
     let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
@@ -270,7 +280,11 @@ struct PreAuthSlot {
 impl PreAuthSlot {
     fn release_global(&mut self) {
         if self.global {
-            self.admission.0.lock().unwrap_or_else(PoisonError::into_inner).total -= 1;
+            self.admission
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .total -= 1;
             self.global = false;
         }
     }
@@ -433,7 +447,9 @@ impl SshServer {
                 {
                     use std::io::Read;
                     let mut key = String::new();
-                    open_host_key_file(path)?.take(1024 * 1024).read_to_string(&mut key)?;
+                    open_host_key_file(path)?
+                        .take(1024 * 1024)
+                        .read_to_string(&mut key)?;
                     info!("Bootstrapping cluster SSH host key from {}", path);
                     key
                 } else {
@@ -451,7 +467,14 @@ impl SshServer {
             // configured file must not permanently poison the shared database.
             let key = russh::keys::decode_secret_key(&bootstrap_key, None)
                 .context("Failed to decode configured SSH host key")?;
-            anyhow::ensure!(Config::default().preferred.key.iter().any(|algorithm| *algorithm == key.algorithm()), "Unsupported SSH host key algorithm");
+            anyhow::ensure!(
+                Config::default()
+                    .preferred
+                    .key
+                    .iter()
+                    .any(|algorithm| *algorithm == key.algorithm()),
+                "Unsupported SSH host key algorithm"
+            );
             crate::backend::db::node_config::insert_cluster_ssh_host_key(&pool, &bootstrap_key)
                 .await?;
             let stored_key = crate::backend::db::node_config::get_cluster_ssh_host_key(&pool)
@@ -472,7 +495,13 @@ impl SshServer {
                     file.take(1024 * 1024).read_to_string(&mut bytes)?;
                     Some(bytes)
                 }
-                Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => None,
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    None
+                }
                 Err(error) => return Err(error),
             };
             if current.as_deref() != Some(cluster_key_pem.as_str()) {
@@ -511,10 +540,15 @@ impl SshServer {
     /// Accepts connections until `stop` is set. Then it closes the listener and returns
     /// once connections and Git tasks have ended, so the caller bounds that wait.
     pub async fn run(&mut self, addr: SocketAddr, stop: watch::Receiver<bool>) -> Result<()> {
-        self.run_listener(TcpListener::bind(addr).await?, stop).await
+        self.run_listener(TcpListener::bind(addr).await?, stop)
+            .await
     }
 
-    pub(crate) async fn run_listener(&mut self, socket: TcpListener, mut stop: watch::Receiver<bool>) -> Result<()> {
+    pub(crate) async fn run_listener(
+        &mut self,
+        socket: TcpListener,
+        mut stop: watch::Receiver<bool>,
+    ) -> Result<()> {
         info!("Starting SSH server on {}", socket.local_addr()?);
         let mut connections = JoinSet::new();
         loop {

@@ -47,9 +47,15 @@ pub async fn list_ci_jobs(
             .map_err(super::unavailable)?
             .ok_or_else(missing)?;
         ensure_repo_read_access(&state, &user, &repo).await?;
-        db::ci::list_filtered_ci_runs(&state.pool, user.id, Some(repo.id), &db::ci::CiRunFilter::default(), limit)
-            .await
-            .map_err(super::unavailable)?
+        db::ci::list_filtered_ci_runs(
+            &state.pool,
+            user.id,
+            Some(repo.id),
+            &db::ci::CiRunFilter::default(),
+            limit,
+        )
+        .await
+        .map_err(super::unavailable)?
     } else {
         // Current repository visibility is in SQL, BEFORE LIMIT; historical
         // triggering is not continuing private-resource authority.

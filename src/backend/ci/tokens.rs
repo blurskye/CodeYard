@@ -42,7 +42,13 @@ impl Permissions {
                     let level = match level.as_str() {
                         Some("none") => 0,
                         Some("read") if name != "id-token" => 1,
-                        Some("write") if codeyard_actions::workflow::permission_level_allowed(name, "write") => 2,
+                        Some("write")
+                            if codeyard_actions::workflow::permission_level_allowed(
+                                name, "write",
+                            ) =>
+                        {
+                            2
+                        }
                         _ => bail!("invalid workflow permission"),
                     };
                     result.insert(name.to_owned(), level);
@@ -66,7 +72,11 @@ impl Permissions {
         Self::jobs_from_yaml(&workflow, permissive, fork)
     }
 
-    fn jobs_from_yaml(workflow: &Value, permissive: bool, fork: bool) -> Result<BTreeMap<String, Self>> {
+    fn jobs_from_yaml(
+        workflow: &Value,
+        permissive: bool,
+        fork: bool,
+    ) -> Result<BTreeMap<String, Self>> {
         let default = if permissive {
             Self(
                 SCOPES
@@ -168,18 +178,38 @@ pub(crate) async fn issue_selected(
         policies: &mut BTreeMap<String, Permissions>,
     ) -> Result<()> {
         ensure!(
-            prefix.split_once(':').map_or(prefix, |(_, job)| job).matches('/').count() < codeyard_actions::workflow::MAX_REUSABLE_LEVELS,
+            prefix
+                .split_once(':')
+                .map_or(prefix, |(_, job)| job)
+                .matches('/')
+                .count()
+                < codeyard_actions::workflow::MAX_REUSABLE_LEVELS,
             "called workflow nesting exceeds limit"
         );
-        let yaml = definitions.get(path).ok_or_else(|| anyhow::anyhow!("missing called workflow"))?;
+        let yaml = definitions
+            .get(path)
+            .ok_or_else(|| anyhow::anyhow!("missing called workflow"))?;
         let mut jobs = Permissions::jobs_from_yaml(yaml, permissive, fork)?;
         if let Some(ceiling) = ceiling {
             let default = Permissions::parse(yaml.get("permissions"), ceiling, fork)?;
-            ensure!(default.0.iter().all(|(scope, level)| *level <= ceiling.0.get(scope).copied().unwrap_or(0)), "Called workflow permissions exceed caller permissions");
+            ensure!(
+                default
+                    .0
+                    .iter()
+                    .all(|(scope, level)| *level <= ceiling.0.get(scope).copied().unwrap_or(0)),
+                "Called workflow permissions exceed caller permissions"
+            );
             for (id, permissions) in &mut jobs {
                 let job = yaml.get("jobs").and_then(|jobs| jobs.get(id));
-                let requested = Permissions::parse(job.and_then(|job| job.get("permissions")), &default, fork)?;
-                ensure!(requested.0.iter().all(|(scope, level)| *level <= ceiling.0.get(scope).copied().unwrap_or(0)), "Called job permissions exceed caller permissions");
+                let requested =
+                    Permissions::parse(job.and_then(|job| job.get("permissions")), &default, fork)?;
+                ensure!(
+                    requested
+                        .0
+                        .iter()
+                        .all(|(scope, level)| *level <= ceiling.0.get(scope).copied().unwrap_or(0)),
+                    "Called job permissions exceed caller permissions"
+                );
                 *permissions = requested;
             }
         }
@@ -257,7 +287,16 @@ pub(crate) async fn issue_selected(
     }
     let values: BTreeMap<_, _> = policies
         .keys()
-        .map(|key| (key.clone(), format!("{}{}", crate::backend::identity::tokens::ACTIONS_PREFIX, super::runtime::secret())))
+        .map(|key| {
+            (
+                key.clone(),
+                format!(
+                    "{}{}",
+                    crate::backend::identity::tokens::ACTIONS_PREFIX,
+                    super::runtime::secret()
+                ),
+            )
+        })
         .collect();
     let stored: Vec<_> = policies
         .iter()
@@ -323,7 +362,10 @@ pub(crate) async fn issue_selected(
         };
         let workflow = &parsed[path];
         let root = key.split_once(':').map_or(path, |(root, _)| root);
-        let name = parsed[root].get("name").and_then(Value::as_str).unwrap_or(root);
+        let name = parsed[root]
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or(root);
         let environment = job
             .and_then(|job| workflow.get("jobs")?.get(job)?.get("environment"))
             .and_then(|env| {

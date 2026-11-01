@@ -138,9 +138,21 @@ async fn repositories(
         .ok_or_else(auth::required)?;
     let org = target(&state, &name).await?;
     let (offset, limit) = page.window()?;
-    let (count, rows) = outcome(data::repositories(&state.pool, actor.user.id, org.id, offset as i64, limit as i64)
-        .await.map_err(Error::unavailable)?)?;
-    let repositories: Vec<_> = rows.iter().map(crate::backend::webhooks::payloads::repository_snapshot).collect();
+    let (count, rows) = outcome(
+        data::repositories(
+            &state.pool,
+            actor.user.id,
+            org.id,
+            offset as i64,
+            limit as i64,
+        )
+        .await
+        .map_err(Error::unavailable)?,
+    )?;
+    let repositories: Vec<_> = rows
+        .iter()
+        .map(crate::backend::webhooks::payloads::repository_snapshot)
+        .collect();
     Ok((
         page.headers(&uri, count > (offset + limit) as i64)?,
         Json(json!({"total_count":count,"repositories":repositories})),

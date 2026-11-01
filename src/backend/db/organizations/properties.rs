@@ -12,10 +12,12 @@ pub const MAX_DEFINITIONS: usize = 100;
 pub const MAX_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_ALLOWED_VALUES: usize = 200;
 pub const MAX_VALUE_BYTES: usize = 1024;
-pub const MAX_FORM_VALUE_BYTES: usize = MAX_ALLOWED_VALUES * MAX_VALUE_BYTES + 2 * (MAX_ALLOWED_VALUES - 1);
+pub const MAX_FORM_VALUE_BYTES: usize =
+    MAX_ALLOWED_VALUES * MAX_VALUE_BYTES + 2 * (MAX_ALLOWED_VALUES - 1);
 
 pub(crate) fn effective_values(
-    definitions: &[Definition], rows: &std::collections::HashMap<i64, String>,
+    definitions: &[Definition],
+    rows: &std::collections::HashMap<i64, String>,
 ) -> Result<Vec<ValueInput>> {
     let mut result = Vec::new();
     let mut bytes = 0;
@@ -25,10 +27,15 @@ pub(crate) fn effective_values(
             None if definition.fields.require_explicit_values => None,
             None => definition.fields.default_value.clone(),
         };
-        if let Some(value) = &value { definition.fields.validate_value(value)?; }
+        if let Some(value) = &value {
+            definition.fields.validate_value(value)?;
+        }
         bytes += serde_json::to_string(&value)?.len() + definition.fields.property_name.len() + 64;
         ensure!(bytes <= 64 * 1024 * 1024, Refusal::TooLarge);
-        result.push(ValueInput { property_name: definition.fields.property_name.clone(), value });
+        result.push(ValueInput {
+            property_name: definition.fields.property_name.clone(),
+            value,
+        });
     }
     Ok(result)
 }
@@ -171,8 +178,10 @@ pub fn valid_name(name: &str) -> bool {
 }
 impl DefinitionInput {
     pub(crate) fn same_value_rules(&self, other: &Self) -> bool {
-        self.value_type == other.value_type && self.allowed_values == other.allowed_values
-            && self.required == other.required && self.require_explicit_values == other.require_explicit_values
+        self.value_type == other.value_type
+            && self.allowed_values == other.allowed_values
+            && self.required == other.required
+            && self.require_explicit_values == other.require_explicit_values
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -406,12 +415,20 @@ pub(crate) fn checked_changes(
     result.sort_unstable_by_key(|(id, _)| *id);
     Ok(result)
 }
-pub(crate) fn checked_catalog_bytes<'a>(fields: impl IntoIterator<Item = &'a DefinitionInput>) -> Result<()> {
+pub(crate) fn checked_catalog_bytes<'a>(
+    fields: impl IntoIterator<Item = &'a DefinitionInput>,
+) -> Result<()> {
     let mut bytes = 2usize;
     for definition in fields {
-        bytes = bytes.checked_add(serde_json::to_vec(definition)?.len() + 1)
+        bytes = bytes
+            .checked_add(serde_json::to_vec(definition)?.len() + 1)
             .filter(|bytes| *bytes <= MAX_CATALOG_BYTES)
-            .ok_or_else(|| invalid("properties", "The serialized property catalog must fit within 2 MiB"))?;
+            .ok_or_else(|| {
+                invalid(
+                    "properties",
+                    "The serialized property catalog must fit within 2 MiB",
+                )
+            })?;
     }
     Ok(())
 }
@@ -448,10 +465,15 @@ pub(crate) fn checked_definitions(
             "An organization can define at most 100 repository properties"
         )
     );
-    checked_catalog_bytes(existing.iter()
-        .filter(|definition| !seen.contains(&definition.fields.property_name.to_ascii_lowercase()))
-        .map(|definition| &definition.fields)
-        .chain(inputs.iter()))
+    checked_catalog_bytes(
+        existing
+            .iter()
+            .filter(|definition| {
+                !seen.contains(&definition.fields.property_name.to_ascii_lowercase())
+            })
+            .map(|definition| &definition.fields)
+            .chain(inputs.iter()),
+    )
 }
 #[derive(Debug)]
 pub struct RepositoryValues {

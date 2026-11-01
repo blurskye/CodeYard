@@ -21,9 +21,10 @@ pub(super) fn drafts(
             .filter(|name| data::valid_name(name))
         {
             if values.property_values.len() < data::MAX_DEFINITIONS {
-                values
-                    .property_values
-                    .insert(name.to_owned(), super::draft_value(form, key, data::MAX_FORM_VALUE_BYTES));
+                values.property_values.insert(
+                    name.to_owned(),
+                    super::draft_value(form, key, data::MAX_FORM_VALUE_BYTES),
+                );
             }
         }
         if let Some(name) = key
@@ -100,7 +101,8 @@ pub(super) async fn populate(
     data::checked_catalog_bytes(definitions.iter().map(|definition| &definition.fields))
         .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
     let owner = matches!(
-        orgs::get_organization_role(&ctx.state.pool, actor, org).await
+        orgs::get_organization_role(&ctx.state.pool, actor, org)
+            .await
             .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
         Applied(OrgRole::Owner)
     );

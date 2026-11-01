@@ -1,8 +1,8 @@
 //! Git database objects are written without publishing a reference.
+use super::repository::process;
 use super::repository::{MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES};
 use crate::backend::repositories::store::{ErrorKind, RepoError};
 use anyhow::{ensure, Context, Result};
-use super::repository::process;
 use git2::{ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, path::Path};
@@ -35,9 +35,13 @@ pub struct Signature {
 
 /// Admission for newly supplied identities. Legacy replay preserves already stored bytes.
 pub(crate) fn validate_identity(name: &str, email: &str) -> std::result::Result<(), RepoError> {
-    if name.trim().is_empty() || name.len() > MAX_COMMIT_NAME_BYTES
-        || email.trim().is_empty() || email.len() > MAX_COMMIT_EMAIL_BYTES
-        || [name, email].iter().any(|value| value.contains(['\0', '\n', '\r', '<', '>']))
+    if name.trim().is_empty()
+        || name.len() > MAX_COMMIT_NAME_BYTES
+        || email.trim().is_empty()
+        || email.len() > MAX_COMMIT_EMAIL_BYTES
+        || [name, email]
+            .iter()
+            .any(|value| value.contains(['\0', '\n', '\r', '<', '>']))
     {
         return Err(invalid("Invalid Git identity"));
     }
@@ -67,9 +71,13 @@ impl Signature {
             ),
             None => git2::Signature::now(&self.name, &self.email),
         };
-        signature.map_err(|error| if error.class() == git2::ErrorClass::Invalid {
-            invalid("Invalid Git identity").into()
-        } else { error.into() })
+        signature.map_err(|error| {
+            if error.class() == git2::ErrorClass::Invalid {
+                invalid("Invalid Git identity").into()
+            } else {
+                error.into()
+            }
+        })
     }
 }
 
@@ -175,32 +183,60 @@ pub(crate) async fn introduced_blobs(path: &Path, commit: &str) -> Result<Vec<Tr
     oid(commit)?;
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path).args([
-        "diff-tree", "--root", "--no-commit-id", "--diff-merges=first-parent", "-r", "-z",
-        "--raw", "--no-renames", "--no-abbrev", commit, "--",
+        "diff-tree",
+        "--root",
+        "--no-commit-id",
+        "--diff-merges=first-parent",
+        "-r",
+        "-z",
+        "--raw",
+        "--no-renames",
+        "--no-abbrev",
+        commit,
+        "--",
     ]);
-    let (status, output) = process::buffered(command, b"", 32 * 1024 * 1024, process::RPC_TIMEOUT).await?;
+    let (status, output) =
+        process::buffered(command, b"", 32 * 1024 * 1024, process::RPC_TIMEOUT).await?;
     ensure!(status.success(), "Git could not list introduced blobs");
     let mut fields = output.split(|byte| *byte == 0);
     let mut blobs = Vec::new();
     while let Some(header) = fields.next().filter(|field| !field.is_empty()) {
         let raw = fields.next().context("Git change has no path")?;
-        let parts = std::str::from_utf8(header)?.split_whitespace().collect::<Vec<_>>();
-        ensure!(parts.len() == 5 && parts[0].starts_with(':'), "Malformed Git change");
-        if parts[1] == "000000" || parts[1] == "160000" || parts[2] == parts[3] { continue; }
+        let parts = std::str::from_utf8(header)?
+            .split_whitespace()
+            .collect::<Vec<_>>();
+        ensure!(
+            parts.len() == 5 && parts[0].starts_with(':'),
+            "Malformed Git change"
+        );
+        if parts[1] == "000000" || parts[1] == "160000" || parts[2] == parts[3] {
+            continue;
+        }
         oid(parts[3])?;
-        blobs.push(TreeObjectEntry { path: String::from_utf8_lossy(raw).into_owned(), path_raw: raw.to_vec(), mode: parts[1].into(), kind: "blob".into(), sha: parts[3].into(), size: None });
+        blobs.push(TreeObjectEntry {
+            path: String::from_utf8_lossy(raw).into_owned(),
+            path_raw: raw.to_vec(),
+            mode: parts[1].into(),
+            kind: "blob".into(),
+            sha: parts[3].into(),
+            size: None,
+        });
     }
     let path = path.to_owned();
-    process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
-        let repo = Repository::open_bare(path)?;
-        let odb = repo.odb()?;
-        for blob in &mut blobs {
-            let (size, kind) = odb.read_header(oid(&blob.sha)?)?;
-            ensure!(kind == ObjectType::Blob, "Invalid introduced blob");
-            blob.size = Some(size);
-        }
-        Ok(blobs)
-    }).await
+    process::blocking_until(
+        std::time::Instant::now() + process::RPC_TIMEOUT,
+        move || {
+            let repo = Repository::open_bare(path)?;
+            let odb = repo.odb()?;
+            for blob in &mut blobs {
+                let (size, kind) = odb.read_header(oid(&blob.sha)?)?;
+                ensure!(kind == ObjectType::Blob, "Invalid introduced blob");
+                blob.size = Some(size);
+            }
+            Ok(blobs)
+        },
+    )
+    .await
 }
 
 pub(crate) async fn read_tree(path: &Path, revision: &str, recursive: bool) -> Result<TreeObject> {
@@ -210,9 +246,18 @@ pub(crate) async fn read_tree(path: &Path, revision: &str, recursive: bool) -> R
     let id = process::blocking_until(deadline, move || {
         let repo = Repository::open_bare(owned_path)?;
         let (id, kind) = super::repository::peel_revision(&repo, &revision)?;
-        Ok(if kind == ObjectType::Commit { super::repository::find_commit_checked(&repo, id)?.tree_id() } else { id })
-    }).await?;
-    let mut result = TreeObject { sha: id.to_string(), tree: Vec::new(), truncated: false };
+        Ok(if kind == ObjectType::Commit {
+            super::repository::find_commit_checked(&repo, id)?.tree_id()
+        } else {
+            id
+        })
+    })
+    .await?;
+    let mut result = TreeObject {
+        sha: id.to_string(),
+        tree: Vec::new(),
+        truncated: false,
+    };
     let mut pending = vec![(id.to_string(), Vec::new(), 0usize)];
     let mut path_bytes = 0usize;
     while let Some((id, prefix, depth)) = pending.pop() {
@@ -220,31 +265,61 @@ pub(crate) async fn read_tree(path: &Path, revision: &str, recursive: bool) -> R
         process::blocking_until(deadline, move || {
             let repo = Repository::open_bare(owned_path)?;
             let (size, kind) = repo.odb()?.read_header(oid(&tree_id)?)?;
-            anyhow::ensure!(kind == ObjectType::Tree && size <= MAX_BYTES, invalid("Invalid or oversized tree"));
+            anyhow::ensure!(
+                kind == ObjectType::Tree && size <= MAX_BYTES,
+                invalid("Invalid or oversized tree")
+            );
             Ok(())
-        }).await?;
+        })
+        .await?;
         // Header sizes alone do not bound packed delta bases. Only the resource-limited
         // child inflates tree payloads, including very large bases of small delta trees.
         let mut command = process::git_command()?;
-        command.arg("--git-dir").arg(path).args(["ls-tree", "-z", "-l", &id]);
-        let (status, bytes) = process::buffered(command, b"", 4 * MAX_BYTES, deadline.saturating_duration_since(std::time::Instant::now())).await?;
+        command
+            .arg("--git-dir")
+            .arg(path)
+            .args(["ls-tree", "-z", "-l", &id]);
+        let (status, bytes) = process::buffered(
+            command,
+            b"",
+            4 * MAX_BYTES,
+            deadline.saturating_duration_since(std::time::Instant::now()),
+        )
+        .await?;
         anyhow::ensure!(status.success(), "Git could not read tree");
         let mut subtrees = Vec::new();
-        for record in bytes.split(|byte| *byte == 0).filter(|record| !record.is_empty()) {
-            let tab = record.iter().position(|byte| *byte == b'\t').ok_or_else(|| invalid("Invalid tree entry"))?;
-            let fields = std::str::from_utf8(&record[..tab])?.split_ascii_whitespace().collect::<Vec<_>>();
+        for record in bytes
+            .split(|byte| *byte == 0)
+            .filter(|record| !record.is_empty())
+        {
+            let tab = record
+                .iter()
+                .position(|byte| *byte == b'\t')
+                .ok_or_else(|| invalid("Invalid tree entry"))?;
+            let fields = std::str::from_utf8(&record[..tab])?
+                .split_ascii_whitespace()
+                .collect::<Vec<_>>();
             anyhow::ensure!(fields.len() == 4, invalid("Invalid tree entry"));
             let mut raw = prefix.clone();
             raw.extend_from_slice(&record[tab + 1..]);
             path_bytes = path_bytes.saturating_add(raw.len());
-            if recursive && (result.tree.len() == MAX_ENTRIES || path_bytes > MAX_BYTES || depth > MAX_DEPTH) {
+            if recursive
+                && (result.tree.len() == MAX_ENTRIES || path_bytes > MAX_BYTES || depth > MAX_DEPTH)
+            {
                 result.truncated = true;
                 return Ok(result);
             }
             let entry = TreeObjectEntry {
                 path: String::from_utf8_lossy(&raw).into_owned(),
-                path_raw: raw.clone(), mode: fields[0].into(), kind: fields[1].into(), sha: fields[2].into(),
-                size: if fields[3] == "-" { None } else { Some(fields[3].parse()?) },
+                path_raw: raw.clone(),
+                mode: fields[0].into(),
+                kind: fields[1].into(),
+                sha: fields[2].into(),
+                size: if fields[3] == "-" {
+                    None
+                } else {
+                    Some(fields[3].parse()?)
+                },
             };
             if recursive && entry.kind == "tree" {
                 raw.push(b'/');
@@ -351,7 +426,12 @@ pub(crate) fn read_tag(path: &Path, sha: &str) -> Result<TagObject> {
     Ok(TagObject {
         sha: id.to_string(),
         tag: String::from_utf8_lossy(tag.name_bytes()).into_owned(),
-        message: String::from_utf8_lossy(raw.windows(2).position(|bytes| bytes == b"\n\n").map_or(&[][..], |offset| &raw[offset + 2..])).into_owned(),
+        message: String::from_utf8_lossy(
+            raw.windows(2)
+                .position(|bytes| bytes == b"\n\n")
+                .map_or(&[][..], |offset| &raw[offset + 2..]),
+        )
+        .into_owned(),
         object: tag.target_id().to_string(),
         kind: tag
             .target_type()
@@ -385,11 +465,17 @@ fn write_tree(builder: &mut git2::TreeBuilder<'_>) -> Result<Oid> {
     let mut size = 0usize;
     let mut valid = true;
     builder.filter(|entry| {
-        size = size.saturating_add(format!("{:o}", entry.filemode()).len() + 1 + entry.name_bytes().len() + 1 + 20);
-        valid &= entry.name_bytes().len() <= 255 && !(entry.name_bytes().eq_ignore_ascii_case(b".gitmodules") && entry.filemode() == 0o120000);
+        size = size.saturating_add(
+            format!("{:o}", entry.filemode()).len() + 1 + entry.name_bytes().len() + 1 + 20,
+        );
+        valid &= entry.name_bytes().len() <= 255
+            && !(entry.name_bytes().eq_ignore_ascii_case(b".gitmodules")
+                && entry.filemode() == 0o120000);
         true
     })?;
-    if !valid || size > MAX_BYTES { return Err(invalid("Invalid or oversized resulting tree").into()); }
+    if !valid || size > MAX_BYTES {
+        return Err(invalid("Invalid or oversized resulting tree").into());
+    }
     Ok(builder.write()?)
 }
 
@@ -463,14 +549,25 @@ fn change_trees(
         .collect();
     directories.sort_by_key(|key| std::cmp::Reverse(key.matches('/').count()));
     for directory in directories {
-        let mut builder = builders.remove(&directory).ok_or_else(|| invalid("Invalid tree path"))?;
-        let id = if builder.is_empty() { None } else { Some(write_tree(&mut builder)?) };
+        let mut builder = builders
+            .remove(&directory)
+            .ok_or_else(|| invalid("Invalid tree path"))?;
+        let id = if builder.is_empty() {
+            None
+        } else {
+            Some(write_tree(&mut builder)?)
+        };
         let (parent, name) = directory
             .rsplit_once('/')
             .unwrap_or(("", directory.as_str()));
-        let parent = builders.get_mut(parent).ok_or_else(|| invalid("Invalid tree path"))?;
-        if let Some(id) = id { parent.insert(name, id, 0o040000)?; }
-        else if parent.get(name)?.is_some() { parent.remove(name)?; }
+        let parent = builders
+            .get_mut(parent)
+            .ok_or_else(|| invalid("Invalid tree path"))?;
+        if let Some(id) = id {
+            parent.insert(name, id, 0o040000)?;
+        } else if parent.get(name)?.is_some() {
+            parent.remove(name)?;
+        }
     }
     let mut root = builders
         .remove("")
@@ -502,7 +599,8 @@ pub(crate) fn write(path: &Path, input: ObjectWrite, bytes: &[u8]) -> Result<Str
                 if size > MAX_BYTES
                     || path.len() > MAX_DEPTH
                     || path.iter().any(|part| {
-                        part.is_empty() || part.len() > 255
+                        part.is_empty()
+                            || part.len() > 255
                             || matches!(*part, "." | ".." | ".git")
                             || part.contains('\0')
                     })
@@ -517,7 +615,11 @@ pub(crate) fn write(path: &Path, input: ObjectWrite, bytes: &[u8]) -> Result<Str
                     ("160000", "commit") => 0o160000,
                     _ => return Err(invalid("Tree mode does not match its type").into()),
                 };
-                if mode == 0o120000 && path.last().is_some_and(|name| name.eq_ignore_ascii_case(".gitmodules")) {
+                if mode == 0o120000
+                    && path
+                        .last()
+                        .is_some_and(|name| name.eq_ignore_ascii_case(".gitmodules"))
+                {
                     return Err(invalid(".gitmodules must not be a symlink").into());
                 }
                 let target = match (entry.sha, entry.content) {

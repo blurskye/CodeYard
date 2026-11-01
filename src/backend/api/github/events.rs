@@ -42,7 +42,8 @@ async fn event_document(
         "renamed" => value["rename"] = json!({"from":event.previous,"to":event.detail}),
         "labeled" | "unlabeled" => {
             // Older entries have no retained color; never substitute today's mutable label.
-            let color = (!event.previous.is_empty()).then(|| event.previous.trim_start_matches('#'));
+            let color =
+                (!event.previous.is_empty()).then(|| event.previous.trim_start_matches('#'));
             value["label"] = json!({"name":event.detail,"color":color});
         }
         "milestoned" | "demilestoned" => value["milestone"] = json!({"title":event.detail}),
@@ -58,7 +59,17 @@ async fn event_document(
     if include_issue {
         let key = (event.subject_kind.clone(), event.subject_id);
         if !issues.contains_key(&key) {
-            issues.insert(key.clone(), issues::document(&state.pool, issues::Reader::Request(state, auth), repo, owner, item).await?);
+            issues.insert(
+                key.clone(),
+                issues::document(
+                    &state.pool,
+                    issues::Reader::Request(state, auth),
+                    repo,
+                    owner,
+                    item,
+                )
+                .await?,
+            );
         }
         value["issue"] = issues[&key].clone();
     }
@@ -73,7 +84,16 @@ async fn read(
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let id = p["event_id"].parse().map_err(|_| Error::missing())?;
     Ok(Json(
-        event_document(&state, auth.as_ref(), &repo, &p["owner"], id, true, &mut HashMap::new()).await?,
+        event_document(
+            &state,
+            auth.as_ref(),
+            &repo,
+            &p["owner"],
+            id,
+            true,
+            &mut HashMap::new(),
+        )
+        .await?,
     ))
 }
 
@@ -141,7 +161,18 @@ async fn list(
     let mut issues = HashMap::new();
     for (kind, id) in rows.into_iter().take(limit) {
         let value = match kind.as_str() {
-            "event" => event_document(&state, auth.as_ref(), &repo, &p["owner"], id, item.is_none(), &mut issues).await?,
+            "event" => {
+                event_document(
+                    &state,
+                    auth.as_ref(),
+                    &repo,
+                    &p["owner"],
+                    id,
+                    item.is_none(),
+                    &mut issues,
+                )
+                .await?
+            }
             "review" => review_document(&state, &repo, &p["owner"], id).await?,
             "issue_comment" | "pr_comment" => {
                 let comment = comments::find(

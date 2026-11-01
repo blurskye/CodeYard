@@ -19,7 +19,10 @@ pub async fn create_notification(
 ) -> Result<Notification> {
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    anyhow::ensure!(fork_readable(&mut tx, input.user_id, input.kind, input.metadata).await?, NotificationSuppressed);
+    anyhow::ensure!(
+        fork_readable(&mut tx, input.user_id, input.kind, input.metadata).await?,
+        NotificationSuppressed
+    );
     if let Some(actor) = input.actor_id {
         anyhow::ensure!(
             !super::super::users::blocks::interaction_blocked(&mut tx, input.user_id, actor)
@@ -72,13 +75,18 @@ pub async fn create_notification(
         anyhow::ensure!(!ignoring, NotificationSuppressed);
     }
     if input.kind == "repository_forked" {
-        let fork = input.metadata["fork_repository_id"].as_i64().ok_or(NotificationSuppressed)?;
+        let fork = input.metadata["fork_repository_id"]
+            .as_i64()
+            .ok_or(NotificationSuppressed)?;
         let readable: bool = sqlx::query_scalar(&format!(
             "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password WHERE r.id=?2 AND {})", scope_readable_condition()
         )).bind(input.user_id).bind(fork).fetch_one(&mut *tx).await?;
         anyhow::ensure!(readable, NotificationSuppressed);
     }
-    if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
+    if matches!(
+        input.kind,
+        "user_followed" | "repository_starred" | "repository_watched"
+    ) {
         let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=?1 AND actor_id=?2 AND kind=?3 AND (?3='user_followed' OR repo_id=?4) AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day'))")
             .bind(input.user_id).bind(input.actor_id).bind(input.kind).bind(input.repo_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!recent, NotificationSuppressed);
@@ -526,11 +534,29 @@ pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64>
     )).bind(user_id).fetch_one(pool).await?)
 }
 
-async fn fork_readable(connection: &mut sqlx::SqliteConnection, user: i64, kind: &str, metadata: &serde_json::Value) -> Result<bool> {
-    if kind != "repository_forked" { return Ok(true); }
-    let Some(fork) = metadata.get("fork_repository_id").and_then(serde_json::Value::as_i64) else { return Ok(false); };
-    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})", scope_readable_condition()))
-        .bind(user).bind(fork).fetch_one(connection).await?)
+async fn fork_readable(
+    connection: &mut sqlx::SqliteConnection,
+    user: i64,
+    kind: &str,
+    metadata: &serde_json::Value,
+) -> Result<bool> {
+    if kind != "repository_forked" {
+        return Ok(true);
+    }
+    let Some(fork) = metadata
+        .get("fork_repository_id")
+        .and_then(serde_json::Value::as_i64)
+    else {
+        return Ok(false);
+    };
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",
+        scope_readable_condition()
+    ))
+    .bind(user)
+    .bind(fork)
+    .fetch_one(connection)
+    .await?)
 }
 
 pub(super) async fn refresh_links(
@@ -541,7 +567,14 @@ pub(super) async fn refresh_links(
     let names: Vec<(i64,String,String)> = sqlx::query_as("SELECT r.id,COALESCE(u.username,o.name),r.name FROM repositories r LEFT JOIN users u ON r.owner_kind='user' AND u.id=r.owner_user_id LEFT JOIN organizations o ON r.owner_kind='org' AND o.id=r.owner_org_id WHERE r.id IN (SELECT value FROM json_each(?1))")
         .bind(serde_json::to_string(&ids)?).fetch_all(&mut *connection).await?;
     for notification in notifications {
-        if !fork_readable(connection, notification.user_id, &notification.kind, &notification.metadata).await? {
+        if !fork_readable(
+            connection,
+            notification.user_id,
+            &notification.kind,
+            &notification.metadata,
+        )
+        .await?
+        {
             crate::backend::db::notifications::records::redact_fork(notification);
         }
         if let Some((_, owner, name)) = names
@@ -570,16 +603,18 @@ pub async fn get_notification(
 
 pub async fn notification_email_allowed(pool: &SqlitePool, notification_id: i64) -> Result<bool> {
     let mut connection = pool.begin().await?;
-    let row: Option<(i64, i64, String, serde_json::Value)> =
-        sqlx::query_as("SELECT user_id, scope_repository_id, kind, metadata FROM notifications WHERE id=?1")
-            .bind(notification_id)
-            .fetch_optional(&mut *connection)
-            .await?;
+    let row: Option<(i64, i64, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT user_id, scope_repository_id, kind, metadata FROM notifications WHERE id=?1",
+    )
+    .bind(notification_id)
+    .fetch_optional(&mut *connection)
+    .await?;
     let Some((user_id, scope, kind, metadata)) = row else {
         return Ok(false);
     };
     if !notification_recipient(&mut connection, user_id).await?
-        || !fork_readable(&mut connection, user_id, &kind, &metadata).await? {
+        || !fork_readable(&mut connection, user_id, &kind, &metadata).await?
+    {
         return Ok(false);
     }
     if scope == 0 {
@@ -837,7 +872,9 @@ pub async fn notification_inbox_with_credential(
             let ids: Vec<_> = scopes.readable.keys().copied().collect();
             let blocked: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE NOT p.classic_allowed AND r.id IN(SELECT value FROM json_each(?1))")
                 .bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
-            for id in blocked { scopes.readable.insert(id, false); }
+            for id in blocked {
+                scopes.readable.insert(id, false);
+            }
         }
     }
     let mut next_cursor = None;

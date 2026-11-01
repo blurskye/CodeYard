@@ -271,9 +271,15 @@ pub struct Change {
     pub instance: Option<Instance>,
 }
 
-pub(crate) fn changes(before: &[(i64, String)], after: Vec<Alert>, instances: Vec<Instance>) -> Vec<Change> {
+pub(crate) fn changes(
+    before: &[(i64, String)],
+    after: Vec<Alert>,
+    instances: Vec<Instance>,
+) -> Vec<Change> {
     let mut snapshots = std::collections::HashMap::new();
-    for instance in instances { snapshots.entry(instance.alert_id).or_insert(instance); }
+    for instance in instances {
+        snapshots.entry(instance.alert_id).or_insert(instance);
+    }
     let before: std::collections::HashMap<_, _> = before
         .iter()
         .map(|(id, state)| (*id, state.as_str()))
@@ -289,7 +295,11 @@ pub(crate) fn changes(before: &[(i64, String)], after: Vec<Alert>, instances: Ve
                 Some(_) => "reopened",
             };
             let instance = snapshots.remove(&alert.id);
-            Some(Change { alert, action, instance })
+            Some(Change {
+                alert,
+                action,
+                instance,
+            })
         })
         .collect()
 }

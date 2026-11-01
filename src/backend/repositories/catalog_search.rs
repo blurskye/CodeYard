@@ -45,42 +45,42 @@ pub async fn git_facts(
     let mut read_readme = false;
     let mut read_license = false;
     for (_, mut entries) in directories {
-    entries.sort_by_key(|entry| entry.name.to_ascii_lowercase());
-    for entry in entries {
-        if entry.entry_type != "file" {
-            continue;
+        entries.sort_by_key(|entry| entry.name.to_ascii_lowercase());
+        for entry in entries {
+            if entry.entry_type != "file" {
+                continue;
+            }
+            let name = entry.name.to_ascii_lowercase();
+            let is_readme =
+                readme && !read_readme && (name == "readme" || name.starts_with("readme."));
+            let is_license = !read_license && templates::is_license_file(&name);
+            if !is_readme && !is_license {
+                continue;
+            }
+            let blob = store
+                .blob_range(
+                    revision,
+                    &entry.path,
+                    BlobRange::Window {
+                        offset: 0,
+                        length: 256 * 1024,
+                    },
+                )
+                .await?;
+            read_readme |= is_readme;
+            read_license |= is_license;
+            // An unread README is unknown, not an authoritative negative search predicate.
+            if blob.size > 256 * 1024 {
+                facts.readme_incomplete |= is_readme;
+                continue;
+            }
+            if is_readme && !blob.is_binary && !blob.bytes.contains(&0) {
+                facts.readme = std::str::from_utf8(&blob.bytes).ok().map(str::to_owned);
+            }
+            if is_license {
+                facts.license = templates::detect_license(&blob.bytes).map(|t| t.name);
+            }
         }
-        let name = entry.name.to_ascii_lowercase();
-        let is_readme =
-            readme && !read_readme && (name == "readme" || name.starts_with("readme."));
-        let is_license = !read_license && templates::is_license_file(&name);
-        if !is_readme && !is_license {
-            continue;
-        }
-        let blob = store
-            .blob_range(
-                revision,
-                &entry.path,
-                BlobRange::Window {
-                    offset: 0,
-                    length: 256 * 1024,
-                },
-            )
-            .await?;
-        read_readme |= is_readme;
-        read_license |= is_license;
-        // An unread README is unknown, not an authoritative negative search predicate.
-        if blob.size > 256 * 1024 {
-            facts.readme_incomplete |= is_readme;
-            continue;
-        }
-        if is_readme && !blob.is_binary && !blob.bytes.contains(&0) {
-            facts.readme = std::str::from_utf8(&blob.bytes).ok().map(str::to_owned);
-        }
-        if is_license {
-            facts.license = templates::detect_license(&blob.bytes).map(|t| t.name);
-        }
-    }
     }
     Ok(facts)
 }

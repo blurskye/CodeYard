@@ -1,6 +1,6 @@
 use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};
-use anyhow::Result;
 use crate::backend::db::models::User;
+use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 // Public visibility alone does not make a user an assignment candidate.
@@ -52,10 +52,13 @@ async fn begin_write<'a>(
     );
     if let Some(credential) = authority.credential() {
         super::users::transitions::require_account(&mut tx, authority.user_id, &credential)
-            .await.map_err(|error| {
+            .await
+            .map_err(|error| {
                 if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
                     AssignmentRefusal::Denied.into()
-                } else { error }
+                } else {
+                    error
+                }
             })?;
     }
     Ok(tx)
@@ -156,7 +159,10 @@ pub(crate) async fn assign_in_transaction(
     }
     if added {
         super::labels::touch_subject(tx, tables(item).0, item_id(item)).await?;
-        let name: String = sqlx::query_scalar("SELECT username FROM users WHERE id=?1").bind(user_id).fetch_one(&mut **tx).await?;
+        let name: String = sqlx::query_scalar("SELECT username FROM users WHERE id=?1")
+            .bind(user_id)
+            .fetch_one(&mut **tx)
+            .await?;
         let (subject, id) = crate::backend::db::timeline::item_subject(item);
         super::timeline::append(tx, repo_id, subject, id, actor_id, "assigned", &name, "").await?;
     }
@@ -187,7 +193,17 @@ pub async fn unassign_users(
         .rows_affected();
         if deleted > 0 {
             let (subject, id) = crate::backend::db::timeline::item_subject(item);
-            super::timeline::append(&mut tx, repo_id, subject, id, authority.user_id, "unassigned", username, "").await?;
+            super::timeline::append(
+                &mut tx,
+                repo_id,
+                subject,
+                id,
+                authority.user_id,
+                "unassigned",
+                username,
+                "",
+            )
+            .await?;
             removed.push(username.clone());
         }
     }
@@ -251,13 +267,32 @@ fn matching_candidates() -> String {
 }
 
 pub async fn count_assignable_users(pool: &SqlitePool, repo_id: i64, query: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar(&format!("SELECT COUNT(*) {}", matching_candidates()))
-        .bind(repo_id).bind(query).fetch_one(pool).await?)
+    Ok(
+        sqlx::query_scalar(&format!("SELECT COUNT(*) {}", matching_candidates()))
+            .bind(repo_id)
+            .bind(query)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
-pub async fn list_assignable_users(pool: &SqlitePool, repo_id: i64, query: &str, offset: i64, limit: i64) -> Result<Vec<User>> {
-    Ok(sqlx::query_as(&format!("SELECT u.* {} ORDER BY u.username,u.id LIMIT ?3 OFFSET ?4", matching_candidates()))
-        .bind(repo_id).bind(query).bind(limit).bind(offset).fetch_all(pool).await?)
+pub async fn list_assignable_users(
+    pool: &SqlitePool,
+    repo_id: i64,
+    query: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<User>> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT u.* {} ORDER BY u.username,u.id LIMIT ?3 OFFSET ?4",
+        matching_candidates()
+    ))
+    .bind(repo_id)
+    .bind(query)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?)
 }
 
 /// The users among `user_ids` who may be assigned in the repository.

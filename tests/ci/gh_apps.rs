@@ -607,7 +607,9 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap()
         .workflow_blobs;
-    assert!(rerun_blobs.as_object().is_some_and(|blobs| !blobs.is_empty()));
+    assert!(rerun_blobs
+        .as_object()
+        .is_some_and(|blobs| !blobs.is_empty()));
     assert_eq!(rerun_blobs, source_blobs);
 
     // The lookup must filter before first:1, not select a newer unrelated branch.

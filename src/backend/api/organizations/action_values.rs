@@ -35,8 +35,13 @@ pub(super) async fn build(
         .filter(|page| (1..=1000).contains(page))
         .unwrap_or(1);
     let listed = values::settings_page(
-        &ctx.state.pool, actor, ctx.session_id.as_deref().ok_or(ValueError::Denied)?, org, page as i64,
-    ).await?;
+        &ctx.state.pool,
+        actor,
+        ctx.session_id.as_deref().ok_or(ValueError::Denied)?,
+        org,
+        page as i64,
+    )
+    .await?;
     let more = listed.more;
     let link = |page: usize| {
         let mut query: Vec<(String, String)> = ctx
@@ -143,7 +148,8 @@ async fn change(
             "Organization does not match this form.",
         );
     }
-    let credential = db::users::accounts::AccountCredential::Session(ctx.session_id.as_deref().unwrap_or(""));
+    let credential =
+        db::users::accounts::AccountCredential::Session(ctx.session_id.as_deref().unwrap_or(""));
     if action.starts_with("oidc-") {
         let result = match action.as_str() {
             "oidc-save" => {
@@ -203,7 +209,9 @@ async fn change(
         )
         .await;
     }
-    let submitted_value = if action == "secret-access" { None } else {
+    let submitted_value = if action == "secret-access" {
+        None
+    } else {
         let original = if action == "variable-save" {
             match values::list(&ctx.state.pool, actor, org, kind).await {
                 Ok(rows) => match rows.into_iter().find(|row| row.name == previous) {
@@ -212,8 +220,13 @@ async fn change(
                 },
                 Err(_) => return organization::unavailable(&ctx),
             }
-        } else { String::new() };
-        Some(crate::backend::repositories::files::native_text(field(&form, "value").to_owned(), &original))
+        } else {
+            String::new()
+        };
+        Some(crate::backend::repositories::files::native_text(
+            field(&form, "value").to_owned(),
+            &original,
+        ))
     };
     let result = if action.ends_with("-delete") {
         values::delete(&ctx.state.pool, actor, &credential, org, kind, &name).await

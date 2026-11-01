@@ -111,9 +111,11 @@ pub fn scopes(value: &str) -> Option<String> {
 }
 
 pub fn has_scope(scopes: &str, scope: &str) -> bool {
-    scopes.split(',').any(|granted| granted == scope
-        || (scope == "read:org" && granted == "write:org")
-        || (matches!(scope, "read:user" | "user:email" | "user:follow") && granted == "user"))
+    scopes.split(',').any(|granted| {
+        granted == scope
+            || (scope == "read:org" && granted == "write:org")
+            || (matches!(scope, "read:user" | "user:email" | "user:follow") && granted == "user")
+    })
 }
 
 pub fn write_scope(scopes: &str) -> bool {
@@ -179,17 +181,32 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
         | ["users", _, "attestations", ..]
         | ["notifications", ..] => has_scope(scopes, "repo"),
         ["orgs", _] if write => has_scope(scopes, "repo"),
-        ["user", "teams"] => !write && (has_scope(scopes, "repo") || has_scope(scopes, "read:org") || has_scope(scopes, "write:org")),
-        ["orgs", _, "public_members", ..] => has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org")),
+        ["user", "teams"] => {
+            !write
+                && (has_scope(scopes, "repo")
+                    || has_scope(scopes, "read:org")
+                    || has_scope(scopes, "write:org"))
+        }
+        ["orgs", _, "public_members", ..] => {
+            has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
+        }
         ["user", "orgs"] | ["orgs", _] | ["orgs", _, "issue-types", ..] => {
             !write && (has_scope(scopes, "read:org") || has_scope(scopes, "write:org"))
         }
-        ["orgs", _, "rulesets", ..] => has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org")),
-        ["issues"] | ["user", "issues"] | ["orgs", _, "issues"] => !write && has_scope(scopes, "repo"),
+        ["orgs", _, "rulesets", ..] => {
+            has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
+        }
+        ["issues"] | ["user", "issues"] | ["orgs", _, "issues"] => {
+            !write && has_scope(scopes, "repo")
+        }
         ["users", _, "events" | "received_events", ..]
         | ["orgs", _, "events", ..]
         | ["networks", _, _, "events"] => !write && has_scope(scopes, "repo"),
-        ["users"] | ["organizations", ..] | ["users", _, "orgs" | "gists" | "social_accounts"] | ["feeds"] | ["events"] => !write,
+        ["users"]
+        | ["organizations", ..]
+        | ["users", _, "orgs" | "gists" | "social_accounts"]
+        | ["feeds"]
+        | ["events"] => !write,
         ["orgs", _, "members" | "memberships" | "teams", ..]
         | ["user", "memberships", "orgs", ..] => {
             has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
@@ -234,11 +251,7 @@ pub async fn allows_git(
         if bounds.personal().is_some() {
             return Ok(true);
         }
-        return Ok(!gist && super::github_apps::allows(
-            &bounds.permissions,
-            "contents",
-            false,
-        ));
+        return Ok(!gist && super::github_apps::allows(&bounds.permissions, "contents", false));
     }
     let scope = if gist { "gist" } else { "repo" };
     Ok(db::oauth_apps::token(pool, token_id)
@@ -254,7 +267,9 @@ pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bo
         return Ok(false);
     }
     if let Some(grant) = super::fine_grained::grant(pool, token_id).await? {
-        return Ok(grant.active && super::fine_grained::allows(&grant.permissions, "workflows", true));
+        return Ok(
+            grant.active && super::fine_grained::allows(&grant.permissions, "workflows", true)
+        );
     }
     if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
         return Ok(super::github_apps::allows(
@@ -351,7 +366,11 @@ mod tests {
             "/orgs/acme/packages/container/app/versions",
             false
         ));
-        assert!(!allows("read:packages", "/user/packages/container/app", true));
+        assert!(!allows(
+            "read:packages",
+            "/user/packages/container/app",
+            true
+        ));
         assert!(!allows("repo", "/users/alice/packages", false));
         assert!(!allows("read:packages", "/repos/alice/project", false));
         assert!(!allows(

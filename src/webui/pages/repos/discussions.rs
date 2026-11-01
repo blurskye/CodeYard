@@ -19,14 +19,28 @@ pub struct Comment {
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum Page {
-    Index { discussions: Vec<Discussion>, page: usize, more: bool },
-    Detail { discussion: Discussion, comments: Vec<Comment>, thread: Option<i64>, page: usize, more: bool },
+    Index {
+        discussions: Vec<Discussion>,
+        page: usize,
+        more: bool,
+    },
+    Detail {
+        discussion: Discussion,
+        comments: Vec<Comment>,
+        thread: Option<i64>,
+        page: usize,
+        more: bool,
+    },
 }
 
 pub fn render(repo: &RepoChrome, page: &Page) -> Element {
     let base = format!("{}/discussions", repo.base());
     let body = match page {
-        Page::Index { discussions, page, more } => rsx! {
+        Page::Index {
+            discussions,
+            page,
+            more,
+        } => rsx! {
             section { class: "collaboration",
                 h1 { "Discussions" }
                 if discussions.is_empty() { p { "No discussions." } }
@@ -39,7 +53,13 @@ pub fn render(repo: &RepoChrome, page: &Page) -> Element {
                 {pages(&base, *page, *more)}
             }
         },
-        Page::Detail { discussion, comments, thread, page, more } => {
+        Page::Detail {
+            discussion,
+            comments,
+            thread,
+            page,
+            more,
+        } => {
             let target = format!("{base}/{}", discussion.number);
             let window = thread.map_or(target.clone(), |id| format!("{target}?thread={id}"));
             rsx! {

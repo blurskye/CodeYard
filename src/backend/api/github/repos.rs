@@ -38,7 +38,10 @@ pub(in crate::backend::api) fn lifecycle_error(error: lifecycle::StorageError) -
 pub(in crate::backend::api) fn settings_error(error: anyhow::Error) -> Error {
     use records::RepositorySettingsRefusal::*;
     if error.is::<db::users::accounts::AccountRestricted>() {
-        return Error::new(StatusCode::FORBIDDEN, "A live unrestricted credential is required");
+        return Error::new(
+            StatusCode::FORBIDDEN,
+            "A live unrestricted credential is required",
+        );
     }
     match error.downcast_ref::<records::RepositorySettingsRefusal>() {
         Some(Denied | VisibilityLocked) => {
@@ -60,9 +63,19 @@ pub(super) async fn search_document(
     let mut value = document(state, repo, viewer).await?;
     let license = match cached_license {
         Some(license) => license.and_then(templates::license),
-        None => tokio::time::timeout_at(deadline,
-            crate::backend::repositories::catalog_search::git_facts(repo, state.cluster.as_ref(), false),
-        ).await.ok().and_then(|result| result.ok()).and_then(|git| git.license).and_then(templates::license),
+        None => tokio::time::timeout_at(
+            deadline,
+            crate::backend::repositories::catalog_search::git_facts(
+                repo,
+                state.cluster.as_ref(),
+                false,
+            ),
+        )
+        .await
+        .ok()
+        .and_then(|result| result.ok())
+        .and_then(|git| git.license)
+        .and_then(templates::license),
     };
     value["license"] = license
         .map(|template| super::meta::license_document(template, false))
@@ -72,8 +85,13 @@ pub(super) async fn search_document(
 
 pub(super) async fn public_fork_count(state: &AppState, repo: i64) -> Result<i32> {
     // The source token does not necessarily select any of its private forks.
-    Ok(db::repositories::discovery::public_fork_counts(&state.pool, &[repo])
-        .await.map_err(Error::unavailable)?.remove(&repo).unwrap_or_default())
+    Ok(
+        db::repositories::discovery::public_fork_counts(&state.pool, &[repo])
+            .await
+            .map_err(Error::unavailable)?
+            .remove(&repo)
+            .unwrap_or_default(),
+    )
 }
 
 /// A repository's REST document for `viewer`. Its fork parent and source appear only when the
@@ -83,32 +101,76 @@ pub(super) async fn document(
     repo: &Repository,
     viewer: Option<&auth::Authentication>,
 ) -> Result<Value> {
-    documents(state, std::slice::from_ref(repo), viewer).await?.pop().ok_or_else(Error::missing)
+    documents(state, std::slice::from_ref(repo), viewer)
+        .await?
+        .pop()
+        .ok_or_else(Error::missing)
 }
 
-pub(super) async fn documents(state: &AppState, repos: &[Repository], viewer: Option<&auth::Authentication>) -> Result<Vec<Value>> {
+pub(super) async fn documents(
+    state: &AppState,
+    repos: &[Repository],
+    viewer: Option<&auth::Authentication>,
+) -> Result<Vec<Value>> {
     let ids: Vec<_> = repos.iter().map(|repo| repo.id).collect();
-    let owners = records::repository_owner_names(&state.pool, &ids).await.map_err(Error::unavailable)?;
-    let topics = topics::repository_topics(&state.pool, &ids).await.map_err(Error::unavailable)?;
+    let owners = records::repository_owner_names(&state.pool, &ids)
+        .await
+        .map_err(Error::unavailable)?;
+    let topics = topics::repository_topics(&state.pool, &ids)
+        .await
+        .map_err(Error::unavailable)?;
     // Counts only public forks: the viewer's credential does not necessarily select its private ones.
-    let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids).await.map_err(Error::unavailable)?;
+    let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids)
+        .await
+        .map_err(Error::unavailable)?;
     let mut metadata = std::collections::HashMap::new();
     for ids in ids.chunks(100) {
-        metadata.extend(db::repository_stats::repository_document_metadata(&state.pool, ids).await.map_err(Error::unavailable)?.into_iter().map(|row| (row.repo_id, row)));
+        metadata.extend(
+            db::repository_stats::repository_document_metadata(&state.pool, ids)
+                .await
+                .map_err(Error::unavailable)?
+                .into_iter()
+                .map(|row| (row.repo_id, row)),
+        );
     }
     let mut values = Vec::with_capacity(repos.len());
     for repo in repos {
-        let (Some(owner), Some(facts)) = (owners.get(&repo.id), metadata.get(&repo.id)) else { continue; };
-        values.push(document_with(state, repo, viewer, owner, facts, topics.get(&repo.id).map(Vec::as_slice).unwrap_or_default(), forks.get(&repo.id).copied().unwrap_or_default()).await?);
+        let (Some(owner), Some(facts)) = (owners.get(&repo.id), metadata.get(&repo.id)) else {
+            continue;
+        };
+        values.push(
+            document_with(
+                state,
+                repo,
+                viewer,
+                owner,
+                facts,
+                topics.get(&repo.id).map(Vec::as_slice).unwrap_or_default(),
+                forks.get(&repo.id).copied().unwrap_or_default(),
+            )
+            .await?,
+        );
     }
     if let Some(viewer) = viewer {
         let readable = auth::readable_repositories(state, Some(viewer), &ids, "metadata").await?;
-        values.retain(|value| value["id"].as_i64().is_some_and(|id| readable.contains(&id)));
+        values.retain(|value| {
+            value["id"]
+                .as_i64()
+                .is_some_and(|id| readable.contains(&id))
+        });
     }
     Ok(values)
 }
 
-async fn document_with(state: &AppState, repo: &Repository, viewer: Option<&auth::Authentication>, owner: &str, facts: &db::repository_stats::RepositoryDocumentMetadata, topics: &[String], forks: i32) -> Result<Value> {
+async fn document_with(
+    state: &AppState,
+    repo: &Repository,
+    viewer: Option<&auth::Authentication>,
+    owner: &str,
+    facts: &db::repository_stats::RepositoryDocumentMetadata,
+    topics: &[String],
+    forks: i32,
+) -> Result<Value> {
     let mut value = payloads::repository(repo, owner);
     payloads::set_fork_counts(&mut value, forks);
     value["language"] = json!(facts.facts.language);
@@ -217,9 +279,13 @@ async fn create(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let merge_methods = records::MergeMethodUpdate {
-        merge: input.allow_merge_commit, squash: input.allow_squash_merge, rebase: input.allow_rebase_merge,
+        merge: input.allow_merge_commit,
+        squash: input.allow_squash_merge,
+        rebase: input.allow_rebase_merge,
     };
-    merge_methods.resolve((true, true, true)).map_err(settings_error)?;
+    merge_methods
+        .resolve((true, true, true))
+        .map_err(settings_error)?;
     lifecycle::validate_description(input.description.as_deref().unwrap_or(""))
         .map_err(lifecycle_error)?;
     let website = input
@@ -293,15 +359,22 @@ async fn create(
     )
     .await
     .map_err(lifecycle_error)?;
-    let repo = records::patch_repository(&state.pool, actor.user.id, repo.id, &records::RepositoryChanges {
-        token: Some(actor.token.id),
-        is_template: input.is_template,
-        website: website.as_ref().map(|website| website.as_deref()),
-        wiki: Some(input.has_wiki.unwrap_or(true)),
-        discussions: input.has_discussions,
-        merge_methods,
-        ..Default::default()
-    }).await.map_err(settings_error)?;
+    let repo = records::patch_repository(
+        &state.pool,
+        actor.user.id,
+        repo.id,
+        &records::RepositoryChanges {
+            token: Some(actor.token.id),
+            is_template: input.is_template,
+            website: website.as_ref().map(|website| website.as_deref()),
+            wiki: Some(input.has_wiki.unwrap_or(true)),
+            discussions: input.has_discussions,
+            merge_methods,
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(settings_error)?;
     let value = document(&state, &repo, Some(&actor)).await?;
     Ok((
         StatusCode::CREATED,
@@ -534,13 +607,15 @@ async fn languages(
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let store = repo_store(&repo, state.cluster.as_ref());
     let branch = format!("refs/heads/{}", repo.default_branch);
-    if !store.refs().await.map_err(store_error)?.contains_key(&branch) {
+    if !store
+        .refs()
+        .await
+        .map_err(store_error)?
+        .contains_key(&branch)
+    {
         return Ok(Json(json!({})));
     }
-    let languages = store
-        .languages(&branch)
-        .await
-        .map_err(store_error)?;
+    let languages = store.languages(&branch).await.map_err(store_error)?;
     let mut value = json!({});
     for language in languages {
         value[language.language] = json!(language.bytes);
@@ -708,30 +783,62 @@ async fn list(
     let mut repos = Vec::with_capacity(limit + 1);
     // The query already applies anonymous visibility, so anonymous listings start at the page.
     // Token restrictions are applied below, so authenticated listings count from the start.
-    let (mut scanned, mut accepted) = if auth.is_none() { (offset as i64, offset) } else { (0, 0) };
+    let (mut scanned, mut accepted) = if auth.is_none() {
+        (offset as i64, offset)
+    } else {
+        (0, 0)
+    };
     'pages: loop {
-        let rows = github::list_repositories(&state.pool, RepositoryListQuery {
-            viewer, list, since: query.since.unwrap_or(0), visibility, kind, sort, descending,
-            limit: 100, offset: scanned,
-        }).await.map_err(Error::unavailable)?;
+        let rows = github::list_repositories(
+            &state.pool,
+            RepositoryListQuery {
+                viewer,
+                list,
+                since: query.since.unwrap_or(0),
+                visibility,
+                kind,
+                sort,
+                descending,
+                limit: 100,
+                offset: scanned,
+            },
+        )
+        .await
+        .map_err(Error::unavailable)?;
         scanned += rows.len() as i64;
         let done = rows.len() < 100;
         let ids: Vec<_> = rows.iter().map(|repo| repo.id).collect();
         let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "metadata").await?;
         for repo in rows {
-            if !readable.contains(&repo.id) { continue; }
-            if accepted < offset { accepted += 1; continue; }
+            if !readable.contains(&repo.id) {
+                continue;
+            }
+            if accepted < offset {
+                accepted += 1;
+                continue;
+            }
             repos.push(repo);
-            if repos.len() > limit { break 'pages; }
+            if repos.len() > limit {
+                break 'pages;
+            }
         }
-        if done { break; }
+        if done {
+            break;
+        }
     }
     let next = repos.len() > limit;
     let mut values = documents(&state, &repos[..repos.len().min(limit)], auth.as_ref()).await?;
     if auth.is_none() {
-        let ids: Vec<_> = values.iter().filter_map(|value| value["id"].as_i64()).collect();
+        let ids: Vec<_> = values
+            .iter()
+            .filter_map(|value| value["id"].as_i64())
+            .collect();
         let readable = auth::readable_repositories(&state, None, &ids, "metadata").await?;
-        values.retain(|value| value["id"].as_i64().is_some_and(|id| readable.contains(&id)));
+        values.retain(|value| {
+            value["id"]
+                .as_i64()
+                .is_some_and(|id| readable.contains(&id))
+        });
     }
     if public {
         let mut headers = HeaderMap::new();

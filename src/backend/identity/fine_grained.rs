@@ -502,11 +502,7 @@ impl Grant {
 
     /// Whether the token is live and its repository selection covers `repo`. Other public
     /// repositories read only as they do anonymously.
-    pub async fn reaches(
-        &self,
-        pool: &DbPool,
-        repo: &Repository,
-    ) -> anyhow::Result<bool> {
+    pub async fn reaches(&self, pool: &DbPool, repo: &Repository) -> anyhow::Result<bool> {
         Ok(self.active
             && owned_by(self.owner, repo)
             && match self.access {
@@ -659,7 +655,9 @@ pub fn need(path: &str, write: bool) -> Need {
             repository_permission(path, write).map_or(Need::Denied, Need::Repository)
         }
         ["repositories", _, "environments", _, "variables", ..] => Need::Repository("environments"),
-        ["organizations", _, "actions", "cache", ..] => Need::Organization("organization_administration"),
+        ["organizations", _, "actions", "cache", ..] => {
+            Need::Organization("organization_administration")
+        }
         ["repositories" | "search" | "events" | "networks" | "feeds" | "advisories"
         | "organizations", ..]
             if !write =>
@@ -728,7 +726,11 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         (Some("actions"), Some("variables" | "organization-variables")) => Some("variables"),
         (Some("actions"), Some("runners" | "oidc" | "policies")) => Some("administration"),
         (Some("actions"), Some("concurrency_groups")) => Some("actions"),
-        (Some("environments"), _) if !write || matches!(parts.get(5).copied(), Some("secrets" | "variables")) => Some("environments"),
+        (Some("environments"), _)
+            if !write || matches!(parts.get(5).copied(), Some("secrets" | "variables")) =>
+        {
+            Some("environments")
+        }
         (Some("hooks"), _) => Some("repository_hooks"),
         (Some("pulls"), _)
             if write
@@ -972,9 +974,18 @@ mod tests {
             Need::Repository("contents")
         );
         assert_eq!(need("/repos/a/b", true), Need::Repository("administration"));
-        assert_eq!(need("/repos/a/b/forks", false), Need::Repository("metadata"));
-        assert_eq!(need("/repos/a/b/forks", true), Need::CopyRepository("metadata"));
-        assert_eq!(need("/repos/a/b/generate", true), Need::CopyRepository("contents"));
+        assert_eq!(
+            need("/repos/a/b/forks", false),
+            Need::Repository("metadata")
+        );
+        assert_eq!(
+            need("/repos/a/b/forks", true),
+            Need::CopyRepository("metadata")
+        );
+        assert_eq!(
+            need("/repos/a/b/generate", true),
+            Need::CopyRepository("contents")
+        );
         assert_eq!(need("/repos/a/b/import", false), Need::Denied);
     }
 }

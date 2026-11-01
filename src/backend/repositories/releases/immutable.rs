@@ -71,7 +71,12 @@ pub async fn enabled(
     );
     records::enabled(pool, repository.id).await
 }
-pub async fn set_enabled(pool: &db::DbPool, actor: impl Into<db::credentials::Actor>, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(
+    pool: &db::DbPool,
+    actor: impl Into<db::credentials::Actor>,
+    repo: i64,
+    enabled: bool,
+) -> Result<()> {
     records::set_enabled(pool, actor, repo, enabled).await
 }
 
@@ -162,15 +167,23 @@ pub(crate) async fn check_namespace(
     Ok(())
 }
 
-static LOCAL_IDENTITIES: std::sync::LazyLock<std::sync::RwLock<std::collections::HashMap<std::path::PathBuf, std::path::PathBuf>>> = std::sync::LazyLock::new(Default::default);
+static LOCAL_IDENTITIES: std::sync::LazyLock<
+    std::sync::RwLock<std::collections::HashMap<std::path::PathBuf, std::path::PathBuf>>,
+> = std::sync::LazyLock::new(Default::default);
 
 /// The application, not a repository row or remote request, selects the backed-up key directory.
 pub(crate) fn register_local_identity(state_dir: &std::path::Path, repos: &std::path::Path) {
     let root = std::path::absolute(repos).unwrap_or_else(|_| repos.to_owned());
-    LOCAL_IDENTITIES.write().unwrap_or_else(|e| e.into_inner()).insert(root, state_dir.to_owned());
+    LOCAL_IDENTITIES
+        .write()
+        .unwrap_or_else(|e| e.into_inner())
+        .insert(root, state_dir.to_owned());
 }
 
-pub(crate) fn configure_local_identity(state_dir: &std::path::Path, repos: &std::path::Path) -> anyhow::Result<()> {
+pub(crate) fn configure_local_identity(
+    state_dir: &std::path::Path,
+    repos: &std::path::Path,
+) -> anyhow::Result<()> {
     crate::backend::cluster::identity::release_key(state_dir, repos)?;
     register_local_identity(state_dir, repos);
     Ok(())
@@ -178,21 +191,34 @@ pub(crate) fn configure_local_identity(state_dir: &std::path::Path, repos: &std:
 
 async fn local_key(path: &std::path::Path) -> anyhow::Result<crate::backend::cluster::NodeKey> {
     let path = std::path::absolute(path)?;
-    let (root, state) = LOCAL_IDENTITIES.read().unwrap_or_else(|e| e.into_inner()).iter()
-        .filter(|(root, _)| path.starts_with(root)).max_by_key(|(root, _)| root.components().count())
-        .map(|(root, state)| (root.clone(), state.clone())).ok_or_else(|| anyhow::anyhow!("Release identity not configured"))?;
-    tokio::task::spawn_blocking(move || crate::backend::cluster::identity::release_key(&state, &root)).await?
+    let (root, state) = LOCAL_IDENTITIES
+        .read()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .filter(|(root, _)| path.starts_with(root))
+        .max_by_key(|(root, _)| root.components().count())
+        .map(|(root, state)| (root.clone(), state.clone()))
+        .ok_or_else(|| anyhow::anyhow!("Release identity not configured"))?;
+    tokio::task::spawn_blocking(move || {
+        crate::backend::cluster::identity::release_key(&state, &root)
+    })
+    .await?
 }
 
 pub(crate) async fn verify_local(
     attestation: &Attestation,
     path: &std::path::Path,
 ) -> Result<records::Publication, RepoError> {
-    let key = local_key(path).await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Release identity unavailable"))?;
+    let key = local_key(path)
+        .await
+        .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Release identity unavailable"))?;
     verify_with_key(attestation, &key)
 }
 
-fn verify_with_key(attestation: &Attestation, key: &crate::backend::cluster::NodeKey) -> Result<records::Publication, RepoError> {
+fn verify_with_key(
+    attestation: &Attestation,
+    key: &crate::backend::cluster::NodeKey,
+) -> Result<records::Publication, RepoError> {
     records::Publication::verify(attestation, &key.public_hex()).map_err(|_| {
         RepoError::new(
             ErrorKind::Invalid,
@@ -202,7 +228,12 @@ fn verify_with_key(attestation: &Attestation, key: &crate::backend::cluster::Nod
 }
 
 pub(crate) fn namespace_url(owner: &str, name: &str) -> String {
-    format!("{}/{}/{}", link_origin(), crate::webui::encode_component(owner), crate::webui::encode_component(name))
+    format!(
+        "{}/{}/{}",
+        link_origin(),
+        crate::webui::encode_component(owner),
+        crate::webui::encode_component(name)
+    )
 }
 
 pub(crate) async fn candidate(
@@ -251,7 +282,9 @@ pub(crate) async fn candidate(
         .map_err(super::unavailable)?;
     let key = match cluster {
         Some(context) => context.key.clone(),
-        None => local_key(std::path::Path::new(&repository.disk_path)).await.map_err(super::unavailable)?,
+        None => local_key(std::path::Path::new(&repository.disk_path))
+            .await
+            .map_err(super::unavailable)?,
     };
     Attestation::sign(&statement, &key)
         .map(Some)

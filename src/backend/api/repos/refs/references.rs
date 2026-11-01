@@ -29,17 +29,33 @@ pub(crate) async fn resolve_references(
     texts: &[&str],
     document: bool,
 ) -> Result<References, Response> {
-    resolve_references_with(&ctx.state.pool, ctx.state.cluster.as_ref(), repository, owner, name, texts, document, |records| async move {
-        let mut readable = std::collections::HashSet::new();
-        for record in records {
-            if can_read(&ctx.state.pool, ctx.user.as_ref(), &record).await? { readable.insert(record.id); }
-        }
-        Ok(readable)
-    }).await.map_err(|_| unavailable(ctx))
+    resolve_references_with(
+        &ctx.state.pool,
+        ctx.state.cluster.as_ref(),
+        repository,
+        owner,
+        name,
+        texts,
+        document,
+        |records| async move {
+            let mut readable = std::collections::HashSet::new();
+            for record in records {
+                if can_read(&ctx.state.pool, ctx.user.as_ref(), &record).await? {
+                    readable.insert(record.id);
+                }
+            }
+            Ok(readable)
+        },
+    )
+    .await
+    .map_err(|_| unavailable(ctx))
 }
 
 /// The bounded native resolver with a caller-owned, credential-aware repository audience.
-#[expect(clippy::too_many_arguments, reason = "Callers pass their own repository audience next to the resolver's bounded inputs.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Callers pass their own repository audience next to the resolver's bounded inputs."
+)]
 pub(crate) async fn resolve_references_with<F, Fut>(
     pool: &db::DbPool,
     cluster: Option<&crate::backend::cluster::NodeContext>,
@@ -59,29 +75,41 @@ where
     let found = tokio::task::spawn_blocking(move || {
         let texts: Vec<&str> = sources.iter().map(String::as_str).collect();
         references::candidates(&texts, document, (&current.0, &current.1))
-    }).await?;
+    })
+    .await?;
     let mut records = vec![repository.clone()];
     let mut names = Vec::new();
     for (owner, name) in found.repositories {
-        if let Some(record) = db::repositories::records::get_repository(pool, &owner, &name).await? {
+        if let Some(record) = db::repositories::records::get_repository(pool, &owner, &name).await?
+        {
             names.push((record.id, owner, name));
             records.push(record);
         }
     }
     let readable = authorize(records.clone()).await?;
-    if !readable.contains(&repository.id) { return Ok(References::default()); }
+    if !readable.contains(&repository.id) {
+        return Ok(References::default());
+    }
     // Retain counters for legacy model compatibility; native links use explicit resolutions.
     let mut counted = vec![repository.id];
     let mut others = Vec::new();
     for (id, owner, name) in names {
-        if readable.contains(&id) { counted.push(id); others.push((id, owner, name)); }
+        if readable.contains(&id) {
+            counted.push(id);
+            others.push((id, owner, name));
+        }
     }
     let lasts = db::discussions::last_discussion_numbers(pool, &counted).await?;
     let autolinks = db::repositories::autolinks::for_rendering(pool, repository.id).await?;
     // Do not let reference metadata read after a revocation escape through earlier decisions.
     let readable = authorize(records.clone()).await?;
-    if !readable.contains(&repository.id) { return Ok(References::default()); }
-    let others: Vec<_> = others.into_iter().filter(|(id, _, _)| readable.contains(id)).collect();
+    if !readable.contains(&repository.id) {
+        return Ok(References::default());
+    }
+    let others: Vec<_> = others
+        .into_iter()
+        .filter(|(id, _, _)| readable.contains(id))
+        .collect();
     let mut linkable = vec![(owner.to_owned(), name.to_owned(), repository.clone())];
     for (id, other_owner, other_name) in &others {
         if let Some(record) = records.iter().find(|record| record.id == *id) {
@@ -100,7 +128,8 @@ where
         last_number: last_number(repository.id),
         targets: Some(Vec::new()),
         users: Vec::new(),
-        autolinks: autolinks.into_iter()
+        autolinks: autolinks
+            .into_iter()
             .map(autolink)
             .collect::<Vec<_>>()
             .into(),
@@ -122,35 +151,81 @@ where
         resolved.users.sort();
     }
     // Resolution is bounded by both candidate count and wall time. Unresolved prose stays intact.
-    resolved.targets = Some(tokio::time::timeout(std::time::Duration::from_secs(2), async {
-        let mut targets = Vec::new();
-        for (owner, name, token) in found.targets {
-            let Some((_, _, record)) = linkable.iter().find(|(o, n, _)| o == &owner && n == &name) else { continue; };
-            let base = crate::webui::repository_path(&owner, &name);
-            let href = if let Some(number) = token.strip_prefix('#') {
-                let Ok(number) = number.parse::<i32>() else { continue; };
-                let issue = db::issues::get_issue(pool, record.id, number).await.ok().flatten().is_some();
-                let pull = if issue { false } else { db::pull_requests::records::get_pull_request(pool, record.id, number).await.ok().flatten().is_some() };
-                let moved = if issue || pull { false } else {
-                    match db::issues::management::redirect(pool, record.id, number).await.ok().flatten() {
-                        Some(issue) => match db::repositories::records::get_repository_by_id(pool, issue.repo_id).await.ok().flatten() {
-                            Some(destination) => authorize(vec![destination]).await.is_ok_and(|readable| readable.contains(&issue.repo_id)),
-                            None => false,
-                        },
-                        None => false,
-                    }
+    resolved.targets = Some(
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            let mut targets = Vec::new();
+            for (owner, name, token) in found.targets {
+                let Some((_, _, record)) =
+                    linkable.iter().find(|(o, n, _)| o == &owner && n == &name)
+                else {
+                    continue;
                 };
-                if !issue && !pull && !moved { continue; }
-                format!("{base}/issues/{number}")
-            } else {
-                let store = crate::backend::repositories::store::repo_store(record, cluster);
-                let Ok(commit) = store.commit(&token).await else { continue; };
-                format!("{base}/commit/{}", commit.sha)
-            };
-            targets.push(references::Target { owner, repo: name, token, href });
-        }
-        targets
-    }).await.unwrap_or_default());
+                let base = crate::webui::repository_path(&owner, &name);
+                let href = if let Some(number) = token.strip_prefix('#') {
+                    let Ok(number) = number.parse::<i32>() else {
+                        continue;
+                    };
+                    let issue = db::issues::get_issue(pool, record.id, number)
+                        .await
+                        .ok()
+                        .flatten()
+                        .is_some();
+                    let pull = if issue {
+                        false
+                    } else {
+                        db::pull_requests::records::get_pull_request(pool, record.id, number)
+                            .await
+                            .ok()
+                            .flatten()
+                            .is_some()
+                    };
+                    let moved = if issue || pull {
+                        false
+                    } else {
+                        match db::issues::management::redirect(pool, record.id, number)
+                            .await
+                            .ok()
+                            .flatten()
+                        {
+                            Some(issue) => match db::repositories::records::get_repository_by_id(
+                                pool,
+                                issue.repo_id,
+                            )
+                            .await
+                            .ok()
+                            .flatten()
+                            {
+                                Some(destination) => authorize(vec![destination])
+                                    .await
+                                    .is_ok_and(|readable| readable.contains(&issue.repo_id)),
+                                None => false,
+                            },
+                            None => false,
+                        }
+                    };
+                    if !issue && !pull && !moved {
+                        continue;
+                    }
+                    format!("{base}/issues/{number}")
+                } else {
+                    let store = crate::backend::repositories::store::repo_store(record, cluster);
+                    let Ok(commit) = store.commit(&token).await else {
+                        continue;
+                    };
+                    format!("{base}/commit/{}", commit.sha)
+                };
+                targets.push(references::Target {
+                    owner,
+                    repo: name,
+                    token,
+                    href,
+                });
+            }
+            targets
+        })
+        .await
+        .unwrap_or_default(),
+    );
     Ok(resolved)
 }
 

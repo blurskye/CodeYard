@@ -141,7 +141,15 @@ pub async fn request_code_owner_reviews(
             }
         }
     }
-    super::team_reviewers::notify(pool, ci.notifications(), &requester, repository, pull, &requested).await;
+    super::team_reviewers::notify(
+        pool,
+        ci.notifications(),
+        &requester,
+        repository,
+        pull,
+        &requested,
+    )
+    .await;
     super::team_reviewers::emit_events(
         pool,
         ci.cluster.as_ref(),
@@ -161,7 +169,9 @@ pub async fn request_code_owner_reviews(
     wanted.dedup();
     // An owner who is already requested needs no write, so a refresh with nothing new does not
     // take the write lock. The insertion decides every other case.
-    if let Ok(existing) = db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id).await {
+    if let Ok(existing) =
+        db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id).await
+    {
         wanted.retain(|id| !existing.iter().any(|reviewer| reviewer.id == *id));
     }
     if wanted.is_empty() {

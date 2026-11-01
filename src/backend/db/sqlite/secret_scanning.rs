@@ -130,7 +130,9 @@ pub async fn use_bypass(
 }
 pub async fn alert_bypasses(pool: &SqlitePool, keys: &[(i64, String)]) -> Result<Vec<Bypass>> {
     ensure!(keys.len() <= 100, "Too many alert enrichments");
-    if keys.is_empty() { return Ok(Vec::new()); }
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
     Ok(sqlx::query_as("SELECT ranked.* FROM (SELECT b.*,row_number() OVER (PARTITION BY repo_id,secret_hash ORDER BY used_at DESC,id DESC) AS position FROM secret_scanning_bypasses b WHERE used_at IS NOT NULL AND (repo_id,secret_hash) IN (SELECT json_extract(value,'$[0]'),json_extract(value,'$[1]') FROM json_each($1))) ranked WHERE position=1")
         .bind(serde_json::to_string(keys)?).fetch_all(pool).await?)
 }
@@ -452,7 +454,12 @@ pub async fn claim(pool: &SqlitePool) -> Result<Option<ScanJob>> {
     Ok(Some(job))
 }
 
-pub async fn finish(pool: &SqlitePool, id: i64, attempt: i64, completion: ScanCompletion) -> Result<()> {
+pub async fn finish(
+    pool: &SqlitePool,
+    id: i64,
+    attempt: i64,
+    completion: ScanCompletion,
+) -> Result<()> {
     let retry = matches!(completion, ScanCompletion::Retry);
     let now = chrono::Utc::now();
     sqlx::query("UPDATE secret_scanning_jobs SET status=$2,completed_at=$3,heartbeat_at=$5 WHERE id=$1 AND attempt=$4 AND status='running'")

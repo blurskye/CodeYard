@@ -437,7 +437,11 @@ pub fn environment(
         value["wait_timer"] = json!(environment.wait_timer);
         rules.push(value);
     }
-    if serde_json::from_str::<Vec<crate::backend::db::environments::Reviewer>>(&environment.reviewers).is_ok_and(|stored| !stored.is_empty()) {
+    if serde_json::from_str::<Vec<crate::backend::db::environments::Reviewer>>(
+        &environment.reviewers,
+    )
+    .is_ok_and(|stored| !stored.is_empty())
+    {
         let mut value = rule("required_reviewers");
         value["prevent_self_review"] = json!(environment.prevent_self_review);
         value["reviewers"] = json!(reviewers);
@@ -541,7 +545,11 @@ pub fn package(
     let account = if owner.kind == "org" {
         organization_person(owner.id, &owner.name)
     } else {
-        simple_person(&Person { id: owner.id, login: owner.name.clone(), site_admin: false })
+        simple_person(&Person {
+            id: owner.id,
+            login: owner.name.clone(),
+            site_admin: false,
+        })
     };
     json!({"id":package.id,"name":package.name,"package_type":package.package_type,
         "visibility":package.visibility,"owner":account,"repository":repository,
@@ -712,7 +720,10 @@ pub fn organization_person(id: i64, name: &str) -> Value {
     });
     value["type"] = json!("Organization");
     value["node_id"] = json!(node_id::encode("O", id));
-    value["repos_url"] = json!(crate::backend::api::github::api_url(&format!("/orgs/{}/repos", crate::webui::encode_component(name))));
+    value["repos_url"] = json!(crate::backend::api::github::api_url(&format!(
+        "/orgs/{}/repos",
+        crate::webui::encode_component(name)
+    )));
     value
 }
 pub fn topic(topic: &crate::backend::db::catalog_search::Topic) -> Value {
@@ -729,7 +740,9 @@ pub fn repository_owner(repo: &Repository, owner: &str) -> Value {
     })
 }
 
-pub fn repository_snapshot(snapshot: &crate::backend::db::repository_stats::RepositorySnapshot) -> Value {
+pub fn repository_snapshot(
+    snapshot: &crate::backend::db::repository_stats::RepositorySnapshot,
+) -> Value {
     let mut value = repository(&snapshot.repository, &snapshot.owner);
     value["open_issues"] = json!(snapshot.facts.open_items);
     value["open_issues_count"] = json!(snapshot.facts.open_items);
@@ -741,7 +754,9 @@ pub fn repository_snapshot(snapshot: &crate::backend::db::repository_stats::Repo
 /// Replaces the zero fork counts of an unscoped repository document with the count its
 /// audience may see.
 pub fn set_fork_counts(repository: &mut Value, count: i32) {
-    if !repository.is_object() { return; }
+    if !repository.is_object() {
+        return;
+    }
     for field in ["forks", "forks_count", "network_count"] {
         repository[field] = json!(count);
     }
@@ -752,7 +767,8 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
     let html_url = repository_url(owner, &repo.name);
     let api = crate::backend::api::github::repo_url(owner, &repo.name);
     let ssh = crate::backend::api::http::config::ssh_clone_base();
-    let ssh_url = (!ssh.trim().is_empty()).then(|| format!("{}/{owner}/{}.git", ssh.trim_end_matches('/'), repo.name));
+    let ssh_url = (!ssh.trim().is_empty())
+        .then(|| format!("{}/{owner}/{}.git", ssh.trim_end_matches('/'), repo.name));
     let mut value = json!({
         "id": repo.id,
         "node_id": crate::backend::api::github::node_id::encode("R", repo.id),
@@ -881,20 +897,29 @@ fn git_verification(signature: Option<&str>, payload: Option<&[u8]>) -> Value {
 /// GitHub's short commit object, as a workflow run names its head commit.
 pub fn simple_commit(commit: &CommitInfo) -> Value {
     simple_commit_document(
-        (&commit.sha, &commit.tree_sha, &commit.message), commit.committer_timestamp,
-        (&commit.author_name, &commit.author_email), (&commit.committer_name, &commit.committer_email),
+        (&commit.sha, &commit.tree_sha, &commit.message),
+        commit.committer_timestamp,
+        (&commit.author_name, &commit.author_email),
+        (&commit.committer_name, &commit.committer_email),
     )
 }
 
 /// The same short commit from the bounded snapshot already captured for a push event.
 pub fn pushed_head(commit: &PushedCommit) -> Value {
     simple_commit_document(
-        (&commit.id, &commit.tree_id, &commit.message), commit.committer_time,
-        (&commit.author_name, &commit.author_email), (&commit.committer_name, &commit.committer_email),
+        (&commit.id, &commit.tree_id, &commit.message),
+        commit.committer_time,
+        (&commit.author_name, &commit.author_email),
+        (&commit.committer_name, &commit.committer_email),
     )
 }
 
-fn simple_commit_document((id, tree_id, message): (&str, &str, &str), timestamp: i64, (author, author_email): (&str, &str), (committer, committer_email): (&str, &str)) -> Value {
+fn simple_commit_document(
+    (id, tree_id, message): (&str, &str, &str),
+    timestamp: i64,
+    (author, author_email): (&str, &str),
+    (committer, committer_email): (&str, &str),
+) -> Value {
     json!({
         "id": id, "tree_id": tree_id, "message": message,
         "timestamp": chrono::DateTime::from_timestamp(timestamp, 0).map(time),
@@ -925,7 +950,10 @@ pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str, repo_id: i64) ->
 
 /// GitHub's commit object: the Git commit `detail` with its comment count, and the accounts
 /// its author and committer emails belong to.
-#[expect(clippy::too_many_arguments, reason = "Each argument is one part of GitHub's commit object.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one part of GitHub's commit object."
+)]
 pub fn commit(
     commit: &CommitInfo,
     mut detail: Value,
@@ -1500,7 +1528,10 @@ pub fn review_comment_revisions<'a>(
     pull: &'a PullRequest,
 ) -> (&'a str, &'a str) {
     (
-        comment.diff_base_sha.as_deref().unwrap_or_else(|| pull.diff_base()),
+        comment
+            .diff_base_sha
+            .as_deref()
+            .unwrap_or_else(|| pull.diff_base()),
         comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),
     )
 }
@@ -1526,7 +1557,13 @@ pub fn review_comment_diff(
     let left = comment.side.as_deref() == Some("LEFT");
     if let Some((position, _, _)) = diff_positions(&file.patch)
         .into_iter()
-        .find(|(_, old, new)| if left { *old == Some(line) } else { *new == Some(line) })
+        .find(|(_, old, new)| {
+            if left {
+                *old == Some(line)
+            } else {
+                *new == Some(line)
+            }
+        })
     {
         value["original_position"] = json!(position);
         if review_comment_is_current(comment, pull) {
@@ -2027,7 +2064,10 @@ pub fn pushed_commits(
     let head = pushed_commit(&repository, after, &is_distinct, files_until);
     let commits = listed
         .iter()
-        .map(|oid| pushed_commit(&repository, oid, &is_distinct, files_until).ok_or_else(|| anyhow::anyhow!("Webhook commit lookup failed")))
+        .map(|oid| {
+            pushed_commit(&repository, oid, &is_distinct, files_until)
+                .ok_or_else(|| anyhow::anyhow!("Webhook commit lookup failed"))
+        })
         .collect::<anyhow::Result<Vec<_>>>()?;
     Ok(PushedCommits {
         commits,
@@ -2143,16 +2183,30 @@ pub fn action_run_pull_requests(
     head_repository: &Value,
     exclude: bool,
 ) -> Value {
-    if exclude { return json!([]); }
+    if exclude {
+        return json!([]);
+    }
     let Some(pull) = pull else {
         // The association was deleted; an empty list would falsely claim there never was one.
-        return if run.event == "pull_request" { Value::Null } else { json!([]) };
+        return if run.event == "pull_request" {
+            Value::Null
+        } else {
+            json!([])
+        };
     };
     let snapshot = run.pull_request_event.as_ref();
-    let event_head = run.event_payload.as_ref().map(|event| &event["pull_request"]["head"]);
-    let head_sha = snapshot.and_then(|event| event["head_sha"].as_str())
+    let event_head = run
+        .event_payload
+        .as_ref()
+        .map(|event| &event["pull_request"]["head"]);
+    let head_sha = snapshot
+        .and_then(|event| event["head_sha"].as_str())
         .or_else(|| event_head.and_then(|head| head["sha"].as_str()))
-        .unwrap_or(if run.event == "pull_request_target" { &pull.head_sha } else { run.head_sha.as_deref().unwrap_or(&pull.head_sha) });
+        .unwrap_or(if run.event == "pull_request_target" {
+            &pull.head_sha
+        } else {
+            run.head_sha.as_deref().unwrap_or(&pull.head_sha)
+        });
     let side = |reference: &str, sha: &str, repository: &Value| json!({"ref":reference,"sha":sha,"repo":{"id":repository["id"],"url":repository["url"],"name":repository["name"]}});
     json!([{"id":pull.id,"number":pull.number,"url":format!("{}/pulls/{}",repository["url"].as_str().unwrap_or(""),pull.number),
         "head":side(snapshot.and_then(|event|event["head_ref"].as_str()).unwrap_or(&pull.head_branch),head_sha,head_repository),

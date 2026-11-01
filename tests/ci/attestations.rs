@@ -371,11 +371,17 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let claim = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .filter(|claim| claim.id == run.id)
-        .unwrap();
+    let claim = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[owner],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .filter(|claim| claim.id == run.id)
+    .unwrap();
     let definitions = std::collections::BTreeMap::from([(".github/workflows/ci.yml".into(),
         b"permissions: {}\njobs:\n  writer: {permissions: {attestations: write}}\n  reader: {permissions: {attestations: read}}\n  denied: {permissions: {contents: write}}".to_vec())]);
     let credentials = ci::tokens::issue(f.pool(), &claim, &definitions, false)

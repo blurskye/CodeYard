@@ -37,7 +37,8 @@ fn refusal(ctx: &PageContext, error: Error) -> Response {
 }
 async fn load(ctx: &PageContext, actor: i64, page: usize) -> Result<view::Page, Error> {
     let limit = paging::DEFAULT_PER_PAGE;
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let mut rows = collaborators::recipient_invitations(
         &ctx.state.pool,
         actor,
@@ -55,7 +56,9 @@ async fn load(ctx: &PageContext, actor: i64, page: usize) -> Result<view::Page, 
             owner: row.owner,
             repository: row.repository,
             inviter: row.inviter,
-            access: db::models::AccessLevel::from(row.invitation.permission).as_str().into(),
+            access: db::models::AccessLevel::from(row.invitation.permission)
+                .as_str()
+                .into(),
             created: row.invitation.created_at.to_rfc3339(),
         });
     }

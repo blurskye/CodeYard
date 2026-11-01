@@ -59,12 +59,20 @@ pub fn validate_required_checks(checks: &[String]) -> Result<(), ProtectionWrite
 
 /// Keep producer selection identical for presentation and enforcement. Identical entries collapse;
 /// conflicting entries are refused instead of giving different readers first/last-wins semantics.
-pub(crate) fn normalize_check_bindings(checks: &mut Vec<serde_json::Value>) -> Result<(), ProtectionWriteRefusal> {
-    if checks.len() > 100 { return Err(ProtectionWriteRefusal::InvalidChecks); }
+pub(crate) fn normalize_check_bindings(
+    checks: &mut Vec<serde_json::Value>,
+) -> Result<(), ProtectionWriteRefusal> {
+    if checks.len() > 100 {
+        return Err(ProtectionWriteRefusal::InvalidChecks);
+    }
     let mut producers = std::collections::BTreeMap::new();
     for binding in checks.iter() {
-        let context = binding.get("context").and_then(serde_json::Value::as_str)
-            .filter(|context| !context.is_empty() && context.len() <= MAX_CHECK_BYTES && !context.contains('\0'))
+        let context = binding
+            .get("context")
+            .and_then(serde_json::Value::as_str)
+            .filter(|context| {
+                !context.is_empty() && context.len() <= MAX_CHECK_BYTES && !context.contains('\0')
+            })
             .ok_or(ProtectionWriteRefusal::InvalidChecks)?;
         let app = match binding.get("app_id") {
             None | Some(serde_json::Value::Null) => None,
@@ -75,10 +83,15 @@ pub(crate) fn normalize_check_bindings(checks: &mut Vec<serde_json::Value>) -> R
             },
         };
         if let Some(previous) = producers.insert(context.to_owned(), app) {
-            if previous != app { return Err(ProtectionWriteRefusal::InvalidChecks); }
+            if previous != app {
+                return Err(ProtectionWriteRefusal::InvalidChecks);
+            }
         }
     }
-    *checks = producers.into_iter().map(|(context, app)| serde_json::json!({"context":context,"app_id":app})).collect();
+    *checks = producers
+        .into_iter()
+        .map(|(context, app)| serde_json::json!({"context":context,"app_id":app}))
+        .collect();
     Ok(())
 }
 
@@ -220,7 +233,10 @@ impl ProtectionUpdate {
         let Self::PushTeams(ActorListUpdate::Add(ids) | ActorListUpdate::Set(ids)) = self else {
             return Ok(None);
         };
-        anyhow::ensure!(ids.len() <= MAX_ALLOWANCE_ACTORS, ProtectionWriteRefusal::InvalidPushTeams);
+        anyhow::ensure!(
+            ids.len() <= MAX_ALLOWANCE_ACTORS,
+            ProtectionWriteRefusal::InvalidPushTeams
+        );
         let mut ids = ids.clone();
         ids.sort_unstable();
         ids.dedup();
@@ -243,8 +259,17 @@ impl ProtectionUpdate {
     }
 }
 
-pub(crate) fn prune_check_bindings(settings: &mut crate::backend::db::models::BranchProtectionSettings, enabled: bool, contexts: &[String]) {
-    settings.checks.retain(|binding| enabled && binding["context"].as_str().is_some_and(|context| contexts.iter().any(|name| name == context)));
+pub(crate) fn prune_check_bindings(
+    settings: &mut crate::backend::db::models::BranchProtectionSettings,
+    enabled: bool,
+    contexts: &[String],
+) {
+    settings.checks.retain(|binding| {
+        enabled
+            && binding["context"]
+                .as_str()
+                .is_some_and(|context| contexts.iter().any(|name| name == context))
+    });
 }
 
 pub fn has_review_requirements(rule: &BranchProtectionRule) -> bool {
@@ -382,12 +407,18 @@ pub(crate) fn apply_protection_update(
                 .retain(|old| !bindings.iter().any(|new| new["context"] == old["context"]));
             rule.github_settings.checks.extend(bindings);
         }
-        ProtectionUpdate::AddContexts { contexts, mut bindings } => {
+        ProtectionUpdate::AddContexts {
+            contexts,
+            mut bindings,
+        } => {
             normalize_check_bindings(&mut bindings)?;
             rule.required_status_checks.extend(contexts);
             add_unbound(&mut rule.github_settings.checks, bindings);
         }
-        ProtectionUpdate::SetContexts { contexts, mut bindings } => {
+        ProtectionUpdate::SetContexts {
+            contexts,
+            mut bindings,
+        } => {
             normalize_check_bindings(&mut bindings)?;
             rule.required_status_checks = contexts;
             add_unbound(&mut rule.github_settings.checks, bindings);
@@ -413,7 +444,11 @@ pub(crate) fn apply_protection_update(
     rule.required_status_checks.dedup();
     validate_required_checks(&rule.required_status_checks)?;
     normalize_check_bindings(&mut rule.github_settings.checks)?;
-    prune_check_bindings(&mut rule.github_settings, rule.require_status_checks, &rule.required_status_checks);
+    prune_check_bindings(
+        &mut rule.github_settings,
+        rule.require_status_checks,
+        &rule.required_status_checks,
+    );
     Ok(())
 }
 
@@ -445,7 +480,10 @@ const MAX_PATTERN_CHARS: usize = 255;
 /// Adds the producer bindings for contexts that have none; an existing binding stays.
 fn add_unbound(checks: &mut Vec<serde_json::Value>, bindings: Vec<serde_json::Value>) {
     for binding in bindings {
-        if !checks.iter().any(|old| old["context"] == binding["context"]) {
+        if !checks
+            .iter()
+            .any(|old| old["context"] == binding["context"])
+        {
             checks.push(binding);
         }
     }
@@ -519,7 +557,10 @@ native_operation!(crate::backend::db::postgres::repositories::protection::rename
     crate::backend::db::sqlite::repositories::protection::rename_branch_settings,
     fn rename_branch_settings(pool: &DbPool, actor: i64, repo: i64, old: &str, new: &str) -> Result<()>);
 
-pub async fn upsert_commit_status(pool: &DbPool, input: CommitStatusUpsert<'_>) -> Result<CommitStatus> {
+pub async fn upsert_commit_status(
+    pool: &DbPool,
+    input: CommitStatusUpsert<'_>,
+) -> Result<CommitStatus> {
     upsert_commit_status_with_token(pool, input, None).await
 }
 

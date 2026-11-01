@@ -107,7 +107,9 @@ async fn list(
     .map_err(release_error)?;
     let mut values = Vec::new();
     let mut grouped = HashMap::<i64, Vec<_>>::new();
-    for asset in listing.assets { grouped.entry(asset.release_id).or_default().push(asset); }
+    for asset in listing.assets {
+        grouped.entry(asset.release_id).or_default().push(asset);
+    }
     for row in listing.releases {
         let assets = grouped.remove(&row.release.id).unwrap_or_default();
         let detail = releases::ReleaseDetail {
@@ -242,7 +244,11 @@ async fn create(
             .map_err(release_error)?;
         (input.name.or(Some(notes.name)), Some(body), notes.target)
     } else {
-        (input.name, input.body, input.target_commitish.unwrap_or(repo.default_branch))
+        (
+            input.name,
+            input.body,
+            input.target_commitish.unwrap_or(repo.default_branch),
+        )
     };
     let release = releases::create(
         &state.pool,
@@ -374,7 +380,9 @@ async fn upload(
     .map_err(|_| Error::invalid("Asset exceeds 100 MiB"))?
     .to_vec();
     auth.require_live(&state.pool).await?;
-    auth.repository_scope(&state.pool, repo.id, "contents", true).await.map_err(auth::scope_error)?;
+    auth.repository_scope(&state.pool, repo.id, "contents", true)
+        .await
+        .map_err(auth::scope_error)?;
     let actor = &auth.user;
     let asset = releases::upload_asset(
         &state.pool,

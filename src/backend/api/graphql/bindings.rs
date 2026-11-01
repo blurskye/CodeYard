@@ -373,7 +373,11 @@ impl Object {
         request: &RequestContext,
     ) -> Result<Value> {
         if ty == "Mutation" {
-            request.auth.require_live(&request.state.pool).await.map_err(|error| error.graphql())?;
+            request
+                .auth
+                .require_live(&request.state.pool)
+                .await
+                .map_err(|error| error.graphql())?;
         }
         if let Some(repo) = self.0.get("_repo").and_then(Value::as_i64).or_else(|| {
             (ty == "Repository")
@@ -428,11 +432,25 @@ impl Object {
             request.authorize(repo, "statuses", false).await?;
             request.authorize(repo, "checks", false).await?;
         }
-        if ty == "Organization" && matches!(field, "team" | "rulesets" | "projects" | "projectsV2" | "projectV2" | "viewerCanCreateProjects") {
-            request.authorize_organization(self.0["databaseId"].as_i64().ok_or_else(missing)?).await?;
+        if ty == "Organization"
+            && matches!(
+                field,
+                "team"
+                    | "rulesets"
+                    | "projects"
+                    | "projectsV2"
+                    | "projectV2"
+                    | "viewerCanCreateProjects"
+            )
+        {
+            request
+                .authorize_organization(self.0["databaseId"].as_i64().ok_or_else(missing)?)
+                .await?;
         }
         if self.0["_ownerKind"] == "org" {
-            request.authorize_organization(self.0["_owner"].as_i64().ok_or_else(missing)?).await?;
+            request
+                .authorize_organization(self.0["_owner"].as_i64().ok_or_else(missing)?)
+                .await?;
         }
         if request.bounded()
             && ((ty == "Query" && matches!(field, "user" | "organization" | "repositoryOwner"))
@@ -452,11 +470,22 @@ impl Object {
         match (ty, field) {
             ("GitActor", "user") => {
                 let email = self.0["_email"].as_str().ok_or_else(missing)?;
-                let authors = crate::backend::repositories::reads::commit_authors(&request.state.pool, &[email.to_owned()]).await.map_err(unavailable)?;
-                Ok(authors.into_values().next()
-                    .filter(|user| !user.is_banned).map_or(Value::Null, |row| user::object(&row, request.auth.user.id)))
+                let authors = crate::backend::repositories::reads::commit_authors(
+                    &request.state.pool,
+                    &[email.to_owned()],
+                )
+                .await
+                .map_err(unavailable)?;
+                Ok(authors
+                    .into_values()
+                    .next()
+                    .filter(|user| !user.is_banned)
+                    .map_or(Value::Null, |row| user::object(&row, request.auth.user.id)))
             }
-            ("UpdateProjectV2ItemPositionPayload", "items") => boxed(|| super::projects::resolve("ProjectV2", field, arguments, request, &self.0)).await,
+            ("UpdateProjectV2ItemPositionPayload", "items") => {
+                boxed(|| super::projects::resolve("ProjectV2", field, arguments, request, &self.0))
+                    .await
+            }
             (_, "repository")
                 if matches!(
                     ty,
@@ -607,7 +636,9 @@ impl Object {
                 boxed(|| super::git_objects::reference_field(field, arguments, &self.0, request))
                     .await
             }
-            ("CheckRun" | "CheckSuite" | "WorkflowRun" | "Workflow", _) => boxed(|| super::checks::resolve(ty, field, arguments, request, &self.0)).await,
+            ("CheckRun" | "CheckSuite" | "WorkflowRun" | "Workflow", _) => {
+                boxed(|| super::checks::resolve(ty, field, arguments, request, &self.0)).await
+            }
             ("Commit" | "Status" | "StatusContext" | "StatusCheckRollup", _) => {
                 boxed(|| super::git::resolve(ty, field, arguments, request, &self.0)).await
             }

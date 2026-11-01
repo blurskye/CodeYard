@@ -6,7 +6,8 @@ use crate::backend::db::{
         OrganizationOutcome,
     },
     repositories::creation::{
-        CreationAdmission, NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal, RepositoryTarget,
+        CreationAdmission, NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal,
+        RepositoryTarget,
     },
 };
 use anyhow::Result;
@@ -161,7 +162,10 @@ async fn insert_kind(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let creator = input.owner.actor_id;
     if let Some(authority) = admission.authority {
-        anyhow::ensure!(authority.user_id == creator, RepositoryStorageRefusal::Denied);
+        anyhow::ensure!(
+            authority.user_id == creator,
+            RepositoryStorageRefusal::Denied
+        );
     }
     let admin = creation_authority(&mut tx, input.owner).await?;
     let (kind, user, org) = match input.owner.target {
@@ -204,12 +208,17 @@ async fn insert_kind(
         return Err(RepositoryStorageRefusal::StalePlacement.into());
     }
     if let Some(ghsa) = admission.advisory {
-        anyhow::ensure!(!gist && input.is_private
-            && input.owner.target == RepositoryTarget::Personal(creator), RepositoryStorageRefusal::Denied);
+        anyhow::ensure!(
+            !gist && input.is_private && input.owner.target == RepositoryTarget::Personal(creator),
+            RepositoryStorageRefusal::Denied
+        );
         let source = input.source_id.ok_or(RepositoryStorageRefusal::Denied)?;
-        let advisory = super::super::advisories::administration(&mut tx, creator, source, ghsa).await?;
-        anyhow::ensure!(advisory.state == "draft" && advisory.private_fork_id.is_none(),
-            crate::backend::db::advisories::Refusal::Conflict);
+        let advisory =
+            super::super::advisories::administration(&mut tx, creator, source, ghsa).await?;
+        anyhow::ensure!(
+            advisory.state == "draft" && advisory.private_fork_id.is_none(),
+            crate::backend::db::advisories::Refusal::Conflict
+        );
     }
     if let Some(source_id) = input.source_id.filter(|_| admission.advisory.is_none()) {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_kind=?1 AND (owner_user_id=?2 OR owner_org_id=?3) AND forked_from_id=?4)")
@@ -251,7 +260,9 @@ async fn insert_kind(
         super::super::code_security::apply_default(&mut tx, repository).await?;
         if source.is_some() {
             sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES(?1,false)")
-                .bind(repository.id).execute(&mut *tx).await?;
+                .bind(repository.id)
+                .execute(&mut *tx)
+                .await?;
         }
     }
     if let (Some(org), Some(repository)) = (org, repository.as_ref()) {

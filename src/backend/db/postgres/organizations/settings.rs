@@ -54,7 +54,9 @@ pub async fn change(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !credential(&mut tx, &grant, org, "organization_administration").await? { return Ok(Denied); }
+    if !credential(&mut tx, &grant, org, "organization_administration").await? {
+        return Ok(Denied);
+    }
     let mut settings = get_on(&mut tx, org)
         .await?
         .context("Organization settings scope disappeared")?;

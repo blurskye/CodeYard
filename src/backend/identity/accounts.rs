@@ -89,11 +89,16 @@ pub async fn reset_password(
 ) -> Result<(), PasswordResetError> {
     validate_new_password(new_password).map_err(PasswordResetError::Input)?;
     // Hashing is costly, so it waits until the link is known to be good.
-    let user = links::password_reset_account(pool, token).await
+    let user = links::password_reset_account(pool, token)
+        .await
         .map_err(|_| PasswordResetError::AccountUnavailable)?
         .ok_or(PasswordResetError::InvalidLink)?;
-    if user.must_change_password && passwords::verify_password(new_password, user.password_hash.as_deref()).await
-        .map_err(PasswordResetError::Password)?.valid {
+    if user.must_change_password
+        && passwords::verify_password(new_password, user.password_hash.as_deref())
+            .await
+            .map_err(PasswordResetError::Password)?
+            .valid
+    {
         return Err(PasswordResetError::UnchangedPassword);
     }
     let hash = passwords::hash_password(new_password)

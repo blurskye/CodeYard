@@ -49,7 +49,13 @@ pub(crate) fn milestone_choice_view(milestone: db::models::Milestone) -> view::M
 fn draft_of(milestone: &view::Milestone) -> MilestoneDraft {
     MilestoneDraft {
         repository_id: None,
-        original: serde_json::to_string(&(&milestone.title, &milestone.description, &milestone.due_date, &milestone.state)).unwrap_or_default(),
+        original: serde_json::to_string(&(
+            &milestone.title,
+            &milestone.description,
+            &milestone.due_date,
+            &milestone.state,
+        ))
+        .unwrap_or_default(),
         title: milestone.title.clone(),
         description: milestone.description.clone().unwrap_or_default(),
         due_date: milestone.due_date.clone().unwrap_or_default(),
@@ -68,7 +74,11 @@ pub(crate) fn milestone_write_error(error: anyhow::Error) -> ApiFailure {
             "not_found",
             "The requested resource was not found or you do not have access.",
         ),
-        Some(MilestoneWriteRefusal::Conflict) => (StatusCode::CONFLICT, "milestone_changed", "The milestone changed. Your draft is preserved; reload before saving."),
+        Some(MilestoneWriteRefusal::Conflict) => (
+            StatusCode::CONFLICT,
+            "milestone_changed",
+            "The milestone changed. Your draft is preserved; reload before saving.",
+        ),
         Some(MilestoneWriteRefusal::DuplicateTitle) => (
             StatusCode::UNPROCESSABLE_ENTITY,
             "milestone_title_taken",
@@ -388,9 +398,10 @@ async fn milestone_page(
         .iter()
         .map(|value| value.pull_request.id)
         .collect::<Vec<_>>();
-    let mut pull_labels = db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &pull_ids)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let mut pull_labels =
+        db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &pull_ids)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     let mut pull_assignees = listed_assignees(ctx, &pull_ids, true).await?;
     let mut pull_items = Vec::new();
     let mut heads = HashMap::new();
@@ -494,11 +505,19 @@ pub(crate) async fn native_update(
     };
     let actor = ctx.database_actor(ctx.require_user()?.id);
     match db::milestones::save_milestone_checked(
-        &ctx.state.pool, actor, repo.record.id, Some(number),
+        &ctx.state.pool,
+        actor,
+        repo.record.id,
+        Some(number),
         db::milestones::MilestoneInput {
-            title: Some(&input.title), description: Some(input.description.as_deref()),
-            due_on: Some(db::milestones::due_on(input.due_date.as_deref()).map_err(|_| unavailable(&ctx))?), state: None,
-        }, Some(&draft.original),
+            title: Some(&input.title),
+            description: Some(input.description.as_deref()),
+            due_on: Some(
+                db::milestones::due_on(input.due_date.as_deref()).map_err(|_| unavailable(&ctx))?,
+            ),
+            state: None,
+        },
+        Some(&draft.original),
     )
     .await
     {
@@ -613,7 +632,12 @@ pub(crate) async fn native_set_item_milestone(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
-    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
+    crate::backend::api::repos::discussion::require_item_binding(
+        &ctx,
+        &form,
+        repo.record.id,
+        value.id,
+    )?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let choice = field(&form, "milestone_number");
     let chosen = match choice.trim() {

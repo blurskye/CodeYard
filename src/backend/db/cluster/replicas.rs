@@ -53,7 +53,9 @@ pub fn plan(
             id != primary
                 && storage.iter().any(|node| {
                     node.id == id
-                        && (completed(id) || applied(id) || node.disk_free.is_some_and(|free| free >= size))
+                        && (completed(id)
+                            || applied(id)
+                            || node.disk_free.is_some_and(|free| free >= size))
                 })
         })
         .collect();
@@ -108,14 +110,24 @@ pub(crate) fn family_plan(
     let mut members = BTreeMap::<i64, i64>::new();
     let mut holders = BTreeSet::new();
     for (repository, _, node, _, size, _) in rows {
-        members.insert(*repository, (*size).max(1).checked_mul(super::REPLICA_STAGING_FACTOR)
-            .ok_or_else(|| anyhow::anyhow!("replica reservation overflow"))?);
+        members.insert(
+            *repository,
+            (*size)
+                .max(1)
+                .checked_mul(super::REPLICA_STAGING_FACTOR)
+                .ok_or_else(|| anyhow::anyhow!("replica reservation overflow"))?,
+        );
         holders.extend(*node);
     }
-    let size = members.values().try_fold(0i64, |sum, size| sum.checked_add(*size))
+    let size = members
+        .values()
+        .try_fold(0i64, |sum, size| sum.checked_add(*size))
         .ok_or_else(|| anyhow::anyhow!("fork family reservation overflow"))?;
     for node in storage.iter_mut() {
-        let reserved = reservations.iter().find(|(id, _)| *id == node.id).map_or(0, |(_, bytes)| *bytes);
+        let reserved = reservations
+            .iter()
+            .find(|(id, _)| *id == node.id)
+            .map_or(0, |(_, bytes)| *bytes);
         let mut free = node.disk_free.unwrap_or(0).saturating_sub(reserved);
         for (repository, _, holder, _, _, _) in rows {
             if *holder == Some(node.id) {
@@ -126,34 +138,74 @@ pub(crate) fn family_plan(
         }
         node.disk_free = node.disk_free.map(|_| free);
     }
-    let copies: Vec<_> = holders.iter().map(|node| {
-        let held: Vec<_> = rows.iter().filter(|row| row.2 == Some(*node)).collect();
-        Holder {
-            node: *node,
-            version: if held.len() == members.len() { held.iter().map(|row| row.3.unwrap_or(-1)).min().unwrap_or(-1) } else { -1 },
-            completed: held.len() == members.len() && held.iter().all(|row| row.5 || row.3.is_some_and(|version| version >= 0)),
-        }
-    }).collect();
-    let family = plan(setting, primary, storage, &copies, size);
-    let targets: BTreeSet<_> = holders.into_iter().filter(|node| !family.remove.contains(node))
-        .chain(family.add).collect();
-    let common_ready = !targets.is_empty() && targets.iter().all(|target| {
-        members.keys().all(|repository| {
-            let newest = rows.iter().filter(|row| row.0 == *repository).filter_map(|row| row.3).max().unwrap_or(-1);
-            rows.iter().any(|row| row.0 == *repository && row.2 == Some(*target)
-                && row.3.is_some_and(|version| version >= 0 && version >= newest))
+    let copies: Vec<_> = holders
+        .iter()
+        .map(|node| {
+            let held: Vec<_> = rows.iter().filter(|row| row.2 == Some(*node)).collect();
+            Holder {
+                node: *node,
+                version: if held.len() == members.len() {
+                    held.iter()
+                        .map(|row| row.3.unwrap_or(-1))
+                        .min()
+                        .unwrap_or(-1)
+                } else {
+                    -1
+                },
+                completed: held.len() == members.len()
+                    && held
+                        .iter()
+                        .all(|row| row.5 || row.3.is_some_and(|version| version >= 0)),
+            }
         })
-    });
-    Ok(members.keys().map(|repository| {
-        let held: BTreeSet<_> = rows.iter().filter(|row| row.0 == *repository).filter_map(|row| row.2).collect();
-        let add = targets.difference(&held).copied().collect();
-        let remove = held.difference(&targets).copied().filter(|node| {
-            // Keep split/offline data until the aligned family has caught up.
-            common_ready || !storage.iter().any(|candidate| candidate.id == *node) || *node == primary
-                || matches!(setting, ReplicaSetting::Copies(1))
-        }).collect();
-        (*repository, Plan { add, remove })
-    }).collect())
+        .collect();
+    let family = plan(setting, primary, storage, &copies, size);
+    let targets: BTreeSet<_> = holders
+        .into_iter()
+        .filter(|node| !family.remove.contains(node))
+        .chain(family.add)
+        .collect();
+    let common_ready = !targets.is_empty()
+        && targets.iter().all(|target| {
+            members.keys().all(|repository| {
+                let newest = rows
+                    .iter()
+                    .filter(|row| row.0 == *repository)
+                    .filter_map(|row| row.3)
+                    .max()
+                    .unwrap_or(-1);
+                rows.iter().any(|row| {
+                    row.0 == *repository
+                        && row.2 == Some(*target)
+                        && row
+                            .3
+                            .is_some_and(|version| version >= 0 && version >= newest)
+                })
+            })
+        });
+    Ok(members
+        .keys()
+        .map(|repository| {
+            let held: BTreeSet<_> = rows
+                .iter()
+                .filter(|row| row.0 == *repository)
+                .filter_map(|row| row.2)
+                .collect();
+            let add = targets.difference(&held).copied().collect();
+            let remove = held
+                .difference(&targets)
+                .copied()
+                .filter(|node| {
+                    // Keep split/offline data until the aligned family has caught up.
+                    common_ready
+                        || !storage.iter().any(|candidate| candidate.id == *node)
+                        || *node == primary
+                        || matches!(setting, ReplicaSetting::Copies(1))
+                })
+                .collect();
+            (*repository, Plan { add, remove })
+        })
+        .collect())
 }
 
 #[cfg(test)]

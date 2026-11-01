@@ -49,7 +49,14 @@ pub struct Draft {
 }
 
 #[component]
-fn Composer(repo: RepoChrome, sha: String, draft: Draft, references: References, split: bool, page: usize) -> Element {
+fn Composer(
+    repo: RepoChrome,
+    sha: String,
+    draft: Draft,
+    references: References,
+    split: bool,
+    page: usize,
+) -> Element {
     // An unsent edit keeps its body and revision through unrelated page-model refreshes.
     let snapshot = use_signal(|| draft.clone());
     let draft = snapshot.read().clone();
@@ -62,7 +69,10 @@ fn Composer(repo: RepoChrome, sha: String, draft: Draft, references: References,
     let action = draft
         .id
         .map_or_else(|| base.clone(), |id| format!("{base}/{id}/edit"));
-    let action = format!("{action}?comments_page={page}{}", if split { "&view=split" } else { "" });
+    let action = format!(
+        "{action}?comments_page={page}{}",
+        if split { "&view=split" } else { "" }
+    );
     let editor = draft.id.map_or_else(
         || "new-commit-comment".into(),
         |id| format!("edit-commit-comment-{id}"),

@@ -1,9 +1,9 @@
 //! Environment values are delivered only to jobs targeting that environment.
 pub use super::organization_values::Kind;
 use super::DbPool;
-use codeyard_actions::values::MAX_SCOPE_VALUES;
 use crate::backend::crypto::{SecretEncryptor, SecretError};
 use chrono::{DateTime, Utc};
+use codeyard_actions::values::MAX_SCOPE_VALUES;
 
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct EnvironmentValue {

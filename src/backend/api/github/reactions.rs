@@ -149,12 +149,24 @@ async fn create(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth.ok_or_else(auth::required)?;
-    let target = target(&state.pool, repo.id, &p, route.as_str(), Some(actor.user.id)).await?;
+    let target = target(
+        &state.pool,
+        repo.id,
+        &p,
+        route.as_str(),
+        Some(actor.user.id),
+    )
+    .await?;
     validate(target.subject, &input.content)?;
-    let (reaction, created) =
-        db::reactions::create_reaction(&state.pool, actor.user.id, &actor.credential(), target, &input.content)
-            .await
-            .map_err(write_error)?;
+    let (reaction, created) = db::reactions::create_reaction(
+        &state.pool,
+        actor.user.id,
+        &actor.credential(),
+        target,
+        &input.content,
+    )
+    .await
+    .map_err(write_error)?;
     Ok((
         if created {
             StatusCode::CREATED
@@ -206,9 +218,17 @@ async fn list(
     let mut ids: Vec<_> = rows.iter().map(|row| row.user_id).collect();
     ids.sort_unstable();
     ids.dedup();
-    let users: std::collections::HashMap<_, _> = db::users::accounts::get_users_by_ids(&state.pool, &ids)
-        .await.map_err(Error::unavailable)?.into_iter().map(|user| (user.id, user)).collect();
-    let items = rows.iter().map(|row| payloads::reaction(row, users.get(&row.user_id))).collect();
+    let users: std::collections::HashMap<_, _> =
+        db::users::accounts::get_users_by_ids(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|user| (user.id, user))
+            .collect();
+    let items = rows
+        .iter()
+        .map(|row| payloads::reaction(row, users.get(&row.user_id)))
+        .collect();
     page.response(&uri, items, next)
 }
 
@@ -220,7 +240,14 @@ async fn remove(
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
     let actor = auth.ok_or_else(auth::required)?;
-    let target = target(&state.pool, repo.id, &p, route.as_str(), Some(actor.user.id)).await?;
+    let target = target(
+        &state.pool,
+        repo.id,
+        &p,
+        route.as_str(),
+        Some(actor.user.id),
+    )
+    .await?;
     let id = p["reaction_id"].parse().map_err(|_| Error::missing())?;
     if !db::reactions::delete_reaction(&state.pool, actor.user.id, &actor.credential(), target, id)
         .await

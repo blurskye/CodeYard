@@ -55,7 +55,8 @@ async fn render_checks(
     // They come a page at a time and without their summaries and text, which this tab never shows.
     const CHECKS_PER_PAGE: usize = 100;
     let max_page = crate::backend::api::repos::paging::MAX_PAGE;
-    let check_page = crate::backend::api::repos::paging::number(ctx, "checks_page", 1, 1..=max_page)?;
+    let check_page =
+        crate::backend::api::repos::paging::number(ctx, "checks_page", 1, 1..=max_page)?;
     let offset = (check_page - 1) * CHECKS_PER_PAGE;
     let check_total = db::checks::summary(&ctx.state.pool, repo.record.id, head)
         .await
@@ -73,24 +74,24 @@ async fn render_checks(
     .await
     .map_err(|_| unavailable(ctx))?
     .into_iter()
-        .map(|run| crate::webui::pages::repos::pulls::CheckStatus {
-            state: match (run.status.as_str(), run.conclusion.as_deref()) {
-                ("completed", Some("success" | "neutral" | "skipped")) => "success",
-                ("completed", _) => "failure",
-                _ => "pending",
-            }
-            .to_owned(),
-            description: run.data.title.clone().or(run.conclusion),
-            // The view links only absolute HTTP(S) addresses.
-            target_url: Some(format!(
-                "{}/{}/{}/runs/{}",
-                crate::backend::api::http::config::link_origin(),
-                repo.view.owner,
-                repo.record.name,
-                run.id
-            )),
-            context: run.name,
-        });
+    .map(|run| crate::webui::pages::repos::pulls::CheckStatus {
+        state: match (run.status.as_str(), run.conclusion.as_deref()) {
+            ("completed", Some("success" | "neutral" | "skipped")) => "success",
+            ("completed", _) => "failure",
+            _ => "pending",
+        }
+        .to_owned(),
+        description: run.data.title.clone().or(run.conclusion),
+        // The view links only absolute HTTP(S) addresses.
+        target_url: Some(format!(
+            "{}/{}/{}/runs/{}",
+            crate::backend::api::http::config::link_origin(),
+            repo.view.owner,
+            repo.record.name,
+            run.id
+        )),
+        context: run.name,
+    });
     let statuses =
         db::repositories::protection::list_commit_statuses(&ctx.state.pool, repo.record.id, head)
             .await

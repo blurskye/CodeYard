@@ -126,7 +126,10 @@ struct Update {
     new_name: Option<String>,
     color: Option<String>,
     /// Left out keeps the description; `null` clears it.
-    #[serde(default, deserialize_with = "db::repositories::records::nullable_change")]
+    #[serde(
+        default,
+        deserialize_with = "db::repositories::records::nullable_change"
+    )]
     description: Option<Option<String>>,
 }
 
@@ -198,7 +201,9 @@ async fn assigned(
     item: db::assignees::AssignedItem,
 ) -> Result<Vec<db::models::Label>> {
     match item {
-        db::assignees::AssignedItem::Issue(id) => db::labels::get_issue_labels(pool, repo_id, id).await,
+        db::assignees::AssignedItem::Issue(id) => {
+            db::labels::get_issue_labels(pool, repo_id, id).await
+        }
         db::assignees::AssignedItem::PullRequest(id) => {
             db::labels::get_pull_request_labels(pool, repo_id, id).await
         }
@@ -257,12 +262,20 @@ async fn change(
     if names.len() > db::labels::MAX_ISSUE_LABELS {
         return Err(Error::invalid("Too many labels"));
     }
-    let catalog = db::labels::list_repo_labels(&state.pool, repo.id).await.map_err(Error::unavailable)?;
-    let ids = names.into_iter().map(|entry| {
-        let (LabelName::String(name) | LabelName::Object { name }) = entry;
-        catalog.iter().find(|label| label.name.eq_ignore_ascii_case(&name)).map(|label| label.id)
-            .ok_or_else(|| Error::invalid("Label does not exist"))
-    }).collect::<Result<Vec<_>>>()?;
+    let catalog = db::labels::list_repo_labels(&state.pool, repo.id)
+        .await
+        .map_err(Error::unavailable)?;
+    let ids = names
+        .into_iter()
+        .map(|entry| {
+            let (LabelName::String(name) | LabelName::Object { name }) = entry;
+            catalog
+                .iter()
+                .find(|label| label.name.eq_ignore_ascii_case(&name))
+                .map(|label| label.id)
+                .ok_or_else(|| Error::invalid("Label does not exist"))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let labels = save_labels(&state.pool, actor, repo.id, item, &ids, replace).await?;
     Ok(Json(
         labels
@@ -345,8 +358,7 @@ async fn remove_from_issue(
             db::labels::remove_issue_label(&state.pool, actor, repo.id, id, label.id).await
         }
         db::assignees::AssignedItem::PullRequest(id) => {
-            db::labels::remove_pull_request_label(&state.pool, actor, repo.id, id, label.id)
-                .await
+            db::labels::remove_pull_request_label(&state.pool, actor, repo.id, id, label.id).await
         }
     }
     .map_err(write_error)?;

@@ -7,12 +7,36 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 
 pub(crate) const DEFAULT_CATEGORIES: &[(&str, &str, &str, &str, bool)] = &[
-    ("Announcements", "announcements", "📣", "Updates from maintainers", false),
-    ("General", "general", "💬", "Chat about the repository", false),
-    ("Ideas", "ideas", "💡", "Share ideas for new features", false),
+    (
+        "Announcements",
+        "announcements",
+        "📣",
+        "Updates from maintainers",
+        false,
+    ),
+    (
+        "General",
+        "general",
+        "💬",
+        "Chat about the repository",
+        false,
+    ),
+    (
+        "Ideas",
+        "ideas",
+        "💡",
+        "Share ideas for new features",
+        false,
+    ),
     ("Polls", "polls", "📊", "Ask the community", false),
     ("Q&A", "q-a", "🙏", "Ask questions and find answers", true),
-    ("Show and tell", "show-and-tell", "🙌", "Show something you made", false),
+    (
+        "Show and tell",
+        "show-and-tell",
+        "🙌",
+        "Show something you made",
+        false,
+    ),
 ];
 
 #[derive(Clone, Debug, sqlx::FromRow)]
@@ -140,12 +164,24 @@ impl Filter {
         filter.query = (!words.is_empty()).then(|| words.join(" "));
         Ok(filter)
     }
-    pub(crate) fn statement(&self, postgres: bool, readable: &str, reader: &super::repositories::credentials::Reader<'_>) -> Result<Statement> {
+    pub(crate) fn statement(
+        &self,
+        postgres: bool,
+        readable: &str,
+        reader: &super::repositories::credentials::Reader<'_>,
+    ) -> Result<Statement> {
         let mut sql = Statement::new(postgres);
         let token = sql.bind(reader.token().unwrap_or(0).to_string());
         let session = sql.bind(reader.session().unwrap_or(""));
         let hash = sql.bind(reader.hash().unwrap_or(""));
-        let scope = super::repositories::credentials::repository_condition(postgres, "discussions", super::repositories::credentials::Access::PublicRead, &format!("NULLIF({token},'0')"), &format!("NULLIF({session},'')"), &format!("NULLIF({hash},'')"));
+        let scope = super::repositories::credentials::repository_condition(
+            postgres,
+            "discussions",
+            super::repositories::credentials::Access::PublicRead,
+            &format!("NULLIF({token},'0')"),
+            &format!("NULLIF({session},'')"),
+            &format!("NULLIF({hash},'')"),
+        );
         let mut predicates = vec![readable.to_owned(), scope];
         if let Some(repo) = self.repo {
             let value = sql.bind(repo.to_string());
@@ -250,11 +286,29 @@ native_operation!(super::postgres::repository_discussions::labels, super::sqlite
     fn labels(pool: &DbPool, discussion: i64) -> Result<Vec<super::models::Label>>);
 native_operation!(super::postgres::repository_discussions::list, super::sqlite::repository_discussions::list,
     fn list_counted(pool: &DbPool, viewer: i64, credential: &super::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Discussion>)>);
-pub async fn list(pool: &DbPool, viewer: i64, credential: &super::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64) -> Result<(i64, Vec<Discussion>)> {
+pub async fn list(
+    pool: &DbPool,
+    viewer: i64,
+    credential: &super::users::accounts::AccountCredential<'_>,
+    filter: &Filter,
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<Discussion>)> {
     list_counted(pool, viewer, credential, filter, offset, limit, true).await
 }
-pub async fn list_rows(pool: &DbPool, viewer: i64, credential: &super::users::accounts::AccountCredential<'_>, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Discussion>> {
-    Ok(list_counted(pool, viewer, credential, filter, offset, limit, false).await?.1)
+pub async fn list_rows(
+    pool: &DbPool,
+    viewer: i64,
+    credential: &super::users::accounts::AccountCredential<'_>,
+    filter: &Filter,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Discussion>> {
+    Ok(
+        list_counted(pool, viewer, credential, filter, offset, limit, false)
+            .await?
+            .1,
+    )
 }
 native_operation!(super::postgres::repository_discussions::write, super::sqlite::repository_discussions::write,
     fn write(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, discussion: Option<i64>, change: &Write<'_>) -> Result<i64>);

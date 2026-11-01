@@ -67,11 +67,22 @@ async fn answer(
     };
     let pool = &ctx.state.pool;
     let outcome = if accept {
-        organizations::accept_organization_invitation(pool, ctx.database_actor(actor), org, invitation)
-            .await
-            .map(unit)
+        organizations::accept_organization_invitation(
+            pool,
+            ctx.database_actor(actor),
+            org,
+            invitation,
+        )
+        .await
+        .map(unit)
     } else {
-        organizations::decline_organization_invitation(pool, ctx.database_actor(actor), org, invitation).await
+        organizations::decline_organization_invitation(
+            pool,
+            ctx.database_actor(actor),
+            org,
+            invitation,
+        )
+        .await
     };
     let outcome = match outcome {
         Ok(outcome) => outcome,

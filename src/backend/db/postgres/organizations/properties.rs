@@ -98,7 +98,9 @@ pub async fn define(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? { return Ok(Denied); }
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
+        return Ok(Denied);
+    }
     let existing = definitions_on(&mut tx, org).await?;
     checked_definitions(inputs, &existing)?;
     for input in inputs {
@@ -131,7 +133,9 @@ pub async fn remove(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? { return Ok(Denied); }
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
+        return Ok(Denied);
+    }
     // A native form names the definition it showed, so a replacement with the same name survives.
     if sqlx::query("DELETE FROM organization_repository_properties WHERE org_id=$1 AND LOWER(property_name)=LOWER($2) AND ($3::BIGINT IS NULL OR id=$3)").bind(org).bind(name).bind(definition).execute(&mut *tx).await?.rows_affected()==0 {
         return Ok(if definition.is_some() { Conflict } else { Missing });
@@ -209,7 +213,9 @@ pub async fn set_values(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? { return Ok(Denied); }
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
+        return Ok(Denied);
+    }
     ensure!(
         !repositories.is_empty() && repositories.len() <= 30,
         invalid(
@@ -251,7 +257,9 @@ pub(crate) async fn values_on(
     repo: i64,
     definitions: &[Definition],
 ) -> Result<Vec<ValueInput>> {
-    if definitions.is_empty() { return Ok(Vec::new()); }
+    if definitions.is_empty() {
+        return Ok(Vec::new());
+    }
     let ids: Vec<i64> = definitions.iter().map(|definition| definition.id).collect();
     let rows: std::collections::HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>(
         "SELECT definition_id,value FROM repository_property_values WHERE repo_id=$1 AND definition_id=ANY($2)",
@@ -350,10 +358,21 @@ async fn change_repository_values(
         read_authority(&mut tx, actor, org).await?,
         Applied(OrgRole::Owner)
     );
-    ensure!(super::super::credentials::writes(&mut tx, &grant, Some(repo), None, "administration").await?, Refusal::Denied);
+    ensure!(
+        super::super::credentials::writes(&mut tx, &grant, Some(repo), None, "administration")
+            .await?,
+        Refusal::Denied
+    );
     // Account ownership cannot lend an organization-only capability to a repository token.
     if owner && grant.token_id().is_some() {
-        owner = super::super::credentials::writes(&mut tx, &grant, None, Some(org), "organization_custom_properties").await?;
+        owner = super::super::credentials::writes(
+            &mut tx,
+            &grant,
+            None,
+            Some(org),
+            "organization_custom_properties",
+        )
+        .await?;
     }
     let definitions = definitions_on(&mut tx, org).await?;
     if let Some(id) = expected {
@@ -516,15 +535,28 @@ pub async fn list_values(
         .build_query_as::<Repository>()
         .fetch_all(&mut *tx)
         .await?;
-    let ids: Vec<i64> = repositories.iter().map(|repository| repository.id).collect();
-    let rows: Vec<(i64, i64, String)> = sqlx::query_as("SELECT repo_id,definition_id,value FROM repository_property_values WHERE repo_id=ANY($1)")
-        .bind(&ids).fetch_all(&mut *tx).await?;
-    let mut values: std::collections::HashMap<i64, std::collections::HashMap<i64, String>> = std::collections::HashMap::new();
-    for (repo, definition, value) in rows { values.entry(repo).or_default().insert(definition, value); }
+    let ids: Vec<i64> = repositories
+        .iter()
+        .map(|repository| repository.id)
+        .collect();
+    let rows: Vec<(i64, i64, String)> = sqlx::query_as(
+        "SELECT repo_id,definition_id,value FROM repository_property_values WHERE repo_id=ANY($1)",
+    )
+    .bind(&ids)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut values: std::collections::HashMap<i64, std::collections::HashMap<i64, String>> =
+        std::collections::HashMap::new();
+    for (repo, definition, value) in rows {
+        values.entry(repo).or_default().insert(definition, value);
+    }
     let mut result = Vec::new();
     let mut bytes = 0;
     for repository in repositories {
-        let properties = crate::backend::db::organizations::properties::effective_values(&definitions, &values.remove(&repository.id).unwrap_or_default())?;
+        let properties = crate::backend::db::organizations::properties::effective_values(
+            &definitions,
+            &values.remove(&repository.id).unwrap_or_default(),
+        )?;
         for property in &properties {
             bytes +=
                 property.property_name.len() + serde_json::to_string(&property.value)?.len() + 64;

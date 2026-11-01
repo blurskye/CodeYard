@@ -152,7 +152,11 @@ pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<
     let ordinary_runner: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM action_runner_tokens WHERE token_hash=$1 AND runner_id IS NULL)")
         .bind(request.token_hash).fetch_one(&mut *tx).await?;
     let internal_name = crate::backend::db::runners::runner_node_name(request.public_key);
-    let node_name = if ordinary_runner { internal_name.as_str() } else { request.name };
+    let node_name = if ordinary_runner {
+        internal_name.as_str()
+    } else {
+        request.name
+    };
     // A joined node is not live until it has published itself, so no last_seen here.
     let inserted = sqlx::query_as::<_, ClusterNode>(
         "INSERT INTO nodes (public_key, name, roles, status, version)
@@ -270,10 +274,17 @@ pub async fn get_node_by_name(pool: &PgPool, name: &str) -> Result<Option<Cluste
     .await?)
 }
 
-pub async fn admin_node_page(pool: &PgPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, after: &str) -> Result<Vec<ClusterNode>> {
+pub async fn admin_node_page(
+    pool: &PgPool,
+    administrator: &crate::backend::db::users::transitions::AdministratorActor,
+    after: &str,
+) -> Result<Vec<ClusterNode>> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
-    anyhow::ensure!(super::users::transitions::active_admin_session(&mut tx, administrator).await?, crate::backend::db::users::accounts::AccountRestricted);
+    anyhow::ensure!(
+        super::users::transitions::active_admin_session(&mut tx, administrator).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
     let rows = sqlx::query_as("SELECT *,clock_timestamp() AS observed_at FROM nodes WHERE name>$1 ORDER BY name LIMIT 101")
         .bind(after).fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -348,9 +359,16 @@ pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConne
     connection.close_on_drop();
     // Advisory locks are per database, and the installation's tables live in its schema, so
     // two installations in different schemas of one database do not exclude each other.
-    let locked: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(723947121,hashtext(COALESCE(current_schema(),'')||'/'||$1))")
-        .bind(identity).fetch_one(&mut *connection).await?;
-    ensure!(locked, "another server is using this installation or node identity");
+    let locked: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock(723947121,hashtext(COALESCE(current_schema(),'')||'/'||$1))",
+    )
+    .bind(identity)
+    .fetch_one(&mut *connection)
+    .await?;
+    ensure!(
+        locked,
+        "another server is using this installation or node identity"
+    );
     Ok(connection.detach())
 }
 
@@ -359,7 +377,10 @@ pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConne
 pub async fn release_serving_lock(mut connection: PgConnection) {
     use sqlx::Connection;
     let unlock = sqlx::query("SELECT pg_advisory_unlock_all()").execute(&mut connection);
-    if tokio::time::timeout(std::time::Duration::from_secs(3), unlock).await.is_ok() {
+    if tokio::time::timeout(std::time::Duration::from_secs(3), unlock)
+        .await
+        .is_ok()
+    {
         let _ = tokio::time::timeout(std::time::Duration::from_secs(3), connection.close()).await;
     }
 }
@@ -418,7 +439,14 @@ pub async fn storage_needed(pool: &PgPool, uuid: &str, node: i64) -> Result<bool
 }
 
 pub async fn list_primary_paths(pool: &PgPool, node: i64) -> Result<Vec<(i64, String)>> {
-    Ok(sqlx::query_as("SELECT id,disk_path FROM repositories WHERE storage_node_id=$1 ORDER BY id").bind(node).fetch_all(pool).await?)
+    Ok(
+        sqlx::query_as(
+            "SELECT id,disk_path FROM repositories WHERE storage_node_id=$1 ORDER BY id",
+        )
+        .bind(node)
+        .fetch_all(pool)
+        .await?,
+    )
 }
 
 pub async fn read_candidates(pool: &PgPool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>> {
@@ -426,9 +454,18 @@ pub async fn read_candidates(pool: &PgPool, uuid: &str, previous: i64) -> Result
         .bind(uuid).bind(previous).fetch_all(pool).await?)
 }
 
-pub async fn replica_applied_version(pool: &PgPool, repository: i64, node: i64) -> Result<Option<i64>> {
-    Ok(sqlx::query_scalar("SELECT applied_version FROM repository_replicas WHERE repository_id=$1 AND node_id=$2")
-        .bind(repository).bind(node).fetch_optional(pool).await?)
+pub async fn replica_applied_version(
+    pool: &PgPool,
+    repository: i64,
+    node: i64,
+) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT applied_version FROM repository_replicas WHERE repository_id=$1 AND node_id=$2",
+    )
+    .bind(repository)
+    .bind(node)
+    .fetch_optional(pool)
+    .await?)
 }
 
 pub async fn get_repository_by_uuid(
@@ -501,8 +538,12 @@ pub async fn bump_write_version(
     node_id: Option<Option<i64>>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SET LOCAL lock_timeout = '5s'").execute(&mut *tx).await?;
-    sqlx::query("SET LOCAL statement_timeout = '30s'").execute(&mut *tx).await?;
+    sqlx::query("SET LOCAL lock_timeout = '5s'")
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("SET LOCAL statement_timeout = '30s'")
+        .execute(&mut *tx)
+        .await?;
     // The row lock orders this against `promote_repository`, which locks the same row.
     let held_by: Option<Option<i64>> =
         sqlx::query_scalar("SELECT storage_node_id FROM repositories WHERE id = $1 FOR UPDATE")
@@ -561,33 +602,61 @@ pub async fn pending_replica_bytes(pool: &PgPool) -> Result<Vec<(i64, i64)>> {
         .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(pool).await?)
 }
 
-pub async fn assign_replica_family(pool: &PgPool, repository: i64, primary: i64, setting: crate::backend::db::models::ReplicaSetting) -> Result<Vec<i64>> {
+pub async fn assign_replica_family(
+    pool: &PgPool,
+    repository: i64,
+    primary: i64,
+    setting: crate::backend::db::models::ReplicaSetting,
+) -> Result<Vec<i64>> {
     let mut tx = pool.begin().await?;
     // One reservation owner across primaries, held through every family-row change.
-    sqlx::query("SELECT pg_advisory_xact_lock(37004)").execute(&mut *tx).await?;
-    let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(&format!("{FORK_FAMILY} FOR UPDATE OF r"))
-        .bind(repository).fetch_all(&mut *tx).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(37004)")
+        .execute(&mut *tx)
+        .await?;
+    let members: Vec<(i64, Option<i64>, i64)> =
+        sqlx::query_as(&format!("{FORK_FAMILY} FOR UPDATE OF r"))
+            .bind(repository)
+            .fetch_all(&mut *tx)
+            .await?;
     let ids: Vec<i64> = members.iter().map(|row| row.0).collect();
     if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) {
         return Ok(ids);
     }
-    let current: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY).bind(repository).fetch_all(&mut *tx).await?;
-    if current.iter().map(|row| row.0).ne(ids.iter().copied()) { return Ok(ids); }
-    let mut storage: Vec<ClusterNode> = sqlx::query_as("SELECT *, clock_timestamp() AS observed_at FROM nodes ORDER BY id FOR UPDATE")
-        .fetch_all(&mut *tx).await?;
-    storage.retain(|node| node.status == "active" && node.roles.iter().any(|role| role == "storage"));
+    let current: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+        .bind(repository)
+        .fetch_all(&mut *tx)
+        .await?;
+    if current.iter().map(|row| row.0).ne(ids.iter().copied()) {
+        return Ok(ids);
+    }
+    let mut storage: Vec<ClusterNode> = sqlx::query_as(
+        "SELECT *, clock_timestamp() AS observed_at FROM nodes ORDER BY id FOR UPDATE",
+    )
+    .fetch_all(&mut *tx)
+    .await?;
+    storage
+        .retain(|node| node.status == "active" && node.roles.iter().any(|role| role == "storage"));
     let reservations: Vec<(i64, i64)> = sqlx::query_as("SELECT rr.node_id,(SUM(GREATEST(r.size_bytes,1))*$1)::BIGINT FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version<0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
         .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(&mut *tx).await?;
     let rows: Vec<PrimaryReplicaRow> = sqlx::query_as("SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r LEFT JOIN repository_replicas rr ON rr.repository_id=r.id WHERE r.id=ANY($1) ORDER BY r.id,rr.node_id")
         .bind(&ids).fetch_all(&mut *tx).await?;
-    for (repository, change) in crate::backend::db::cluster::replicas::family_plan(setting, primary, &mut storage, &rows, &reservations)? {
+    for (repository, change) in crate::backend::db::cluster::replicas::family_plan(
+        setting,
+        primary,
+        &mut storage,
+        &rows,
+        &reservations,
+    )? {
         for node in change.add {
             sqlx::query("INSERT INTO repository_replicas(repository_id,node_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
                 .bind(repository).bind(node).execute(&mut *tx).await?;
         }
         for node in change.remove {
             sqlx::query("DELETE FROM repository_replicas WHERE repository_id=$1 AND node_id=$2")
-                .bind(repository).bind(node).execute(&mut *tx).await?;
+                .bind(repository)
+                .bind(node)
+                .execute(&mut *tx)
+                .await?;
         }
     }
     tx.commit().await?;
@@ -808,15 +877,31 @@ pub async fn promote_repository(
 /// all. The family is read and its rows locked here, so a member that another node has already
 /// moved is refused. Two nodes taking over one family cannot split it: the second waits for the
 /// first, then finds the family moved.
-pub async fn promote_fork_family(pool: &PgPool, repo_id: i64, from: i64, to: i64) -> Result<FamilyOutcome> {
+pub async fn promote_fork_family(
+    pool: &PgPool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+) -> Result<FamilyOutcome> {
     promote_family(pool, repo_id, from, to, true).await
 }
 
-pub async fn promote_manual_family(pool: &PgPool, repo_id: i64, from: i64, to: i64) -> Result<FamilyOutcome> {
+pub async fn promote_manual_family(
+    pool: &PgPool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+) -> Result<FamilyOutcome> {
     promote_family(pool, repo_id, from, to, false).await
 }
 
-async fn promote_family(pool: &PgPool, repo_id: i64, from: i64, to: i64, automatic: bool) -> Result<FamilyOutcome> {
+async fn promote_family(
+    pool: &PgPool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+    automatic: bool,
+) -> Result<FamilyOutcome> {
     let mut tx = pool.begin().await?;
     // The rows are locked in id order, so two transactions over one family never wait on each
     // other in turn.
@@ -825,7 +910,9 @@ async fn promote_family(pool: &PgPool, repo_id: i64, from: i64, to: i64, automat
             .bind(repo_id)
             .fetch_all(&mut *tx)
             .await?;
-    let Some(members) = crate::backend::db::cluster::members_to_move(&family, repo_id, from, automatic) else {
+    let Some(members) =
+        crate::backend::db::cluster::members_to_move(&family, repo_id, from, automatic)
+    else {
         return Ok(FamilyOutcome::Refused);
     };
     // A fork may have committed while the locking statement waited for its source. Read

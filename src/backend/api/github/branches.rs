@@ -44,7 +44,14 @@ async fn list(
         .refs()
         .await
         .map_err(store_error)?;
-    let mut refs: Vec<_> = refs.into_iter().filter_map(|(reference, sha)| reference.strip_prefix("refs/heads/").map(|branch| (branch.to_owned(), sha))).collect();
+    let mut refs: Vec<_> = refs
+        .into_iter()
+        .filter_map(|(reference, sha)| {
+            reference
+                .strip_prefix("refs/heads/")
+                .map(|branch| (branch.to_owned(), sha))
+        })
+        .collect();
     refs.sort_by(|a, b| a.0.cmp(&b.0));
     let mut has_next = refs.len() > offset + limit;
     if query.protected.is_none() {
@@ -134,8 +141,17 @@ pub(super) async fn document(
         .collect();
     contexts.sort();
     contexts.dedup();
-    let mut checks: Vec<_> = rules.iter().filter(|rule| rule.require_status_checks).flat_map(super::protection::check_documents).collect();
-    checks.sort_by(|a, b| a["context"].as_str().cmp(&b["context"].as_str()).then(a["app_id"].as_i64().cmp(&b["app_id"].as_i64())));
+    let mut checks: Vec<_> = rules
+        .iter()
+        .filter(|rule| rule.require_status_checks)
+        .flat_map(super::protection::check_documents)
+        .collect();
+    checks.sort_by(|a, b| {
+        a["context"]
+            .as_str()
+            .cmp(&b["context"].as_str())
+            .then(a["app_id"].as_i64().cmp(&b["app_id"].as_i64()))
+    });
     checks.dedup();
     Ok(json!({
         "name": branch, "commit": super::commits::read_document(state, repo.id, &commit, owner, name).await?,

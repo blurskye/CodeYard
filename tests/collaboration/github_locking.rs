@@ -168,7 +168,11 @@ async fn locking(pg: bool) {
                 )
                 .await
                 .status(),
-                if token == write { StatusCode::CREATED } else { StatusCode::FORBIDDEN }
+                if token == write {
+                    StatusCode::CREATED
+                } else {
+                    StatusCode::FORBIDDEN
+                }
             );
         }
         for method in ["PATCH", "DELETE"] {
@@ -182,7 +186,11 @@ async fn locking(pg: bool) {
                 )
                 .await
                 .status(),
-                if method == "PATCH" { StatusCode::OK } else { StatusCode::NO_CONTENT }
+                if method == "PATCH" {
+                    StatusCode::OK
+                } else {
+                    StatusCode::NO_CONTENT
+                }
             );
         }
         let page = format!("/alice/proj/{family}/{number}");

@@ -5,12 +5,21 @@ use serde_json::Value;
 use sqlx::PgPool;
 fn visibility() -> String {
     let level = super::repositories::access::USER_REPO_ACCESS_SQL;
-    let manager = crate::backend::db::organizations::roles::security_manager_condition("u.id", "r.owner_org_id");
+    let manager = crate::backend::db::organizations::roles::security_manager_condition(
+        "u.id",
+        "r.owner_org_id",
+    );
     format!("(NOT r.is_private OR (NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND (r.owner_user_id=u.id OR u.is_admin)) OR ({level})>=1))) AND (a.state='published' OR (NOT u.is_banned AND NOT u.must_change_password AND (a.author_id=u.id OR (r.owner_kind='user' AND u.is_admin) OR ({level})>=5 OR ({manager}))))")
 }
 pub async fn can_administer(pool: &PgPool, actor: i64, repo: i64) -> Result<bool> {
-    let sql = crate::backend::db::advisories::administration_sql(super::repositories::access::USER_REPO_ACCESS_SQL);
-    Ok(sqlx::query_scalar(&sql).bind(actor).bind(repo).fetch_one(pool).await?)
+    let sql = crate::backend::db::advisories::administration_sql(
+        super::repositories::access::USER_REPO_ACCESS_SQL,
+    );
+    Ok(sqlx::query_scalar(&sql)
+        .bind(actor)
+        .bind(repo)
+        .fetch_one(pool)
+        .await?)
 }
 
 pub async fn list(
@@ -94,7 +103,11 @@ pub async fn create(
 /// Compensates failed provisioning only while the newly created draft is untouched.
 pub async fn discard_created(pool: &PgPool, actor: i64, created: &Advisory) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if !super::discussions::lock_repository_mutation_authority(&mut tx, actor, created.repo_id).await? { return Ok(false); }
+    if !super::discussions::lock_repository_mutation_authority(&mut tx, actor, created.repo_id)
+        .await?
+    {
+        return Ok(false);
+    }
     let deleted = sqlx::query("DELETE FROM repository_advisories WHERE id=$1 AND repo_id=$2 AND author_id=$3 AND revision=$4 AND state='draft' AND private_fork_id IS NULL AND report_id IS NULL AND cve_requested_at IS NULL")
         .bind(created.id).bind(created.repo_id).bind(actor).bind(created.revision).execute(&mut *tx).await?.rows_affected() == 1;
     tx.commit().await?;
@@ -192,7 +205,12 @@ pub async fn update(
     tx.commit().await?;
     Ok(updated)
 }
-pub async fn request_cve(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, ghsa: &str) -> Result<()> {
+pub async fn request_cve(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo: i64,
+    ghsa: &str,
+) -> Result<()> {
     let authority = actor.into();
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
@@ -200,7 +218,10 @@ pub async fn request_cve(pool: &PgPool, actor: impl Into<crate::backend::db::cre
     if let Some(credential) = authority.credential() {
         super::users::transitions::require_account(&mut tx, actor, &credential).await?;
     }
-    let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=$1").bind(repo).fetch_one(&mut *tx).await?;
+    let private: bool = sqlx::query_scalar("SELECT is_private FROM repositories WHERE id=$1")
+        .bind(repo)
+        .fetch_one(&mut *tx)
+        .await?;
     anyhow::ensure!(!private, Refusal::Conflict);
     anyhow::ensure!(
         row.state == "draft"

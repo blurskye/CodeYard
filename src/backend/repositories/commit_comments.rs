@@ -295,13 +295,25 @@ async fn notify(
         }
         .await;
         let notice = NotificationRequest {
-            user_id: user.id, actor_id: Some(user.id), repo_id: Some(repo.id), kind: "commit_comment", title: &title, body: Some(&comment.body), link: Some(&link),
+            user_id: user.id,
+            actor_id: Some(user.id),
+            repo_id: Some(repo.id),
+            kind: "commit_comment",
+            title: &title,
+            body: Some(&comment.body),
+            link: Some(&link),
             metadata: json!({"repo_owner":owner,"repo_name":repo.name,"commit_sha":comment.sha,"commit_comment_id":comment.id,"subject":comment.sha}),
         };
         if let Some(recipient) = recipient {
-            let sent = create_and_broadcast_notification(pool, broadcaster, NotificationRequest {
-                user_id: recipient, ..notice.clone()
-            }).await;
+            let sent = create_and_broadcast_notification(
+                pool,
+                broadcaster,
+                NotificationRequest {
+                    user_id: recipient,
+                    ..notice.clone()
+                },
+            )
+            .await;
             if sent.is_ok() {
                 notified.push(recipient);
             }

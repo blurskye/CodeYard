@@ -165,7 +165,9 @@ async fn get_one(
         return Err(Error::invalid("Use either ahead_of_job or ahead_of_run"));
     }
     if let Some(id) = query.ahead_of_job {
-        let position = members.iter().position(|member| member.job_id == Some(id))
+        let position = members
+            .iter()
+            .position(|member| member.job_id == Some(id))
             .ok_or_else(|| Error::invalid("Job is not in this concurrency group"))?;
         members.truncate(position + 1);
     }

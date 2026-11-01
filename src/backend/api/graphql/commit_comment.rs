@@ -29,8 +29,12 @@ pub(super) async fn object(
 }
 pub(super) async fn field(field: &str, parent: &Value, request: &RequestContext) -> Result<Value> {
     if field == "reactionGroups" {
-        return super::collaboration::reactions(db::reactions::Subject::CommitComment,
-            parent["databaseId"].as_i64().ok_or_else(missing)?, request).await;
+        return super::collaboration::reactions(
+            db::reactions::Subject::CommitComment,
+            parent["databaseId"].as_i64().ok_or_else(missing)?,
+            request,
+        )
+        .await;
     }
     if field != "authorAssociation" {
         return Err(async_graphql::Error::new(format!(
@@ -82,8 +86,14 @@ pub(super) async fn list(
         .await
         .map_err(unavailable)?
     };
-    let details = commit_comments::comment_details(&request.state.pool, request.state.cluster.as_ref(), &repository, rows)
-        .await.map_err(unavailable)?;
+    let details = commit_comments::comment_details(
+        &request.state.pool,
+        request.state.cluster.as_ref(),
+        &repository,
+        rows,
+    )
+    .await
+    .map_err(unavailable)?;
     let mut nodes = vec![];
     for row in details {
         let mut value = object(&row.comment, request).await?;

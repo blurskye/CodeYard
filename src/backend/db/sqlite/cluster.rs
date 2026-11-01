@@ -144,7 +144,11 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     let ordinary_runner: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM action_runner_tokens WHERE token_hash=?1 AND runner_id IS NULL)")
         .bind(request.token_hash).fetch_one(&mut *tx).await?;
     let internal_name = crate::backend::db::runners::runner_node_name(request.public_key);
-    let node_name = if ordinary_runner { internal_name.as_str() } else { request.name };
+    let node_name = if ordinary_runner {
+        internal_name.as_str()
+    } else {
+        request.name
+    };
     // A joined node is not live until it has published itself, so no last_seen here.
     let inserted = sqlx::query_as::<_, ClusterNode>(&format!(
         "INSERT INTO nodes (public_key, name, roles, status, version)
@@ -261,11 +265,22 @@ pub async fn get_node_by_name(pool: &SqlitePool, name: &str) -> Result<Option<Cl
     .await?)
 }
 
-pub async fn admin_node_page(pool: &SqlitePool, administrator: &crate::backend::db::users::transitions::AdministratorActor, after: &str) -> Result<Vec<ClusterNode>> {
+pub async fn admin_node_page(
+    pool: &SqlitePool,
+    administrator: &crate::backend::db::users::transitions::AdministratorActor,
+    after: &str,
+) -> Result<Vec<ClusterNode>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    anyhow::ensure!(super::users::transitions::active_admin_session(&mut tx, administrator).await?, crate::backend::db::users::accounts::AccountRestricted);
-    let rows = sqlx::query_as(&format!("SELECT *,{NOW} AS observed_at FROM nodes WHERE name>?1 ORDER BY name LIMIT 101"))
-        .bind(after).fetch_all(&mut *tx).await?;
+    anyhow::ensure!(
+        super::users::transitions::active_admin_session(&mut tx, administrator).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
+    let rows = sqlx::query_as(&format!(
+        "SELECT *,{NOW} AS observed_at FROM nodes WHERE name>?1 ORDER BY name LIMIT 101"
+    ))
+    .bind(after)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -383,17 +398,37 @@ pub async fn storage_needed(pool: &SqlitePool, uuid: &str, node: i64) -> Result<
 }
 
 pub async fn list_primary_paths(pool: &SqlitePool, node: i64) -> Result<Vec<(i64, String)>> {
-    Ok(sqlx::query_as("SELECT id,disk_path FROM repositories WHERE storage_node_id=$1 ORDER BY id").bind(node).fetch_all(pool).await?)
+    Ok(
+        sqlx::query_as(
+            "SELECT id,disk_path FROM repositories WHERE storage_node_id=$1 ORDER BY id",
+        )
+        .bind(node)
+        .fetch_all(pool)
+        .await?,
+    )
 }
 
-pub async fn read_candidates(pool: &SqlitePool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>> {
+pub async fn read_candidates(
+    pool: &SqlitePool,
+    uuid: &str,
+    previous: i64,
+) -> Result<Vec<(i64, bool)>> {
     Ok(sqlx::query_as("WITH repository AS (SELECT id,storage_node_id,write_version FROM repositories WHERE substr(disk_path,-40)=$1||'.git'), candidates AS (SELECT storage_node_id AS node_id,1 AS moved,write_version AS applied_version FROM repository UNION ALL SELECT rr.node_id,0,rr.applied_version FROM repository r JOIN repository_replicas rr ON rr.repository_id=r.id WHERE rr.node_id IS NOT r.storage_node_id AND rr.applied_version>=0) SELECT c.node_id,c.moved FROM candidates c JOIN nodes n ON n.id=c.node_id WHERE c.node_id<>$2 AND n.status='active' AND EXISTS(SELECT 1 FROM json_each(n.roles) WHERE value='storage') AND n.disk_free IS NOT NULL AND julianday(n.last_seen) BETWEEN julianday('now','-60 seconds') AND julianday('now') ORDER BY c.moved DESC,c.applied_version DESC,c.node_id")
         .bind(uuid).bind(previous).fetch_all(pool).await?)
 }
 
-pub async fn replica_applied_version(pool: &SqlitePool, repository: i64, node: i64) -> Result<Option<i64>> {
-    Ok(sqlx::query_scalar("SELECT applied_version FROM repository_replicas WHERE repository_id=$1 AND node_id=$2")
-        .bind(repository).bind(node).fetch_optional(pool).await?)
+pub async fn replica_applied_version(
+    pool: &SqlitePool,
+    repository: i64,
+    node: i64,
+) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT applied_version FROM repository_replicas WHERE repository_id=$1 AND node_id=$2",
+    )
+    .bind(repository)
+    .bind(node)
+    .fetch_optional(pool)
+    .await?)
 }
 
 pub async fn get_repository_by_uuid(
@@ -525,27 +560,49 @@ pub async fn pending_replica_bytes(pool: &SqlitePool) -> Result<Vec<(i64, i64)>>
         .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(pool).await?)
 }
 
-pub async fn assign_replica_family(pool: &SqlitePool, repository: i64, primary: i64, setting: crate::backend::db::models::ReplicaSetting) -> Result<Vec<i64>> {
+pub async fn assign_replica_family(
+    pool: &SqlitePool,
+    repository: i64,
+    primary: i64,
+    setting: crate::backend::db::models::ReplicaSetting,
+) -> Result<Vec<i64>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
-        .bind(repository).fetch_all(&mut *tx).await?;
+        .bind(repository)
+        .fetch_all(&mut *tx)
+        .await?;
     let ids: Vec<i64> = members.iter().map(|row| row.0).collect();
-    if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) { return Ok(ids); }
-    let mut storage: Vec<ClusterNode> = sqlx::query_as(&format!("SELECT *,{NOW} AS observed_at FROM nodes ORDER BY id"))
-        .fetch_all(&mut *tx).await?;
-    storage.retain(|node| node.status == "active" && node.roles.iter().any(|role| role == "storage"));
+    if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) {
+        return Ok(ids);
+    }
+    let mut storage: Vec<ClusterNode> = sqlx::query_as(&format!(
+        "SELECT *,{NOW} AS observed_at FROM nodes ORDER BY id"
+    ))
+    .fetch_all(&mut *tx)
+    .await?;
+    storage
+        .retain(|node| node.status == "active" && node.roles.iter().any(|role| role == "storage"));
     let reservations: Vec<(i64, i64)> = sqlx::query_as("SELECT rr.node_id,CASE WHEN SUM(MAX(r.size_bytes,1))<=9223372036854775807/?1 THEN SUM(MAX(r.size_bytes,1))*?1 END FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version<0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
         .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(&mut *tx).await?;
     let rows: Vec<PrimaryReplicaRow> = sqlx::query_as(&format!("WITH family AS ({FORK_FAMILY}) SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r JOIN family f ON f.id=r.id LEFT JOIN repository_replicas rr ON rr.repository_id=r.id ORDER BY r.id,rr.node_id"))
         .bind(repository).fetch_all(&mut *tx).await?;
-    for (repository, change) in crate::backend::db::cluster::replicas::family_plan(setting, primary, &mut storage, &rows, &reservations)? {
+    for (repository, change) in crate::backend::db::cluster::replicas::family_plan(
+        setting,
+        primary,
+        &mut storage,
+        &rows,
+        &reservations,
+    )? {
         for node in change.add {
             sqlx::query("INSERT INTO repository_replicas(repository_id,node_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
                 .bind(repository).bind(node).execute(&mut *tx).await?;
         }
         for node in change.remove {
             sqlx::query("DELETE FROM repository_replicas WHERE repository_id=?1 AND node_id=?2")
-                .bind(repository).bind(node).execute(&mut *tx).await?;
+                .bind(repository)
+                .bind(node)
+                .execute(&mut *tx)
+                .await?;
         }
     }
     tx.commit().await?;
@@ -742,15 +799,31 @@ pub async fn promote_repository(
 /// Moves the whole fork family of `repo_id` from `from` to `to` in one transaction, or not at
 /// all. The family is read and its rows checked inside the write transaction, so a member that
 /// another node has already moved is refused, and two take-overs cannot split a family.
-pub async fn promote_fork_family(pool: &SqlitePool, repo_id: i64, from: i64, to: i64) -> Result<FamilyOutcome> {
+pub async fn promote_fork_family(
+    pool: &SqlitePool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+) -> Result<FamilyOutcome> {
     promote_family(pool, repo_id, from, to, true).await
 }
 
-pub async fn promote_manual_family(pool: &SqlitePool, repo_id: i64, from: i64, to: i64) -> Result<FamilyOutcome> {
+pub async fn promote_manual_family(
+    pool: &SqlitePool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+) -> Result<FamilyOutcome> {
     promote_family(pool, repo_id, from, to, false).await
 }
 
-async fn promote_family(pool: &SqlitePool, repo_id: i64, from: i64, to: i64, automatic: bool) -> Result<FamilyOutcome> {
+async fn promote_family(
+    pool: &SqlitePool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+    automatic: bool,
+) -> Result<FamilyOutcome> {
     // BEGIN IMMEDIATE: one writer at a time, so the family read and the moves see the same
     // state. Every early return drops the transaction, which rolls it back.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
@@ -758,7 +831,9 @@ async fn promote_family(pool: &SqlitePool, repo_id: i64, from: i64, to: i64, aut
         .bind(repo_id)
         .fetch_all(&mut *tx)
         .await?;
-    let Some(members) = crate::backend::db::cluster::members_to_move(&family, repo_id, from, automatic) else {
+    let Some(members) =
+        crate::backend::db::cluster::members_to_move(&family, repo_id, from, automatic)
+    else {
         return Ok(FamilyOutcome::Refused);
     };
     let primary = node_at_db_time(&mut tx, from).await?;

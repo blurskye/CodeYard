@@ -163,8 +163,12 @@ fn insert_markup(id: &str, markup: Markup) {
             ))
         } else {
             let fence = "`".repeat(longest_run + 1);
-            let pad = if selected_text.starts_with('`') || selected_text.ends_with('`')
-                || (selected_text.starts_with(' ') && selected_text.ends_with(' ') && selected_text.chars().any(|c| c != ' ')) {
+            let pad = if selected_text.starts_with('`')
+                || selected_text.ends_with('`')
+                || (selected_text.starts_with(' ')
+                    && selected_text.ends_with(' ')
+                    && selected_text.chars().any(|c| c != ' '))
+            {
                 " "
             } else {
                 ""
@@ -198,12 +202,21 @@ fn insert_markup(id: &str, markup: Markup) {
             };
             let (head, tail) = (&selected[..lead], &selected[lead + core.len()..]);
             let marked = if matches!(markup, Markup::Bold | Markup::Italic) {
-                core.split('\n').map(|line| {
-                    let content = line.trim();
-                    if content.is_empty() { return line.to_owned(); }
-                    let lead = line.len() - line.trim_start().len();
-                    format!("{}{before}{content}{after}{}", &line[..lead], &line[lead + content.len()..])
-                }).collect::<Vec<_>>().join("\n")
+                core.split('\n')
+                    .map(|line| {
+                        let content = line.trim();
+                        if content.is_empty() {
+                            return line.to_owned();
+                        }
+                        let lead = line.len() - line.trim_start().len();
+                        format!(
+                            "{}{before}{content}{after}{}",
+                            &line[..lead],
+                            &line[lead + content.len()..]
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                    .join("\n")
             } else {
                 format!("{before}{core}{after}")
             };

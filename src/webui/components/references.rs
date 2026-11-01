@@ -111,9 +111,11 @@ impl References {
         budget: usize,
         mut visit: impl FnMut(Range<usize>, Link),
     ) {
-        let definitions = self.autolinks.iter().map(|definition| {
-            (definition, definition.url_template.matches("<num>").count())
-        }).collect::<Vec<_>>();
+        let definitions = self
+            .autolinks
+            .iter()
+            .map(|definition| (definition, definition.url_template.matches("<num>").count()))
+            .collect::<Vec<_>>();
         let mut remaining = budget;
         let mut done = range.start;
         scan_tokens(text, range.clone(), opaque, |span, token| {
@@ -121,7 +123,14 @@ impl References {
                 return;
             }
             if let Some(link) = self.link(&token) {
-                self.scan_autolinks(&definitions, text, done..span.start, opaque, &mut remaining, &mut visit);
+                self.scan_autolinks(
+                    &definitions,
+                    text,
+                    done..span.start,
+                    opaque,
+                    &mut remaining,
+                    &mut visit,
+                );
                 if remaining > 0 {
                     visit(span.clone(), link);
                     remaining -= 1;
@@ -129,7 +138,14 @@ impl References {
                 done = span.end;
             }
         });
-        self.scan_autolinks(&definitions, text, done..range.end, opaque, &mut remaining, &mut visit);
+        self.scan_autolinks(
+            &definitions,
+            text,
+            done..range.end,
+            opaque,
+            &mut remaining,
+            &mut visit,
+        );
     }
 
     fn scan_autolinks(
@@ -251,10 +267,20 @@ impl References {
                     title: None,
                     text: format!("@{name}"),
                 }),
-            Token::Commit(sha) => self.commit_link(&self.owner, &self.repo, sha, super::short_sha(sha).to_owned()),
+            Token::Commit(sha) => self.commit_link(
+                &self.owner,
+                &self.repo,
+                sha,
+                super::short_sha(sha).to_owned(),
+            ),
             Token::RepoCommit { owner, repo, sha } => {
                 self.repository_last_number(owner, repo)?;
-                self.commit_link(owner, repo, sha, format!("{owner}/{repo}@{}", super::short_sha(sha)))
+                self.commit_link(
+                    owner,
+                    repo,
+                    sha,
+                    format!("{owner}/{repo}@{}", super::short_sha(sha)),
+                )
             }
         }
     }
@@ -262,7 +288,11 @@ impl References {
     fn commit_link(&self, owner: &str, repo: &str, sha: &str, text: String) -> Option<Link> {
         let mut link = commit_link(owner, repo, sha, text);
         if let Some(targets) = &self.targets {
-            link.href = targets.iter().find(|target| target.owner == owner && target.repo == repo && target.token == sha)?.href.clone();
+            link.href = targets
+                .iter()
+                .find(|target| target.owner == owner && target.repo == repo && target.token == sha)?
+                .href
+                .clone();
         }
         Some(link)
     }
@@ -277,11 +307,24 @@ impl References {
         text: impl FnOnce() -> String,
     ) -> Option<Link> {
         let href = if let Some(targets) = &self.targets {
-            targets.iter().find(|target| target.owner == owner && target.repo == repo && target.token == format!("#{number}"))?.href.clone()
+            targets
+                .iter()
+                .find(|target| {
+                    target.owner == owner
+                        && target.repo == repo
+                        && target.token == format!("#{number}")
+                })?
+                .href
+                .clone()
         } else {
             let last = self.repository_last_number(owner, repo)?;
-            if number > last { return None; }
-            format!("{}/issues/{number}", crate::webui::repository_path(owner, repo))
+            if number > last {
+                return None;
+            }
+            format!(
+                "{}/issues/{number}",
+                crate::webui::repository_path(owner, repo)
+            )
         };
         Some(Link {
             href,
@@ -305,7 +348,10 @@ impl References {
 
 fn commit_link(owner: &str, repo: &str, sha: &str, text: String) -> Link {
     Link {
-        href: format!("{}/commit/{sha}", crate::webui::repository_path(owner, repo)),
+        href: format!(
+            "{}/commit/{sha}",
+            crate::webui::repository_path(owner, repo)
+        ),
         class: COMMIT,
         title: Some(sha.to_owned()),
         text,
@@ -493,13 +539,33 @@ impl Candidates {
     fn add(&mut self, token: Token<'_>) {
         if self.targets.len() < 50 {
             let target = match &token {
-                Token::Number(number) => Some((self.current.0.clone(), self.current.1.clone(), format!("#{number}"))),
-                Token::Commit(sha) => Some((self.current.0.clone(), self.current.1.clone(), (*sha).to_owned())),
-                Token::RepoNumber { owner, repo, number } => Some(((*owner).to_owned(), (*repo).to_owned(), format!("#{number}"))),
-                Token::RepoCommit { owner, repo, sha } => Some(((*owner).to_owned(), (*repo).to_owned(), (*sha).to_owned())),
+                Token::Number(number) => Some((
+                    self.current.0.clone(),
+                    self.current.1.clone(),
+                    format!("#{number}"),
+                )),
+                Token::Commit(sha) => Some((
+                    self.current.0.clone(),
+                    self.current.1.clone(),
+                    (*sha).to_owned(),
+                )),
+                Token::RepoNumber {
+                    owner,
+                    repo,
+                    number,
+                } => Some((
+                    (*owner).to_owned(),
+                    (*repo).to_owned(),
+                    format!("#{number}"),
+                )),
+                Token::RepoCommit { owner, repo, sha } => {
+                    Some(((*owner).to_owned(), (*repo).to_owned(), (*sha).to_owned()))
+                }
                 Token::User(_) => None,
             };
-            if let Some(target) = target.filter(|target| !self.targets.contains(target)) { self.targets.push(target); }
+            if let Some(target) = target.filter(|target| !self.targets.contains(target)) {
+                self.targets.push(target);
+            }
         }
         match token {
             // Numbers and commits were collected above for bounded native resolution.

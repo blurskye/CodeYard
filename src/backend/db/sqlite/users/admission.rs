@@ -45,12 +45,25 @@ pub async fn admit_password_attempt(
     let window_ends_at = time::encode(now + Duration::seconds(WINDOW_SECONDS));
     let client_window = if let Some(key) = client_key {
         charge(&mut tx, key, &encoded, &window_ends_at, CLIENT_LIMIT).await?
-    } else { None };
+    } else {
+        None
+    };
     let account_window = if client_key.is_none() || client_window.is_some() {
-        charge(&mut tx, account_key, &encoded, &window_ends_at, ACCOUNT_LIMIT).await?
-    } else { None };
+        charge(
+            &mut tx,
+            account_key,
+            &encoded,
+            &window_ends_at,
+            ACCOUNT_LIMIT,
+        )
+        .await?
+    } else {
+        None
+    };
     let receipt = account_window.map(|window| Receipt {
-        client: client_key.zip(client_window).map(|(key, window)| (key.to_owned(), window)),
+        client: client_key
+            .zip(client_window)
+            .map(|(key, window)| (key.to_owned(), window)),
         account: (account_key.to_owned(), window),
     });
     if receipt.is_some() {
@@ -62,11 +75,12 @@ pub async fn admit_password_attempt(
 }
 
 /// Gives back the attempt that `admit_password_attempt` counted, after the credentials were right.
-pub async fn forgive_password_attempt(
-    pool: &SqlitePool,
-    receipt: &Receipt,
-) -> Result<()> {
-    for (key, window) in receipt.client.iter().chain(std::iter::once(&receipt.account)) {
+pub async fn forgive_password_attempt(pool: &SqlitePool, receipt: &Receipt) -> Result<()> {
+    for (key, window) in receipt
+        .client
+        .iter()
+        .chain(std::iter::once(&receipt.account))
+    {
         sqlx::query("UPDATE auth_login_limits SET attempts=attempts-1 WHERE account_key=?1 AND attempts>0 AND window_ends_at=?2 AND window_ends_at>?3")
             .bind(key).bind(time::encode(*window)).bind(time::encode(time::now()))
             .execute(pool).await?;

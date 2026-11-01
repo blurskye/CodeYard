@@ -346,7 +346,9 @@ async fn review_page_budgets(pg: bool) {
             w.database.pool(),
             w.pull.id,
             w.bob_id,
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(w.database.pool(), w.bob_id).await),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(w.database.pool(), w.bob_id).await,
+            ),
             "commented",
             Some("Review summary"),
             Some(&w.head),
@@ -708,7 +710,9 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
         w.database.pool(),
         w.pull.id,
         w.bob_id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(w.database.pool(), w.bob_id).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(w.database.pool(), w.bob_id).await,
+        ),
         "changes_requested",
         Some("Needs changes"),
         Some(&w.head),
@@ -719,7 +723,9 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
         w.database.pool(),
         w.pull.id,
         w.bob_id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(w.database.pool(), w.bob_id).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(w.database.pool(), w.bob_id).await,
+        ),
         "commented",
         Some("Just a note"),
         Some(&w.head),

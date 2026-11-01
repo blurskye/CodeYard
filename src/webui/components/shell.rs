@@ -305,7 +305,9 @@ fn HeaderContext(
         return rsx! {};
     }
     if first == "users" {
-        let Some(username) = second.map(decode_component) else { return rsx! {}; };
+        let Some(username) = second.map(decode_component) else {
+            return rsx! {};
+        };
         return rsx! { nav { class: "site-context", aria_label: "Current location",
             NavLink { href: crate::webui::profile_path(&username), class: "site-context-link", "{username}" }
         } };

@@ -685,12 +685,7 @@ async fn credentialed_private_blob_and_denials_cannot_enter_a_shared_cache() {
             StatusCode::NOT_FOUND,
         ),
         (private, None, None, StatusCode::NOT_FOUND),
-        (
-            "/api/repos/fixture_org/public",
-            None,
-            None,
-            StatusCode::OK,
-        ),
+        ("/api/repos/fixture_org/public", None, None, StatusCode::OK),
         (
             "/api/repos/fixture_org/public",
             None,

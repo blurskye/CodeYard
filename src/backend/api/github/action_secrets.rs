@@ -116,10 +116,16 @@ async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (key_id, key) =
-        db::secrets::repository_secret_key_for(&state.pool, kind, encryptor, actor.user.id, repo, &actor.credential())
-            .await
-            .map_err(error)?;
+    let (key_id, key) = db::secrets::repository_secret_key_for(
+        &state.pool,
+        kind,
+        encryptor,
+        actor.user.id,
+        repo,
+        &actor.credential(),
+    )
+    .await
+    .map_err(error)?;
     Ok(Json(public_key_document(&key_id, &key)))
 }
 
@@ -161,10 +167,16 @@ async fn save(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (key_id, key) =
-        db::secrets::repository_secret_key_for(&state.pool, kind, encryptor, actor.user.id, repo, &actor.credential())
-            .await
-            .map_err(error)?;
+    let (key_id, key) = db::secrets::repository_secret_key_for(
+        &state.pool,
+        kind,
+        encryptor,
+        actor.user.id,
+        repo,
+        &actor.credential(),
+    )
+    .await
+    .map_err(error)?;
     let value = open_value(&key, &key_id, &body.key_id, &body.encrypted_value)?;
     let created = db::secrets::create_or_update_secret_for(
         &state.pool,
@@ -210,9 +222,16 @@ async fn remove(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
-    if !db::secrets::delete_secret_for(&state.pool, kind, actor.user.id, repo, &name.to_ascii_uppercase(), &actor.credential())
-        .await
-        .map_err(error)?
+    if !db::secrets::delete_secret_for(
+        &state.pool,
+        kind,
+        actor.user.id,
+        repo,
+        &name.to_ascii_uppercase(),
+        &actor.credential(),
+    )
+    .await
+    .map_err(error)?
     {
         return Err(Error::missing());
     }

@@ -59,7 +59,10 @@ pub fn save_work_folder(state: &std::path::Path, folder: &str) -> Result<()> {
     let previous = work_root(state)?;
     if previous != state.join("runner-workspaces").join(folder) {
         match std::fs::read_dir(previous.join("ci-containers")) {
-            Ok(mut records) => anyhow::ensure!(records.next().transpose()?.is_none(), "recover previous CI workspaces and containers before changing the work folder"),
+            Ok(mut records) => anyhow::ensure!(
+                records.next().transpose()?.is_none(),
+                "recover previous CI workspaces and containers before changing the work folder"
+            ),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
@@ -70,7 +73,8 @@ pub fn save_work_folder(state: &std::path::Path, folder: &str) -> Result<()> {
         work_folder: folder.to_owned(),
     })?)?;
     file.as_file().sync_all()?;
-    file.persist(state.join("runner-settings.json")).map_err(|error| error.error)?;
+    file.persist(state.join("runner-settings.json"))
+        .map_err(|error| error.error)?;
     std::fs::File::open(state)?.sync_all()?;
     Ok(())
 }
@@ -93,7 +97,10 @@ pub fn work_root(state: &std::path::Path) -> Result<std::path::PathBuf> {
     Ok(state.join("runner-workspaces").join(saved.work_folder))
 }
 pub fn new_remove_token() -> String {
-    format!("codeyard-remove-v1.{}", crate::backend::crypto::random_hex())
+    format!(
+        "codeyard-remove-v1.{}",
+        crate::backend::crypto::random_hex()
+    )
 }
 pub fn remove_hash(token: &str) -> String {
     let mut hash = Sha256::new();
@@ -128,7 +135,8 @@ mod tests {
                 tcp: vec!["127.0.0.1:1".parse().unwrap()],
                 ..Default::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
         let config = JitConfig {
             ticket: ticket.encode(),
             node_name: "runner-42".into(),
@@ -180,7 +188,10 @@ mod tests {
         std::os::unix::fs::symlink(&target, state.path().join("runner-settings.json")).unwrap();
         // The new settings are renamed over the link, so its target is never written.
         save_work_folder(state.path(), "_work").unwrap();
-        assert_eq!(std::fs::read_to_string(target).unwrap(), r#"{"work_folder":"old"}"#);
+        assert_eq!(
+            std::fs::read_to_string(target).unwrap(),
+            r#"{"work_folder":"old"}"#
+        );
         let saved = state.path().join("runner-settings.json");
         assert!(std::fs::symlink_metadata(&saved).unwrap().is_file());
         assert_eq!(

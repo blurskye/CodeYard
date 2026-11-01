@@ -55,7 +55,8 @@ pub(super) struct Operation {
 pub(super) struct HookState {
     pub(super) proposed: Option<Vec<RefUpdate>>,
     pub(super) previous_refs: Vec<String>,
-    pub(super) secret_bypasses: Vec<crate::backend::repositories::secret_scanning::push_protection::ApprovedBypass>,
+    pub(super) secret_bypasses:
+        Vec<crate::backend::repositories::secret_scanning::push_protection::ApprovedBypass>,
     pub(super) post_started: bool,
     pub(super) dispatch_failed: bool,
     // Acquired in pre-receive through the description already inherited by the child.
@@ -341,7 +342,9 @@ mod admission_tests {
 
 struct AbortSession(tokio::task::AbortHandle);
 impl Drop for AbortSession {
-    fn drop(&mut self) { self.0.abort(); }
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 impl Gateway {
@@ -627,12 +630,28 @@ impl Gateway {
             _ => traffic::Identity::account(actor.id),
         };
         match credential {
-            ReceiveCredential::DeployKey(id) => { let _ = timeout(Duration::from_secs(1), crate::backend::repositories::deploy_keys::record_use(&self.pool, id)).await; }
-            ReceiveCredential::SshKey(id) => { let _ = timeout(Duration::from_secs(1), db::users::ssh_keys::touch_ssh_key(&self.pool, id)).await; }
+            ReceiveCredential::DeployKey(id) => {
+                let _ = timeout(
+                    Duration::from_secs(1),
+                    crate::backend::repositories::deploy_keys::record_use(&self.pool, id),
+                )
+                .await;
+            }
+            ReceiveCredential::SshKey(id) => {
+                let _ = timeout(
+                    Duration::from_secs(1),
+                    db::users::ssh_keys::touch_ssh_key(&self.pool, id),
+                )
+                .await;
+            }
             _ => {}
         }
         let path = self.bare_path(&repo).await?;
-        let (current, _) = timeout(Duration::from_secs(5), credential.authorize(&self.pool, &repo, command.write)).await??;
+        let (current, _) = timeout(
+            Duration::from_secs(5),
+            credential.authorize(&self.pool, &repo, command.write),
+        )
+        .await??;
         ensure!(current.id == actor.id, "identity changed");
         let _slot = slot;
         let (input, child_input) = tokio::io::duplex(CHUNK);
@@ -728,7 +747,10 @@ impl Gateway {
         let token = uuid::Uuid::new_v4().simple().to_string();
         let gateway = self.clone();
         let repo_id = repo.id;
-        let hooks = tokio::task::spawn_blocking(move || gateway.make_hooks(credential.id(), repo_id, write)).await??;
+        let hooks = tokio::task::spawn_blocking(move || {
+            gateway.make_hooks(credential.id(), repo_id, write)
+        })
+        .await??;
         let operation = Arc::new(Operation {
             credential,
             actor_id: actor.id,

@@ -81,15 +81,22 @@ pub(crate) async fn repository_fork_counts(
 ) -> Result<std::collections::HashMap<i64, i32>, (StatusCode, Json<ApiError>)> {
     let (viewer, session) = match headers {
         Some(headers) => (
-            crate::backend::api::http::session::get_optional_user(pool, headers).await?.map(|user| user.id),
-            Some(crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default()),
+            crate::backend::api::http::session::get_optional_user(pool, headers)
+                .await?
+                .map(|user| user.id),
+            Some(
+                crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default(),
+            ),
         ),
         None => (None, None),
     };
     let mut counts = std::collections::HashMap::new();
     for ids in ids.chunks(100) {
-        counts.extend(db::repositories::discovery::visible_fork_counts(pool, viewer, session.as_deref(), ids)
-            .await.map_err(|_| repository_unavailable())?);
+        counts.extend(
+            db::repositories::discovery::visible_fork_counts(pool, viewer, session.as_deref(), ids)
+                .await
+                .map_err(|_| repository_unavailable())?,
+        );
     }
     Ok(counts)
 }

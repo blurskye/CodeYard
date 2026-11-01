@@ -97,25 +97,58 @@ async fn package(
     .map_err(error)
 }
 
-async fn documents(state: &AppState, owner: &Owner, packages: &[Package], auth: Option<&auth::Authentication>) -> Result<Vec<Value>> {
+async fn documents(
+    state: &AppState,
+    owner: &Owner,
+    packages: &[Package],
+    auth: Option<&auth::Authentication>,
+) -> Result<Vec<Value>> {
     let ids: Vec<_> = packages.iter().map(|package| package.id).collect();
-    let counts: HashMap<_, _> = db::packages::version_counts(&state.pool, &ids).await.map_err(error)?.into_iter().collect();
-    let ids: Vec<_> = packages.iter().filter_map(|package| package.repo_id).collect();
-    let snapshots = db::repository_stats::readable_snapshots(&state.pool, auth.map(|auth| auth.user.id), &ids).await.map_err(error)?;
+    let counts: HashMap<_, _> = db::packages::version_counts(&state.pool, &ids)
+        .await
+        .map_err(error)?
+        .into_iter()
+        .collect();
+    let ids: Vec<_> = packages
+        .iter()
+        .filter_map(|package| package.repo_id)
+        .collect();
+    let snapshots =
+        db::repository_stats::readable_snapshots(&state.pool, auth.map(|auth| auth.user.id), &ids)
+            .await
+            .map_err(error)?;
     let mut repositories = HashMap::new();
     for snapshot in snapshots {
         if snapshot.repository.is_private {
             if let Some(auth) = auth {
-                match auth.repository_scope(&state.pool, snapshot.repository.id, "metadata", false).await {
+                match auth
+                    .repository_scope(&state.pool, snapshot.repository.id, "metadata", false)
+                    .await
+                {
                     Ok(()) => {}
                     Err(auth::ScopeError::Missing | auth::ScopeError::Denied) => continue,
                     Err(error) => return Err(auth::scope_error(error)),
                 }
             }
         }
-        repositories.insert(snapshot.repository.id, payloads::repository_snapshot(&snapshot));
+        repositories.insert(
+            snapshot.repository.id,
+            payloads::repository_snapshot(&snapshot),
+        );
     }
-    Ok(packages.iter().map(|package| payloads::package(owner, package, counts.get(&package.id).copied().unwrap_or(0), package.repo_id.and_then(|id| repositories.get(&id).cloned()))).collect())
+    Ok(packages
+        .iter()
+        .map(|package| {
+            payloads::package(
+                owner,
+                package,
+                counts.get(&package.id).copied().unwrap_or(0),
+                package
+                    .repo_id
+                    .and_then(|id| repositories.get(&id).cloned()),
+            )
+        })
+        .collect())
 }
 
 #[derive(Deserialize)]
@@ -159,11 +192,19 @@ async fn list(
         versions.truncate(limit);
         let ids: Vec<_> = versions.iter().map(|version| version.id).collect();
         let mut tags: HashMap<i64, Vec<String>> = HashMap::new();
-        for (id, tag) in db::packages::version_tags(&state.pool, &ids).await.map_err(error)? {
+        for (id, tag) in db::packages::version_tags(&state.pool, &ids)
+            .await
+            .map_err(error)?
+        {
             tags.entry(id).or_default().push(tag);
         }
         for version in versions {
-            items.push(payloads::package_version(&owner, &package, &version, &tags.remove(&version.id).unwrap_or_default()));
+            items.push(payloads::package_version(
+                &owner,
+                &package,
+                &version,
+                &tags.remove(&version.id).unwrap_or_default(),
+            ));
         }
     } else {
         let kind = kind(query.package_type.as_deref())?;
@@ -219,20 +260,23 @@ async fn get_one(
     let token = auth.as_ref().map(|auth| auth.token.id.into());
     let value = if let Some(id) = params.get("package_version_id") {
         let id = id.parse().map_err(|_| Error::missing())?;
-        let version = db::packages::version_by_id(
-            &state.pool,
-            package.id,
-            token,
-            id,
-        )
-        .await
-        .map_err(error)?;
+        let version = db::packages::version_by_id(&state.pool, package.id, token, id)
+            .await
+            .map_err(error)?;
         let tags = db::packages::tags(&state.pool, package.id, token, version.id)
             .await
             .map_err(error)?;
         payloads::package_version(&owner, &package, &version, &tags)
     } else {
-        documents(&state, &owner, std::slice::from_ref(&package), auth.as_ref()).await?.pop().ok_or_else(Error::missing)?
+        documents(
+            &state,
+            &owner,
+            std::slice::from_ref(&package),
+            auth.as_ref(),
+        )
+        .await?
+        .pop()
+        .ok_or_else(Error::missing)?
     };
     Ok(Json(value))
 }

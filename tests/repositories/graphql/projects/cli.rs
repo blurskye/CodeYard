@@ -240,7 +240,9 @@ async fn cli_contract(pg: bool) {
     let org_project = db::projects::create(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
         db::projects::Owner::Organization(org.id),
         "Organization plan",
         None,
@@ -427,7 +429,9 @@ async fn cli_contract(pg: bool) {
     let iteration = db::projects::add_field(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
         project_id,
         &db::projects::NewField {
             name: "Sprint".into(),
@@ -458,7 +462,9 @@ async fn cli_contract(pg: bool) {
     db::projects::add_item(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
         org_project.id,
         &db::projects::Content::Draft {
             title: "Org draft".into(),

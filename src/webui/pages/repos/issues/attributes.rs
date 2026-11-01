@@ -34,7 +34,12 @@ fn identity_fields(repo: &Repository, item_id: i64, owner_key: &str) -> Element 
     }
 }
 
-fn definition(repo: &Repository, url: &str, a: &IssueAttribute, (item_id, owner_key): (i64, &str)) -> Element {
+fn definition(
+    repo: &Repository,
+    url: &str,
+    a: &IssueAttribute,
+    (item_id, owner_key): (i64, &str),
+) -> Element {
     let csrf = |_: &str| identity_fields(repo, item_id, owner_key);
     let field = a.kind == "field";
     let kind = if field { "field" } else { "type" };

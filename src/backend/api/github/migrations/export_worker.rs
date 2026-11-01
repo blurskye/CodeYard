@@ -141,27 +141,40 @@ async fn metadata(
 ) -> Result<()> {
     let repository = payloads::repository(repo, owner)["html_url"].clone();
     for (kind, record) in [("type", "issue_type"), ("field", "issue_field")] {
-        let definitions = db::issue_attributes::catalog(&state.pool, repo.id, Some(actor), kind).await.map_err(Error::unavailable)?;
+        let definitions = db::issue_attributes::catalog(&state.pool, repo.id, Some(actor), kind)
+            .await
+            .map_err(Error::unavailable)?;
         let mut values = Vec::new();
         for definition in definitions {
             let mut value = serde_json::to_value(definition).map_err(Error::unavailable)?;
             value["repository"] = repository.clone();
             values.push(value);
         }
-        archive.records(record, values).map_err(Error::unavailable)?;
+        archive
+            .records(record, values)
+            .map_err(Error::unavailable)?;
     }
     let mut offset = 0;
     loop {
-        let labels = db::labels::list_repo_labels_page(&state.pool, repo.id, "", "oldest", 100, offset)
-            .await.map_err(Error::unavailable)?;
+        let labels =
+            db::labels::list_repo_labels_page(&state.pool, repo.id, "", "oldest", 100, offset)
+                .await
+                .map_err(Error::unavailable)?;
         let count = labels.len();
-        let values = labels.iter().map(|label| {
-            let mut value = payloads::label(label, owner, &repo.name);
-            value["repository"] = repository.clone();
-            value
-        }).collect();
-        archive.records("label", values).map_err(Error::unavailable)?;
-        if count < 100 { break; }
+        let values = labels
+            .iter()
+            .map(|label| {
+                let mut value = payloads::label(label, owner, &repo.name);
+                value["repository"] = repository.clone();
+                value
+            })
+            .collect();
+        archive
+            .records("label", values)
+            .map_err(Error::unavailable)?;
+        if count < 100 {
+            break;
+        }
         offset += 100;
     }
     let mut offset = 0;
@@ -187,30 +200,53 @@ async fn metadata(
     }
     let mut before = i64::MAX;
     loop {
-        let rows = exports::discussion_ids(&state.pool, repo.id, false, before, 100).await.map_err(Error::unavailable)?;
+        let rows = exports::discussion_ids(&state.pool, repo.id, false, before, 100)
+            .await
+            .map_err(Error::unavailable)?;
         let count = rows.len();
         let next = rows.last().copied();
         let mut values = Vec::new();
         for id in rows {
-            let mut value = issues::document(&state.pool, issues::Reader::Repository, repo, owner, AssignedItem::Issue(id)).await?;
+            let mut value = issues::document(
+                &state.pool,
+                issues::Reader::Repository,
+                repo,
+                owner,
+                AssignedItem::Issue(id),
+            )
+            .await?;
             value["issue_type"] = value["type"].take();
-            value["issue_field_values"] = serde_json::to_value(db::issue_attributes::values(&state.pool, repo.id, id, Some(actor)).await.map_err(Error::unavailable)?).map_err(Error::unavailable)?;
+            value["issue_field_values"] = serde_json::to_value(
+                db::issue_attributes::values(&state.pool, repo.id, id, Some(actor))
+                    .await
+                    .map_err(Error::unavailable)?,
+            )
+            .map_err(Error::unavailable)?;
             value["repository"] = repository.clone();
             values.push(value);
             issue_comments(state, repo, owner, id, archive).await?;
         }
-        archive.records("issue", values).map_err(Error::unavailable)?;
-        if count < 100 { break; }
+        archive
+            .records("issue", values)
+            .map_err(Error::unavailable)?;
+        if count < 100 {
+            break;
+        }
         before = next.ok_or_else(|| Error::unavailable(()))?;
     }
     let mut before = i64::MAX;
     loop {
-        let rows = exports::discussion_ids(&state.pool, repo.id, true, before, 100).await.map_err(Error::unavailable)?;
+        let rows = exports::discussion_ids(&state.pool, repo.id, true, before, 100)
+            .await
+            .map_err(Error::unavailable)?;
         let count = rows.len();
         let next = rows.last().copied();
         let mut values = Vec::new();
         for id in rows {
-            let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
             let mut value = pulls::document(state, headers, repo, owner, &pull, false).await?;
             value["repository"] = repository.clone();
             values.push(value);
@@ -424,7 +460,10 @@ async fn release_records(
                     *archive = tokio::task::spawn_blocking(move || {
                         pending.append(&archive_path, &bytes)?;
                         anyhow::Ok(pending)
-                    }).await.map_err(Error::unavailable)?.map_err(Error::unavailable)?;
+                    })
+                    .await
+                    .map_err(Error::unavailable)?
+                    .map_err(Error::unavailable)?;
                     let mut asset_value = releases::asset_document(
                         state,
                         owner,

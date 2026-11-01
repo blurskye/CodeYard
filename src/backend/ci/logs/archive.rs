@@ -31,19 +31,39 @@ fn filename(name: &str) -> String {
 }
 fn job_filename(name: &str) -> String {
     let utf16: Vec<_> = filename(name).encode_utf16().take(90).collect();
-    String::from_utf16_lossy(&utf16).trim().trim_end_matches(['.', ' ']).to_owned()
+    String::from_utf16_lossy(&utf16)
+        .trim()
+        .trim_end_matches(['.', ' '])
+        .to_owned()
 }
-fn archive_key(name: &str) -> String { name.to_uppercase() }
+fn archive_key(name: &str) -> String {
+    name.to_uppercase()
+}
 fn usable(name: &str) -> bool {
-    let stem = name.split('.').next().unwrap_or("").trim_end_matches(' ').to_ascii_uppercase();
-    let numbered_device = stem.strip_prefix("COM").or_else(|| stem.strip_prefix("LPT"))
-        .is_some_and(|suffix| matches!(suffix, "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"));
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    let numbered_device = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+        .is_some_and(|suffix| {
+            matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        });
     !name.is_empty()
         && name != "."
         && name != ".."
         && name.len() <= 240
         && !numbered_device
-        && !matches!(stem.as_str(), "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$")
+        && !matches!(
+            stem.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
+        )
 }
 fn member(
     zip: &mut ZipWriter<Cursor<Vec<u8>>>,
@@ -86,7 +106,9 @@ pub fn encode(snapshot: Snapshot) -> Result<(Vec<u8>, &'static str, String)> {
         .unix_permissions(0o600);
     let mut counts = BTreeMap::<String, usize>::new();
     for job in &snapshot.grant.manifest.0.jobs {
-        *counts.entry(archive_key(&job_filename(&job.name))).or_default() += 1;
+        *counts
+            .entry(archive_key(&job_filename(&job.name)))
+            .or_default() += 1;
     }
     let mut reserved: std::collections::BTreeSet<String> = counts.keys().cloned().collect();
     // A job directory may not share a name with a file at the archive root.
@@ -112,7 +134,9 @@ pub fn encode(snapshot: Snapshot) -> Result<(Vec<u8>, &'static str, String)> {
     }
     for (index, job) in snapshot.grant.manifest.0.jobs.iter().enumerate() {
         let base = job_filename(&job.name);
-        let compatible = usable(&base) && counts.get(&archive_key(&base)) == Some(&1) && !roots.contains(&archive_key(&base));
+        let compatible = usable(&base)
+            && counts.get(&archive_key(&base)) == Some(&1)
+            && !roots.contains(&archive_key(&base));
         let directory = if compatible {
             base.clone()
         } else {

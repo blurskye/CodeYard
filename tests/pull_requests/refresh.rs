@@ -758,7 +758,12 @@ async fn concurrent_refresh_converges(pg: bool) {
     let mut moved = Vec::new();
     for (prepared, parent, path, bytes) in [
         (&second_head, &first_head.sha, "two.txt", &b"two\n"[..]),
-        (&second_base, &first_base.sha, "base-two.txt", &b"base two\n"[..]),
+        (
+            &second_base,
+            &first_base.sha,
+            "base-two.txt",
+            &b"base two\n"[..],
+        ),
     ] {
         match &f {
             Database::Postgres(_) => {
@@ -1016,7 +1021,12 @@ async fn merge_into_the_default_branch_closes_named_issues(pg: bool) {
     let mut issues = Vec::new();
     for title in ["Named", "Unnamed"] {
         let issue = alice
-            .expect("POST", "/api/repos/alice/proj/issues", json!({"title": title, "body": "Body"}), StatusCode::CREATED)
+            .expect(
+                "POST",
+                "/api/repos/alice/proj/issues",
+                json!({"title": title, "body": "Body"}),
+                StatusCode::CREATED,
+            )
             .await;
         issues.push(issue["number"].as_i64().unwrap());
     }
@@ -1032,7 +1042,12 @@ async fn merge_into_the_default_branch_closes_named_issues(pg: bool) {
     let mut states = Vec::new();
     for number in &issues {
         let issue = alice
-            .expect("GET", &format!("/api/repos/alice/proj/issues/{number}"), Value::Null, StatusCode::OK)
+            .expect(
+                "GET",
+                &format!("/api/repos/alice/proj/issues/{number}"),
+                Value::Null,
+                StatusCode::OK,
+            )
             .await;
         states.push(issue["state"].as_str().unwrap().to_owned());
     }

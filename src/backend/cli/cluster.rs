@@ -282,7 +282,10 @@ pub async fn run(
             _ => bail!("no node is named '{name}'; `codeyard cluster list` shows the names"),
         },
         Command::Adopt => {
-            ensure!(db::cluster::cluster_enabled(pool).await?, "enable cluster mode before adopting repositories");
+            ensure!(
+                db::cluster::cluster_enabled(pool).await?,
+                "enable cluster mode before adopting repositories"
+            );
             let key = load_existing(state_dir)?.ok_or_else(|| {
                 anyhow!(
                     "this node has no key yet; start `codeyard serve` with cluster settings first"
@@ -446,7 +449,10 @@ async fn promote_command(
         (None, Some(node)) => {
             let primary = node_id(pool, node).await?;
             let repositories: Vec<i64> = db::cluster::list_primary_paths(pool, primary)
-                .await?.into_iter().map(|(id, _)| id).collect();
+                .await?
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect();
             if repositories.is_empty() {
                 println!("No repository has '{node}' as its primary.");
                 return Ok(());
@@ -476,7 +482,9 @@ async fn promote_command(
                 if let Some((_, error)) = failures.iter().find(|(id, _)| *id == repository) {
                     eprintln!("{name}: {error:#}");
                 } else {
-                    eprintln!("{name}: fork-family promotion left this member on its original primary");
+                    eprintln!(
+                        "{name}: fork-family promotion left this member on its original primary"
+                    );
                 }
             }
             ensure!(

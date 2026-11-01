@@ -30,7 +30,10 @@ pub async fn create_signup_request(
     Ok(request)
 }
 
-pub async fn count_signup_requests<'a>(pool: impl sqlx::Executor<'a, Database=sqlx::Sqlite>, status: &str) -> Result<i64> {
+pub async fn count_signup_requests<'a>(
+    pool: impl sqlx::Executor<'a, Database = sqlx::Sqlite>,
+    status: &str,
+) -> Result<i64> {
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) FROM signup_requests WHERE status=?1")
             .bind(status)
@@ -40,7 +43,7 @@ pub async fn count_signup_requests<'a>(pool: impl sqlx::Executor<'a, Database=sq
 }
 
 pub async fn list_signup_requests<'a>(
-    pool: impl sqlx::Executor<'a, Database=sqlx::Sqlite>,
+    pool: impl sqlx::Executor<'a, Database = sqlx::Sqlite>,
     status: &str,
     limit: i64,
     offset: i64,
@@ -59,15 +62,33 @@ pub async fn list_signup_requests<'a>(
     Ok(requests)
 }
 
-pub async fn admin_pending_page(pool: &SqlitePool, administrator: &AdministratorActor, limit: i64, requested: usize) -> Result<crate::backend::db::users::signup_requests::AdminSignupPage> {
+pub async fn admin_pending_page(
+    pool: &SqlitePool,
+    administrator: &AdministratorActor,
+    limit: i64,
+    requested: usize,
+) -> Result<crate::backend::db::users::signup_requests::AdminSignupPage> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     require_reviewer(&mut tx, administrator).await?;
     let total = count_signup_requests(&mut *tx, "pending").await?;
-    let limit = limit.clamp(1,100);
+    let limit = limit.clamp(1, 100);
     let page = requested.clamp(1, (total as usize).div_ceil(limit as usize).max(1));
-    let requests = list_signup_requests(&mut *tx, "pending", limit, ((page-1) * limit as usize) as i64, 0).await?;
+    let requests = list_signup_requests(
+        &mut *tx,
+        "pending",
+        limit,
+        ((page - 1) * limit as usize) as i64,
+        0,
+    )
+    .await?;
     tx.commit().await?;
-    Ok(crate::backend::db::users::signup_requests::AdminSignupPage { requests, total, page })
+    Ok(
+        crate::backend::db::users::signup_requests::AdminSignupPage {
+            requests,
+            total,
+            page,
+        },
+    )
 }
 
 pub async fn get_pending_signup_request_by_identity(
@@ -201,12 +222,11 @@ async fn require_reviewer(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor: &AdministratorActor,
 ) -> Result<()> {
-    let configured = sqlx::query_scalar::<_, bool>(
-        "SELECT setup_completed FROM node_configuration WHERE id=1",
-    )
-    .fetch_optional(&mut **tx)
-    .await?
-    .unwrap_or(false);
+    let configured =
+        sqlx::query_scalar::<_, bool>("SELECT setup_completed FROM node_configuration WHERE id=1")
+            .fetch_optional(&mut **tx)
+            .await?
+            .unwrap_or(false);
     if !configured || !super::transitions::active_admin_session(tx, actor).await? {
         return Err(ReviewError::Denied.into());
     }

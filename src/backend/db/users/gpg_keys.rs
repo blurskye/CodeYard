@@ -86,7 +86,10 @@ impl StoredGpgKeySummary {
             fingerprint: self.fingerprint,
             key_id: self.key_id,
             created_at: self.created_at.parse::<DateTime<Utc>>()?,
-            expires_at: self.expires_at.map(|value| value.parse::<DateTime<Utc>>()).transpose()?,
+            expires_at: self
+                .expires_at
+                .map(|value| value.parse::<DateTime<Utc>>())
+                .transpose()?,
             revoked: self.revoked,
         })
     }

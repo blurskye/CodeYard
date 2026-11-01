@@ -114,10 +114,17 @@ async fn card(
     owner: &Owner,
     package: &Package,
 ) -> Result<view::Package, Response> {
-    let session = ctx.user.as_ref().and_then(|_| session::extract_session_id(&ctx.headers));
-    let versions = db::packages::version_count(&ctx.state.pool, package.id, session.as_deref().map(Credential::Session))
-        .await
-        .map_err(|error| failure(ctx, error))?;
+    let session = ctx
+        .user
+        .as_ref()
+        .and_then(|_| session::extract_session_id(&ctx.headers));
+    let versions = db::packages::version_count(
+        &ctx.state.pool,
+        package.id,
+        session.as_deref().map(Credential::Session),
+    )
+    .await
+    .map_err(|error| failure(ctx, error))?;
     let updated = chrono::DateTime::from_timestamp(package.updated_at, 0)
         .unwrap_or_default()
         .format("%b %e, %Y")
@@ -140,7 +147,11 @@ fn version_card(base: &str, version: &db::packages::Version, tags: Vec<String>) 
         name: version.name.clone(),
         digest: version.digest.clone(),
         tags,
-        href: if version.deleted_at.is_some() { format!("{base}/settings") } else { format!("{base}/versions/{}", version.id) },
+        href: if version.deleted_at.is_some() {
+            format!("{base}/settings")
+        } else {
+            format!("{base}/versions/{}", version.id)
+        },
         created: chrono::DateTime::from_timestamp(version.created_at, 0)
             .unwrap_or_default()
             .format("%b %e, %Y")
@@ -295,7 +306,9 @@ async fn model(
             .or_else(|| origin.strip_prefix("http://"))
             .unwrap_or(&origin);
         let (command, registry) = if package.package_type == "container" {
-            let namespace = db::packages::container_namespace(&ctx.state.pool, owner).await.map_err(|error| failure(ctx, error))?;
+            let namespace = db::packages::container_namespace(&ctx.state.pool, owner)
+                .await
+                .map_err(|error| failure(ctx, error))?;
             let reference = selected
                 .as_ref()
                 .map_or(":latest".into(), |version| format!("@{}", version.digest));
@@ -470,7 +483,11 @@ async fn model(
     }
     let base = ctx.path.clone();
     let container_namespace = match owner.as_ref() {
-        Some(owner) => Some(db::packages::container_namespace(&ctx.state.pool, owner).await.map_err(|error| failure(ctx, error))?),
+        Some(owner) => Some(
+            db::packages::container_namespace(&ctx.state.pool, owner)
+                .await
+                .map_err(|error| failure(ctx, error))?,
+        ),
         None => None,
     };
     Ok(view::Page::List(Box::new(view::Listing {

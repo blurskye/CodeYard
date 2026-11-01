@@ -88,14 +88,25 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                 let initially_active = {
                     let page = current.peek();
                     match &page.page {
-                        crate::webui::app::Page::Actions(crate::webui::pages::ci::Page::Actions(model)) => model.selected.as_ref().is_some_and(|selected| matches!(super::logs::normalize_status(&selected.run.status), "queued" | "running")),
+                        crate::webui::app::Page::Actions(
+                            crate::webui::pages::ci::Page::Actions(model),
+                        ) => model.selected.as_ref().is_some_and(|selected| {
+                            matches!(
+                                super::logs::normalize_status(&selected.run.status),
+                                "queued" | "running"
+                            )
+                        }),
                         _ => false,
                     }
                 };
-                if !initially_active { return; }
+                if !initially_active {
+                    return;
+                }
                 let mut backlog = false;
                 loop {
-                    if !backlog { gloo_timers::future::TimeoutFuture::new(2000).await; }
+                    if !backlog {
+                        gloo_timers::future::TimeoutFuture::new(2000).await;
+                    }
                     let (location, url) = {
                         let page = current.peek();
                         let crate::webui::app::Page::Actions(
@@ -131,7 +142,13 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                         }
                         response.json::<RunLogUpdate>().await.map_err(|_| ())
                     };
-                    let result = match crate::webui::navigation::load::with_abort_timeout(request, &controller, 10_000).await {
+                    let result = match crate::webui::navigation::load::with_abort_timeout(
+                        request,
+                        &controller,
+                        10_000,
+                    )
+                    .await
+                    {
                         Ok(result) => result,
                         Err(()) => {
                             failure.set(true);
@@ -144,7 +161,11 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                     match result {
                         Ok(update) => {
                             backlog = update.has_more;
-                            let terminal = !backlog && !matches!(super::logs::normalize_status(&update.progress.status), "queued" | "running");
+                            let terminal = !backlog
+                                && !matches!(
+                                    super::logs::normalize_status(&update.progress.status),
+                                    "queued" | "running"
+                                );
                             let mut page = current.write();
                             if let crate::webui::app::Page::Actions(
                                 crate::webui::pages::ci::Page::Actions(model),

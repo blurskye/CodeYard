@@ -5,7 +5,11 @@ use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{RepoSecret, RepoSecretMeta};
 
 pub async fn encryption_samples(pool: &SqlitePool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
-    Ok(sqlx::query_as(crate::backend::db::secrets::ENCRYPTION_SAMPLES_SQL).fetch_all(pool).await?)
+    Ok(
+        sqlx::query_as(crate::backend::db::secrets::ENCRYPTION_SAMPLES_SQL)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
 pub async fn create_or_update_secret(
@@ -26,7 +30,12 @@ pub async fn create_or_update_secret(
     {
         return Err(SecretsError::Denied);
     }
-    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await.map_err(SecretsError::authority)? { return Err(SecretsError::Denied); }
+    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, true)
+        .await
+        .map_err(SecretsError::authority)?
+    {
+        return Err(SecretsError::Denied);
+    }
     let table = kind.secrets_table();
     let exists: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS(SELECT 1 FROM {table} WHERE repo_id = ?1 AND name = ?2)",
@@ -63,7 +72,9 @@ pub async fn create_or_update_secret(
     .bind(Some(actor_id))
     .execute(&mut *tx)
     .await?;
-    if matches!(kind, SecretKind::Actions) { delivery_budget(&mut tx, repo_id).await?; }
+    if matches!(kind, SecretKind::Actions) {
+        delivery_budget(&mut tx, repo_id).await?;
+    }
     tx.commit().await?;
 
     Ok(!exists)
@@ -84,7 +95,12 @@ pub async fn repository_secret_key(
     {
         return Err(SecretsError::Denied);
     }
-    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, false).await.map_err(SecretsError::authority)? { return Err(SecretsError::Denied); }
+    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, false)
+        .await
+        .map_err(SecretsError::authority)?
+    {
+        return Err(SecretsError::Denied);
+    }
     let (encrypted, nonce) = encryptor.generate_sealed_box_key()?;
     let table = kind.keys_table();
     sqlx::query(&format!(
@@ -107,7 +123,10 @@ pub async fn repository_secret_key(
     Ok((id, key))
 }
 
-pub(crate) async fn delivery_budget(c: &mut sqlx::SqliteConnection, repo: i64) -> Result<(), SecretsError> {
+pub(crate) async fn delivery_budget(
+    c: &mut sqlx::SqliteConnection,
+    repo: i64,
+) -> Result<(), SecretsError> {
     let (count, bytes): (i64, i64) = sqlx::query_as("WITH inherited AS (SELECT v.name,length(CAST(v.name AS BLOB))+length(v.encrypted_value)-16 AS bytes FROM org_actions_values v JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=v.org_id WHERE r.id=?1 AND v.kind='secret' AND (v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id))) ORDER BY v.name LIMIT 100), delivered AS (SELECT i.bytes FROM inherited i WHERE NOT EXISTS(SELECT 1 FROM repo_secrets s WHERE s.repo_id=?1 AND upper(s.name)=upper(i.name)) UNION ALL SELECT length(CAST(name AS BLOB))+length(encrypted_value)-16 FROM repo_secrets WHERE repo_id=?1) SELECT COUNT(*),COALESCE(SUM(bytes),0) FROM delivered")
         .bind(repo).fetch_one(c).await?;
     crate::backend::db::secrets::ensure_workflow_budget(count, bytes)
@@ -176,7 +195,12 @@ pub async fn delete_secret(
     {
         return Err(SecretsError::Denied);
     }
-    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await.map_err(SecretsError::authority)? { return Err(SecretsError::Denied); }
+    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, true)
+        .await
+        .map_err(SecretsError::authority)?
+    {
+        return Err(SecretsError::Denied);
+    }
     let result = sqlx::query(&format!(
         "DELETE FROM {} WHERE repo_id = ?1 AND name = ?2",
         kind.secrets_table()
@@ -185,7 +209,9 @@ pub async fn delete_secret(
     .bind(name)
     .execute(&mut *tx)
     .await?;
-    if matches!(kind, SecretKind::Actions) { delivery_budget(&mut tx, repo_id).await?; }
+    if matches!(kind, SecretKind::Actions) {
+        delivery_budget(&mut tx, repo_id).await?;
+    }
     tx.commit().await?;
 
     Ok(result.rows_affected() > 0)

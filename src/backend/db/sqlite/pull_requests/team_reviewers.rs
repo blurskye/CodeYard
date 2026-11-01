@@ -8,17 +8,61 @@ use sqlx::SqlitePool;
 
 const SCOPED: &str = "SELECT t.*,o.name AS org_slug,COALESCE(a.permission,0) AS permission FROM teams t JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL JOIN organizations o ON o.id=t.org_id LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=?1 AND (t.privacy='visible' OR EXISTS(SELECT 1 FROM org_memberships om WHERE om.org_id=t.org_id AND om.user_id=?2 AND om.role IN ('owner','admin')) OR EXISTS(SELECT 1 FROM effective_team_memberships tm JOIN org_memberships om ON om.org_id=t.org_id AND om.user_id=tm.user_id WHERE tm.team_id=t.id AND tm.user_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member')))";
 
-pub async fn request_page(pool: &SqlitePool, window: &crate::backend::db::pull_requests::team_reviewers::RequestWindow) -> Result<(i64, Vec<crate::backend::db::pull_requests::reviews::ReviewRequestOrigin>)> {
-    ensure!(window.offset >= 0 && (0..=100).contains(&window.limit), InvalidReviewTeam);
-    let sql = crate::backend::db::pull_requests::team_reviewers::request_roster_sql("?", SCOPED, &super::super::repositories::access::readable_condition());
+pub async fn request_page(
+    pool: &SqlitePool,
+    window: &crate::backend::db::pull_requests::team_reviewers::RequestWindow,
+) -> Result<(
+    i64,
+    Vec<crate::backend::db::pull_requests::reviews::ReviewRequestOrigin>,
+)> {
+    ensure!(
+        window.offset >= 0 && (0..=100).contains(&window.limit),
+        InvalidReviewTeam
+    );
+    let sql = crate::backend::db::pull_requests::team_reviewers::request_roster_sql(
+        "?",
+        SCOPED,
+        &super::super::repositories::access::readable_condition(),
+    );
     let mut tx = pool.begin().await?;
-    let total = if window.count { sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({sql}) visible")).bind(window.repo).bind(window.viewer).bind(window.pull).bind(window.target.map(|target| target.0)).bind(window.target.map(|target| target.1)).fetch_one(&mut *tx).await? } else { 0 };
-    let rows = if window.limit == 0 { Vec::new() } else { sqlx::query_as(&format!("{sql} ORDER BY kind,sort_name,COALESCE(user_id,team_id) LIMIT ?6 OFFSET ?7")).bind(window.repo).bind(window.viewer).bind(window.pull).bind(window.target.map(|target| target.0)).bind(window.target.map(|target| target.1)).bind(window.limit).bind(window.offset).fetch_all(&mut *tx).await? };
+    let total = if window.count {
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({sql}) visible"))
+            .bind(window.repo)
+            .bind(window.viewer)
+            .bind(window.pull)
+            .bind(window.target.map(|target| target.0))
+            .bind(window.target.map(|target| target.1))
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        0
+    };
+    let rows = if window.limit == 0 {
+        Vec::new()
+    } else {
+        sqlx::query_as(&format!(
+            "{sql} ORDER BY kind,sort_name,COALESCE(user_id,team_id) LIMIT ?6 OFFSET ?7"
+        ))
+        .bind(window.repo)
+        .bind(window.viewer)
+        .bind(window.pull)
+        .bind(window.target.map(|target| target.0))
+        .bind(window.target.map(|target| target.1))
+        .bind(window.limit)
+        .bind(window.offset)
+        .fetch_all(&mut *tx)
+        .await?
+    };
     tx.commit().await?;
     Ok((total, rows))
 }
 
-pub async fn by_ids(pool: &SqlitePool, repo: i64, viewer: Option<i64>, ids: &[i64]) -> Result<Vec<Team>> {
+pub async fn by_ids(
+    pool: &SqlitePool,
+    repo: i64,
+    viewer: Option<i64>,
+    ids: &[i64],
+) -> Result<Vec<Team>> {
     ensure!(ids.len() <= 100, InvalidReviewTeam);
     let readable = super::super::repositories::access::readable_condition();
     Ok(sqlx::query_as(&format!("{SCOPED} AND t.id IN (SELECT value FROM json_each(?3)) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?2 WHERE r.id=?1 AND {readable})")).bind(repo).bind(viewer).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
@@ -34,33 +78,92 @@ pub async fn list(
         .bind(repo).bind(viewer).bind(pull).fetch_all(pool).await?)
 }
 
-pub async fn members(pool: &SqlitePool, repo: i64, teams: &[i64], after: i64) -> Result<Vec<crate::backend::db::models::User>> {
+pub async fn members(
+    pool: &SqlitePool,
+    repo: i64,
+    teams: &[i64],
+    after: i64,
+) -> Result<Vec<crate::backend::db::models::User>> {
     let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
     Ok(sqlx::query_as(&format!("SELECT DISTINCT u.* FROM effective_team_memberships m JOIN teams t ON t.id=m.team_id JOIN org_memberships o ON o.org_id=t.org_id AND o.user_id=m.user_id JOIN users u ON u.id=m.user_id JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=t.org_id AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND u.id>?3 AND t.notifications_enabled AND m.role IN ('member','maintainer') AND o.role IN ('owner','admin','member') AND NOT r.is_archived AND NOT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=r.id) AND ({access})>=3 AND EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=t.id AND a.repo_id=r.id AND a.permission BETWEEN 3 AND 5) ORDER BY u.id LIMIT 100"))
         .bind(repo).bind(serde_json::to_string(teams)?).bind(after).fetch_all(pool).await?)
 }
 
-pub async fn set_requests(pool: &SqlitePool, actor: i64, pull: i64, input: &crate::backend::db::pull_requests::team_reviewers::ReviewRequests<'_>) -> Result<crate::backend::db::pull_requests::team_reviewers::ReviewRequestChanges> {
+pub async fn set_requests(
+    pool: &SqlitePool,
+    actor: i64,
+    pull: i64,
+    input: &crate::backend::db::pull_requests::team_reviewers::ReviewRequests<'_>,
+) -> Result<crate::backend::db::pull_requests::team_reviewers::ReviewRequestChanges> {
     use crate::backend::db::{models::User, pull_requests::team_reviewers::ReviewRequestChanges};
-    ensure!(input.users.len() + input.teams.len() <= 100, InvalidReviewTeam);
+    ensure!(
+        input.users.len() + input.teams.len() <= 100,
+        InvalidReviewTeam
+    );
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let (author, state, _) = discussions::lock_pull_request_review_authority(&mut tx, actor, pull).await?;
+    let (author, state, _) =
+        discussions::lock_pull_request_review_authority(&mut tx, actor, pull).await?;
     ensure!(state == "open", InvalidReviewTeam);
-    let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=?1").bind(pull).fetch_one(&mut *tx).await?;
-    if let Some(token) = input.token { ensure!(super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "pull-requests").await?, discussions::AUTHORITY_DENIED); }
-    let old: Vec<i64> = sqlx::query_scalar("SELECT user_id FROM pr_reviewers WHERE pull_request_id=?1").bind(pull).fetch_all(&mut *tx).await?;
+    let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM pull_requests WHERE id=?1")
+        .bind(pull)
+        .fetch_one(&mut *tx)
+        .await?;
+    if let Some(token) = input.token {
+        ensure!(
+            super::super::users::tokens::repository_write_on(
+                &mut tx,
+                token,
+                actor,
+                repo,
+                "pull-requests"
+            )
+            .await?,
+            discussions::AUTHORITY_DENIED
+        );
+    }
+    let old: Vec<i64> =
+        sqlx::query_scalar("SELECT user_id FROM pr_reviewers WHERE pull_request_id=?1")
+            .bind(pull)
+            .fetch_all(&mut *tx)
+            .await?;
     let old_ids: std::collections::HashSet<_> = old.into_iter().collect();
-    let old_teams: Vec<i64> = sqlx::query_scalar("SELECT team_id FROM pr_team_reviewers WHERE pull_request_id=?1").bind(pull).fetch_all(&mut *tx).await?;
+    let old_teams: Vec<i64> =
+        sqlx::query_scalar("SELECT team_id FROM pr_team_reviewers WHERE pull_request_id=?1")
+            .bind(pull)
+            .fetch_all(&mut *tx)
+            .await?;
     let mut users: Vec<User> = Vec::new();
     for id in input.users {
-        if users.iter().any(|user| user.id == *id) { continue; }
-        ensure!(*id != author && discussions::lock_write_authority(&mut tx, *id, repo).await?, discussions::AUTHORITY_DENIED);
-        users.push(sqlx::query_as("SELECT * FROM users WHERE id=?1").bind(id).fetch_one(&mut *tx).await?);
+        if users.iter().any(|user| user.id == *id) {
+            continue;
+        }
+        ensure!(
+            *id != author && discussions::lock_write_authority(&mut tx, *id, repo).await?,
+            discussions::AUTHORITY_DENIED
+        );
+        users.push(
+            sqlx::query_as("SELECT * FROM users WHERE id=?1")
+                .bind(id)
+                .fetch_one(&mut *tx)
+                .await?,
+        );
     }
     let mut teams: Vec<Team> = Vec::new();
     for id in input.teams {
-        if teams.iter().any(|team| team.id == *id) { continue; }
-        teams.push(sqlx::query_as(&format!("{SCOPED} AND t.id=?3 AND a.permission BETWEEN 3 AND 5")).bind(repo).bind(actor).bind(id).fetch_optional(&mut *tx).await?.ok_or(InvalidReviewTeam)?);
+        if teams.iter().any(|team| team.id == *id) {
+            continue;
+        }
+        teams.push(
+            sqlx::query_as(&format!(
+                "{SCOPED} AND t.id=?3 AND a.permission BETWEEN 3 AND 5"
+            ))
+            .bind(repo)
+            .bind(actor)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(InvalidReviewTeam)?,
+        );
     }
     let replace = !input.union && !input.rerequest;
     if replace {
@@ -70,18 +173,37 @@ pub async fn set_requests(pool: &SqlitePool, actor: i64, pull: i64, input: &crat
     }
     let mut added_users = Vec::new();
     for user in users {
-        if input.rerequest { sqlx::query("DELETE FROM pr_reviewers WHERE pull_request_id=?1 AND user_id=?2").bind(pull).bind(user.id).execute(&mut *tx).await?; }
+        if input.rerequest {
+            sqlx::query("DELETE FROM pr_reviewers WHERE pull_request_id=?1 AND user_id=?2")
+                .bind(pull)
+                .bind(user.id)
+                .execute(&mut *tx)
+                .await?;
+        }
         sqlx::query("INSERT INTO pr_reviewers(pull_request_id,user_id) VALUES(?1,?2) ON CONFLICT DO NOTHING").bind(pull).bind(user.id).execute(&mut *tx).await?;
-        if input.rerequest || !old_ids.contains(&user.id) { added_users.push(user); }
+        if input.rerequest || !old_ids.contains(&user.id) {
+            added_users.push(user);
+        }
     }
     let mut added_teams = Vec::new();
     for team in teams {
-        if input.rerequest { sqlx::query("DELETE FROM pr_team_reviewers WHERE pull_request_id=?1 AND team_id=?2").bind(pull).bind(team.id).execute(&mut *tx).await?; }
+        if input.rerequest {
+            sqlx::query("DELETE FROM pr_team_reviewers WHERE pull_request_id=?1 AND team_id=?2")
+                .bind(pull)
+                .bind(team.id)
+                .execute(&mut *tx)
+                .await?;
+        }
         sqlx::query("INSERT INTO pr_team_reviewers(pull_request_id,team_id) VALUES(?1,?2) ON CONFLICT DO NOTHING").bind(pull).bind(team.id).execute(&mut *tx).await?;
-        if input.rerequest || !old_teams.contains(&team.id) { added_teams.push(team); }
+        if input.rerequest || !old_teams.contains(&team.id) {
+            added_teams.push(team);
+        }
     }
     tx.commit().await?;
-    Ok(ReviewRequestChanges { added_users, added_teams })
+    Ok(ReviewRequestChanges {
+        added_users,
+        added_teams,
+    })
 }
 
 pub async fn change(

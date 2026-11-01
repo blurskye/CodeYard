@@ -204,9 +204,19 @@ native_operation!(super::postgres::secret_scanning::enqueue, super::sqlite::secr
 native_operation!(super::postgres::secret_scanning::claim, super::sqlite::secret_scanning::claim,
     fn claim(pool: &DbPool) -> Result<Option<ScanJob>>);
 #[derive(Clone, Copy)]
-pub enum ScanCompletion { Completed, Failed, Retry }
+pub enum ScanCompletion {
+    Completed,
+    Failed,
+    Retry,
+}
 impl ScanCompletion {
-    pub(crate) fn status(&self) -> &'static str { match self { Self::Completed => "completed", Self::Failed => "failed", Self::Retry => "queued" } }
+    pub(crate) fn status(&self) -> &'static str {
+        match self {
+            Self::Completed => "completed",
+            Self::Failed => "failed",
+            Self::Retry => "queued",
+        }
+    }
 }
 
 native_operation!(super::postgres::secret_scanning::finish, super::sqlite::secret_scanning::finish,

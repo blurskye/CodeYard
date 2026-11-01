@@ -72,11 +72,23 @@ impl RateLimiter {
         }
         // Admit new sources by evicting the oldest record, preferring non-banned entries.
         if records.by_ip.len() >= MAX_TRACKED_IPS && !records.by_ip.contains_key(&ip) {
-            let oldest = records.by_ip.iter().min_by_key(|(_, record)| (
-                record.banned_until.is_some_and(|until| until > now),
-                record.attempts.last().copied().or(record.banned_until.map(|until| until - BAN_DURATION)),
-            )).map(|(ip, _)| *ip);
-            if let Some(oldest) = oldest { records.by_ip.remove(&oldest); }
+            let oldest = records
+                .by_ip
+                .iter()
+                .min_by_key(|(_, record)| {
+                    (
+                        record.banned_until.is_some_and(|until| until > now),
+                        record
+                            .attempts
+                            .last()
+                            .copied()
+                            .or(record.banned_until.map(|until| until - BAN_DURATION)),
+                    )
+                })
+                .map(|(ip, _)| *ip);
+            if let Some(oldest) = oldest {
+                records.by_ip.remove(&oldest);
+            }
         }
         let record = records.by_ip.entry(ip).or_insert_with(|| IpRecord {
             attempts: Vec::new(),

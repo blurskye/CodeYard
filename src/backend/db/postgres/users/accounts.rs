@@ -154,7 +154,9 @@ pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User
 /// Git attribution prefers the account's noreply identity, then verified addresses, with
 /// the lowest account ID resolving legacy duplicate claims. Banned accounts never attribute.
 pub async fn commit_authors(pool: &PgPool, emails: &[String]) -> Result<Vec<CommitAuthor>> {
-    if emails.is_empty() { return Ok(Vec::new()); }
+    if emails.is_empty() {
+        return Ok(Vec::new());
+    }
     Ok(sqlx::query_as(
         "WITH requested AS (
             SELECT DISTINCT address, LOWER(address) AS normalized FROM unnest($1::text[]) AS input(address)
@@ -260,10 +262,11 @@ pub async fn set_user_avatar(
     // which happens after the upload's storage work. The user row is written below, so the
     // lock is exclusive: two shared holders that both upgrade it would deadlock.
     super::transitions::require_account_exclusive(&mut tx, user_id, credential).await?;
-    let previous: Option<uuid::Uuid> = sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=$1")
-        .bind(user_id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let previous: Option<uuid::Uuid> =
+        sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=$1")
+            .bind(user_id)
+            .fetch_one(&mut *tx)
+            .await?;
     if let Some(file) = avatar_file_id {
         let usable: Option<uuid::Uuid> = sqlx::query_scalar(
             "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>NOW())) AND reason='avatar' AND content_type IN (SELECT jsonb_array_elements_text($3::jsonb)) RETURNING id",
@@ -324,13 +327,16 @@ pub async fn update_user_profile(
 }
 
 /// Accounts that match the search: all of them, the administrators and the banned ones.
-pub async fn count_matching_users<'a>(pool: impl sqlx::Executor<'a, Database=sqlx::Postgres>, text: &str) -> Result<(i64, i64, i64)> {
+pub async fn count_matching_users<'a>(
+    pool: impl sqlx::Executor<'a, Database = sqlx::Postgres>,
+    text: &str,
+) -> Result<(i64, i64, i64)> {
     Ok(sqlx::query_as("SELECT COUNT(*), COUNT(*) FILTER (WHERE is_admin), COUNT(*) FILTER (WHERE is_banned) FROM users WHERE strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0")
         .bind(text.trim().to_lowercase()).fetch_one(pool).await?)
 }
 
 pub async fn list_admin_users<'a>(
-    pool: impl sqlx::Executor<'a, Database=sqlx::Postgres>,
+    pool: impl sqlx::Executor<'a, Database = sqlx::Postgres>,
     text: &str,
     role: &str,
     limit: i64,
@@ -340,17 +346,42 @@ pub async fn list_admin_users<'a>(
         .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
 }
 
-pub async fn admin_users_page(pool: &PgPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, text: &str, role: &str, limit: i64, requested: usize) -> Result<crate::backend::db::users::accounts::AdminUserPage> {
+pub async fn admin_users_page(
+    pool: &PgPool,
+    administrator: &crate::backend::db::users::transitions::AdministratorActor,
+    text: &str,
+    role: &str,
+    limit: i64,
+    requested: usize,
+) -> Result<crate::backend::db::users::accounts::AdminUserPage> {
     let mut tx = pool.begin().await?;
     super::transitions::lock_membership_shared(&mut tx).await?;
-    anyhow::ensure!(super::transitions::active_admin_session(&mut tx, administrator).await?, crate::backend::db::users::accounts::AccountRestricted);
+    anyhow::ensure!(
+        super::transitions::active_admin_session(&mut tx, administrator).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
     let counts = count_matching_users(&mut *tx, text).await?;
-    let total = match role { "admins" => counts.1, "banned" => counts.2, _ => counts.0 } as usize;
-    let limit = limit.clamp(1,100);
+    let total = match role {
+        "admins" => counts.1,
+        "banned" => counts.2,
+        _ => counts.0,
+    } as usize;
+    let limit = limit.clamp(1, 100);
     let page = requested.clamp(1, total.div_ceil(limit as usize).max(1));
-    let users = list_admin_users(&mut *tx, text, role, limit, ((page-1) * limit as usize) as i64).await?;
+    let users = list_admin_users(
+        &mut *tx,
+        text,
+        role,
+        limit,
+        ((page - 1) * limit as usize) as i64,
+    )
+    .await?;
     tx.commit().await?;
-    Ok(crate::backend::db::users::accounts::AdminUserPage { counts, page, users })
+    Ok(crate::backend::db::users::accounts::AdminUserPage {
+        counts,
+        page,
+        users,
+    })
 }
 
 pub async fn list_admin_account_summaries(

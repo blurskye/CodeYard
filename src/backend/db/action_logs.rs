@@ -62,12 +62,27 @@ pub(crate) struct ObservedStep {
     pub step: Step,
 }
 impl Manifest {
-    pub(crate) fn capture(mut jobs: Vec<Job>, steps: Vec<ObservedStep>, number: Option<i32>) -> Option<Self> {
-        let indices: std::collections::HashMap<_, _> = jobs.iter().enumerate().map(|(index, job)| (job.id, index)).collect();
+    pub(crate) fn capture(
+        mut jobs: Vec<Job>,
+        steps: Vec<ObservedStep>,
+        number: Option<i32>,
+    ) -> Option<Self> {
+        let indices: std::collections::HashMap<_, _> = jobs
+            .iter()
+            .enumerate()
+            .map(|(index, job)| (job.id, index))
+            .collect();
         for observed in steps {
-            if let Some(index) = indices.get(&observed.job_id) { jobs[*index].steps.push(observed.step); }
+            if let Some(index) = indices.get(&observed.job_id) {
+                jobs[*index].steps.push(observed.step);
+            }
         }
-        if number.is_some_and(|number| jobs.iter().any(|job| !job.steps.iter().any(|step| step.number == number))) { return None; }
+        if number.is_some_and(|number| {
+            jobs.iter()
+                .any(|job| !job.steps.iter().any(|step| step.number == number))
+        }) {
+            return None;
+        }
         Some(Self { jobs })
     }
 }

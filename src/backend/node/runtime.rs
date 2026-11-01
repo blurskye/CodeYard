@@ -1,7 +1,7 @@
 //! `codeyard serve`: starts the HTTP server, the selected SSH transport and the
 //! CI service, then waits for a shutdown signal.
 use super::{config::ServeConfig, NodeRole};
-use crate::backend::{api, cluster, db::DbPool, ssh, fs::lock_state_dir};
+use crate::backend::{api, cluster, db::DbPool, fs::lock_state_dir, ssh};
 use crate::backend::{
     app::AppState,
     ci::CiConfig,
@@ -21,9 +21,8 @@ fn validate_cluster_encryptor(
     if !clustered {
         return Ok(());
     }
-    let encryptor = encryptor.context(
-        "Cluster core nodes require the same SECRETS_MASTER_KEY for encrypted secrets",
-    )?;
+    let encryptor = encryptor
+        .context("Cluster core nodes require the same SECRETS_MASTER_KEY for encrypted secrets")?;
     if let Some((ciphertext, nonce)) = sample {
         encryptor
             .decrypt(ciphertext, nonce)
@@ -59,7 +58,12 @@ async fn prepare_application(
     crate::backend::api::http::config::public_url()?;
     if cluster.is_none() {
         let (state_dir, repos) = (state_dir.to_owned(), repos_path.clone());
-        tokio::task::spawn_blocking(move || crate::backend::repositories::releases::immutable::configure_local_identity(&state_dir, &repos)).await??;
+        tokio::task::spawn_blocking(move || {
+            crate::backend::repositories::releases::immutable::configure_local_identity(
+                &state_dir, &repos,
+            )
+        })
+        .await??;
     }
     let secret_encryptor = SecretEncryptor::configured_from_env()?.map(Arc::new);
     validate_cluster_encryptor(cluster.is_some(), secret_encryptor.as_deref(), None)?;
@@ -95,7 +99,6 @@ async fn prepare_application(
         cluster,
     ))
 }
-
 
 async fn shutdown_signal() -> Result<()> {
     #[cfg(unix)]
@@ -179,7 +182,12 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
         Err(_) => warn!("upload cleanup budget exhausted; remaining work stays queued"),
     }
     // Object families have independent budgets; a slow package delete cannot cancel uploads.
-    match tokio::time::timeout(std::time::Duration::from_secs(30), crate::backend::packages::collect(pool, storage)).await {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        crate::backend::packages::collect(pool, storage),
+    )
+    .await
+    {
         Ok(Ok(())) => {}
         Ok(Err(error)) => warn!(%error, "package objects were not collected"),
         Err(_) => warn!("package object collection timed out"),
@@ -188,7 +196,9 @@ async fn remove_expired_web_rows(pool: &DbPool, storage: &crate::backend::storag
         crate::backend::db::attestations::collect(pool).await?;
         crate::backend::db::action_objects::expire_objects(pool).await?;
         Ok::<_, anyhow::Error>(())
-    }).await {
+    })
+    .await
+    {
         Ok(Ok(())) => {}
         _ => warn!("attestation or Actions object collection was deferred"),
     }
@@ -337,7 +347,9 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         );
     }
     let _repository_lock = if member.is_none() && config.roles.contains(NodeRole::Storage) {
-        Some(crate::backend::locks::exclusive_file(&repos_path.join("storage.lock"))?)
+        Some(crate::backend::locks::exclusive_file(
+            &repos_path.join("storage.lock"),
+        )?)
     } else {
         None
     };
@@ -427,7 +439,10 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         return started.map(|_| ()).and(stopped);
     }
     let (stop_traffic, traffic_stop) = tokio::sync::watch::channel(false);
-    let traffic = tokio::spawn(crate::backend::repositories::traffic::maintain(pool.clone(), traffic_stop));
+    let traffic = tokio::spawn(crate::backend::repositories::traffic::maintain(
+        pool.clone(),
+        traffic_stop,
+    ));
     let (stop_vulnerabilities, vulnerabilities_stop) = tokio::sync::watch::channel(false);
     let vulnerabilities = config.roles.contains(NodeRole::Web).then(|| {
         tokio::spawn(crate::backend::vulnerabilities::run(

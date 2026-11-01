@@ -161,12 +161,16 @@ fn expression_context(
             .map(|name| ((*name).to_owned(), crate::expressions::Value::Null))
             .collect(),
     };
-    crate::expressions::validate(expression, &contexts)
-    .with_context(|| path.to_owned())?;
+    crate::expressions::validate(expression, &contexts).with_context(|| path.to_owned())?;
     Ok(())
 }
 
-pub(super) fn templates(value: &Value, contexts: &[&str], functions: &[&str], path: &str) -> Result<()> {
+pub(super) fn templates(
+    value: &Value,
+    contexts: &[&str],
+    functions: &[&str],
+    path: &str,
+) -> Result<()> {
     match value {
         Value::String(s) => {
             for expression in expressions(s).with_context(|| path.to_owned())? {
@@ -247,14 +251,24 @@ pub(super) fn string_map(value: Option<&Value>, path: &str) -> Result<BTreeMap<S
         .collect()
 }
 
-pub(super) fn environment_template(value: Option<&Value>, path: &str) -> Result<super::EnvironmentTemplate> {
+pub(super) fn environment_template(
+    value: Option<&Value>,
+    path: &str,
+) -> Result<super::EnvironmentTemplate> {
     if let Some(Value::String(template)) = value {
         let template = template.trim();
-        let inner = template.strip_prefix("${{").with_context(|| format!("{path}: Expected an environment mapping or whole expression"))?;
-        ensure!(crate::expressions::expression_end(inner)? + 2 == inner.len(), "{path}: Expected a whole expression");
+        let inner = template.strip_prefix("${{").with_context(|| {
+            format!("{path}: Expected an environment mapping or whole expression")
+        })?;
+        ensure!(
+            crate::expressions::expression_end(inner)? + 2 == inner.len(),
+            "{path}: Expected a whole expression"
+        );
         Ok(super::EnvironmentTemplate::Expression(template.into()))
     } else {
-        Ok(super::EnvironmentTemplate::Entries(string_map(value, path)?))
+        Ok(super::EnvironmentTemplate::Entries(string_map(
+            value, path,
+        )?))
     }
 }
 
@@ -303,10 +317,16 @@ fn permissions(value: &Value, path: &str) -> Result<()> {
     for (k, v) in map {
         let level = text(v, path)?;
         let scope = k.as_str().unwrap_or("");
-        ensure!(["read", "write", "none"].contains(&level.as_str()), "{path}: Unexpected permission level '{level}'");
+        ensure!(
+            ["read", "write", "none"].contains(&level.as_str()),
+            "{path}: Unexpected permission level '{level}'"
+        );
         // A known level the scope does not take: name the one it does.
         let other = if level == "read" { "write" } else { "read" };
-        ensure!(super::permission_level_allowed(scope, &level), "{path}.{scope}: Expected '{other}' or 'none'");
+        ensure!(
+            super::permission_level_allowed(scope, &level),
+            "{path}.{scope}: Expected '{other}' or 'none'"
+        );
     }
     Ok(())
 }
@@ -808,7 +828,10 @@ fn validate_job(job: &Mapping, path: &str) -> Result<()> {
             !steps.is_empty(),
             "{path}.steps: Expected at least one step"
         );
-        ensure!(steps.len() <= super::MAX_JOB_STEPS, "{path}.steps: Too many steps");
+        ensure!(
+            steps.len() <= super::MAX_JOB_STEPS,
+            "{path}.steps: Too many steps"
+        );
         let mut ids = BTreeSet::new();
         for (i, step) in steps.iter().enumerate() {
             let step = parse_step(step).with_context(|| format!("{path}.steps[{i}]"))?;
@@ -998,8 +1021,12 @@ pub(super) fn parse_step(value: &Value) -> Result<Step> {
         match key.as_str() {
             "continue-on-error" => boolean(v, &p)?,
             "timeout-minutes" => number(v, &p)?,
-            "env" => { environment_template(Some(v), &p)?; }
-            "with" => { string_map(Some(v), &p)?; }
+            "env" => {
+                environment_template(Some(v), &p)?;
+            }
+            "with" => {
+                string_map(Some(v), &p)?;
+            }
             "shell" | "uses" => nonempty(v, &p)?,
             _ => {}
         }

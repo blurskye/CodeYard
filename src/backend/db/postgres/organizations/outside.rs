@@ -40,7 +40,9 @@ pub async fn remove(
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
+    if !credential(&mut tx, &grant, org, "members").await? {
+        return Ok(Denied);
+    }
     active(&mut tx, target).await?;
     if membership_role(&mut tx, org, target).await?.is_some() {
         return Ok(Conflict);

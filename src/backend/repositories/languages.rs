@@ -33,9 +33,13 @@ pub async fn stored(pool: &DbPool, repo_id: i64) -> Result<Vec<LanguageStat>> {
 }
 
 fn computation(repo_id: i64) -> Arc<tokio::sync::Mutex<()>> {
-    let mut computations = COMPUTATIONS.lock().unwrap_or_else(|error| error.into_inner());
+    let mut computations = COMPUTATIONS
+        .lock()
+        .unwrap_or_else(|error| error.into_inner());
     computations.retain(|_, lock| lock.strong_count() != 0);
-    let lock = computations.get(&repo_id).and_then(Weak::upgrade)
+    let lock = computations
+        .get(&repo_id)
+        .and_then(Weak::upgrade)
         .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(())));
     computations.insert(repo_id, Arc::downgrade(&lock));
     lock
@@ -53,7 +57,10 @@ pub async fn compute_and_store(
         // Do not hold a frontend single-flight lock across RPC: an owning store can
         // run in this process too, and must acquire the same lock itself.
         return tokio::time::timeout(REFRESH_TIMEOUT, store.languages_from_primary(branch))
-            .await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Language computation timed out"))?;
+            .await
+            .map_err(|_| {
+                RepoError::new(ErrorKind::Unavailable, "Language computation timed out")
+            })?;
     };
     let computation = computation(repository.id);
     tokio::time::timeout(REFRESH_TIMEOUT, async {
@@ -61,7 +68,9 @@ pub async fn compute_and_store(
         let Some(source) = db::repository_stats::language_source(pool, repository.id).await? else {
             return Ok(Vec::new());
         };
-        if source.default_branch != repository.default_branch || source.storage_node_id != repository.storage_node_id {
+        if source.default_branch != repository.default_branch
+            || source.storage_node_id != repository.storage_node_id
+        {
             return Ok(Vec::new());
         }
         let mut source = source;
@@ -69,13 +78,23 @@ pub async fn compute_and_store(
         loop {
             let tip = git::branch_tip(path, &branch)?;
             let languages = compute_local(pool, path, &branch, &source).await?;
-            let current = git::default_branch(path).await?.unwrap_or_else(|| "main".into());
-            if current == branch && git::branch_tip(path, &branch)? == tip
-                && db::repository_stats::languages_computed(pool, &source, &tip.clone().unwrap_or_default()).await?
+            let current = git::default_branch(path)
+                .await?
+                .unwrap_or_else(|| "main".into());
+            if current == branch
+                && git::branch_tip(path, &branch)? == tip
+                && db::repository_stats::languages_computed(
+                    pool,
+                    &source,
+                    &tip.clone().unwrap_or_default(),
+                )
+                .await?
             {
                 return Ok::<_, anyhow::Error>(languages);
             }
-            let Some(current_source) = db::repository_stats::language_source(pool, repository.id).await? else {
+            let Some(current_source) =
+                db::repository_stats::language_source(pool, repository.id).await?
+            else {
                 return Ok(Vec::new());
             };
             if current_source.storage_node_id != repository.storage_node_id {
@@ -84,8 +103,10 @@ pub async fn compute_and_store(
             source = current_source;
             branch = current;
         }
-    }).await.map_err(|_| RepoError::new(ErrorKind::Unavailable, "Language computation timed out"))?
-        .map_err(RepoError::from)
+    })
+    .await
+    .map_err(|_| RepoError::new(ErrorKind::Unavailable, "Language computation timed out"))?
+    .map_err(RepoError::from)
 }
 
 /// Keep only the latest pending request while a repository's worker is scanning.
@@ -168,8 +189,11 @@ async fn compute_local(
     };
     // Languages follow Git's default branch, which an adopted repository may name
     // differently from the stored default.
-    let git_default = git::default_branch(path).await?.unwrap_or_else(|| "main".into());
-    if git_default == branch && current.storage_node_id == source.storage_node_id
+    let git_default = git::default_branch(path)
+        .await?
+        .unwrap_or_else(|| "main".into());
+    if git_default == branch
+        && current.storage_node_id == source.storage_node_id
         && git::branch_tip(path, branch)?.unwrap_or_default() == tip
     {
         match store_rows(pool, &current, &tip, &languages).await? {

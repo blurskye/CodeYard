@@ -15,7 +15,16 @@ pub struct SecretSnapshot {
 impl Database {
     pub async fn secret_actor(&self, name: &str) -> i64 {
         let actor = self.actor(name).await;
-        db::users::sessions::create_session(self.pool(), &format!("{actor:064x}"), actor, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
+        db::users::sessions::create_session(
+            self.pool(),
+            &format!("{actor:064x}"),
+            actor,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
         actor
     }
     pub async fn repo(&self, owner: i64, org: Option<i64>, name: &str, private: bool) -> i64 {

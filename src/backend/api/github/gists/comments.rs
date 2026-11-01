@@ -29,14 +29,10 @@ async fn list(
     auth::authenticate(&state, &headers, false).await?;
     let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
     let (offset, limit) = page.window()?;
-    let mut comments = db::gists::comments(
-        &state.pool,
-        gist.repo_id,
-        (limit + 1) as i64,
-        offset as i64,
-    )
-    .await
-    .map_err(Error::unavailable)?;
+    let mut comments =
+        db::gists::comments(&state.pool, gist.repo_id, (limit + 1) as i64, offset as i64)
+            .await
+            .map_err(Error::unavailable)?;
     let more = comments.len() > limit;
     comments.truncate(limit);
     let mut values = Vec::new();
@@ -57,10 +53,7 @@ async fn read(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    documents::response(
-        &headers,
-        documents::comment(&state, &gist, &comment).await?,
-    )
+    documents::response(&headers, documents::comment(&state, &gist, &comment).await?)
 }
 async fn create(
     State(state): State<Arc<AppState>>,
@@ -109,9 +102,7 @@ async fn update(
     )
     .await
     .map_err(hidden_failure)?;
-    Ok(Json(
-        documents::comment(&state, &gist, &comment).await?,
-    ))
+    Ok(Json(documents::comment(&state, &gist, &comment).await?))
 }
 async fn remove(
     State(state): State<Arc<AppState>>,

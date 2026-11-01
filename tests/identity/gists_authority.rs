@@ -241,7 +241,12 @@ async fn authority(pg: bool) {
     )
     .await
     .unwrap();
-    let paths: Vec<_> = deleted.snapshot.files.iter().map(|file| file.path.as_str()).collect();
+    let paths: Vec<_> = deleted
+        .snapshot
+        .files
+        .iter()
+        .map(|file| file.path.as_str())
+        .collect();
     assert_eq!(paths, ["recovered.txt"]);
     let comment = db::gists::create_comment(
         f.pool(),

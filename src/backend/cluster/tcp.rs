@@ -271,7 +271,9 @@ fn tune(socket: &TcpStream) {
         warn!(%error, "cannot turn off Nagle's algorithm on a cluster connection");
     }
     #[cfg(target_os = "linux")]
-    if let Err(error) = socket2::SockRef::from(socket).set_tcp_user_timeout(Some(Duration::from_secs(15))) {
+    if let Err(error) =
+        socket2::SockRef::from(socket).set_tcp_user_timeout(Some(Duration::from_secs(15)))
+    {
         warn!(%error, "cannot bound unacknowledged data on a cluster connection");
     }
     let keepalive = socket2::TcpKeepalive::new()

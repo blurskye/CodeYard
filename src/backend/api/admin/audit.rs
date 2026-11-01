@@ -40,25 +40,32 @@ async fn load_audit(
         )
     };
     let (total, entries) = db::audit::page(
-        pool, (user.id, session).into(), action, actor,
-        i64::try_from(page).unwrap_or(i64::MAX), AUDIT_ENTRIES_PER_PAGE as i64,
-    ).await.map_err(|_| unavailable())?
-        .ok_or_else(|| ctx.error(StatusCode::FORBIDDEN, "Administrator session required."))?;
+        pool,
+        (user.id, session).into(),
+        action,
+        actor,
+        i64::try_from(page).unwrap_or(i64::MAX),
+        AUDIT_ENTRIES_PER_PAGE as i64,
+    )
+    .await
+    .map_err(|_| unavailable())?
+    .ok_or_else(|| ctx.error(StatusCode::FORBIDDEN, "Administrator session required."))?;
     let total = total as usize;
     let pages = total.div_ceil(AUDIT_ENTRIES_PER_PAGE).max(1);
     let page = page.clamp(1, pages);
-    let entries = entries.into_iter()
-    .map(|entry| AuditEntry {
-        id: entry.id,
-        actor: entry.actor.unwrap_or_default(),
-        action: entry.action,
-        // A user target that no longer exists has no name, and the page says so.
-        target: entry.target_name.unwrap_or_default(),
-        org: entry.org_name.unwrap_or_default(),
-        details: details_text(entry.details),
-        time: entry.created_at.to_rfc3339(),
-    })
-    .collect();
+    let entries = entries
+        .into_iter()
+        .map(|entry| AuditEntry {
+            id: entry.id,
+            actor: entry.actor.unwrap_or_default(),
+            action: entry.action,
+            // A user target that no longer exists has no name, and the page says so.
+            target: entry.target_name.unwrap_or_default(),
+            org: entry.org_name.unwrap_or_default(),
+            details: details_text(entry.details),
+            time: entry.created_at.to_rfc3339(),
+        })
+        .collect();
     Ok(AdminAudit {
         entries,
         action: action.to_owned(),

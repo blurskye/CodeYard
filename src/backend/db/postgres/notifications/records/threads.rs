@@ -152,25 +152,49 @@ async fn candidates(
     let sql = if filter.since.is_some() {
         sql.replacen("WITH page", "WITH recent AS MATERIALIZED (SELECT DISTINCT thread_id FROM notifications WHERE user_id=$1 AND created_at>$8 AND id<=$2 AND thread_id IS NOT NULL), page", 1)
             .replacen("FROM notification_threads t\n", "FROM notification_threads t JOIN recent ON recent.thread_id=t.id\n", 1)
-    } else { sql.to_owned() };
-    Ok(sqlx::query_as(&sql).bind(user).bind(scopes.high_water).bind(ids).bind(filter.repository_id).bind(thread).bind(filter.participating).bind(filter.all).bind(filter.since).bind(filter.before).bind(filter.limit.clamp(1,101)).bind(filter.offset.max(0)).fetch_all(connection).await?)
+    } else {
+        sql.to_owned()
+    };
+    Ok(sqlx::query_as(&sql)
+        .bind(user)
+        .bind(scopes.high_water)
+        .bind(ids)
+        .bind(filter.repository_id)
+        .bind(thread)
+        .bind(filter.participating)
+        .bind(filter.all)
+        .bind(filter.since)
+        .bind(filter.before)
+        .bind(filter.limit.clamp(1, 101))
+        .bind(filter.offset.max(0))
+        .fetch_all(connection)
+        .await?)
 }
 async fn views(
     connection: &mut sqlx::PgConnection,
     user: i64,
     summaries: Vec<ThreadSummary>,
 ) -> Result<Vec<ThreadView>> {
-    if summaries.is_empty() { return Ok(Vec::new()); }
+    if summaries.is_empty() {
+        return Ok(Vec::new());
+    }
     let ids: Vec<_> = summaries.iter().map(|s| s.thread_id).collect();
     let latest: Vec<_> = summaries.iter().map(|s| s.latest_id).collect();
     let repos: Vec<_> = summaries.iter().map(|s| s.scope_repository_id).collect();
-    let threads = sqlx::query_as("SELECT * FROM notification_threads WHERE id=ANY($1) AND user_id=$2")
-        .bind(&ids).bind(user).fetch_all(&mut *connection).await?;
+    let threads =
+        sqlx::query_as("SELECT * FROM notification_threads WHERE id=ANY($1) AND user_id=$2")
+            .bind(&ids)
+            .bind(user)
+            .fetch_all(&mut *connection)
+            .await?;
     let mut notifications: Vec<Notification> = sqlx::query_as("SELECT n.* FROM notifications n JOIN notification_threads t ON t.id=n.thread_id AND t.scope_repository_id=n.scope_repository_id WHERE n.id=ANY($1) AND n.user_id=$2 AND t.user_id=$2 AND t.id=ANY($3)")
         .bind(&latest).bind(user).bind(&ids).fetch_all(&mut *connection).await?;
     super::refresh_links(connection, &mut notifications).await?;
-    let repositories: Vec<Repository> = sqlx::query_as("SELECT * FROM repositories WHERE id=ANY($1)")
-        .bind(&repos).fetch_all(&mut *connection).await?;
+    let repositories: Vec<Repository> =
+        sqlx::query_as("SELECT * FROM repositories WHERE id=ANY($1)")
+            .bind(&repos)
+            .fetch_all(&mut *connection)
+            .await?;
     let projections: Vec<model::ThreadProjection> = sqlx::query_as(r#"
         SELECT t.id AS thread_id,CASE WHEN r.owner_kind='user' THEN u.username ELSE o.name END AS owner,
           p.number AS pull_number,i.number AS issue_number,e.id AS release_id,
@@ -186,7 +210,13 @@ async fn views(
           AND (c.review_id IS NULL OR EXISTS(SELECT 1 FROM pr_reviews v WHERE v.id=c.review_id AND v.state<>'pending'))
         WHERE t.id=ANY($1) AND t.user_id=$2
     "#).bind(&ids).bind(user).bind(&latest).fetch_all(connection).await?;
-    Ok(model::hydrate(summaries, threads, notifications, repositories, projections))
+    Ok(model::hydrate(
+        summaries,
+        threads,
+        notifications,
+        repositories,
+        projections,
+    ))
 }
 async fn subscription(
     connection: &mut sqlx::PgConnection,

@@ -97,7 +97,10 @@ pub async fn apply(
             number,
             name: display,
         } => {
-            ensure!((1..=codeyard_actions::progress::MAX_STEP_NUMBER).contains(number), "invalid step number");
+            ensure!(
+                (1..=codeyard_actions::progress::MAX_STEP_NUMBER).contains(number),
+                "invalid step number"
+            );
             name(display)?;
             let active: bool =
                 sqlx::query_scalar("SELECT status='in_progress' FROM actions_jobs WHERE id=$1")
@@ -143,8 +146,13 @@ pub async fn apply(
             super::action_concurrency::request_job(&mut tx, &leased, id, &config).await?;
         }
         Update::Summary { number, markdown } => {
-            ensure!(*number > 0 && *number <= codeyard_actions::progress::MAX_STEP_NUMBER
-                && markdown.len() <= codeyard_actions::progress::MAX_STEP_SUMMARY_BYTES && !markdown.contains('\0'), "invalid step summary");
+            ensure!(
+                *number > 0
+                    && *number <= codeyard_actions::progress::MAX_STEP_NUMBER
+                    && markdown.len() <= codeyard_actions::progress::MAX_STEP_SUMMARY_BYTES
+                    && !markdown.contains('\0'),
+                "invalid step summary"
+            );
             sqlx::query("INSERT INTO actions_step_summaries(job_id,number,markdown,bytes) SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM actions_jobs WHERE id=$1 AND status='in_progress') AND $4 + COALESCE((SELECT SUM(s.bytes) FROM actions_step_summaries s JOIN actions_jobs j ON j.id=s.job_id WHERE j.run_id=$6 AND NOT(s.job_id=$1 AND s.number=$2)),0)<=$5 ON CONFLICT(job_id,number) DO UPDATE SET markdown=excluded.markdown,bytes=excluded.bytes")
                 .bind(id).bind(*number as i32).bind(markdown).bind(markdown.len() as i32)
                 .bind(codeyard_actions::progress::MAX_RUN_SUMMARY_BYTES as i64).bind(run).execute(&mut *tx).await?;
@@ -235,13 +243,26 @@ pub async fn by_check_run(pool: &SqlitePool, repo: i64, id: i64) -> Result<Optio
 pub async fn steps(pool: &SqlitePool, repo: i64, job: i64) -> Result<Vec<Step>> {
     Ok(sqlx::query_as("SELECT s.* FROM actions_steps s JOIN actions_jobs j ON j.id=s.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2 ORDER BY s.number").bind(repo).bind(job).fetch_all(pool).await?)
 }
-pub async fn summaries(pool: &SqlitePool, repo: i64, run: i64) -> Result<Vec<crate::backend::db::action_jobs::Summary>> {
+pub async fn summaries(
+    pool: &SqlitePool,
+    repo: i64,
+    run: i64,
+) -> Result<Vec<crate::backend::db::action_jobs::Summary>> {
     Ok(sqlx::query_as("SELECT j.name AS job,s.number,s.markdown FROM actions_step_summaries s JOIN actions_jobs j ON j.id=s.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND c.id=$2 ORDER BY j.id,s.number LIMIT 128")
         .bind(repo).bind(run).fetch_all(pool).await?)
 }
 
-pub async fn annotations(pool: &SqlitePool, repo: i64, job: i64, offset: i64, limit: i64) -> Result<(i64, Vec<Json<Annotation>>)> {
-    ensure!(offset >= 0 && (1..=100).contains(&limit), "invalid annotation page");
+pub async fn annotations(
+    pool: &SqlitePool,
+    repo: i64,
+    job: i64,
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<Json<Annotation>>)> {
+    ensure!(
+        offset >= 0 && (1..=100).contains(&limit),
+        "invalid annotation page"
+    );
     let mut tx = pool.begin().await?;
     let total = sqlx::query_scalar("SELECT COUNT(*) FROM actions_job_annotations a JOIN actions_jobs j ON j.id=a.job_id JOIN ci_runs c ON c.id=j.run_id WHERE c.repo_id=$1 AND j.id=$2")
         .bind(repo).bind(job).fetch_one(&mut *tx).await?;

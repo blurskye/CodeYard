@@ -131,12 +131,25 @@ impl Lockfile {
                 .and_then(Value::as_object)
                 .context("Missing npm packages")?;
             ensure!(entries.len() <= MAX_PACKAGES + 1, "Too many npm packages");
-            let root = entries.get("").and_then(Value::as_object).context("Missing npm root package")?;
+            let root = entries
+                .get("")
+                .and_then(Value::as_object)
+                .context("Missing npm root package")?;
             for section in ["dependencies", "devDependencies", "optionalDependencies"] {
-                let declarations = |value: Option<&Value>| -> Result<serde_json::Map<String, Value>> {
-                    match value { None => Ok(serde_json::Map::new()), Some(value) => value.as_object().cloned().context("Invalid root dependency declarations") }
-                };
-                ensure!(declarations(manifest.get(section))? == declarations(root.get(section))?, "The npm manifest and root lock declarations disagree");
+                let declarations =
+                    |value: Option<&Value>| -> Result<serde_json::Map<String, Value>> {
+                        match value {
+                            None => Ok(serde_json::Map::new()),
+                            Some(value) => value
+                                .as_object()
+                                .cloned()
+                                .context("Invalid root dependency declarations"),
+                        }
+                    };
+                ensure!(
+                    declarations(manifest.get(section))? == declarations(root.get(section))?,
+                    "The npm manifest and root lock declarations disagree"
+                );
             }
             for (path, value) in entries {
                 if path.is_empty() {
@@ -259,7 +272,10 @@ impl Lockfile {
             .collect()
     }
     pub fn patch(mut self, path: &str, old: &Archive, new: &Archive) -> Result<Patch> {
-        ensure!(self.version >= 2, "Npm v1 updates require manual peer-constraint verification");
+        ensure!(
+            self.version >= 2,
+            "Npm v1 updates require manual peer-constraint verification"
+        );
         ensure!(
             self.unsupported == 0
                 && self.manifest.get("workspaces").is_none()

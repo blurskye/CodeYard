@@ -46,9 +46,7 @@ pub fn parse_website(text: &str) -> Result<Option<String>> {
         return Ok(None);
     }
     match crate::website::parse(website) {
-        Some(url) if url.as_str().len() <= MAX_WEBSITE_LEN => {
-            Ok(Some(url.as_str().to_owned()))
-        }
+        Some(url) if url.as_str().len() <= MAX_WEBSITE_LEN => Ok(Some(url.as_str().to_owned())),
         _ => Err(RepositorySettingsRefusal::InvalidWebsite.into()),
     }
 }

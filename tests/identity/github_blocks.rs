@@ -153,7 +153,16 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     for (a, b) in [(alice, bob), (bob, alice), (carol, alice)] {
-        db::following::follow_user(f.pool(), a, b, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), a).await)).await.unwrap();
+        db::following::follow_user(
+            f.pool(),
+            a,
+            b,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(f.pool(), a).await,
+            ),
+        )
+        .await
+        .unwrap();
     }
     for actor in [bob, carol] {
         db::repositories::engagement::star_repo(f.pool(), actor, public.id)
@@ -163,9 +172,18 @@ async fn contract(pg: bool) {
             .await
             .unwrap();
     }
-    db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "Before block", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await))
-        .await
-        .unwrap();
+    db::issues::add_issue_comment(
+        f.pool(),
+        issue.repo_id,
+        issue.id,
+        bob,
+        "Before block",
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), bob).await,
+        ),
+    )
+    .await
+    .unwrap();
     db::notifications::create_notification(
         f.pool(),
         db::notifications::NewNotification {
@@ -284,10 +302,16 @@ async fn contract(pg: bool) {
         subject: db::reactions::Subject::Issue,
         subject_id: issue.id,
     };
-    assert!(db::reactions::create_reaction(f.pool(), bob, &db::users::accounts::AccountCredential::Session(&other_session.session), target, "+1")
-        .await
-        .unwrap_err()
-        .is::<db::discussions::DiscussionWriteRefusal>());
+    assert!(db::reactions::create_reaction(
+        f.pool(),
+        bob,
+        &db::users::accounts::AccountCredential::Session(&other_session.session),
+        target,
+        "+1"
+    )
+    .await
+    .unwrap_err()
+    .is::<db::discussions::DiscussionWriteRefusal>());
     let reply = other_session
         .form_reply(
             &format!("/alice/project/issues/{}/comments", issue.number),
@@ -305,11 +329,18 @@ async fn contract(pg: bool) {
             .unwrap_err()
             .is::<db::discussions::DiscussionWriteRefusal>()
     );
-    assert!(
-        db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "Refused", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await))
-            .await
-            .is_err()
-    );
+    assert!(db::issues::add_issue_comment(
+        f.pool(),
+        issue.repo_id,
+        issue.id,
+        bob,
+        "Refused",
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), bob).await
+        )
+    )
+    .await
+    .is_err());
     assert!(
         db::repositories::engagement::watch_repo(f.pool(), bob, public.id)
             .await
@@ -525,9 +556,18 @@ async fn contract(pg: bool) {
             .unwrap(),
         AccessLevel::None
     );
-    db::issues::add_issue_comment(f.pool(), issue.repo_id, issue.id, bob, "After unblock", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await))
-        .await
-        .unwrap();
+    db::issues::add_issue_comment(
+        f.pool(),
+        issue.repo_id,
+        issue.id,
+        bob,
+        "After unblock",
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), bob).await,
+        ),
+    )
+    .await
+    .unwrap();
     let reply = session
         .form_reply("/settings/blocks", &[("username", "bob")])
         .await;
@@ -592,10 +632,18 @@ async fn contract(pg: bool) {
                 .is_err()
         });
         let pool = f.pool().clone();
-        let follower =
-            tokio::spawn(
-                async move { db::following::follow_user(&pool, bob, alice, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&pool, bob).await)).await.is_err() },
-            );
+        let follower = tokio::spawn(async move {
+            db::following::follow_user(
+                &pool,
+                bob,
+                alice,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(&pool, bob).await,
+                ),
+            )
+            .await
+            .is_err()
+        });
         wait_until_blocked(f.pg(), pid, 3).await;
         gate.commit().await.unwrap();
         assert!(issue_writer.await.unwrap());

@@ -17,7 +17,10 @@ pub enum AccountInputError {
     EmailFormat,
 }
 
-pub(crate) fn validate_namespace(username: &str, min_bytes: usize) -> Result<(), AccountInputError> {
+pub(crate) fn validate_namespace(
+    username: &str,
+    min_bytes: usize,
+) -> Result<(), AccountInputError> {
     // PostgreSQL VARCHAR(255) is a character bound, not a UTF-8 byte bound.
     // Non-ASCII usernames pass this check; the byte limit keeps request work bounded.
     if !(min_bytes..=1024).contains(&username.len()) || username.chars().count() > 255 {
@@ -57,7 +60,9 @@ pub(crate) fn validate_email(email: &str) -> Result<(), AccountInputError> {
     if email.len() > 255 || email.contains('\0') {
         return Err(AccountInputError::EmailBounds);
     }
-    if email.chars().any(|ch| ch.is_whitespace() || ch.is_control())
+    if email
+        .chars()
+        .any(|ch| ch.is_whitespace() || ch.is_control())
         || email.parse::<lettre::Address>().is_err()
     {
         return Err(AccountInputError::EmailFormat);

@@ -82,7 +82,11 @@ pub fn register(token: &str, credentials: Option<(String, String)>) -> Element {
     } }
 }
 
-pub fn applications(applications: Vec<(String, String, String)>, previous: Option<String>, next: Option<String>) -> Element {
+pub fn applications(
+    applications: Vec<(String, String, String)>,
+    previous: Option<String>,
+    next: Option<String>,
+) -> Element {
     rsx! { section { class: "identity-auth",
         header { class: "identity-auth-header", h1 { "OAuth applications" } }
         a { href: "/settings/applications/new", class: "btn btn-primary", "New OAuth application" }

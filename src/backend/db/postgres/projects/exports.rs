@@ -10,8 +10,18 @@ pub async fn list_page(
     list_window(pool, viewer, owner, after, i64::MAX, limit).await
 }
 
-pub async fn list_window(pool: &PgPool, viewer: Option<i64>, owner: Owner, after: i64, before: i64, limit: i64) -> Result<Vec<Project>> {
-    anyhow::ensure!(after >= 0 && before > after && (1..=101).contains(&limit), Refusal::Invalid);
+pub async fn list_window(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    owner: Owner,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Project>> {
+    anyhow::ensure!(
+        after >= 0 && before > after && (1..=101).contains(&limit),
+        Refusal::Invalid
+    );
     let (kind, id) = owner.parts();
     let direction = if before < i64::MAX { "DESC" } else { "ASC" };
     Ok(sqlx::query_as(&format!("SELECT * FROM projects p WHERE p.owner_kind=$1 AND p.owner_id=$2 AND {} AND p.id>$4 AND p.id<$5 ORDER BY p.id {direction} LIMIT $6", crate::backend::db::projects::readable_condition("$3")))
@@ -28,8 +38,18 @@ pub async fn fields_page(
     fields_window(pool, viewer, project, after, i64::MAX, limit).await
 }
 
-pub async fn fields_window(pool: &PgPool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Field>> {
-    anyhow::ensure!(after >= 0 && before > after && (1..=101).contains(&limit), Refusal::Invalid);
+pub async fn fields_window(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Field>> {
+    anyhow::ensure!(
+        after >= 0 && before > after && (1..=101).contains(&limit),
+        Refusal::Invalid
+    );
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
     let direction = if before < i64::MAX { "DESC" } else { "ASC" };

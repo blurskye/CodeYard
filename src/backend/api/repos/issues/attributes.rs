@@ -73,7 +73,10 @@ pub(crate) async fn load(
     } else {
         false
     };
-    let owner = db::repositories::records::get_repository_by_id(&ctx.state.pool, repo).await.map_err(|_| unavailable(ctx))?.ok_or_else(|| unavailable(ctx))?;
+    let owner = db::repositories::records::get_repository_by_id(&ctx.state.pool, repo)
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .ok_or_else(|| unavailable(ctx))?;
     Ok(Box::new(IssueAttributes {
         owner_key: db::issue_attributes::owner_key(owner.owner_user_id, owner.owner_org_id),
         types: types.into_iter().map(|a| view(a, None)).collect(),
@@ -115,8 +118,12 @@ fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
 }
 fn parse_number(text: &str) -> Option<Value> {
     let text = text.trim();
-    if let Ok(value) = text.parse::<i64>() { return Some(value.into()); }
-    if let Ok(value) = text.parse::<u64>() { return Some(value.into()); }
+    if let Ok(value) = text.parse::<i64>() {
+        return Some(value.into());
+    }
+    if let Ok(value) = text.parse::<u64>() {
+        return Some(value.into());
+    }
     serde_json::Number::from_f64(text.parse::<f64>().ok()?).map(Value::Number)
 }
 
@@ -136,7 +143,12 @@ pub(crate) async fn native_change(
         .await
         .map_err(|_| unavailable(&ctx))?
         .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
-    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, issue.id)?;
+    crate::backend::api::repos::discussion::require_item_binding(
+        &ctx,
+        &form,
+        repo.record.id,
+        issue.id,
+    )?;
     let id = || {
         field(&form, "attribute_id")
             .parse::<i64>()
@@ -147,9 +159,19 @@ pub(crate) async fn native_change(
             let kind = field(&form, "kind");
             let attribute_id = form.get("attribute_id").map(|_| id()).transpose()?;
             let expected_updated = if attribute_id.is_some() {
-                Some(field(&form, "expected_updated").parse::<chrono::DateTime<chrono::Utc>>()
-                    .map_err(|_| ctx.error(StatusCode::CONFLICT, "Reload this definition before saving it again."))?)
-            } else { None };
+                Some(
+                    field(&form, "expected_updated")
+                        .parse::<chrono::DateTime<chrono::Utc>>()
+                        .map_err(|_| {
+                            ctx.error(
+                                StatusCode::CONFLICT,
+                                "Reload this definition before saving it again.",
+                            )
+                        })?,
+                )
+            } else {
+                None
+            };
             let catalog =
                 db::issue_attributes::catalog(&ctx.state.pool, repo.record.id, Some(actor), &kind)
                     .await
@@ -223,9 +245,18 @@ pub(crate) async fn native_change(
                 color: Some(field(&form, "color")).filter(|s| !s.is_empty()),
                 options,
             };
-            db::issue_attributes::configure_checked(&ctx.state.pool, repo.record.id, authority(), &definition, (Some(&field(&form, "expected_revision")), Some(&field(&form, "owner_key"))))
-                .await
-                .map_err(|e| failure(&ctx, e))?;
+            db::issue_attributes::configure_checked(
+                &ctx.state.pool,
+                repo.record.id,
+                authority(),
+                &definition,
+                (
+                    Some(&field(&form, "expected_revision")),
+                    Some(&field(&form, "owner_key")),
+                ),
+            )
+            .await
+            .map_err(|e| failure(&ctx, e))?;
         }
         "delete_definition" => {
             if field(&form, "confirm") != "true" {
@@ -234,9 +265,14 @@ pub(crate) async fn native_change(
                     "Confirm deletion of this attribute and its assignments.",
                 ));
             }
-            db::issue_attributes::delete_definition(&ctx.state.pool, repo.record.id, authority(), id()?)
-                .await
-                .map_err(|e| failure(&ctx, e))?;
+            db::issue_attributes::delete_definition(
+                &ctx.state.pool,
+                repo.record.id,
+                authority(),
+                id()?,
+            )
+            .await
+            .map_err(|e| failure(&ctx, e))?;
         }
         "set_type" => {
             let kind = field(&form, "type_id");
@@ -247,9 +283,15 @@ pub(crate) async fn native_change(
                     ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid issue type.")
                 })?)
             };
-            db::issue_attributes::set_type(&ctx.state.pool, repo.record.id, authority(), issue.id, kind)
-                .await
-                .map_err(|e| failure(&ctx, e))?;
+            db::issue_attributes::set_type(
+                &ctx.state.pool,
+                repo.record.id,
+                authority(),
+                issue.id,
+                kind,
+            )
+            .await
+            .map_err(|e| failure(&ctx, e))?;
         }
         "delete_value" => {
             db::issue_attributes::delete_value(
@@ -276,19 +318,34 @@ pub(crate) async fn native_change(
                 .iter()
                 .find(|a| a.id == id)
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue field not found."))?;
-            let invalid_option = || ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid issue field option.");
+            let invalid_option = || {
+                ctx.error(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    "Invalid issue field option.",
+                )
+            };
             let value = if attribute.data_type.as_deref() == Some("multi_select") {
                 let mut ids = Vec::new();
                 for key in form.keys() {
                     if let Some(selected) = key.strip_prefix("option_") {
-                        ids.push(selected.parse::<i64>().ok().filter(|id| *id > 0).ok_or_else(invalid_option)?);
+                        ids.push(
+                            selected
+                                .parse::<i64>()
+                                .ok()
+                                .filter(|id| *id > 0)
+                                .ok_or_else(invalid_option)?,
+                        );
                     }
                 }
                 ids.sort_unstable();
                 Value::Array(ids.into_iter().map(Value::from).collect())
             } else if attribute.data_type.as_deref() == Some("single_select") {
-                field(&form, "value").parse::<i64>().ok().filter(|id| *id > 0)
-                    .map(Value::from).ok_or_else(invalid_option)?
+                field(&form, "value")
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .map(Value::from)
+                    .ok_or_else(invalid_option)?
             } else if attribute.data_type.as_deref() == Some("number") {
                 parse_number(&field(&form, "value"))
                     .ok_or_else(|| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid number."))?

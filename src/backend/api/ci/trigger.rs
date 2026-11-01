@@ -29,7 +29,12 @@ pub async fn trigger_ci(
     let user = get_current_user(&state.pool, &headers).await?;
     let run = state
         .ci_runs
-        .dispatch_run(user.id, request, crate::backend::api::http::session::extract_session_id(&headers).map(crate::backend::db::ci::CiCredential::Session))
+        .dispatch_run(
+            user.id,
+            request,
+            crate::backend::api::http::session::extract_session_id(&headers)
+                .map(crate::backend::db::ci::CiCredential::Session),
+        )
         .await
         .map_err(super::admission_error)?;
     Ok(Json(TriggerCiResponse {
@@ -152,8 +157,12 @@ async fn refusal_workflows(
     let store =
         crate::backend::repositories::store::repo_store(repository, ctx.state.cluster.as_ref());
     let definitions = crate::backend::ci::list_workflows_for_ref(&store, branch).await?;
-    let user = ctx.user.as_ref().ok_or_else(|| anyhow::anyhow!("Sign in required"))?;
-    super::jobs::ensure_repo_read_access(&ctx.state, user, repository).await
+    let user = ctx
+        .user
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Sign in required"))?;
+    super::jobs::ensure_repo_read_access(&ctx.state, user, repository)
+        .await
         .map_err(|_| anyhow::anyhow!("Repository read access required"))?;
     Ok(definitions
         .into_iter()
@@ -326,7 +335,12 @@ async fn dispatch(
     match ctx
         .state
         .ci_runs
-        .dispatch_run(actor_id, request, crate::backend::api::http::session::extract_session_id(&ctx.headers).map(crate::backend::db::ci::CiCredential::Session))
+        .dispatch_run(
+            actor_id,
+            request,
+            crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .map(crate::backend::db::ci::CiCredential::Session),
+        )
         .await
         .map_err(super::admission_error)
     {

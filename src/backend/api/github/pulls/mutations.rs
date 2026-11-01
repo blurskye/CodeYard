@@ -20,7 +20,9 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(in crate::backend::api::github) fn operation_error(error: pull_requests::OperationError) -> Error {
+pub(in crate::backend::api::github) fn operation_error(
+    error: pull_requests::OperationError,
+) -> Error {
     use pull_requests::OperationError::*;
     match error {
         Missing { .. } => Error::missing(),
@@ -67,8 +69,7 @@ async fn create_value(
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let viewer = viewer.ok_or_else(auth::required)?;
     let actor = viewer.user.clone();
-    let input: Create =
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
+    let input: Create = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let source = match input.issue {
         Some(number) => mutations::PullRequestSource::Issue {
             issue: i32::try_from(number)
@@ -103,13 +104,18 @@ async fn create_value(
     }
     // The head's commits become readable through this repository, so a credential bounded
     // to some repositories must reach the head repository as well.
-    viewer.repository_scope(&state.pool, head.id, "contents", false)
-        .await.map_err(auth::scope_error)?;
+    viewer
+        .repository_scope(&state.pool, head.id, "contents", false)
+        .await
+        .map_err(auth::scope_error)?;
     let pull = mutations::create_pull_request(
         &state.pool,
         &state.ci_runs,
         &state.notification_broadcaster,
-        crate::backend::repositories::store::PullHeadActor { user: actor.id, token: Some(viewer.token.id) },
+        crate::backend::repositories::store::PullHeadActor {
+            user: actor.id,
+            token: Some(viewer.token.id),
+        },
         owner.clone(),
         name,
         mutations::CreatePullRequestRequest {

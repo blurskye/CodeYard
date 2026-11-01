@@ -29,10 +29,18 @@ pub enum ReleaseRefusal {
 }
 
 /// GitHub's legacy election favors the highest semantic version, then publication age.
-pub(in crate::backend::db) fn legacy_latest(rows: &[(i64, String, chrono::DateTime<chrono::Utc>)]) -> Option<i64> {
-    rows.iter().max_by_key(|(id, tag, created)| (
-        semver::Version::parse(tag.strip_prefix('v').unwrap_or(tag)).ok(), *created, *id,
-    )).map(|(id, _, _)| *id)
+pub(in crate::backend::db) fn legacy_latest(
+    rows: &[(i64, String, chrono::DateTime<chrono::Utc>)],
+) -> Option<i64> {
+    rows.iter()
+        .max_by_key(|(id, tag, created)| {
+            (
+                semver::Version::parse(tag.strip_prefix('v').unwrap_or(tag)).ok(),
+                *created,
+                *id,
+            )
+        })
+        .map(|(id, _, _)| *id)
 }
 
 /// The most assets one release holds; immutable publication signs at most this many.
@@ -85,7 +93,11 @@ pub enum LatestSelection {
 }
 impl From<bool> for LatestSelection {
     fn from(value: bool) -> Self {
-        if value { Self::Promote } else { Self::Keep }
+        if value {
+            Self::Promote
+        } else {
+            Self::Keep
+        }
     }
 }
 
@@ -158,9 +170,12 @@ impl ReleaseChanges {
             is_draft,
             is_prerelease: self.is_prerelease.unwrap_or(current.is_prerelease),
             // Publishing a draft makes it the latest release unless the edit says otherwise.
-            make_latest: self
-                .make_latest
-                .unwrap_or_else(|| (current.is_latest || (current.is_draft && !is_draft) || (!is_draft && current.is_prerelease && self.is_prerelease == Some(false))).into()),
+            make_latest: self.make_latest.unwrap_or_else(|| {
+                (current.is_latest
+                    || (current.is_draft && !is_draft)
+                    || (!is_draft && current.is_prerelease && self.is_prerelease == Some(false)))
+                .into()
+            }),
         }
     }
 }
@@ -205,7 +220,14 @@ native_operation!(crate::backend::db::postgres::releases::delete_release,
     crate::backend::db::sqlite::releases::delete_release,
     fn delete_release(pool: &DbPool, actor_id: i64, repo_id: i64, release_id: i64) -> Result<Vec<File>>);
 
-pub async fn add_release_asset(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, release: i64, asset: &NewReleaseAsset<'_>) -> Result<ReleaseAsset> {
+pub async fn add_release_asset(
+    pool: &DbPool,
+    actor: i64,
+    credential: &super::users::accounts::AccountCredential<'_>,
+    repo: i64,
+    release: i64,
+    asset: &NewReleaseAsset<'_>,
+) -> Result<ReleaseAsset> {
     add_release_asset_with_token(pool, actor, credential, repo, release, asset, None).await
 }
 

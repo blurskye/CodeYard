@@ -1,7 +1,7 @@
 pub(crate) mod pages;
 use crate::backend::db::artifact_metadata::{
-    cacheable, Actor, Admission, Artifact, ClusterInput, Deployment, DeploymentInput, Environment, Job, JobInput,
-    Mutation, Record, Refusal, StorageInput,
+    cacheable, Actor, Admission, Artifact, ClusterInput, Deployment, DeploymentInput, Environment,
+    Job, JobInput, Mutation, Record, Refusal, StorageInput,
 };
 use anyhow::Result;
 use serde_json::{json, Value};
@@ -47,7 +47,9 @@ async fn writable(tx: &mut Tx<'_>, admission: &mut Admission, org: i64, repo: i6
         anyhow::ensure!(belongs, Refusal::Missing);
         Ok(())
     }.await;
-    if let Some(cached) = cacheable(&result) { admission.repositories.insert((org, repo), cached); }
+    if let Some(cached) = cacheable(&result) {
+        admission.repositories.insert((org, repo), cached);
+    }
     result
 }
 
@@ -59,8 +61,15 @@ async fn targets(
     maximum: usize,
 ) -> Result<Vec<(i64, Option<i64>)>> {
     anyhow::ensure!((1..=1001).contains(&maximum), Refusal::Invalid);
-    let key = (org, artifact.digest.clone(), artifact.github_repository.clone(), maximum);
-    if let Some(cached) = admission.targets.get(&key) { return cached.clone().map_err(Into::into); }
+    let key = (
+        org,
+        artifact.digest.clone(),
+        artifact.github_repository.clone(),
+        maximum,
+    );
+    if let Some(cached) = admission.targets.get(&key) {
+        return cached.clone().map_err(Into::into);
+    }
     let actor = admission.actor;
     let result: Result<Vec<(i64, Option<i64>)>> = async {
         let sql = crate::backend::db::artifact_metadata::target_candidates_sql(false, super::repositories::access::USER_REPO_ACCESS_SQL);
@@ -85,7 +94,9 @@ async fn targets(
         anyhow::ensure!(!authorized.is_empty(), Refusal::Missing);
         Ok(authorized)
     }.await;
-    if let Some(cached) = cacheable(&result) { admission.targets.insert(key, cached); }
+    if let Some(cached) = cacheable(&result) {
+        admission.targets.insert(key, cached);
+    }
     result
 }
 
@@ -369,8 +380,11 @@ pub async fn list(
 }
 
 async fn prune_jobs(tx: &mut Tx<'_>, scope: Option<(i64, i64, Option<i64>)>) -> Result<()> {
-    use crate::backend::db::artifact_metadata::{JOB_GC_BATCH, JOB_HISTORY_LIMIT, JOB_HISTORY_SECONDS};
-    let cutoff = super::time::encode(super::time::now() - chrono::Duration::seconds(JOB_HISTORY_SECONDS));
+    use crate::backend::db::artifact_metadata::{
+        JOB_GC_BATCH, JOB_HISTORY_LIMIT, JOB_HISTORY_SECONDS,
+    };
+    let cutoff =
+        super::time::encode(super::time::now() - chrono::Duration::seconds(JOB_HISTORY_SECONDS));
     sqlx::query("DELETE FROM artifact_metadata_jobs WHERE id IN (SELECT id FROM artifact_metadata_jobs WHERE status IN ('completed','failed') AND completed_at<?1 ORDER BY completed_at,id LIMIT ?2)")
         .bind(cutoff).bind(JOB_GC_BATCH).execute(&mut **tx).await?;
     if let Some((actor, org, repo)) = scope {
@@ -450,7 +464,14 @@ pub async fn process_job(pool: &SqlitePool, id: Option<i64>) -> Result<bool> {
         credential(&mut tx, actor).await?;
         let saved: JobInput = serde_json::from_str(&job.input)?;
         let mut admission = Admission::new(actor);
-        apply(&mut tx, &mut admission, job.org_id, &job.cluster, &saved.input).await
+        apply(
+            &mut tx,
+            &mut admission,
+            job.org_id,
+            &job.cluster,
+            &saved.input,
+        )
+        .await
     }
     .await;
     match result {

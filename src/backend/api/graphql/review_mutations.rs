@@ -147,9 +147,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     }
     let review = match field {
         "addPullRequestReview" | "submitPullRequestReview" => {
-            let body = input["body"]
-                .as_str()
-                .map(str::to_owned);
+            let body = input["body"].as_str().map(str::to_owned);
             crate::backend::issues::validate_body(body.as_deref().unwrap_or(""), false)
                 .map_err(async_graphql::Error::new)?;
             let commit = input
@@ -169,7 +167,8 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 })
                 .unwrap_or(&pull.head_sha);
             if !crate::backend::git::is_full_commit_id(commit)
-                || (field != "submitPullRequestReview" && !commit.eq_ignore_ascii_case(&pull.head_sha))
+                || (field != "submitPullRequestReview"
+                    && !commit.eq_ignore_ascii_case(&pull.head_sha))
             {
                 return Err(async_graphql::Error::new(
                     "Review the current pull request head",
@@ -197,11 +196,21 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 .await
                 .map_err(pull_error)?
             } else {
-                db::pull_requests::reviews::save_review_batch(pool, db::pull_requests::reviews::ReviewBatch {
-                    pr_id: pull.id, author_id: actor, state: None, body: body.as_deref(), commit_sha: Some(commit),
-                    expected_pending: None, create_pending: true, comments: &[], token: Some(request.auth.token.id),
-                    credential: &request.auth.credential(),
-                })
+                db::pull_requests::reviews::save_review_batch(
+                    pool,
+                    db::pull_requests::reviews::ReviewBatch {
+                        pr_id: pull.id,
+                        author_id: actor,
+                        state: None,
+                        body: body.as_deref(),
+                        commit_sha: Some(commit),
+                        expected_pending: None,
+                        create_pending: true,
+                        comments: &[],
+                        token: Some(request.auth.token.id),
+                        credential: &request.auth.credential(),
+                    },
+                )
                 .await
                 .map(|(review, _)| review)
                 .map_err(|e| pull_error(pull_requests::write_error(e)))?

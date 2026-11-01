@@ -84,9 +84,21 @@ pub(crate) fn list_sql(pg: bool, filter: &Filter<'_>, readable: &str) -> String 
         (Some(_), false) => "a.id>$2",
         (None, _) => "CAST($2 AS BIGINT) IS NULL",
     };
-    let reference = if filter.reference.is_some() { "a.reference=$3" } else { "CAST($3 AS TEXT) IS NULL" };
-    let actor = if filter.actor.is_some() { "lower(actor.username)=lower($4)" } else { "CAST($4 AS TEXT) IS NULL" };
-    let kind = if filter.kind.is_some() { "a.activity_type=$5" } else { "CAST($5 AS TEXT) IS NULL" };
+    let reference = if filter.reference.is_some() {
+        "a.reference=$3"
+    } else {
+        "CAST($3 AS TEXT) IS NULL"
+    };
+    let actor = if filter.actor.is_some() {
+        "lower(actor.username)=lower($4)"
+    } else {
+        "CAST($4 AS TEXT) IS NULL"
+    };
+    let kind = if filter.kind.is_some() {
+        "a.activity_type=$5"
+    } else {
+        "CAST($5 AS TEXT) IS NULL"
+    };
     let since = match (filter.since.is_some(), pg) {
         (true, _) => "a.created_at>=$6",
         (false, true) => "CAST($6 AS TIMESTAMPTZ) IS NULL",

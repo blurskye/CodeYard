@@ -111,7 +111,13 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
         let mut forged = import.clone();
         forged.refs.insert(forbidden.into(), tip.clone());
         assert!(remote
-            .import_git_as(&database.pool, repository.id, owner.id, forged, pack.clone())
+            .import_git_as(
+                &database.pool,
+                repository.id,
+                owner.id,
+                forged,
+                pack.clone()
+            )
             .await
             .is_err());
         assert!(local.mirror_refs().await.unwrap().is_empty());

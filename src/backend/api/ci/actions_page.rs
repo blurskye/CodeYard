@@ -137,9 +137,14 @@ async fn planned_jobs(
         .filter(|definition| paths.split(',').any(|path| path.trim() == definition.path))
         .flat_map(|definition| {
             let workflow = definition.path;
-            definition.jobs.into_iter().map(move |job| view_actions::PlannedJob {
-                workflow: workflow.clone(), name: job.name, steps: job.steps,
-            })
+            definition
+                .jobs
+                .into_iter()
+                .map(move |job| view_actions::PlannedJob {
+                    workflow: workflow.clone(),
+                    name: job.name,
+                    steps: job.steps,
+                })
         })
         .collect()
 }
@@ -252,7 +257,11 @@ async fn actions(
             return ctx.error(StatusCode::BAD_REQUEST, "Invalid workflow ref.");
         }
         let store = repo_store(repository, ctx.state.cluster.as_ref());
-        let discovery_ref = if query.contains_key("ref") { dispatch_branch.clone() } else { format!("refs/heads/{}", repository.default_branch) };
+        let discovery_ref = if query.contains_key("ref") {
+            dispatch_branch.clone()
+        } else {
+            format!("refs/heads/{}", repository.default_branch)
+        };
         let definitions = match tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let refs = store.refs().await?;
             // A genuinely empty repository has no workflow tree yet. Do not
@@ -452,20 +461,22 @@ async fn actions(
             )
             .await
         };
-        let artifacts = match db::action_objects::list_artifacts(&ctx.state.pool, run.id, None, None).await {
-            Ok(artifacts) => artifacts
-                .into_iter()
-                .map(|artifact| view_actions::Artifact {
-                    can_delete: !run_repository.is_archived && !user.is_banned
-                        && !user.must_change_password
-                        && (personal_admin || access.can_write()),
-                    id: artifact.id,
-                    name: artifact.name,
-                    size: artifact.size,
-                })
-                .collect(),
-            Err(_) => return unavailable(&ctx),
-        };
+        let artifacts =
+            match db::action_objects::list_artifacts(&ctx.state.pool, run.id, None, None).await {
+                Ok(artifacts) => artifacts
+                    .into_iter()
+                    .map(|artifact| view_actions::Artifact {
+                        can_delete: !run_repository.is_archived
+                            && !user.is_banned
+                            && !user.must_change_password
+                            && (personal_admin || access.can_write()),
+                        id: artifact.id,
+                        name: artifact.name,
+                        size: artifact.size,
+                    })
+                    .collect(),
+                Err(_) => return unavailable(&ctx),
+            };
         let groups = match db::action_concurrency::groups(
             &ctx.state.pool,
             run.repo_id,
@@ -516,10 +527,16 @@ async fn actions(
         } else {
             None
         };
-        let summaries = match db::action_jobs::summaries(&ctx.state.pool, run.repo_id, run.id).await {
-            Ok(summaries) => summaries.into_iter().map(|summary| view_actions::Summary {
-                job: summary.job, number: summary.number, markdown: summary.markdown,
-            }).collect(),
+        let summaries = match db::action_jobs::summaries(&ctx.state.pool, run.repo_id, run.id).await
+        {
+            Ok(summaries) => summaries
+                .into_iter()
+                .map(|summary| view_actions::Summary {
+                    job: summary.job,
+                    number: summary.number,
+                    markdown: summary.markdown,
+                })
+                .collect(),
             Err(_) => return unavailable(&ctx),
         };
         let mut run_view = map_run(run, &run_repository);

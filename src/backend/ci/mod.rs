@@ -73,7 +73,11 @@ pub fn failure_notification(run: &CiRun, message: Option<&str>) -> (String, Opti
     } else {
         branch_name(&run.branch)
     };
-    let title = match run.head_sha.as_deref().map(crate::webui::components::short_sha) {
+    let title = match run
+        .head_sha
+        .as_deref()
+        .map(crate::webui::components::short_sha)
+    {
         Some(short) => format!("CI run failed: {} on {branch} ({short})", run.workflow_path),
         None => format!("CI run failed: {} on {branch}", run.workflow_path),
     };

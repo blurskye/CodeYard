@@ -57,11 +57,19 @@ pub(super) async fn resolve(
         )),
         "isEmpty" => Ok(json!(store.refs().await.map_err(unavailable)?.is_empty())),
         "isUserConfigurationRepository" => Ok(json!(repo.name == ".github")),
-        "viewerDefaultCommitEmail" => Ok(json!(if request.account_permission("email_addresses", "user:email").await? {
+        "viewerDefaultCommitEmail" => Ok(json!(if request
+            .account_permission("email_addresses", "user:email")
+            .await?
+        {
             actor.commit_email()
-        } else { actor.noreply_email() })),
+        } else {
+            actor.noreply_email()
+        })),
         "viewerPossibleCommitEmails" => {
-            if !request.account_permission("email_addresses", "user:email").await? {
+            if !request
+                .account_permission("email_addresses", "user:email")
+                .await?
+            {
                 return Ok(json!([actor.noreply_email()]));
             }
             let mut emails: Vec<_> = db::users::emails::list_emails(pool, actor.id)
@@ -139,9 +147,14 @@ pub(super) async fn resolve(
                 return Ok(json!(!files.is_empty()));
             }
             let owner = repository::owner(repo, request).await?;
-            Ok(json!(files.first().map(|(path, _)| url(&crate::webui::pages::repos::ref_path::branch_url(
-                &format!("/{}/{}", owner, repo.name), "blob", &repo.default_branch, path,
-            )))))
+            Ok(json!(files.first().map(|(path, _)| url(
+                &crate::webui::pages::repos::ref_path::branch_url(
+                    &format!("/{}/{}", owner, repo.name),
+                    "blob",
+                    &repo.default_branch,
+                    path,
+                )
+            ))))
         }
         "contactLinks" => {
             let files = texts(
@@ -190,11 +203,24 @@ pub(super) async fn resolve(
         }
         "licenseInfo" => {
             let refs = store.refs().await.map_err(unavailable)?;
-            let Some(revision) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else { return Ok(Value::Null) };
-            let mut files = store.tree_metadata(revision, "").await.map_err(unavailable)?;
+            let Some(revision) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else {
+                return Ok(Value::Null);
+            };
+            let mut files = store
+                .tree_metadata(revision, "")
+                .await
+                .map_err(unavailable)?;
             files.sort_by_key(|file| file.name.to_ascii_lowercase());
-            let Some(file) = files.iter().find(|file| file.entry_type == "file" && templates::is_license_file(&file.name)) else { return Ok(Value::Null) };
-            let texts = store.template_texts(revision, std::slice::from_ref(&file.path)).await.map_err(unavailable)?;
+            let Some(file) = files
+                .iter()
+                .find(|file| file.entry_type == "file" && templates::is_license_file(&file.name))
+            else {
+                return Ok(Value::Null);
+            };
+            let texts = store
+                .template_texts(revision, std::slice::from_ref(&file.path))
+                .await
+                .map_err(unavailable)?;
             Ok(texts.first().and_then(Option::as_ref).map(|(_, text)| {
                 templates::detect_license(text.as_bytes()).map(|template| json!({"key":template.name.to_lowercase(),"name":template.name,"nickname":Value::Null})).unwrap_or(json!({"key":"other","name":"Other","nickname":Value::Null}))
             }).unwrap_or(Value::Null))
@@ -267,13 +293,28 @@ pub(super) async fn resolve(
                 .transpose()?
                 .unwrap_or("")
                 .to_lowercase();
-            let total = db::assignees::count_assignable_users(pool, repo.id, &filter).await.map_err(unavailable)?;
+            let total = db::assignees::count_assignable_users(pool, repo.id, &filter)
+                .await
+                .map_err(unavailable)?;
             let page = connection::Page::new(ctx, total)?;
-            let rows = if page.limit == 0 { Vec::new() } else {
-                db::assignees::list_assignable_users(pool, repo.id, &filter, page.offset, page.limit)
-                    .await.map_err(unavailable)?
+            let rows = if page.limit == 0 {
+                Vec::new()
+            } else {
+                db::assignees::list_assignable_users(
+                    pool,
+                    repo.id,
+                    &filter,
+                    page.offset,
+                    page.limit,
+                )
+                .await
+                .map_err(unavailable)?
             };
-            Ok(page.finish(rows.iter().map(|user| user::object(user, actor.id)).collect()))
+            Ok(page.finish(
+                rows.iter()
+                    .map(|user| user::object(user, actor.id))
+                    .collect(),
+            ))
         }
         // Codeyard stores Projects v2, not retired classic projects.
         _ => Err(Error::new(format!(
@@ -287,7 +328,9 @@ async fn funding(store: &RepoStore, branch: &str) -> Result<Value> {
     let Some((_, text)) = files.first() else {
         return Ok(json!([]));
     };
-    let Ok(config) = yaml(text) else { return Ok(json!([])) };
+    let Ok(config) = yaml(text) else {
+        return Ok(json!([]));
+    };
     let mut links = Vec::new();
     for (key, platform, prefix) in [
         ("github", "GITHUB", "https://github.com/sponsors/"),

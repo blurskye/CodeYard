@@ -1,5 +1,7 @@
 use super::models::{EmailSettings, OutboxMessage};
-use crate::backend::db::email::{delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS};
+use crate::backend::db::email::{
+    delivery_allowed_sql, primary_link_condition, EmailLink, NewEmailSettings, RESEND_SECONDS,
+};
 use anyhow::Result;
 use sqlx::{PgConnection, PgPool};
 
@@ -170,7 +172,11 @@ pub async fn claim_due_email(
 }
 
 pub async fn delivery_allowed(pool: &PgPool, id: i64, attempt: i32) -> Result<bool> {
-    Ok(sqlx::query_scalar(&delivery_allowed_sql(true)).bind(id).bind(attempt).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar(&delivery_allowed_sql(true))
+        .bind(id)
+        .bind(attempt)
+        .fetch_one(pool)
+        .await?)
 }
 
 pub async fn mark_email_sent(pool: &PgPool, id: i64, attempt: i32) -> Result<()> {
@@ -221,7 +227,11 @@ pub async fn remove_old_email(pool: &PgPool, max_attempts: i32, days: i64) -> Re
     .rows_affected())
 }
 
-pub async fn get_email_notifications(pool: &PgPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool> {
+pub async fn get_email_notifications(
+    pool: &PgPool,
+    user_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<bool> {
     let mut tx = pool.begin().await?;
     super::users::transitions::require_account(&mut tx, user_id, credential).await?;
     let enabled: bool = sqlx::query_scalar("SELECT email_notifications FROM users WHERE id = $1")
@@ -232,7 +242,12 @@ pub async fn get_email_notifications(pool: &PgPool, user_id: i64, credential: &c
     Ok(enabled)
 }
 
-pub async fn set_email_notifications(pool: &PgPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()> {
+pub async fn set_email_notifications(
+    pool: &PgPool,
+    user_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    enabled: bool,
+) -> Result<()> {
     let mut tx = pool.begin().await?;
     super::users::transitions::require_account(&mut tx, user_id, credential).await?;
     sqlx::query("UPDATE users SET email_notifications = $2 WHERE id = $1")
@@ -266,9 +281,17 @@ pub(in crate::backend::db) async fn notification_address(
 
 // Parent existence locks precede issuance locks, including when the issuance is replaced.
 // Key share remains compatible with token consumers updating the account's non-key fields.
-pub(super) async fn lock_link_recipient(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, user: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR KEY SHARE")
-        .bind(user).fetch_optional(&mut **tx).await?.is_some())
+pub(super) async fn lock_link_recipient(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    user: i64,
+) -> Result<bool> {
+    Ok(
+        sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR KEY SHARE")
+            .bind(user)
+            .fetch_optional(&mut **tx)
+            .await?
+            .is_some(),
+    )
 }
 
 pub async fn save_email_token(pool: &PgPool, link: &EmailLink<'_>) -> Result<bool> {
@@ -278,8 +301,13 @@ pub async fn save_email_token(pool: &PgPool, link: &EmailLink<'_>) -> Result<boo
         return Ok(false);
     }
     // A link goes only to the account's current address, and never to a banned account.
-    let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND email=$2 AND NOT is_banned)")
-        .bind(link.user_id).bind(link.email).fetch_one(&mut *tx).await?;
+    let current: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND email=$2 AND NOT is_banned)",
+    )
+    .bind(link.user_id)
+    .bind(link.email)
+    .fetch_one(&mut *tx)
+    .await?;
     if !current {
         return Ok(false);
     }
@@ -331,12 +359,19 @@ pub async fn email_token_is_valid(pool: &PgPool, purpose: &str, token_hash: &str
 pub async fn verify_email_token(pool: &PgPool, token_hash: &str) -> Result<Option<bool>> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership(&mut tx).await?;
-    let user: Option<i64> = sqlx::query_scalar("SELECT user_id FROM email_tokens WHERE purpose='verify' AND token_hash=$1")
-        .bind(token_hash).fetch_optional(&mut *tx).await?;
+    let user: Option<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM email_tokens WHERE purpose='verify' AND token_hash=$1",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some(user) = user else { return Ok(None) };
     // Consumers retain the parent before taking the issuance, like issuers and account deletion.
     if sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
-        .bind(user).fetch_optional(&mut *tx).await?.is_none()
+        .bind(user)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_none()
     {
         return Ok(None);
     }

@@ -39,7 +39,11 @@ pub(super) async fn protected(
     name: &str,
     branch: &str,
     write: bool,
-) -> Result<(BranchProtectionRule, crate::backend::db::credentials::Actor, String)> {
+) -> Result<(
+    BranchProtectionRule,
+    crate::backend::db::credentials::Actor,
+    String,
+)> {
     let (repo, auth) = repository(state, headers, owner, name, write).await?;
     let auth = auth.ok_or_else(super::auth::required)?;
     let actor = &auth.user;
@@ -62,16 +66,23 @@ pub(super) async fn protected(
     let rule = if write {
         // A concrete-branch edit must not silently modify a wildcard that protects other branches.
         protection::list_branch_protection_rules(&state.pool, repo.id)
-            .await.map_err(Error::unavailable)?
-            .into_iter().find(|rule| rule.pattern == branch).ok_or_else(Error::missing)?
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .find(|rule| rule.pattern == branch)
+            .ok_or_else(Error::missing)?
     } else {
-        let mut matching = crate::backend::repositories::protection::matching_rules(&state.pool, &repo, branch)
-            .await.map_err(Error::unavailable)?;
+        let mut matching =
+            crate::backend::repositories::protection::matching_rules(&state.pool, &repo, branch)
+                .await
+                .map_err(Error::unavailable)?;
         // Native enforcement intersects all matching rules. Classic protection cannot losslessly
         // express their actor allowances or conflicting producer pins; never pick an arbitrary one.
         if matching.len() > 1 {
-            return Err(Error::new(StatusCode::CONFLICT,
-                "Multiple native protection rules apply; inspect the branch rules endpoint"));
+            return Err(Error::new(
+                StatusCode::CONFLICT,
+                "Multiple native protection rules apply; inspect the branch rules endpoint",
+            ));
         }
         matching.pop().ok_or_else(Error::missing)?
     };
@@ -84,7 +95,17 @@ pub(super) async fn protected(
 }
 
 pub(super) fn check_documents(rule: &BranchProtectionRule) -> Vec<Value> {
-    rule.required_status_checks.iter().map(|context| rule.github_settings.checks.iter().find(|check| check["context"] == *context).cloned().unwrap_or_else(|| json!({"context": context, "app_id": null}))).collect()
+    rule.required_status_checks
+        .iter()
+        .map(|context| {
+            rule.github_settings
+                .checks
+                .iter()
+                .find(|check| check["context"] == *context)
+                .cloned()
+                .unwrap_or_else(|| json!({"context": context, "app_id": null}))
+        })
+        .collect()
 }
 
 fn checks(rule: &BranchProtectionRule, url: &str) -> Value {
@@ -482,7 +503,10 @@ async fn users(
         .await
         .map_err(write_error)?;
     }
-    Ok(Json(restriction_document(&state, &rule, &url, actor.user_id).await?["users"].clone()).into_response())
+    Ok(
+        Json(restriction_document(&state, &rule, &url, actor.user_id).await?["users"].clone())
+            .into_response(),
+    )
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

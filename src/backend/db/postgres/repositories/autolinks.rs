@@ -16,11 +16,20 @@ async fn admin(
     };
     anyhow::ensure!(allowed, Refusal::Denied);
     if write {
-        anyhow::ensure!(super::super::credentials::writes(tx, &credential, Some(repo), None, "administration").await?, Refusal::Denied);
+        anyhow::ensure!(
+            super::super::credentials::writes(tx, &credential, Some(repo), None, "administration")
+                .await?,
+            Refusal::Denied
+        );
     }
     Ok(())
 }
-pub async fn create(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, input: &NewAutolink) -> Result<Autolink> {
+pub async fn create(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo: i64,
+    input: &NewAutolink,
+) -> Result<Autolink> {
     let mut tx = pool.begin().await?;
     admin(&mut tx, actor, repo, true).await?;
     let count: i64 =
@@ -69,7 +78,12 @@ pub async fn get(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<Autoli
     tx.commit().await?;
     Ok(row)
 }
-pub async fn remove(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, id: i64) -> Result<()> {
+pub async fn remove(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo: i64,
+    id: i64,
+) -> Result<()> {
     let mut tx = pool.begin().await?;
     admin(&mut tx, actor, repo, true).await?;
     let removed = sqlx::query("DELETE FROM repository_autolinks WHERE repo_id=$1 AND id=$2")

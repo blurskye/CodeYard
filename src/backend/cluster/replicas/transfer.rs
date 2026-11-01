@@ -59,9 +59,13 @@ async fn tips(context: &NodeContext, repository: Uuid, mirror: &Path) -> Result<
     let store = RepoStore::from_disk_path(path);
     let mut tips: Vec<String> = store.mirror_refs().await?.into_values().collect();
     let pool = context.database()?;
-    let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string()).await?.context("replica repository was deleted")?;
+    let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string())
+        .await?
+        .context("replica repository was deleted")?;
     let mut retained = crate::backend::db::ci::retained_ci_commits(pool, row.id).await?;
-    retained.extend(crate::backend::db::pull_requests::records::retained_revisions(pool, row.id).await?);
+    retained.extend(
+        crate::backend::db::pull_requests::records::retained_revisions(pool, row.id).await?,
+    );
     tips.extend(store.existing_commits(&retained).await?);
     tips.sort();
     tips.dedup();
@@ -114,8 +118,10 @@ async fn fetch(
         RepoStore::from_disk_path(mirror.to_str().context("replica copy path is not text")?);
     let pool = context.database()?;
     let row = crate::backend::db::cluster::get_repository_by_uuid(pool, &repository.to_string())
-        .await?.context("replica repository was deleted")?;
-    let primary_path = crate::backend::repositories::store::primary_path(&context.repos_path, repository);
+        .await?
+        .context("replica repository was deleted")?;
+    let primary_path =
+        crate::backend::repositories::store::primary_path(&context.repos_path, repository);
     let _installation = tokio::select! {
         biased;
         _ = stop.cancelled() => anyhow::bail!("replica assignment changed"),
@@ -129,7 +135,17 @@ async fn fetch(
     };
     // From here cancellation is deferred until installation has ended. Copying retains
     // the task and its directory reservation until join, including during shutdown.
-    ensure!(crate::backend::db::cluster::set_applied_version(pool, row.id, context.node_id, primary, -1).await?, "replica assignment changed before installation");
+    ensure!(
+        crate::backend::db::cluster::set_applied_version(
+            pool,
+            row.id,
+            context.node_id,
+            primary,
+            -1
+        )
+        .await?,
+        "replica assignment changed before installation"
+    );
     // `initialize` needs an empty path, so a directory Git cannot open is renamed aside first.
     if !super::connected(mirror).await? {
         if mirror.exists() {
@@ -160,7 +176,11 @@ async fn move_aside(mirror: &Path) -> Result<()> {
         .file_name()
         .context("replica copy has no name")?
         .to_string_lossy();
-    let directory = mirror.parent().context("replica copy has no parent")?.join(super::QUARANTINES).join(name.as_ref());
+    let directory = mirror
+        .parent()
+        .context("replica copy has no parent")?
+        .join(super::QUARANTINES)
+        .join(name.as_ref());
     tokio::fs::create_dir_all(&directory).await?;
     let aside = directory.join(Uuid::new_v4().to_string());
     tokio::fs::rename(mirror, &aside).await?;
@@ -181,7 +201,10 @@ async fn remove_aside_copies(mirror: &Path) {
         }
     };
     while let Ok(Some(entry)) = entries.next_entry().await {
-        let is_aside = entry.file_name().to_str().is_some_and(|name| Uuid::parse_str(name).is_ok());
+        let is_aside = entry
+            .file_name()
+            .to_str()
+            .is_some_and(|name| Uuid::parse_str(name).is_ok());
         // `DirEntry::file_type` does not follow symlinks.
         let is_directory = entry.file_type().await.is_ok_and(|kind| kind.is_dir());
         if is_aside && is_directory {
@@ -225,18 +248,26 @@ mod tests {
         let server_key = NodeKey::generate();
         // The copy reads its repository row and its retained commits, and marks the copy
         // incomplete before it installs the pack.
-        let pool = db::init_db(&format!("sqlite://{}", root.path().join("test.db").display()))
-            .await
-            .unwrap();
+        let pool = db::init_db(&format!(
+            "sqlite://{}",
+            root.path().join("test.db").display()
+        ))
+        .await
+        .unwrap();
         db::run_migrations(&pool).await.unwrap();
         let mut nodes = Vec::new();
-        for (node_key, name) in [(key.public_hex(), "copy"), (server_key.public_hex(), "primary")] {
+        for (node_key, name) in [
+            (key.public_hex(), "copy"),
+            (server_key.public_hex(), "primary"),
+        ] {
             let roles = ["storage".to_owned()];
             let node = db::cluster::register_own_node(&pool, &node_key, name, &roles, "test").await;
             nodes.push(node.unwrap().id);
         }
         let (copy_node, primary) = (nodes[0], nodes[1]);
-        let owner = db::users::accounts::create_user(&pool, "owner", None).await.unwrap();
+        let owner = db::users::accounts::create_user(&pool, "owner", None)
+            .await
+            .unwrap();
         let repository = Uuid::new_v4();
         let row = db::repositories::records::create_repository(
             &pool,
@@ -248,8 +279,14 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(db::cluster::place_repository(&pool, row.id, primary).await.unwrap());
-        assert!(db::cluster::insert_replica(&pool, row.id, copy_node, primary).await.unwrap());
+        assert!(db::cluster::place_repository(&pool, row.id, primary)
+            .await
+            .unwrap());
+        assert!(
+            db::cluster::insert_replica(&pool, row.id, copy_node, primary)
+                .await
+                .unwrap()
+        );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let context = NodeContext {
             pool: Some(pool),
@@ -268,9 +305,15 @@ mod tests {
         };
         let hint = serde_json::to_string(&address).unwrap();
         let pool = context.database().unwrap();
-        assert!(db::cluster::record_node_heartbeat(pool, &server_key.public_hex(), "test", &hint, Some(1 << 40))
-            .await
-            .unwrap());
+        assert!(db::cluster::record_node_heartbeat(
+            pool,
+            &server_key.public_hex(),
+            "test",
+            &hint,
+            Some(1 << 40)
+        )
+        .await
+        .unwrap());
         let acceptor = tokio_rustls::TlsAcceptor::from(
             crate::backend::cluster::tls::server_config(&server_key).unwrap(),
         );
@@ -312,7 +355,15 @@ mod tests {
                 stream.shutdown().await.unwrap();
             }
         });
-        assert!(copy(&context, primary, repository, &mirror, &CancellationToken::new()).await.is_err());
+        assert!(copy(
+            &context,
+            primary,
+            repository,
+            &mirror,
+            &CancellationToken::new()
+        )
+        .await
+        .is_err());
         let calls = calls.load(Ordering::SeqCst);
         server.abort();
         let _ = server.await;

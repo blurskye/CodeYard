@@ -10,7 +10,8 @@ async fn credential_authority(
 ) -> Result<(), VariableError> {
     use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
     if !super::users::transitions::credential_live(tx, actor, credential, write)
-        .await.map_err(VariableError::Authority)?
+        .await
+        .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
     }

@@ -7,7 +7,10 @@ pub const TOGGLES: [(&str, &str); 5] = [
     ("secret_scanning_push_protection", "Push protection"),
     ("dependabot_alerts", "Dependabot alerts"),
     ("dependency_graph", "Dependency graph"),
-    ("private_vulnerability_reporting", "Private vulnerability reporting"),
+    (
+        "private_vulnerability_reporting",
+        "Private vulnerability reporting",
+    ),
 ];
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Configuration {

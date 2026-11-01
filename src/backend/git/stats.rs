@@ -115,7 +115,13 @@ pub fn language_for_path(path: &str) -> Option<&'static str> {
     } else {
         path.extension()
             .and_then(|extension| extension.to_str())
-            .and_then(|extension| if extension == "C" { Some("C++") } else { extension_to_language(&extension.to_ascii_lowercase()) })
+            .and_then(|extension| {
+                if extension == "C" {
+                    Some("C++")
+                } else {
+                    extension_to_language(&extension.to_ascii_lowercase())
+                }
+            })
     }
 }
 
@@ -163,7 +169,8 @@ fn parse_language_stats(output: &[u8]) -> Result<Vec<LanguageStat>> {
         let size = std::str::from_utf8(size)?.parse::<u64>()?;
         let filepath = String::from_utf8_lossy(filepath);
         // Keep prose/data classification for file views, but not source-language totals.
-        let language = language_for_path(filepath.as_ref()).filter(|language| !matches!(*language, "Markdown" | "JSON" | "YAML" | "TOML"));
+        let language = language_for_path(filepath.as_ref())
+            .filter(|language| !matches!(*language, "Markdown" | "JSON" | "YAML" | "TOML"));
         if let Some(language) = language {
             let bytes = lang_bytes.entry(language.to_owned()).or_insert(0);
             *bytes = bytes
@@ -266,10 +273,18 @@ fn add_contributor(contributors: &mut Contributors, author: &str, commits: u32) 
         .ok_or_else(|| anyhow::anyhow!("Malformed Git contributor email"))?;
     let email_end = email_start + 1 + email_end;
     let email = author[email_start + 1..email_end].to_owned();
-    let entry = contributors.entry(email.to_ascii_lowercase()).or_insert_with(|| ContributorInfo {
-        name: author[..email_start].trim().to_owned(), email, commits: 0,
-    });
-    entry.commits = entry.commits.checked_add(commits).filter(|count| *count <= i32::MAX as u32).ok_or(ObjectTooLarge)?;
+    let entry = contributors
+        .entry(email.to_ascii_lowercase())
+        .or_insert_with(|| ContributorInfo {
+            name: author[..email_start].trim().to_owned(),
+            email,
+            commits: 0,
+        });
+    entry.commits = entry
+        .commits
+        .checked_add(commits)
+        .filter(|count| *count <= i32::MAX as u32)
+        .ok_or(ObjectTooLarge)?;
     check_contributor_count(contributors.len())
 }
 
@@ -321,17 +336,26 @@ fn ref_cache<T>(caches: &RefCaches<T>, path: &Path) -> RefCache<T> {
 
 async fn current_refs(repo_path: &Path) -> Result<HashMap<String, String>> {
     let path = repo_path.to_owned();
-    process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
-        let mut refs = super::repository::list_mirror_refs(&path)?;
-        refs.retain(|name, _| !name.starts_with("refs/codeyard/"));
-        let repo = git2::Repository::open_bare(&path)?;
-        match repo.refname_to_id("HEAD") {
-            Ok(head) => { refs.insert("HEAD".into(), head.to_string()); }
-            Err(error) if matches!(error.code(), git2::ErrorCode::NotFound | git2::ErrorCode::UnbornBranch) => {}
-            Err(error) => return Err(error.into()),
-        }
-        Ok(refs)
-    })
+    process::blocking_until(
+        std::time::Instant::now() + process::RPC_TIMEOUT,
+        move || {
+            let mut refs = super::repository::list_mirror_refs(&path)?;
+            refs.retain(|name, _| !name.starts_with("refs/codeyard/"));
+            let repo = git2::Repository::open_bare(&path)?;
+            match repo.refname_to_id("HEAD") {
+                Ok(head) => {
+                    refs.insert("HEAD".into(), head.to_string());
+                }
+                Err(error)
+                    if matches!(
+                        error.code(),
+                        git2::ErrorCode::NotFound | git2::ErrorCode::UnbornBranch
+                    ) => {}
+                Err(error) => return Err(error.into()),
+            }
+            Ok(refs)
+        },
+    )
     .await
 }
 
@@ -352,7 +376,10 @@ where
     let cache = ref_cache(caches, repo_path);
     let mut cached = tokio::time::timeout(process::RPC_TIMEOUT, cache.lock()).await?;
     let select = |mut refs: HashMap<String, String>| {
-        if let Some(branch) = branch { let reference = format!("refs/heads/{branch}"); refs.retain(|name, _| name == &reference); }
+        if let Some(branch) = branch {
+            let reference = format!("refs/heads/{branch}");
+            refs.retain(|name, _| name == &reference);
+        }
         refs
     };
     let refs = select(current_refs(repo_path).await?);
@@ -377,56 +404,115 @@ pub(crate) async fn get_contributors(repo_path: &Path) -> Result<Vec<Contributor
     contributors_for(repo_path, None).await
 }
 
-pub(crate) async fn get_branch_contributors(repo_path: &Path, branch: &str) -> Result<Vec<ContributorInfo>> {
+pub(crate) async fn get_branch_contributors(
+    repo_path: &Path,
+    branch: &str,
+) -> Result<Vec<ContributorInfo>> {
     contributors_for(repo_path, Some(branch)).await
 }
 
 /// Every branch's contributors, or one branch's. The mailmap comes from HEAD, or from that branch.
 async fn contributors_for(repo_path: &Path, branch: Option<&str>) -> Result<Vec<ContributorInfo>> {
-    let mailmap_ref = branch.map_or_else(|| "HEAD".to_owned(), |branch| format!("refs/heads/{branch}"));
-    cached_by_refs(&CONTRIBUTOR_CACHES, repo_path, branch.unwrap_or("").to_owned(), branch, |refs| async move {
-        let path = repo_path.to_owned();
-        let (tips, mailmap) = process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
-            let repo = git2::Repository::open_bare(path)?;
-            let mut tips = std::collections::BTreeSet::new();
-            let deadline = std::time::Instant::now() + process::RPC_TIMEOUT;
-            for oid in refs.values() {
-                ensure!(std::time::Instant::now() < deadline, "Git contributor snapshot timed out");
-                // Git walks the history, so a tip commit too large for libgit2 still counts.
-                let (id, kind) = super::repository::peel_revision_id(&repo, oid)?;
-                if kind == git2::ObjectType::Commit { tips.insert(id.to_string()); }
+    let mailmap_ref = branch.map_or_else(
+        || "HEAD".to_owned(),
+        |branch| format!("refs/heads/{branch}"),
+    );
+    cached_by_refs(
+        &CONTRIBUTOR_CACHES,
+        repo_path,
+        branch.unwrap_or("").to_owned(),
+        branch,
+        |refs| async move {
+            let path = repo_path.to_owned();
+            let (tips, mailmap) = process::blocking_until(
+                std::time::Instant::now() + process::RPC_TIMEOUT,
+                move || {
+                    let repo = git2::Repository::open_bare(path)?;
+                    let mut tips = std::collections::BTreeSet::new();
+                    let deadline = std::time::Instant::now() + process::RPC_TIMEOUT;
+                    for oid in refs.values() {
+                        ensure!(
+                            std::time::Instant::now() < deadline,
+                            "Git contributor snapshot timed out"
+                        );
+                        // Git walks the history, so a tip commit too large for libgit2 still counts.
+                        let (id, kind) = super::repository::peel_revision_id(&repo, oid)?;
+                        if kind == git2::ObjectType::Commit {
+                            tips.insert(id.to_string());
+                        }
+                    }
+                    let mailmap = if let Some(head) = refs.get(&mailmap_ref) {
+                        let commit = super::repository::peel_to_commit_checked(&repo, head)?;
+                        match super::repository::tree_entry(&repo, &commit, ".mailmap") {
+                            Ok(entry) if entry.kind() == Some(git2::ObjectType::Blob) => {
+                                entry.id().to_string()
+                            }
+                            Ok(_) => String::new(),
+                            Err(error)
+                                if error
+                                    .downcast_ref::<git2::Error>()
+                                    .is_some_and(super::repository::is_missing_path) =>
+                            {
+                                String::new()
+                            }
+                            Err(error) => return Err(error),
+                        }
+                    } else {
+                        String::new()
+                    };
+                    Ok((tips, mailmap))
+                },
+            )
+            .await?;
+            if tips.is_empty() {
+                return Ok(Vec::new());
             }
-            let mailmap = if let Some(head) = refs.get(&mailmap_ref) {
-                let commit = super::repository::peel_to_commit_checked(&repo, head)?;
-                match super::repository::tree_entry(&repo, &commit, ".mailmap") {
-                    Ok(entry) if entry.kind() == Some(git2::ObjectType::Blob) => entry.id().to_string(),
-                    Ok(_) => String::new(),
-                    Err(error) if error.downcast_ref::<git2::Error>().is_some_and(super::repository::is_missing_path) => String::new(),
-                    Err(error) => return Err(error),
-                }
-            } else { String::new() };
-            Ok((tips, mailmap))
-        }).await?;
-        if tips.is_empty() { return Ok(Vec::new()); }
-        let input = tips.into_iter().map(|tip| format!("{tip}\n")).collect::<String>();
-        // shortlog takes no --stdin, so log prints each pinned commit's mailmapped author and
-        // the commits are counted here as they stream.
-        let mut command = process::git_command()?;
-        command.args(["-c", "mailmap.file=/dev/null", "-c", &format!("mailmap.blob={mailmap}")])
-            .args(["log", "--use-mailmap", "--format=%aN <%aE>", "--stdin", "--"])
-            .current_dir(repo_path);
-        let (_, contributors) = process::read_stream(command, input.as_bytes(), process::RPC_TIMEOUT, |stdout, _| async move {
-            let mut reader = tokio::io::BufReader::new(stdout);
-            let mut contributors = Contributors::new();
-            while let Some((line, used)) = super::repository::read_delimited(&mut reader, b'\n', MAX_CONTRIBUTOR_LINE_BYTES + 1).await? {
-                ensure!(used == line.len(), ObjectTooLarge);
-                add_contributor(&mut contributors, &String::from_utf8_lossy(&line), 1)?;
-            }
-            Ok(process::ReadEnd::Complete(contributors))
-        })
-        .await?;
-        Ok(ranked_contributors(contributors))
-    })
+            let input = tips
+                .into_iter()
+                .map(|tip| format!("{tip}\n"))
+                .collect::<String>();
+            // shortlog takes no --stdin, so log prints each pinned commit's mailmapped author and
+            // the commits are counted here as they stream.
+            let mut command = process::git_command()?;
+            command
+                .args([
+                    "-c",
+                    "mailmap.file=/dev/null",
+                    "-c",
+                    &format!("mailmap.blob={mailmap}"),
+                ])
+                .args([
+                    "log",
+                    "--use-mailmap",
+                    "--format=%aN <%aE>",
+                    "--stdin",
+                    "--",
+                ])
+                .current_dir(repo_path);
+            let (_, contributors) = process::read_stream(
+                command,
+                input.as_bytes(),
+                process::RPC_TIMEOUT,
+                |stdout, _| async move {
+                    let mut reader = tokio::io::BufReader::new(stdout);
+                    let mut contributors = Contributors::new();
+                    while let Some((line, used)) = super::repository::read_delimited(
+                        &mut reader,
+                        b'\n',
+                        MAX_CONTRIBUTOR_LINE_BYTES + 1,
+                    )
+                    .await?
+                    {
+                        ensure!(used == line.len(), ObjectTooLarge);
+                        add_contributor(&mut contributors, &String::from_utf8_lossy(&line), 1)?;
+                    }
+                    Ok(process::ReadEnd::Complete(contributors))
+                },
+            )
+            .await?;
+            Ok(ranked_contributors(contributors))
+        },
+    )
     .await
 }
 
@@ -499,31 +585,37 @@ pub(crate) async fn get_code_frequency(repo_path: &Path, branch: &str) -> Result
     let first = week_start(today) - chrono::Days::new((CODE_FREQUENCY_WEEKS as u64 - 1) * 7);
     let reference = format!("refs/heads/{branch}");
     let key = format!("{reference} {first}");
-    cached_by_refs(&CODE_FREQUENCY_CACHES, repo_path, key, Some(branch), |refs| async move {
-        // The snapshot's commit, not the live branch, so a branch that moves and returns
-        // cannot leave another commit's chart cached under this one.
-        let Some(tip) = refs.get(&reference) else {
-            return Ok(parse_week_changes(b"", first));
-        };
-        let mut command = process::git_command()?;
-        // A merge's lines were counted on the commits it brings in.
-        command
-            .args(["log", "--no-merges", "--format=@%ct", "--shortstat"])
-            // Filtering keeps recent commits that sit below an older tip.
-            .arg(format!("--since-as-filter={first} 00:00:00 +0000"))
-            .arg(tip)
-            .arg("--")
-            .current_dir(repo_path);
-        let (status, output) = process::buffered(
-            command,
-            b"",
-            MAX_CODE_FREQUENCY_OUTPUT_BYTES,
-            process::RPC_TIMEOUT,
-        )
-        .await?;
-        ensure!(status.success(), "Git code frequency listing failed");
-        Ok(parse_week_changes(&output, first))
-    })
+    cached_by_refs(
+        &CODE_FREQUENCY_CACHES,
+        repo_path,
+        key,
+        Some(branch),
+        |refs| async move {
+            // The snapshot's commit, not the live branch, so a branch that moves and returns
+            // cannot leave another commit's chart cached under this one.
+            let Some(tip) = refs.get(&reference) else {
+                return Ok(parse_week_changes(b"", first));
+            };
+            let mut command = process::git_command()?;
+            // A merge's lines were counted on the commits it brings in.
+            command
+                .args(["log", "--no-merges", "--format=@%ct", "--shortstat"])
+                // Filtering keeps recent commits that sit below an older tip.
+                .arg(format!("--since-as-filter={first} 00:00:00 +0000"))
+                .arg(tip)
+                .arg("--")
+                .current_dir(repo_path);
+            let (status, output) = process::buffered(
+                command,
+                b"",
+                MAX_CODE_FREQUENCY_OUTPUT_BYTES,
+                process::RPC_TIMEOUT,
+            )
+            .await?;
+            ensure!(status.success(), "Git code frequency listing failed");
+            Ok(parse_week_changes(&output, first))
+        },
+    )
     .await
 }
 
@@ -616,7 +708,11 @@ pub struct AuthorWeek {
 }
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
-pub enum StatisticsMode { #[default] Full, Counts }
+pub enum StatisticsMode {
+    #[default]
+    Full,
+    Counts,
+}
 
 static COMMIT_STATISTICS_CACHES: LazyLock<RefCaches<CommitStatistics>> =
     LazyLock::new(Mutex::default);
@@ -637,7 +733,9 @@ pub(crate) async fn get_commit_statistics(
             };
             let mut command = process::git_command()?;
             command.args(["log", "--no-merges"]);
-            if matches!(mode, StatisticsMode::Full) { command.arg("--numstat"); }
+            if matches!(mode, StatisticsMode::Full) {
+                command.arg("--numstat");
+            }
             command
                 .arg("--format=%x00%at %aI%x00%aN%x00%aE%x00")
                 .arg(id)
@@ -651,7 +749,11 @@ pub(crate) async fn get_commit_statistics(
             )
             .await?;
             ensure!(status.success(), "Git commit statistics listing failed");
-            process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || parse_commit_statistics(&output)).await
+            process::blocking_until(
+                std::time::Instant::now() + process::RPC_TIMEOUT,
+                move || parse_commit_statistics(&output),
+            )
+            .await
         },
     )
     .await
@@ -678,16 +780,30 @@ fn parse_commit_statistics(output: &[u8]) -> Result<CommitStatistics> {
     let mut authors = BTreeMap::<String, (AuthorStatistics, BTreeMap<i64, AuthorWeek>)>::new();
     for record in fields[1..].as_chunks::<4>().0 {
         let field = std::str::from_utf8(record[0])?;
-        let (timestamp, local) = field.split_once(' ').map_or((field, None), |(timestamp, local)| (timestamp, Some(local)));
+        let (timestamp, local) = field
+            .split_once(' ')
+            .map_or((field, None), |(timestamp, local)| (timestamp, Some(local)));
         let timestamp = timestamp.parse::<i64>()?;
         let date = chrono::DateTime::from_timestamp(timestamp, 0);
         let calendar = if let Some(date) = date {
-            let local = local.map(chrono::DateTime::parse_from_rfc3339).transpose()?.unwrap_or_else(|| date.fixed_offset());
+            let local = local
+                .map(chrono::DateTime::parse_from_rfc3339)
+                .transpose()?
+                .unwrap_or_else(|| date.fixed_offset());
             let day = date.weekday().num_days_from_sunday() as usize;
-            let week = date.date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() - day as i64 * 86_400;
+            let week = date
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp()
+                - day as i64 * 86_400;
             Some((week, day, local))
         } else {
-            tracing::warn!(timestamp, "Git statistics omitted calendar buckets for an out-of-range date");
+            tracing::warn!(
+                timestamp,
+                "Git statistics omitted calendar buckets for an out-of-range date"
+            );
             None
         };
         let mut additions = 0;
@@ -713,11 +829,16 @@ fn parse_commit_statistics(output: &[u8]) -> Result<CommitStatistics> {
         }
         result.commits += 1;
         if let Some((week, day, local)) = calendar {
-            let entry = weeks.entry(week).or_insert_with(|| CommitWeek { week, ..Default::default() });
+            let entry = weeks.entry(week).or_insert_with(|| CommitWeek {
+                week,
+                ..Default::default()
+            });
             entry.days[day] += 1;
             entry.additions += additions;
             entry.deletions += deletions;
-            result.punch_card[local.weekday().num_days_from_sunday() as usize * 24 + local.hour() as usize][2] += 1;
+            result.punch_card
+                [local.weekday().num_days_from_sunday() as usize * 24 + local.hour() as usize]
+                [2] += 1;
         }
         let email = String::from_utf8_lossy(record[2]).into_owned();
         let (author, author_weeks) = authors.entry(email.clone()).or_insert_with(|| {
@@ -731,9 +852,14 @@ fn parse_commit_statistics(output: &[u8]) -> Result<CommitStatistics> {
             )
         });
         author.commits += 1;
-        if changed { author.total += 1; }
+        if changed {
+            author.total += 1;
+        }
         if let Some((week, day, _)) = calendar {
-            let entry = author_weeks.entry(week).or_insert_with(|| AuthorWeek { week, ..Default::default() });
+            let entry = author_weeks.entry(week).or_insert_with(|| AuthorWeek {
+                week,
+                ..Default::default()
+            });
             entry.all_commits += 1;
             entry.days[day] += 1;
             if changed {

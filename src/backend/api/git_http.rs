@@ -150,8 +150,10 @@ async fn authorize_repository(
         };
     };
     let repo = found.ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
-    let (user, _) = ReceiveCredential::Token(token.id).authorize(&state.pool, &repo, write)
-        .await.map_err(credential_refusal)?;
+    let (user, _) = ReceiveCredential::Token(token.id)
+        .authorize(&state.pool, &repo, write)
+        .await
+        .map_err(credential_refusal)?;
     Ok(AuthorizedRepository {
         repo,
         token_id: Some(token.id),
@@ -167,7 +169,9 @@ fn credential_refusal(error: anyhow::Error) -> Response {
         Some(CredentialRefusal::ReadOnly) => "Token is read-only",
         Some(CredentialRefusal::TokenScope) => "Resource not accessible by token",
         Some(CredentialRefusal::Integration) => "Resource not accessible by integration",
-        Some(CredentialRefusal::Classic) => "This organization forbids access with a personal access token (classic)",
+        Some(CredentialRefusal::Classic) => {
+            "This organization forbids access with a personal access token (classic)"
+        }
         Some(CredentialRefusal::Migration) => "Repository is locked for migration",
         Some(CredentialRefusal::Denied | CredentialRefusal::Archived) => "Repository access denied",
         None => return unavailable(),

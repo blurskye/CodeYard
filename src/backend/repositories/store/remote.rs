@@ -268,8 +268,16 @@ impl RemoteStore {
         .await
     }
 
-    pub(super) async fn blob_by_id_range(&self, id: &str, range: BlobRange) -> Result<BlobBytes, RepoError> {
-        self.blob_part(Operation::BlobByIdRange { id: id.into(), range }).await
+    pub(super) async fn blob_by_id_range(
+        &self,
+        id: &str,
+        range: BlobRange,
+    ) -> Result<BlobBytes, RepoError> {
+        self.blob_part(Operation::BlobByIdRange {
+            id: id.into(),
+            range,
+        })
+        .await
     }
 
     /// Blob bytes travel as the raw reply body beside their JSON metadata.
@@ -356,7 +364,9 @@ impl RemoteStore {
         let mut request = Vec::new();
         super::source::append_packet(&mut request, &format!("want {oid}\n"));
         request.extend_from_slice(b"00000009done\n");
-        let parent = destination.parent().ok_or_else(|| rpc::wire::invalid("invalid checkout directory"))?;
+        let parent = destination
+            .parent()
+            .ok_or_else(|| rpc::wire::invalid("invalid checkout directory"))?;
         let pack = tempfile::NamedTempFile::new_in(parent)
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         let mut output = tokio::fs::File::from_std(

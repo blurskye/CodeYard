@@ -194,13 +194,18 @@ pub(crate) fn build(
     // Fresh variables can change an unselected variant without changing its index.
     for (job, variants) in &state.variants {
         if selected.get(job).is_some_and(Option::is_none)
-            || raw["jobs"][job.as_str()]["strategy"].get("matrix").is_none() {
+            || raw["jobs"][job.as_str()]["strategy"]
+                .get("matrix")
+                .is_none()
+        {
             continue;
         }
         let mut values = BTreeMap::new();
         for variant in variants.keys() {
-            let matrix = latest.get(&(job.clone(), *variant))
-                .and_then(|job| job.matrix.as_ref()).ok_or_else(unavailable)?;
+            let matrix = latest
+                .get(&(job.clone(), *variant))
+                .and_then(|job| job.matrix.as_ref())
+                .ok_or_else(unavailable)?;
             values.insert(*variant, matrix.0.clone());
         }
         matrices.insert(job.clone(), values);

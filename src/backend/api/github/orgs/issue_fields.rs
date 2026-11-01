@@ -70,7 +70,10 @@ struct Create {
 struct Update {
     #[serde(default, deserialize_with = "supplied")]
     name: Option<String>,
-    #[serde(default, deserialize_with = "crate::backend::db::repositories::records::nullable_change")]
+    #[serde(
+        default,
+        deserialize_with = "crate::backend::db::repositories::records::nullable_change"
+    )]
     description: Option<Option<String>>,
     #[serde(default, deserialize_with = "supplied")]
     visibility: Option<String>,
@@ -105,8 +108,7 @@ async fn create(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) =
-        input.map_err(|error| super::super::json_error(error).simple())?;
+    let Json(input) = input.map_err(|error| super::super::json_error(error).simple())?;
     if matches!(input.data_type.as_str(), "single_select" | "multi_select")
         && input.options.is_none()
     {
@@ -154,8 +156,7 @@ async fn update(
     let id = params["issue_field_id"]
         .parse()
         .map_err(|_| Error::missing())?;
-    let Json(input) =
-        input.map_err(|error| super::super::json_error(error).simple())?;
+    let Json(input) = input.map_err(|error| super::super::json_error(error).simple())?;
     let field = issue_attributes::patch_organization_field(
         &state.pool,
         org.id,

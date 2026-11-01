@@ -51,10 +51,17 @@ async fn open(
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
     if error.is::<db::users::accounts::AccountRestricted>() {
-        return ctx.error(StatusCode::FORBIDDEN, "A live unrestricted credential is required.");
+        return ctx.error(
+            StatusCode::FORBIDDEN,
+            "A live unrestricted credential is required.",
+        );
     }
     use db::advisories::Refusal;
-    if let Some(graph @ (db::dependency_graph::GraphError::Limit | db::dependency_graph::GraphError::Disabled)) = error.downcast_ref::<db::dependency_graph::GraphError>() {
+    if let Some(
+        graph @ (db::dependency_graph::GraphError::Limit
+        | db::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+    {
         return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &graph.to_string());
     }
     match error.downcast_ref::<Refusal>() {

@@ -21,7 +21,9 @@ pub fn configured_admin_secret() -> anyhow::Result<Option<String>> {
     match std::env::var("ADMIN_SECRET") {
         Ok(secret) => Ok(Some(secret.trim().to_owned()).filter(|secret| !secret.is_empty())),
         Err(std::env::VarError::NotPresent) => Ok(None),
-        Err(std::env::VarError::NotUnicode(_)) => anyhow::bail!("ADMIN_SECRET must be valid Unicode"),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("ADMIN_SECRET must be valid Unicode")
+        }
     }
 }
 

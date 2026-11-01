@@ -847,12 +847,16 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    assert!(
-        db::runners::list_runners(f.pool(), alice, db::runners::Scope::Repository(repo), &Default::default())
-            .await
-            .unwrap().rows
-            .is_empty()
-    );
+    assert!(db::runners::list_runners(
+        f.pool(),
+        alice,
+        db::runners::Scope::Repository(repo),
+        &Default::default()
+    )
+    .await
+    .unwrap()
+    .rows
+    .is_empty());
     assert_eq!(
         call(
             &router,
@@ -980,7 +984,8 @@ async fn contract(pg: bool) {
                 &Default::default(),
             )
             .await
-            .unwrap().rows
+            .unwrap()
+            .rows
             .into_iter()
             .find(|r| r.id == jit["runner"]["id"].as_i64().unwrap())
             .unwrap();
@@ -1055,13 +1060,18 @@ async fn contract(pg: bool) {
     assert_eq!(wrong.status(), StatusCode::NOT_FOUND);
     let removable_key = NodeKey::generate();
     pair(&registration_tokens[0], &removable_key, "removable").await;
-    let removable =
-        db::runners::list_runners(f.pool(), alice, db::runners::Scope::Organization(org.id), &Default::default())
-            .await
-            .unwrap().rows
-            .into_iter()
-            .find(|r| r.name == "removable")
-            .unwrap();
+    let removable = db::runners::list_runners(
+        f.pool(),
+        alice,
+        db::runners::Scope::Organization(org.id),
+        &Default::default(),
+    )
+    .await
+    .unwrap()
+    .rows
+    .into_iter()
+    .find(|r| r.name == "removable")
+    .unwrap();
     let removed = router
         .clone()
         .oneshot(
@@ -1201,7 +1211,8 @@ async fn runner_settings_browser() {
     println!("{}", String::from_utf8_lossy(&result.stdout));
     let groups = db::runners::list_groups(f.pool(), alice, org.id, &Default::default())
         .await
-        .unwrap().rows;
+        .unwrap()
+        .rows;
     assert_eq!(groups.len(), 1);
     assert!(groups[0].is_default);
     f.finish().await;

@@ -111,7 +111,10 @@ async fn charge_part(
 
 /// Checks the declaration and the per-reason quotas, then records a pending
 /// file and charges the quota, in one transaction.
-pub async fn reserve_upload(pool: &SqlitePool, req: ReserveUpload<'_>) -> Result<File, AdmissionError> {
+pub async fn reserve_upload(
+    pool: &SqlitePool,
+    req: ReserveUpload<'_>,
+) -> Result<File, AdmissionError> {
     if !req.valid() {
         return Err(AdmissionError::Invalid);
     }
@@ -138,7 +141,15 @@ pub async fn reserve_upload(pool: &SqlitePool, req: ReserveUpload<'_>) -> Result
     .bind(PUT_LIFETIME_SECONDS)
     .fetch_one(&mut *tx)
     .await?;
-    charge(&mut tx, req.user_id, req.reason.as_str(), req.file_size, Some(file_id), &limits).await?;
+    charge(
+        &mut tx,
+        req.user_id,
+        req.reason.as_str(),
+        req.file_size,
+        Some(file_id),
+        &limits,
+    )
+    .await?;
     tx.commit().await?;
     Ok(file)
 }
@@ -192,16 +203,39 @@ pub(super) async fn charge_upload_in_transaction(
     }
 }
 
-async fn require_file_actor(tx: &mut Transaction<'_, Sqlite>, actor: &FileAuthority) -> Result<bool, sqlx::Error> {
-    let Some(user) = actor.user_id else { return Ok(false); };
+async fn require_file_actor(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor: &FileAuthority,
+) -> Result<bool, sqlx::Error> {
+    let Some(user) = actor.user_id else {
+        return Ok(false);
+    };
     if let Some(session) = &actor.session {
-        match super::users::transitions::require_account(tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(session)).await {
+        match super::users::transitions::require_account(
+            tx,
+            user,
+            &crate::backend::db::users::accounts::AccountCredential::Session(session),
+        )
+        .await
+        {
             Ok(()) => return Ok(true),
-            Err(error) if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => return Ok(false),
-            Err(error) => return Err(error.downcast::<sqlx::Error>().unwrap_or_else(|_| sqlx::Error::Protocol("File authority unavailable".into()))),
+            Err(error) if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => {
+                return Ok(false)
+            }
+            Err(error) => {
+                return Err(error.downcast::<sqlx::Error>().unwrap_or_else(|_| {
+                    sqlx::Error::Protocol("File authority unavailable".into())
+                }))
+            }
         }
     }
-    Ok(sqlx::query_scalar::<_, bool>("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=?1").bind(user).fetch_optional(&mut **tx).await?.unwrap_or(false))
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=?1",
+    )
+    .bind(user)
+    .fetch_optional(&mut **tx)
+    .await?
+    .unwrap_or(false))
 }
 
 /// Files anyone may download: the owner's own, public ones, and avatars.
@@ -241,9 +275,15 @@ pub async fn verify_pending_upload(
     Ok(changed.rows_affected() == 1)
 }
 
-pub async fn can_publish_upload(pool: &SqlitePool, file_id: Uuid, actor: FileAuthority) -> Result<bool, sqlx::Error> {
+pub async fn can_publish_upload(
+    pool: &SqlitePool,
+    file_id: Uuid,
+    actor: FileAuthority,
+) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    if !require_file_actor(&mut tx, &actor).await? { return Ok(false); }
+    if !require_file_actor(&mut tx, &actor).await? {
+        return Ok(false);
+    }
     let allowed = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM files WHERE id=?1 AND user_id=?2 AND NOT is_active AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))").bind(file_id).bind(actor.user_id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(allowed)
@@ -257,7 +297,9 @@ pub async fn activate_upload(
 ) -> Result<bool, sqlx::Error> {
     let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    if !require_file_actor(&mut tx, &actor).await? { return Ok(false); }
+    if !require_file_actor(&mut tx, &actor).await? {
+        return Ok(false);
+    }
     let user_id = actor.user_id;
     let changed = sqlx::query(
         "UPDATE files SET is_active = 1, confirmed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), upload_expires_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')

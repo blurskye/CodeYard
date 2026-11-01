@@ -361,12 +361,23 @@ async fn atomic_creation_safe_metadata_namespace_and_validation(database: &Datab
             .unwrap(),
         Conflict
     ));
-    assert_eq!(database.org(owner, "Creation_Mixed").await.name, "Creation_Mixed");
+    assert_eq!(
+        database.org(owner, "Creation_Mixed").await.name,
+        "Creation_Mixed"
+    );
     database.execute("UPDATE organizations SET billing_email='private@example.test',is_verified=TRUE WHERE id=$1", &[organization.id]).await;
     let safe = applied(
-        update_organization_profile(&database.pool, owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, owner).await), organization.id, &profile())
-            .await
-            .unwrap(),
+        update_organization_profile(
+            &database.pool,
+            owner,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&database.pool, owner).await,
+            ),
+            organization.id,
+            &profile(),
+        )
+        .await
+        .unwrap(),
     );
     assert!(safe.is_verified);
     assert_eq!(safe.name, "creation_org");
@@ -419,21 +430,45 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             .unwrap(),
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, outsider, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, outsider).await), org.id, &profile())
-            .await
-            .unwrap(),
+        update_organization_profile(
+            &database.pool,
+            outsider,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&database.pool, outsider).await
+            ),
+            org.id,
+            &profile()
+        )
+        .await
+        .unwrap(),
         Denied
     ));
     assert!(matches!(
-        update_organization_profile(&database.pool, member, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, member).await), org.id, &profile())
-            .await
-            .unwrap(),
+        update_organization_profile(
+            &database.pool,
+            member,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&database.pool, member).await
+            ),
+            org.id,
+            &profile()
+        )
+        .await
+        .unwrap(),
         Denied
     ));
     applied(
-        update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, admin).await), org.id, &profile())
-            .await
-            .unwrap(),
+        update_organization_profile(
+            &database.pool,
+            admin,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&database.pool, admin).await,
+            ),
+            org.id,
+            &profile(),
+        )
+        .await
+        .unwrap(),
     );
     assert!(matches!(
         add_organization_member(&database.pool, member, org.id, outsider, OrgRole::Member)
@@ -483,9 +518,17 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             )
             .await;
         assert!(matches!(
-            update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, admin).await), org.id, &profile())
-                .await
-                .unwrap(),
+            update_organization_profile(
+                &database.pool,
+                admin,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(&database.pool, admin).await
+                ),
+                org.id,
+                &profile()
+            )
+            .await
+            .unwrap(),
             Denied
         ));
         assert!(matches!(
@@ -509,9 +552,15 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             .await;
     }
     assert!(matches!(
-        update_organization_profile(&database.pool, 900_000, &db::users::accounts::AccountCredential::Session("missing"), org.id, &profile())
-            .await
-            .unwrap(),
+        update_organization_profile(
+            &database.pool,
+            900_000,
+            &db::users::accounts::AccountCredential::Session("missing"),
+            org.id,
+            &profile()
+        )
+        .await
+        .unwrap(),
         Denied
     ));
     assert!(matches!(
@@ -1053,9 +1102,17 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
             Denied
         ));
         assert!(matches!(
-            update_organization_profile(&database.pool, member, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, member).await), org.id, &profile())
-                .await
-                .unwrap(),
+            update_organization_profile(
+                &database.pool,
+                member,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(&database.pool, member).await
+                ),
+                org.id,
+                &profile()
+            )
+            .await
+            .unwrap(),
             Denied
         ));
         assert!(matches!(
@@ -1664,9 +1721,15 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         db::models::AccessLevel::None
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, 700000, &db::users::accounts::AccountCredential::Session("missing"), 700000, &profile())
-            .await
-            .unwrap(),
+        update_organization_profile(
+            &database.pool,
+            700000,
+            &db::users::accounts::AccountCredential::Session("missing"),
+            700000,
+            &profile()
+        )
+        .await
+        .unwrap(),
         Denied
     ));
     assert_eq!(
@@ -2649,9 +2712,17 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
         "suspension retains reads, not tenant write authority"
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, replacement, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, replacement).await), org.id, &profile())
-            .await
-            .unwrap(),
+        update_organization_profile(
+            &database.pool,
+            replacement,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&database.pool, replacement).await
+            ),
+            org.id,
+            &profile()
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Suspended
     ));
     assert!(matches!(
@@ -2886,9 +2957,17 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
                 }
                 "profile" => {
                     let metadata = applied(
-                        update_organization_profile(&pool, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&pool, admin).await), org, &profile())
-                            .await
-                            .unwrap(),
+                        update_organization_profile(
+                            &pool,
+                            admin,
+                            &db::users::accounts::AccountCredential::Session(
+                                &crate::support::live_session(&pool, admin).await,
+                            ),
+                            org,
+                            &profile(),
+                        )
+                        .await
+                        .unwrap(),
                     );
                     assert_eq!(metadata.display_name.as_deref(), Some("Changed"));
                 }
@@ -2927,9 +3006,17 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
             db::users::transitions::BanChange::Updated(user) if user.is_banned
         ));
         assert!(matches!(
-            update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, admin).await), org, &profile())
-                .await
-                .unwrap(),
+            update_organization_profile(
+                &database.pool,
+                admin,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(&database.pool, admin).await
+                ),
+                org,
+                &profile()
+            )
+            .await
+            .unwrap(),
             Denied
         ));
         assert!(
@@ -3086,41 +3173,134 @@ async fn ended_sessions_cannot_manage_the_organization(database: &Database) {
     let invitee = database.actor("ended_session_invitee").await;
     let outsider = database.actor("ended_session_outsider").await;
     let org = database.org(owner, "ended_session_org").await;
-    applied(add_organization_member(&database.pool, owner, org.id, member, OrgRole::Member).await.unwrap());
-    applied(invite_organization_member(&database.pool, owner, org.id, invitee, OrgRole::Member).await.unwrap());
-    let team = database.team(owner, org.id, "ended-session-team", TeamPrivacy::Visible).await;
+    applied(
+        add_organization_member(&database.pool, owner, org.id, member, OrgRole::Member)
+            .await
+            .unwrap(),
+    );
+    applied(
+        invite_organization_member(&database.pool, owner, org.id, invitee, OrgRole::Member)
+            .await
+            .unwrap(),
+    );
+    let team = database
+        .team(owner, org.id, "ended-session-team", TeamPrivacy::Visible)
+        .await;
     let expires = chrono::Utc::now() + chrono::Duration::hours(1);
-    for (id, user) in [("ended_owner", owner), ("ended_invitee", invitee), ("live_owner", owner)] {
-        db::users::sessions::create_session(&database.pool, id, user, None, None, expires).await.unwrap();
+    for (id, user) in [
+        ("ended_owner", owner),
+        ("ended_invitee", invitee),
+        ("live_owner", owner),
+    ] {
+        db::users::sessions::create_session(&database.pool, id, user, None, None, expires)
+            .await
+            .unwrap();
     }
     for id in ["ended_owner", "ended_invitee"] {
-        db::users::sessions::delete_session(&database.pool, id).await.unwrap();
+        db::users::sessions::delete_session(&database.pool, id)
+            .await
+            .unwrap();
     }
     let ended = || Actor::from((owner, "ended_owner".to_string()));
     let pool = &database.pool;
-    assert!(matches!(update_organization_member_role(pool, ended(), org.id, member, OrgRole::Admin).await.unwrap(), Denied));
-    assert!(matches!(remove_organization_member(pool, ended(), org.id, member).await.unwrap(), Denied));
-    assert!(matches!(discovery::set_membership_public(pool, ended(), org.id, true).await.unwrap(), Denied));
-    assert!(matches!(blocks::change(pool, ended(), org.id, outsider, true).await.unwrap(), Denied));
-    assert!(matches!(add_organization_team_member(pool, ended(), org.id, team.id, member, TeamRole::Member).await.unwrap(), Denied));
-    assert!(matches!(invite_team_member(pool, ended(), org.id, team.id, outsider, TeamRole::Member).await.unwrap(), Denied));
-    assert!(matches!(cancel_organization_invitation(pool, ended(), org.id, invitee).await.unwrap(), Denied));
     assert!(matches!(
-        decline_organization_invitation(pool, Actor::from((invitee, "ended_invitee".to_string())), org.id, None).await.unwrap(),
+        update_organization_member_role(pool, ended(), org.id, member, OrgRole::Admin)
+            .await
+            .unwrap(),
+        Denied
+    ));
+    assert!(matches!(
+        remove_organization_member(pool, ended(), org.id, member)
+            .await
+            .unwrap(),
+        Denied
+    ));
+    assert!(matches!(
+        discovery::set_membership_public(pool, ended(), org.id, true)
+            .await
+            .unwrap(),
+        Denied
+    ));
+    assert!(matches!(
+        blocks::change(pool, ended(), org.id, outsider, true)
+            .await
+            .unwrap(),
+        Denied
+    ));
+    assert!(matches!(
+        add_organization_team_member(pool, ended(), org.id, team.id, member, TeamRole::Member)
+            .await
+            .unwrap(),
+        Denied
+    ));
+    assert!(matches!(
+        invite_team_member(pool, ended(), org.id, team.id, outsider, TeamRole::Member)
+            .await
+            .unwrap(),
+        Denied
+    ));
+    assert!(matches!(
+        cancel_organization_invitation(pool, ended(), org.id, invitee)
+            .await
+            .unwrap(),
+        Denied
+    ));
+    assert!(matches!(
+        decline_organization_invitation(
+            pool,
+            Actor::from((invitee, "ended_invitee".to_string())),
+            org.id,
+            None
+        )
+        .await
+        .unwrap(),
         Denied
     ));
     for (sql, ids, expected) in [
-        ("SELECT COUNT(*) FROM org_memberships WHERE org_id=$1 AND user_id=$2 AND role='member'", [org.id, member], 1),
-        ("SELECT COUNT(*) FROM org_memberships WHERE org_id=$1 AND user_id=$2 AND is_public", [org.id, owner], 0),
-        ("SELECT COUNT(*) FROM organization_blocks WHERE org_id=$1 AND user_id=$2", [org.id, outsider], 0),
-        ("SELECT COUNT(*) FROM team_memberships WHERE team_id=$1 AND user_id=$2", [team.id, member], 0),
-        ("SELECT COUNT(*) FROM organization_invitations WHERE org_id=$1 AND user_id=$2", [org.id, invitee], 1),
-        ("SELECT COUNT(*) FROM organization_invitations WHERE org_id=$1 AND user_id=$2", [org.id, outsider], 0),
+        (
+            "SELECT COUNT(*) FROM org_memberships WHERE org_id=$1 AND user_id=$2 AND role='member'",
+            [org.id, member],
+            1,
+        ),
+        (
+            "SELECT COUNT(*) FROM org_memberships WHERE org_id=$1 AND user_id=$2 AND is_public",
+            [org.id, owner],
+            0,
+        ),
+        (
+            "SELECT COUNT(*) FROM organization_blocks WHERE org_id=$1 AND user_id=$2",
+            [org.id, outsider],
+            0,
+        ),
+        (
+            "SELECT COUNT(*) FROM team_memberships WHERE team_id=$1 AND user_id=$2",
+            [team.id, member],
+            0,
+        ),
+        (
+            "SELECT COUNT(*) FROM organization_invitations WHERE org_id=$1 AND user_id=$2",
+            [org.id, invitee],
+            1,
+        ),
+        (
+            "SELECT COUNT(*) FROM organization_invitations WHERE org_id=$1 AND user_id=$2",
+            [org.id, outsider],
+            0,
+        ),
     ] {
         assert_eq!(database.count(sql, &ids).await, expected, "{sql}");
     }
     // The owner's other, live session still works.
-    applied(discovery::set_membership_public(pool, Actor::from((owner, "live_owner".to_string())), org.id, true).await.unwrap());
+    applied(
+        discovery::set_membership_public(
+            pool,
+            Actor::from((owner, "live_owner".to_string())),
+            org.id,
+            true,
+        )
+        .await
+        .unwrap(),
+    );
 }
 
 async fn native_suite(database: &Database) {

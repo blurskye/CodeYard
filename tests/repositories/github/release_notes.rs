@@ -135,7 +135,10 @@ async fn release_notes_contract(pg: bool) {
     assert!(!body.contains("Excluded change"));
     assert!(body.contains("/pulls/1"));
     // The comparison names both tags in full, so a branch named like a tag cannot stand in.
-    assert!(body.contains("/compare/refs%2Ftags%2Fv1...refs%2Ftags%2Fv2"), "{body}");
+    assert!(
+        body.contains("/compare/refs%2Ftags%2Fv1...refs%2Ftags%2Fv2"),
+        "{body}"
+    );
     assert!(git.find_reference("refs/tags/v2").is_err());
     checked(
         &router,

@@ -2,7 +2,12 @@ use super::*;
 use crate::backend::db::projects::{valid_name, Content, FieldUpdate, Item, NewView, View};
 use serde_json::Value;
 
-pub async fn item_links(pool: &PgPool, viewer: Option<i64>, project: i64, items: &[i64]) -> Result<Vec<crate::backend::db::projects::ItemLink>> {
+pub async fn item_links(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    items: &[i64],
+) -> Result<Vec<crate::backend::db::projects::ItemLink>> {
     anyhow::ensure!(items.len() <= 50, Refusal::Invalid);
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
@@ -78,7 +83,13 @@ pub async fn can_write(pool: &PgPool, actor: i64, owner: Owner) -> Result<bool> 
     }
 }
 
-pub async fn delete_field(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, project: i64, field: i64) -> Result<()> {
+pub async fn delete_field(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    field: i64,
+) -> Result<()> {
     let mut tx = pool.begin().await?;
     write_project(&mut tx, actor, credential, project).await?;
     let name: Option<String> =
@@ -128,7 +139,13 @@ pub async fn delete_field(pool: &PgPool, actor: i64, credential: &AccountCredent
     Ok(())
 }
 
-pub async fn add_item(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, project: i64, content: &Content) -> Result<Item> {
+pub async fn add_item(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    content: &Content,
+) -> Result<Item> {
     let mut tx = pool.begin().await?;
     let (issue, pull, repo, title, body) = match content {
         Content::Issue(id) | Content::PullRequest(id) => {
@@ -186,7 +203,12 @@ pub async fn add_item(pool: &PgPool, actor: i64, credential: &AccountCredential<
     Ok(item)
 }
 
-pub async fn item(pool: &PgPool, viewer: Option<i64>, project: i64, id: i64) -> Result<Option<Item>> {
+pub async fn item(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    id: i64,
+) -> Result<Option<Item>> {
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
     let item = sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND i.id=$3 AND (i.repo_id IS NULL OR {})", super::super::repositories::access::readable_condition()))
@@ -195,8 +217,18 @@ pub async fn item(pool: &PgPool, viewer: Option<i64>, project: i64, id: i64) -> 
     Ok(item)
 }
 
-pub async fn items_page(pool: &PgPool, viewer: Option<i64>, project: i64, after: i64, before: i64, limit: i64) -> Result<Vec<Item>> {
-    anyhow::ensure!(after >= 0 && before > 0 && (1..=101).contains(&limit), Refusal::Invalid);
+pub async fn items_page(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Item>> {
+    anyhow::ensure!(
+        after >= 0 && before > 0 && (1..=101).contains(&limit),
+        Refusal::Invalid
+    );
     let mut tx = pool.begin().await?;
     readable(&mut tx, viewer, project).await?;
     let direction = if before < i64::MAX { "DESC" } else { "ASC" };
@@ -206,26 +238,91 @@ pub async fn items_page(pool: &PgPool, viewer: Option<i64>, project: i64, after:
     Ok(items)
 }
 
-pub async fn content_items(pool: &PgPool, viewer: Option<i64>, content: &Content, include_archived: bool, offset: i64, limit: i64, count: bool) -> Result<(i64, Vec<Item>)> {
+pub async fn content_items(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    content: &Content,
+    include_archived: bool,
+    offset: i64,
+    limit: i64,
+    count: bool,
+) -> Result<(i64, Vec<Item>)> {
     anyhow::ensure!(offset >= 0 && (0..=100).contains(&limit), Refusal::Invalid);
-    let (issue, pull) = match content { Content::Issue(id) => (Some(*id), None), Content::PullRequest(id) => (None, Some(*id)), _ => return Ok((0, Vec::new())) };
+    let (issue, pull) = match content {
+        Content::Issue(id) => (Some(*id), None),
+        Content::PullRequest(id) => (None, Some(*id)),
+        _ => return Ok((0, Vec::new())),
+    };
     let joins = format!(" JOIN projects p ON p.id=i.project_id LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$3 WHERE (i.issue_id=$1 OR i.pull_request_id=$2) AND ($4 OR NOT i.archived) AND {} AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", crate::backend::db::projects::readable_condition("$3"), super::super::repositories::access::readable_condition());
     let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
-    let total = if count { sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible")).bind(issue).bind(pull).bind(viewer).bind(include_archived).fetch_one(&mut *tx).await? } else { 0 };
-    let rows = if limit == 0 { Vec::new() } else { sqlx::query_as(&format!("{ITEM}{joins} ORDER BY i.id LIMIT $5 OFFSET $6")).bind(issue).bind(pull).bind(viewer).bind(include_archived).bind(limit).bind(offset).fetch_all(&mut *tx).await? };
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let total = if count {
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible"))
+            .bind(issue)
+            .bind(pull)
+            .bind(viewer)
+            .bind(include_archived)
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        0
+    };
+    let rows = if limit == 0 {
+        Vec::new()
+    } else {
+        sqlx::query_as(&format!("{ITEM}{joins} ORDER BY i.id LIMIT $5 OFFSET $6"))
+            .bind(issue)
+            .bind(pull)
+            .bind(viewer)
+            .bind(include_archived)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&mut *tx)
+            .await?
+    };
     tx.commit().await?;
     Ok((total, rows))
 }
 
-pub async fn items_window(pool: &PgPool, viewer: Option<i64>, window: &crate::backend::db::projects::ItemWindow) -> Result<(i64, Vec<Item>)> {
-    anyhow::ensure!(window.offset >= 0 && (0..=100).contains(&window.limit), Refusal::Invalid);
+pub async fn items_window(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    window: &crate::backend::db::projects::ItemWindow,
+) -> Result<(i64, Vec<Item>)> {
+    anyhow::ensure!(
+        window.offset >= 0 && (0..=100).contains(&window.limit),
+        Refusal::Invalid
+    );
     let mut tx = pool.begin().await?;
     readable_at(&mut tx, viewer, window.project, window.include_deleted).await?;
     let joins = format!(" LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND ($3::boolean IS NULL OR i.archived=$3) AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {})", super::super::repositories::access::readable_condition());
-    let total = if window.count { sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible")).bind(window.project).bind(viewer).bind(window.archived).fetch_one(&mut *tx).await? } else { 0 };
+    let total = if window.count {
+        sqlx::query_scalar(&format!("SELECT COUNT(*) FROM ({ITEM}{joins}) visible"))
+            .bind(window.project)
+            .bind(viewer)
+            .bind(window.archived)
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        0
+    };
     let direction = if window.descending { "DESC" } else { "ASC" };
-    let rows = if window.limit == 0 { Vec::new() } else { sqlx::query_as(&format!("{ITEM}{joins} ORDER BY i.position {direction},i.id {direction} LIMIT $4 OFFSET $5")).bind(window.project).bind(viewer).bind(window.archived).bind(window.limit).bind(window.offset).fetch_all(&mut *tx).await? };
+    let rows = if window.limit == 0 {
+        Vec::new()
+    } else {
+        sqlx::query_as(&format!(
+            "{ITEM}{joins} ORDER BY i.position {direction},i.id {direction} LIMIT $4 OFFSET $5"
+        ))
+        .bind(window.project)
+        .bind(viewer)
+        .bind(window.archived)
+        .bind(window.limit)
+        .bind(window.offset)
+        .fetch_all(&mut *tx)
+        .await?
+    };
     tx.commit().await?;
     Ok((total, rows))
 }
@@ -235,12 +332,21 @@ pub async fn items(pool: &PgPool, viewer: Option<i64>, project: i64) -> Result<V
 }
 
 /// The project's items that `viewer` may read, in board order.
-pub(super) async fn readable_items(tx: &mut Transaction<'_, Postgres>, viewer: Option<i64>, project: i64) -> Result<Vec<Item>> {
+pub(super) async fn readable_items(
+    tx: &mut Transaction<'_, Postgres>,
+    viewer: Option<i64>,
+    project: i64,
+) -> Result<Vec<Item>> {
     Ok(sqlx::query_as(&format!("{ITEM} LEFT JOIN repositories r ON r.id=COALESCE(issues.repo_id,pr.repo_id,i.repo_id) LEFT JOIN users u ON u.id=$2 WHERE i.project_id=$1 AND (COALESCE(issues.repo_id,pr.repo_id,i.repo_id) IS NULL OR {}) ORDER BY i.position,i.id", super::super::repositories::access::readable_condition()))
         .bind(project).bind(viewer).fetch_all(&mut **tx).await?)
 }
 
-pub async fn items_at(pool: &PgPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Item>> {
+pub async fn items_at(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    include_deleted: bool,
+) -> Result<Vec<Item>> {
     let mut tx = pool.begin().await?;
     readable_at(&mut tx, viewer, project, include_deleted).await?;
     let items = readable_items(&mut tx, viewer, project).await?;
@@ -301,7 +407,13 @@ pub async fn update_item(
     Ok(item)
 }
 
-pub async fn delete_item(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, project: i64, item: i64) -> Result<()> {
+pub async fn delete_item(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    item: i64,
+) -> Result<()> {
     let mut tx = pool.begin().await?;
     // The project's writer may remove an item even after losing access to its repository.
     write_project(&mut tx, actor, credential, project).await?;
@@ -315,7 +427,13 @@ pub async fn delete_item(pool: &PgPool, actor: i64, credential: &AccountCredenti
     Ok(())
 }
 
-pub async fn create_view(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, project: i64, input: &NewView) -> Result<View> {
+pub async fn create_view(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    input: &NewView,
+) -> Result<View> {
     let mut tx = pool.begin().await?;
     write_project(&mut tx, actor, credential, project).await?;
     let fields = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")

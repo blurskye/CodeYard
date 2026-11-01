@@ -50,7 +50,11 @@ pub struct Attestation {
 }
 
 /// Retain the first over-budget row as cursor lookahead, never the entire requested collection.
-pub(crate) fn append_page(rows: &mut Vec<Attestation>, bytes: &mut usize, row: Attestation) -> bool {
+pub(crate) fn append_page(
+    rows: &mut Vec<Attestation>,
+    bytes: &mut usize,
+    row: Attestation,
+) -> bool {
     *bytes += row.bundle.len() + 256;
     rows.push(row);
     *bytes <= MAX_RESPONSE_BUNDLE_BYTES

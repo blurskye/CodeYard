@@ -10,6 +10,7 @@ use codeyard::backend::{
     api::create_router,
     app::AppState,
     ci::CiConfig,
+    crypto::hmac_sha256,
     crypto::SecretEncryptor,
     db::{
         self,
@@ -19,7 +20,6 @@ use codeyard::backend::{
     },
     identity::tokens::{self, TokenInput},
     storage::ObjectStore,
-    crypto::hmac_sha256,
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};

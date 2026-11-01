@@ -28,7 +28,11 @@ pub(super) fn panel(page: &Page, target: &str) -> Element {
             && page.draft.get("user_id") == Some(&member.user_id.to_string());
         page.draft
             .get("role")
-            .filter(|role| drafted && (page.is_owner || role.as_str() == "member") && ROLES.iter().any(|(value, _)| *value == role.as_str()))
+            .filter(|role| {
+                drafted
+                    && (page.is_owner || role.as_str() == "member")
+                    && ROLES.iter().any(|(value, _)| *value == role.as_str())
+            })
             .cloned()
             .unwrap_or_else(|| member.role.clone())
     };

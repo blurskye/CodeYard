@@ -57,26 +57,65 @@ async fn global(
     validate(&query, true)?;
     let sort = query.get("sort").map_or("published", String::as_str);
     let ascending = query.get("direction").is_some_and(|v| v == "asc");
-    let limit = query.get("per_page").map(|v| v.parse::<usize>()).transpose()
-        .map_err(|_| Error::invalid("Invalid page size"))?.unwrap_or(30).clamp(1, 100);
+    let limit = query
+        .get("per_page")
+        .map(|v| v.parse::<usize>())
+        .transpose()
+        .map_err(|_| Error::invalid("Invalid page size"))?
+        .unwrap_or(30)
+        .clamp(1, 100);
     let cursor = if let Some(cursor) = query.get("after").or(query.get("before")) {
-        if cursor.len() > 2048 { return Err(Error::invalid("Invalid cursor")); }
-        let bytes = URL_SAFE_NO_PAD.decode(cursor).map_err(|_| Error::invalid("Invalid cursor"))?;
-        let (field, direction, key): (String, bool, (String, String)) = serde_json::from_slice(&bytes).map_err(|_| Error::invalid("Invalid cursor"))?;
-        if field != sort || direction != ascending { return Err(Error::invalid("Invalid cursor")); }
+        if cursor.len() > 2048 {
+            return Err(Error::invalid("Invalid cursor"));
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(cursor)
+            .map_err(|_| Error::invalid("Invalid cursor"))?;
+        let (field, direction, key): (String, bool, (String, String)) =
+            serde_json::from_slice(&bytes).map_err(|_| Error::invalid("Invalid cursor"))?;
+        if field != sort || direction != ascending {
+            return Err(Error::invalid("Invalid cursor"));
+        }
         Some(key)
-    } else { None };
-    let offset = if cursor.is_some() { 0 } else {
-        let page = query.get("page").map(|v| v.parse::<usize>()).transpose()
-            .map_err(|_| Error::invalid("Invalid page"))?.unwrap_or(1);
-        if !(1..=10000).contains(&page) { return Err(Error::invalid("Invalid page")); }
+    } else {
+        None
+    };
+    let offset = if cursor.is_some() {
+        0
+    } else {
+        let page = query
+            .get("page")
+            .map(|v| v.parse::<usize>())
+            .transpose()
+            .map_err(|_| Error::invalid("Invalid page"))?
+            .unwrap_or(1);
+        if !(1..=10000).contains(&page) {
+            return Err(Error::invalid("Invalid page"));
+        }
         (page - 1) * limit
     };
-    let selected = store::global_page(&state.pool, &store::CatalogueQuery {
-        filters: query.clone(), sort: sort.to_owned(), ascending, cursor,
-        before: query.contains_key("before"), offset, limit,
-    }).await.map_err(failure)?;
-    page_response(selected.documents, &query, &uri, true, selected.previous, selected.next)
+    let selected = store::global_page(
+        &state.pool,
+        &store::CatalogueQuery {
+            filters: query.clone(),
+            sort: sort.to_owned(),
+            ascending,
+            cursor,
+            before: query.contains_key("before"),
+            offset,
+            limit,
+        },
+    )
+    .await
+    .map_err(failure)?;
+    page_response(
+        selected.documents,
+        &query,
+        &uri,
+        true,
+        selected.previous,
+        selected.next,
+    )
 }
 async fn global_detail(
     State(state): State<Arc<AppState>>,
@@ -169,9 +208,21 @@ fn sort_key(v: &Value, sort: &str, global: bool) -> (String, String) {
         }
         .into(),
         field => {
-            let field = match field { "published" => "published_at", "updated" => "updated_at", _ => "created_at" };
-            v[field].as_str().and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok()).map(|value| value.with_timezone(&chrono::Utc).to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)).unwrap_or_default()
-        },
+            let field = match field {
+                "published" => "published_at",
+                "updated" => "updated_at",
+                _ => "created_at",
+            };
+            v[field]
+                .as_str()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .map(|value| {
+                    value
+                        .with_timezone(&chrono::Utc)
+                        .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+                })
+                .unwrap_or_default()
+        }
     };
     let id = if global {
         v["ghsa_id"].as_str().unwrap_or("").to_owned()
@@ -189,7 +240,12 @@ fn page(mut rows: Vec<Value>, q: &Params, uri: &Uri, global: bool) -> Result<Res
         .get("sort")
         .map_or(if global { "published" } else { "created" }, String::as_str);
     let ascending = q.get("direction").is_some_and(|s| s == "asc");
-    let limit = super::pagination::page_size(q.get("per_page").map(|s| s.parse::<usize>()).transpose().map_err(|_| Error::invalid("Invalid page size"))?);
+    let limit = super::pagination::page_size(
+        q.get("per_page")
+            .map(|s| s.parse::<usize>())
+            .transpose()
+            .map_err(|_| Error::invalid("Invalid page size"))?,
+    );
     rows.sort_by_cached_key(|v| sort_key(v, sort, global));
     if !ascending {
         rows.reverse();
@@ -239,18 +295,30 @@ fn page(mut rows: Vec<Value>, q: &Params, uri: &Uri, global: bool) -> Result<Res
     };
     let more = offset.saturating_add(limit) < rows.len();
     let selected: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
-    page_response(selected, q, uri, global, offset > 0 || q.contains_key("after"), more || q.contains_key("before"))
+    page_response(
+        selected,
+        q,
+        uri,
+        global,
+        offset > 0 || q.contains_key("after"),
+        more || q.contains_key("before"),
+    )
 }
-fn page_response(selected: Vec<Value>, q: &Params, uri: &Uri, global: bool, previous: bool, next: bool) -> Result<Response> {
-    let sort = q.get("sort").map_or(if global { "published" } else { "created" }, String::as_str);
+fn page_response(
+    selected: Vec<Value>,
+    q: &Params,
+    uri: &Uri,
+    global: bool,
+    previous: bool,
+    next: bool,
+) -> Result<Response> {
+    let sort = q
+        .get("sort")
+        .map_or(if global { "published" } else { "created" }, String::as_str);
     let ascending = q.get("direction").is_some_and(|s| s == "asc");
     let mut links = Vec::new();
     for (rel, row, include) in [
-        (
-            "prev",
-            selected.first(),
-            previous,
-        ),
+        ("prev", selected.first(), previous),
         ("next", selected.last(), next),
     ] {
         if !include {

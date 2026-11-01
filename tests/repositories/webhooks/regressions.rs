@@ -22,7 +22,9 @@ async fn try_insert_hook(
         database.pool(),
         owner,
         repo.owner_user_id.unwrap(),
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(database.pool(), repo.owner_user_id.unwrap()).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(database.pool(), repo.owner_user_id.unwrap()).await,
+        ),
         &WebhookFields {
             username: None,
             password: None,
@@ -59,7 +61,9 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
             &[repo_id],
         )
         .await;
-    let hooks = db::webhooks::list_webhooks(database.pool(), owner).await.unwrap();
+    let hooks = db::webhooks::list_webhooks(database.pool(), owner)
+        .await
+        .unwrap();
     assert_eq!(hooks.len(), 32);
     let mut record = db::webhooks::NewDelivery {
         redelivery: false,
@@ -102,9 +106,15 @@ async fn webhook_settings_batch_statuses_and_paginate(pg: bool) {
         csrf_token: "token",
         repository_id: hooks[0].repo_id,
     };
-    let first = webhooks::panel::build(database.pool(), &actor, &credential, &place, &Default::default())
-        .await
-        .unwrap();
+    let first = webhooks::panel::build(
+        database.pool(),
+        &actor,
+        &credential,
+        &place,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(first.hooks.len(), 30);
     assert_eq!(first.hooks[0].last, "No deliveries yet");
     assert_eq!(first.hooks[1].last, "Last delivery failed");

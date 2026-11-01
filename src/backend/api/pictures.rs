@@ -72,13 +72,11 @@ pub async fn read(mut multipart: Multipart) -> Result<PictureForm, PictureFormEr
                 return Err(PictureFormError::Unreadable);
             }
         } else {
-            let value = crate::backend::api::http::multipart::bounded_text(
-                &mut field,
-                MAX_FIELD_BYTES,
-            )
-            .await
-            .map_err(read_error)?
-            .ok_or(PictureFormError::Unreadable)?;
+            let value =
+                crate::backend::api::http::multipart::bounded_text(&mut field, MAX_FIELD_BYTES)
+                    .await
+                    .map_err(read_error)?
+                    .ok_or(PictureFormError::Unreadable)?;
             form.fields.insert(name, value);
         }
     }

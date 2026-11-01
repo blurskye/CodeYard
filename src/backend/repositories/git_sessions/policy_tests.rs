@@ -1222,7 +1222,12 @@ mod fixture {
                 .unwrap();
             let commit = scratch.commit(&[fixture.oid], "topic");
             let output = fixture
-                .push(&scratch, "refs/heads/topic", &fixture.oid.to_string(), &commit.to_string())
+                .push(
+                    &scratch,
+                    "refs/heads/topic",
+                    &fixture.oid.to_string(),
+                    &commit.to_string(),
+                )
                 .await;
             if listed {
                 assert!(output.contains("ok refs/heads/topic"), "{output}");
@@ -1977,11 +1982,16 @@ mod fixture {
             assert_eq!(repository.default_branch, "main");
             assert!(repository.size_bytes > 0);
             for _ in 0..runs.len() {
-                let run =
-                    db::ci::claim_ci_run(&fixture.pool, "worker", "local", &[fixture.actor_id], &crate::backend::ci::CiConfig::default().platform_labels())
-                        .await
-                        .unwrap()
-                        .unwrap();
+                let run = db::ci::claim_ci_run(
+                    &fixture.pool,
+                    "worker",
+                    "local",
+                    &[fixture.actor_id],
+                    &crate::backend::ci::CiConfig::default().platform_labels(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
                 assert_eq!(run.workflow_path, ".github/workflows/ci.yml");
                 assert_eq!(
                     run.workflow_blobs[".github/workflows/ci.yml"],

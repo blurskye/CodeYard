@@ -1,6 +1,8 @@
 use crate::backend::db::{
     models::{AccessLevel, User},
-    repositories::collaborators::{Added, Collaborator, CollaboratorQuery, Invitation, InvitationSummary, Refusal},
+    repositories::collaborators::{
+        Added, Collaborator, CollaboratorQuery, Invitation, InvitationSummary, Refusal,
+    },
 };
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -24,7 +26,11 @@ pub async fn add(
     admin(&mut tx, actor, repo_id).await?;
     anyhow::ensure!((1..=5).contains(&(permission as i16)), Refusal::Denied);
     let user=sqlx::query_as::<_,User>("SELECT * FROM users WHERE username=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE").bind(username).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
-    anyhow::ensure!(!super::super::users::blocks::repository_interaction_blocked(&mut tx, user.id, repo_id).await?, Refusal::Denied);
+    anyhow::ensure!(
+        !super::super::users::blocks::repository_interaction_blocked(&mut tx, user.id, repo_id)
+            .await?,
+        Refusal::Denied
+    );
     let owner: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND owner_kind='user' AND owner_user_id=$2)").bind(repo_id).bind(user.id).fetch_one(&mut *tx).await?;
     anyhow::ensure!(!owner, Refusal::Owner);
     let existing: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repo_access WHERE repo_id=$1 AND user_id=$2) OR EXISTS(SELECT 1 FROM repositories r JOIN org_memberships m ON m.org_id=r.owner_org_id WHERE r.id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin','member'))").bind(repo_id).bind(user.id).fetch_one(&mut *tx).await?;
@@ -98,7 +104,11 @@ fn administration(user: &str) -> String {
 fn invitation_query(projection: &str, joins: &str, session: bool) -> String {
     let inviter = administration("i.inviter_id");
     let viewer = administration("$1");
-    let credential = if session { "AND EXISTS(SELECT 1 FROM sessions s JOIN users viewer ON viewer.id=s.user_id WHERE s.id=$5 AND s.user_id=$1 AND s.expires_at>clock_timestamp() AND NOT viewer.is_banned AND NOT viewer.must_change_password)" } else { "" };
+    let credential = if session {
+        "AND EXISTS(SELECT 1 FROM sessions s JOIN users viewer ON viewer.id=s.user_id WHERE s.id=$5 AND s.user_id=$1 AND s.expires_at>clock_timestamp() AND NOT viewer.is_banned AND NOT viewer.must_change_password)"
+    } else {
+        ""
+    };
     format!("SELECT {projection} FROM repository_invitations i JOIN repositories r ON r.id=i.repo_id {joins}
         WHERE i.state='pending' AND i.created_at>clock_timestamp()-INTERVAL '7 days' AND {inviter}
         AND EXISTS(SELECT 1 FROM users recipient WHERE recipient.id=$1 AND NOT recipient.is_banned AND NOT recipient.must_change_password)
@@ -106,11 +116,27 @@ fn invitation_query(projection: &str, joins: &str, session: bool) -> String {
         ORDER BY i.id DESC LIMIT $3 OFFSET $4")
 }
 
-pub async fn recipient_invitations(pool: &PgPool, actor: i64, session: &str, offset: i64, limit: i64) -> Result<Vec<InvitationSummary>> {
-    anyhow::ensure!(offset >= 0 && (1..=101).contains(&limit), "Invalid invitation page");
+pub async fn recipient_invitations(
+    pool: &PgPool,
+    actor: i64,
+    session: &str,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<InvitationSummary>> {
+    anyhow::ensure!(
+        offset >= 0 && (1..=101).contains(&limit),
+        "Invalid invitation page"
+    );
     let query = invitation_query("i.*,CASE WHEN r.owner_kind='user' THEN owner.username::text ELSE org.name::text END AS owner,r.name::text AS repository,inviter.username::text AS inviter",
         "JOIN users inviter ON inviter.id=i.inviter_id LEFT JOIN users owner ON owner.id=r.owner_user_id LEFT JOIN organizations org ON org.id=r.owner_org_id", true);
-    Ok(sqlx::query_as(&query).bind(actor).bind(None::<i64>).bind(limit).bind(offset).bind(session).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&query)
+        .bind(actor)
+        .bind(None::<i64>)
+        .bind(limit)
+        .bind(offset)
+        .bind(session)
+        .fetch_all(pool)
+        .await?)
 }
 
 pub async fn invitations(
@@ -121,7 +147,13 @@ pub async fn invitations(
     limit: i64,
 ) -> Result<Vec<Invitation>> {
     anyhow::ensure!(offset >= 0 && limit > 0, "Invalid invitation page");
-    Ok(sqlx::query_as(&invitation_query("i.*", "", false)).bind(actor).bind(repo_id).bind(limit).bind(offset).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&invitation_query("i.*", "", false))
+        .bind(actor)
+        .bind(repo_id)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?)
 }
 
 pub async fn update_invitation(
@@ -138,7 +170,12 @@ pub async fn update_invitation(
     Ok(invitation)
 }
 
-pub async fn respond(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, id: i64, accept: bool) -> Result<()> {
+pub async fn respond(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    id: i64,
+    accept: bool,
+) -> Result<()> {
     let authority = actor.into();
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
@@ -151,11 +188,21 @@ pub async fn respond(pool: &PgPool, actor: impl Into<crate::backend::db::credent
     let live: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *tx).await?;
     anyhow::ensure!(live, Refusal::Denied);
     if let Some(credential) = authority.credential() {
-        super::super::users::transitions::require_account(&mut tx, actor, &credential).await
-            .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { Refusal::Denied.into() } else { error })?;
+        super::super::users::transitions::require_account(&mut tx, actor, &credential)
+            .await
+            .map_err(|error| {
+                if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+                    Refusal::Denied.into()
+                } else {
+                    error
+                }
+            })?;
     }
     let invitation=sqlx::query_as::<_,Invitation>("SELECT * FROM repository_invitations WHERE id=$1 AND invitee_id=$2 AND state='pending' AND created_at>NOW()-INTERVAL '7 days' FOR UPDATE").bind(id).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
-    anyhow::ensure!(!accept || invitation.inviter_id == authorized_inviter, Refusal::Denied);
+    anyhow::ensure!(
+        !accept || invitation.inviter_id == authorized_inviter,
+        Refusal::Denied
+    );
     if accept {
         let current: i16=sqlx::query_scalar("SELECT COALESCE((SELECT access_level FROM repo_access WHERE repo_id=$1 AND user_id=$2),0)::smallint").bind(invitation.repo_id).bind(actor).fetch_one(&mut *tx).await?;
         super::access::grant_repo_access_in_transaction(

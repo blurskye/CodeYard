@@ -7,7 +7,9 @@ pub(crate) const PUBLIC_REF_NAMESPACES: [&str; 3] = ["refs/heads/", "refs/tags/"
 
 /// Namespace selection only; callers admitting a new name must also validate it.
 pub(crate) fn is_public_ref(reference: &str) -> bool {
-    PUBLIC_REF_NAMESPACES.iter().any(|prefix| reference.starts_with(*prefix))
+    PUBLIC_REF_NAMESPACES
+        .iter()
+        .any(|prefix| reference.starts_with(*prefix))
 }
 
 /// Returns whether `reference` is an exact, non-normalized branch, tag or notes ref.

@@ -8,7 +8,10 @@ use sqlx::PgPool;
 use tracing::debug;
 
 pub async fn touch_ssh_key(pool: &PgPool, key_id: i64) -> Result<()> {
-    sqlx::query("UPDATE ssh_keys SET last_used_at=clock_timestamp() WHERE id=$1").bind(key_id).execute(pool).await?;
+    sqlx::query("UPDATE ssh_keys SET last_used_at=clock_timestamp() WHERE id=$1")
+        .bind(key_id)
+        .execute(pool)
+        .await?;
     Ok(())
 }
 

@@ -181,7 +181,15 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
             has_more,
             reference,
             revision,
-        } => dependencies(repo, &path, &rows, page, has_more, &reference, revision.as_deref()),
+        } => dependencies(
+            repo,
+            &path,
+            &rows,
+            page,
+            has_more,
+            &reference,
+            revision.as_deref(),
+        ),
     };
     chrome(
         repo,
@@ -210,7 +218,13 @@ fn dependencies(
     reference: &str,
     revision: Option<&str>,
 ) -> Element {
-    let page_url = |page| format!("{path}?page={page}&ref={}&sha={}", encode_component(reference), encode_component(revision.unwrap_or_default()));
+    let page_url = |page| {
+        format!(
+            "{path}?page={page}&ref={}&sha={}",
+            encode_component(reference),
+            encode_component(revision.unwrap_or_default())
+        )
+    };
     rsx! {
         {heading("Dependency graph", "Latest stored dependency submissions at one revision. Storage need not be online; this is not a live inventory or vulnerability scan.", None)}
         if let Some(revision) = revision { p { "Stored revision: " code { "{revision}" } " · {reference}" } }

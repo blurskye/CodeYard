@@ -12,7 +12,10 @@ pub(super) fn parse(expression: &str) -> Result<Cron> {
     ensure!(fields.len() == 5, "cron requires five fields");
     let mut normalized = Vec::new();
     for (index, field) in fields.iter().enumerate() {
-        ensure!(field.split(',').all(|term| !term.is_empty()), "empty cron term");
+        ensure!(
+            field.split(',').all(|term| !term.is_empty()),
+            "empty cron term"
+        );
         let mut field = field.to_ascii_uppercase();
         let names: &[&str] = match index {
             3 => &[
@@ -53,15 +56,23 @@ pub(super) fn parse(expression: &str) -> Result<Cron> {
     if let (Some(first), Some(last)) = (first, previous) {
         if 60 + first - last < 5 {
             let hours: Cron = format!("0 {} * * *", fields[1]).parse()?;
-            let selected: Vec<_> = (0..24).map(|hour| hours.is_time_matching(&(start + chrono::Duration::hours(hour))))
+            let selected: Vec<_> = (0..24)
+                .map(|hour| hours.is_time_matching(&(start + chrono::Duration::hours(hour))))
                 .collect::<std::result::Result<_, _>>()?;
-            ensure!(!selected.windows(2).any(|pair| pair[0] && pair[1]), "cron interval is less than five minutes");
+            ensure!(
+                !selected.windows(2).any(|pair| pair[0] && pair[1]),
+                "cron interval is less than five minutes"
+            );
             if selected[23] && selected[0] {
-                let days: Cron = format!("0 0 {} {} {}", normalized[2], normalized[3], normalized[4]).parse()?;
+                let days: Cron =
+                    format!("0 0 {} {} {}", normalized[2], normalized[3], normalized[4]).parse()?;
                 let mut previous_day = false;
                 for day in 0..=146097 {
                     let matches = days.is_time_matching(&(start + chrono::Duration::days(day)))?;
-                    ensure!(!(matches && previous_day), "cron interval is less than five minutes");
+                    ensure!(
+                        !(matches && previous_day),
+                        "cron interval is less than five minutes"
+                    );
                     previous_day = matches;
                 }
             }
@@ -86,11 +97,19 @@ impl CiRuns {
             after = *ids.last().expect("nonempty repository page");
             use futures_util::StreamExt;
             let mut pending = futures_util::stream::iter(ids.into_iter().map(|id| async move {
-                let result = tokio::time::timeout(std::time::Duration::from_secs(10), self.queue_repository_schedules(id, now)).await;
+                let result = tokio::time::timeout(
+                    std::time::Duration::from_secs(10),
+                    self.queue_repository_schedules(id, now),
+                )
+                .await;
                 if !matches!(result, Ok(Ok(()))) {
-                    tracing::warn!(repo_id=id, "scheduled workflow discovery timed out or was refused");
+                    tracing::warn!(
+                        repo_id = id,
+                        "scheduled workflow discovery timed out or was refused"
+                    );
                 }
-            })).buffer_unordered(32);
+            }))
+            .buffer_unordered(32);
             while pending.next().await.is_some() {}
         }
         Ok(())
@@ -128,10 +147,15 @@ impl CiRuns {
             return Ok(());
         }
         let (actor, access_cap) = match proof.publication.actor {
-            crate::backend::git::PublicationActor::User(actor) => (actor, db::models::AccessLevel::Owner),
+            crate::backend::git::PublicationActor::User(actor) => {
+                (actor, db::models::AccessLevel::Owner)
+            }
             crate::backend::git::PublicationActor::DeployKey(key) => {
-                let (actor, cap) = crate::backend::repositories::deploy_keys::authorize(&self.pool, key, &repo, true)
-                    .await.map_err(|_| AdmissionError::Denied("CI repository access denied"))?;
+                let (actor, cap) = crate::backend::repositories::deploy_keys::authorize(
+                    &self.pool, key, &repo, true,
+                )
+                .await
+                .map_err(|_| AdmissionError::Denied("CI repository access denied"))?;
                 (actor.id, cap)
             }
         };

@@ -6,7 +6,10 @@ use sqlx::{PgPool, Postgres, Transaction};
 /// The reactor's access is checked under a shared lock on the repository, and the item row is locked
 /// before the toggle, so two toggles of one item run one after the other. Neither is lost, and a
 /// revoked grant or an archived repository refuses the write.
-#[expect(clippy::too_many_arguments, reason = "Each argument is one ID, subject or check of the reaction.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one ID, subject or check of the reaction."
+)]
 pub async fn toggle_reaction(
     pool: &PgPool,
     actor_id: i64,

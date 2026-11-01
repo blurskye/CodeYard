@@ -47,7 +47,13 @@ pub async fn sqlite_snapshot_repositories(path: &std::path::Path) -> Result<Vec<
 }
 
 /// Keep the exporting transaction alive until pg_dump has imported and read its snapshot.
-pub async fn postgres_snapshot(pool: &DbPool) -> Result<(sqlx::Transaction<'static, sqlx::Postgres>, String, Vec<Repository>)> {
+pub async fn postgres_snapshot(
+    pool: &DbPool,
+) -> Result<(
+    sqlx::Transaction<'static, sqlx::Postgres>,
+    String,
+    Vec<Repository>,
+)> {
     match pool {
         DbPool::Postgres(pool) => super::postgres::backups::export_snapshot(pool).await,
         DbPool::Sqlite(_) => bail!("only PostgreSQL exports snapshots"),

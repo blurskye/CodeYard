@@ -25,7 +25,9 @@ pub async fn recover_suspended_organization_owner(
     // Lock the users in id order so concurrent recoveries cannot deadlock.
     let users: Vec<(i64, bool, bool)> = sqlx::query_as("SELECT id,is_admin,NOT is_banned AND NOT must_change_password FROM users WHERE id=ANY($1) ORDER BY id FOR SHARE")
         .bind(vec![actor.user_id, target]).fetch_all(&mut *tx).await?;
-    if !crate::backend::db::postgres::users::transitions::active_admin_session(&mut tx, &actor).await? {
+    if !crate::backend::db::postgres::users::transitions::active_admin_session(&mut tx, &actor)
+        .await?
+    {
         return Ok(Denied);
     }
     if remaining_active_owner(&mut tx, org, -1).await? {

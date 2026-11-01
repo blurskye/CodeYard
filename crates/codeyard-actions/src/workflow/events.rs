@@ -1,5 +1,8 @@
 //! Event declarations shared by discovery, admission and execution.
-use super::{dispatch_inputs::{self, DispatchInput}, parser};
+use super::{
+    dispatch_inputs::{self, DispatchInput},
+    parser,
+};
 use anyhow::{ensure, Context, Result};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
@@ -48,12 +51,20 @@ pub fn declares_event(value: Option<&Value>, event: &str) -> bool {
 
 pub fn parse(value: Option<&Value>) -> Result<WorkflowTriggers> {
     let mut triggers = WorkflowTriggers::default();
-    let Some(value) = value else { return Ok(triggers); };
+    let Some(value) = value else {
+        return Ok(triggers);
+    };
     parser::events(value)?;
     let events: Vec<_> = match value {
         Value::String(event) => vec![(event.as_str(), &Value::Null)],
-        Value::Sequence(events) => events.iter().map(|event| Ok((event.as_str().context("Invalid event")?, &Value::Null))).collect::<Result<_>>()?,
-        Value::Mapping(events) => events.iter().map(|(event, config)| Ok((event.as_str().context("Invalid event")?, config))).collect::<Result<_>>()?,
+        Value::Sequence(events) => events
+            .iter()
+            .map(|event| Ok((event.as_str().context("Invalid event")?, &Value::Null)))
+            .collect::<Result<_>>()?,
+        Value::Mapping(events) => events
+            .iter()
+            .map(|(event, config)| Ok((event.as_str().context("Invalid event")?, config)))
+            .collect::<Result<_>>()?,
         _ => unreachable!("validated event declaration"),
     };
     for (event, config) in events {
@@ -66,13 +77,22 @@ pub fn parse(value: Option<&Value>) -> Result<WorkflowTriggers> {
                 triggers.dispatch_inputs = dispatch_inputs::parse(config)?;
             }
             "schedule" => {
-                let schedules = config.as_sequence().context("Workflow schedules must be a list")?;
+                let schedules = config
+                    .as_sequence()
+                    .context("Workflow schedules must be a list")?;
                 ensure!(schedules.len() <= 32, "Too many workflow schedules");
                 for schedule in schedules {
-                    triggers.schedules.push(schedule["cron"].as_str().context("Workflow schedule requires cron")?.to_owned());
+                    triggers.schedules.push(
+                        schedule["cron"]
+                            .as_str()
+                            .context("Workflow schedule requires cron")?
+                            .to_owned(),
+                    );
                 }
             }
-            _ => { triggers.events.insert(event.to_owned(), filter(config)?); }
+            _ => {
+                triggers.events.insert(event.to_owned(), filter(config)?);
+            }
         }
     }
     Ok(triggers)
@@ -80,7 +100,9 @@ pub fn parse(value: Option<&Value>) -> Result<WorkflowTriggers> {
 
 fn filter(config: &Value) -> Result<WorkflowEventFilter> {
     let mut filter = WorkflowEventFilter::default();
-    let Some(mapping) = config.as_mapping() else { return Ok(filter); };
+    let Some(mapping) = config.as_mapping() else {
+        return Ok(filter);
+    };
     for (key, value) in mapping {
         let target = match key.as_str().unwrap_or("") {
             "types" => &mut filter.types,
@@ -94,7 +116,13 @@ fn filter(config: &Value) -> Result<WorkflowEventFilter> {
             _ => continue,
         };
         *target = parser::strings(value, "event filter")?;
-        ensure!(target.len() <= MAX_WORKFLOW_FILTER_PATTERNS && target.iter().all(|value| value.len() <= MAX_WORKFLOW_PATTERN_BYTES), "Workflow filter too large");
+        ensure!(
+            target.len() <= MAX_WORKFLOW_FILTER_PATTERNS
+                && target
+                    .iter()
+                    .all(|value| value.len() <= MAX_WORKFLOW_PATTERN_BYTES),
+            "Workflow filter too large"
+        );
     }
     Ok(filter)
 }

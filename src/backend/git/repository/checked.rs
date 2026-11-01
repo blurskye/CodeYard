@@ -205,8 +205,13 @@ pub(crate) async fn introduced_signatures(
         validate_merge_revision("main", old)?;
     }
     let commits = walk_commits(
-        path, quarantine, &[new.to_owned()], &old.into_iter().map(str::to_owned).collect::<Vec<_>>(),
-        false, MAX_SIGNATURE_CHECKS, COMMIT_WALK_TIMEOUT,
+        path,
+        quarantine,
+        &[new.to_owned()],
+        &old.into_iter().map(str::to_owned).collect::<Vec<_>>(),
+        false,
+        MAX_SIGNATURE_CHECKS,
+        COMMIT_WALK_TIMEOUT,
     )
     .await?;
     let path = path.to_owned();
@@ -263,7 +268,9 @@ pub(crate) async fn walk_commits(
         validate_merge_revision("main", id)?;
     }
     let mut command = quarantined_command(path, quarantine)?;
-    command.args(["rev-list", &format!("--max-count={}", limit + 1)]).args(tips);
+    command
+        .args(["rev-list", &format!("--max-count={}", limit + 1)])
+        .args(tips);
     if !hidden.is_empty() || hide_published {
         command.arg("--not").args(hidden);
         if hide_published {
@@ -275,7 +282,10 @@ pub(crate) async fn walk_commits(
     command.arg("--");
     let (status, bytes) = process::buffered(command, b"", (limit + 1) * 41, timeout).await?;
     ensure!(status.success(), "Git could not enumerate commits");
-    let ids = std::str::from_utf8(&bytes)?.lines().map(git2::Oid::from_str).collect::<std::result::Result<Vec<_>, _>>()?;
+    let ids = std::str::from_utf8(&bytes)?
+        .lines()
+        .map(git2::Oid::from_str)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
     ensure!(ids.len() <= limit, "Too many commits to scan");
     Ok(ids)
 }
@@ -370,7 +380,8 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
             listed.push_str(&line);
         }
         Ok(process::ReadEnd::Complete(listed))
-    }).await?;
+    })
+    .await?;
     if listed.is_empty() {
         return Ok(title.to_owned());
     }
@@ -386,11 +397,12 @@ fn check_commit_text(message: &str, people: &[&Person<'_>]) -> Result<()> {
     for person in people {
         crate::backend::git::objects::validate_identity(person.name, person.email)?;
     }
-    if message.is_empty() || message.contains('\0') || message.len() > MAX_MERGE_MESSAGE_BYTES
-    {
+    if message.is_empty() || message.contains('\0') || message.len() > MAX_MERGE_MESSAGE_BYTES {
         return Err(crate::backend::repositories::store::RepoError::new(
-            crate::backend::repositories::store::ErrorKind::Invalid, "Invalid merge commit identity or message",
-        ).into());
+            crate::backend::repositories::store::ErrorKind::Invalid,
+            "Invalid merge commit identity or message",
+        )
+        .into());
     }
     Ok(())
 }
@@ -485,11 +497,24 @@ pub(crate) async fn commit_tree(
     author: &Person<'_>,
     committer: &Person<'_>,
 ) -> Result<String> {
-    commit_tree_bytes(path, tree, parents, message, std::ffi::OsStr::new(author.name), std::ffi::OsStr::new(author.email), author.date, committer).await
+    commit_tree_bytes(
+        path,
+        tree,
+        parents,
+        message,
+        std::ffi::OsStr::new(author.name),
+        std::ffi::OsStr::new(author.email),
+        author.date,
+        committer,
+    )
+    .await
 }
 
 /// Legacy authors need not be UTF-8; the environment carries their original bytes.
-#[expect(clippy::too_many_arguments, reason = "Each argument is one input of git commit-tree.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one input of git commit-tree."
+)]
 pub(super) async fn commit_tree_bytes(
     path: &Path,
     tree: &str,
@@ -501,11 +526,21 @@ pub(super) async fn commit_tree_bytes(
     committer: &Person<'_>,
 ) -> Result<String> {
     let mut command = process::git_command()?;
-    command.arg("--git-dir").arg(path).args(["commit-tree", tree]);
-    for parent in parents { command.args(["-p", *parent]); }
-    command.env("GIT_AUTHOR_NAME", author_name).env("GIT_AUTHOR_EMAIL", author_email)
-        .env("GIT_COMMITTER_NAME", committer.name).env("GIT_COMMITTER_EMAIL", committer.email);
-    if let Some(date) = author_date { command.env("GIT_AUTHOR_DATE", date); }
+    command
+        .arg("--git-dir")
+        .arg(path)
+        .args(["commit-tree", tree]);
+    for parent in parents {
+        command.args(["-p", *parent]);
+    }
+    command
+        .env("GIT_AUTHOR_NAME", author_name)
+        .env("GIT_AUTHOR_EMAIL", author_email)
+        .env("GIT_COMMITTER_NAME", committer.name)
+        .env("GIT_COMMITTER_EMAIL", committer.email);
+    if let Some(date) = author_date {
+        command.env("GIT_AUTHOR_DATE", date);
+    }
     let (status, output) = process::buffered(command, message, MAX_OUTPUT, COMMAND_TIMEOUT).await?;
     ensure!(status.success(), "Git failed to construct the commit");
     oid_output(&output)
@@ -540,7 +575,9 @@ pub(crate) async fn initialize_repository_copy(
             .ok_or_else(|| anyhow!("Invalid source storage path"))?;
         let default_ref = format!("+refs/heads/{default_branch}:refs/heads/{default_branch}");
         let mut arguments = vec!["fetch", "--quiet", "--no-tags", "--no-write-fetch-head"];
-        if template { arguments.push("--depth=1"); }
+        if template {
+            arguments.push("--depth=1");
+        }
         arguments.extend(["--", source]);
         if default_branch_only {
             arguments.push(&default_ref);
@@ -551,10 +588,22 @@ pub(crate) async fn initialize_repository_copy(
         if !status.success() {
             bail!("Git fork snapshot failed");
         }
-        let (status, heads) = command(path, &["for-each-ref", "--format=%(refname)", "refs/heads/"], b"", None).await?;
+        let (status, heads) = command(
+            path,
+            &["for-each-ref", "--format=%(refname)", "refs/heads/"],
+            b"",
+            None,
+        )
+        .await?;
         ensure!(status.success(), "Git fork branch listing failed");
         let expected = format!("refs/heads/{default_branch}");
-        ensure!(heads.is_empty() || heads.split(|byte| *byte == b'\n').any(|name| name == expected.as_bytes()), "The source default branch changed while copying");
+        ensure!(
+            heads.is_empty()
+                || heads
+                    .split(|byte| *byte == b'\n')
+                    .any(|name| name == expected.as_bytes()),
+            "The source default branch changed while copying"
+        );
     }
     Ok(())
 }
@@ -572,42 +621,46 @@ pub(crate) async fn rewrite_template_history(
         author.0.to_owned(),
         author.1.to_owned(),
     );
-    process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || -> Result<()> {
-        let repo = git2::Repository::open_bare(&path_owned)?;
-        let signature = git2::Signature::now(&name, &email)?;
-        super::peel_to_commit_checked(&repo, &format!("refs/heads/{branch}"))?;
-        let mut names = Vec::new();
-        let mut bytes = 0;
-        for reference in repo.references()? {
-            let reference = reference?;
-            let name = reference
-                .name()
-                .ok_or_else(|| anyhow!("Invalid reference name"))?
-                .to_owned();
-            bytes += name.len();
-            if names.len() >= super::MAX_REPOSITORY_REFS || bytes > super::MAX_REPOSITORY_REF_BYTES
-            {
-                return Err(super::ObjectTooLarge.into());
+    process::blocking_until(
+        Instant::now() + process::RPC_TIMEOUT,
+        move || -> Result<()> {
+            let repo = git2::Repository::open_bare(&path_owned)?;
+            let signature = git2::Signature::now(&name, &email)?;
+            super::peel_to_commit_checked(&repo, &format!("refs/heads/{branch}"))?;
+            let mut names = Vec::new();
+            let mut bytes = 0;
+            for reference in repo.references()? {
+                let reference = reference?;
+                let name = reference
+                    .name()
+                    .ok_or_else(|| anyhow!("Invalid reference name"))?
+                    .to_owned();
+                bytes += name.len();
+                if names.len() >= super::MAX_REPOSITORY_REFS
+                    || bytes > super::MAX_REPOSITORY_REF_BYTES
+                {
+                    return Err(super::ObjectTooLarge.into());
+                }
+                names.push(name);
             }
-            names.push(name);
-        }
-        for name in names {
-            if !name.starts_with("refs/heads/") {
-                repo.find_reference(&name)?.delete()?;
-                continue;
+            for name in names {
+                if !name.starts_with("refs/heads/") {
+                    repo.find_reference(&name)?.delete()?;
+                    continue;
+                }
+                let commit = super::peel_to_commit_checked(&repo, &name)?;
+                let tree = super::directory_tree(&repo, &commit, "")?;
+                let message = format!(
+                    "Initial commit from {}",
+                    name.trim_start_matches("refs/heads/")
+                );
+                let id = repo.commit(None, &signature, &signature, &message, &tree, &[])?;
+                repo.reference(&name, id, true, "Create from template")?;
             }
-            let commit = super::peel_to_commit_checked(&repo, &name)?;
-            let tree = super::directory_tree(&repo, &commit, "")?;
-            let message = format!(
-                "Initial commit from {}",
-                name.trim_start_matches("refs/heads/")
-            );
-            let id = repo.commit(None, &signature, &signature, &message, &tree, &[])?;
-            repo.reference(&name, id, true, "Create from template")?;
-        }
-        repo.set_head(&format!("refs/heads/{branch}"))?;
-        Ok(())
-    })
+            repo.set_head(&format!("refs/heads/{branch}"))?;
+            Ok(())
+        },
+    )
     .await?;
     match tokio::fs::remove_file(path.join("shallow")).await {
         Ok(()) => {}
@@ -739,17 +792,24 @@ pub(crate) async fn prepare_pull_head(
 ) -> Result<PreparedPullHead> {
     validate_merge_revision("main", head)?;
     let (base, source) = (base.to_owned(), source.to_owned());
-    let (source, temporary, mut alternates, refs) = process::blocking_until(std::time::Instant::now() + process::RPC_TIMEOUT, move || {
-        use std::os::unix::ffi::OsStringExt;
-        let source = std::path::absolute(source)?;
-        ensure!(source.is_dir(), "Repository storage is unavailable");
-        let source = source.to_str().ok_or_else(|| anyhow!("Invalid source storage path"))?.to_owned();
-        let temporary = tempfile::tempdir()?;
-        let base = std::fs::canonicalize(base)?;
-        let alternates = quote_alternate(&base.join("objects")).into_vec();
-        let refs = super::list_mirror_refs(&base)?;
-        Ok((source, temporary, alternates, refs))
-    }).await?;
+    let (source, temporary, mut alternates, refs) = process::blocking_until(
+        std::time::Instant::now() + process::RPC_TIMEOUT,
+        move || {
+            use std::os::unix::ffi::OsStringExt;
+            let source = std::path::absolute(source)?;
+            ensure!(source.is_dir(), "Repository storage is unavailable");
+            let source = source
+                .to_str()
+                .ok_or_else(|| anyhow!("Invalid source storage path"))?
+                .to_owned();
+            let temporary = tempfile::tempdir()?;
+            let base = std::fs::canonicalize(base)?;
+            let alternates = quote_alternate(&base.join("objects")).into_vec();
+            let refs = super::list_mirror_refs(&base)?;
+            Ok((source, temporary, alternates, refs))
+        },
+    )
+    .await?;
     initialize_repository(temporary.path(), None, "main").await?;
     alternates.push(b'\n');
     tokio::fs::write(temporary.path().join("objects/info/alternates"), alternates).await?;
@@ -888,7 +948,8 @@ fn is_retained_object_ref(reference: &str) -> bool {
     reference
         .strip_prefix("refs/codeyard/objects/")
         .is_some_and(|id| {
-            crate::git_ids::is_full_commit_id(id) && !id.bytes().any(|byte| byte.is_ascii_uppercase())
+            crate::git_ids::is_full_commit_id(id)
+                && !id.bytes().any(|byte| byte.is_ascii_uppercase())
         })
 }
 
@@ -910,7 +971,9 @@ pub(crate) async fn current_branch_head(path: &Path, branch: &str) -> Result<Opt
 
 async fn current_reference(path: &Path, reference: &str) -> Result<Option<String>> {
     ensure!(
-        crate::backend::git::is_canonical_ref(reference) || is_pull_head_ref(reference) || is_retained_object_ref(reference),
+        crate::backend::git::is_canonical_ref(reference)
+            || is_pull_head_ref(reference)
+            || is_retained_object_ref(reference),
         "Invalid reference"
     );
     let (status, current) = command(
@@ -1065,12 +1128,20 @@ pub(crate) async fn publish_branch_rename(
     {
         return Err(RefConflict("Reference changed while renaming".into()).into());
     }
-    let outcome = run_ref_command(path, &["branch", "--move", "--", old, new], b"", "Reference changed while renaming", &[(&old_ref, Some(target)), (&new_ref, None)]).await;
+    let outcome = run_ref_command(
+        path,
+        &["branch", "--move", "--", old, new],
+        b"",
+        "Reference changed while renaming",
+        &[(&old_ref, Some(target)), (&new_ref, None)],
+    )
+    .await;
     if outcome.is_err() {
         // A timeout or failed exit may still follow an accepted ref move; report it as done so
         // the caller finishes the metadata. Prefix-related refs cannot coexist, so do not probe
         // the old name through the new ref's file.
-        let prefix_related = old_ref.starts_with(&format!("{new_ref}/")) || new_ref.starts_with(&format!("{old_ref}/"));
+        let prefix_related = old_ref.starts_with(&format!("{new_ref}/"))
+            || new_ref.starts_with(&format!("{old_ref}/"));
         if current_reference(path, &new_ref).await?.as_deref() == Some(target)
             && (prefix_related || current_reference(path, &old_ref).await?.is_none())
         {
@@ -1185,23 +1256,50 @@ pub(crate) async fn publish_restack(
 pub(crate) struct RefConflict(pub(crate) String);
 
 /// Runs one `update-ref --stdin` transaction. A failed check of any line refuses all of them.
-pub(crate) async fn run_ref_transaction(path: &Path, input: &str, message: &str, failure: &str) -> Result<()> {
+pub(crate) async fn run_ref_transaction(
+    path: &Path,
+    input: &str,
+    message: &str,
+    failure: &str,
+) -> Result<()> {
     let mut expected = Vec::new();
     for line in input.lines() {
         let fields = line.split(' ').collect::<Vec<_>>();
         let pair = match fields.as_slice() {
             ["create", reference, _] => Some((*reference, None)),
-            ["update", reference, _, old] | ["delete", reference, old] | ["verify", reference, old] => {
-                Some((*reference, if old.bytes().all(|byte| byte == b'0') { None } else { Some(*old) }))
-            }
+            ["update", reference, _, old]
+            | ["delete", reference, old]
+            | ["verify", reference, old] => Some((
+                *reference,
+                if old.bytes().all(|byte| byte == b'0') {
+                    None
+                } else {
+                    Some(*old)
+                },
+            )),
             _ => None,
         };
-        if let Some(pair) = pair { expected.push(pair); }
+        if let Some(pair) = pair {
+            expected.push(pair);
+        }
     }
-    run_ref_command(path, &["update-ref", "--stdin", "-m", message], input.as_bytes(), failure, &expected).await
+    run_ref_command(
+        path,
+        &["update-ref", "--stdin", "-m", message],
+        input.as_bytes(),
+        failure,
+        &expected,
+    )
+    .await
 }
 
-async fn run_ref_command(path: &Path, args: &[&str], input: &[u8], failure: &str, expected: &[(&str, Option<&str>)]) -> Result<()> {
+async fn run_ref_command(
+    path: &Path,
+    args: &[&str],
+    input: &[u8],
+    failure: &str,
+    expected: &[(&str, Option<&str>)],
+) -> Result<()> {
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path).args(args);
     let output = process::run(command, input, MAX_OUTPUT, COMMAND_TIMEOUT).await?;
@@ -1264,7 +1362,9 @@ pub(crate) async fn materialize_checkout(
         process::stream(fetch, pack, tokio::io::sink(), tokio::io::sink(), false).await?
     } else {
         fetch.args(["fetch", "--no-tags", "--", "origin", sha]);
-        process::buffered(fetch, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?.0
+        process::buffered(fetch, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT)
+            .await?
+            .0
     };
     ensure!(status.success(), "git fetch of CI commit failed");
     let mut switch = process::git_command()?;

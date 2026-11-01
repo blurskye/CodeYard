@@ -3,7 +3,9 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::access_error;
 use crate::backend::api::repos::paging::{json_page, PageQuery};
-use crate::backend::api::repos::responses::{repository_fork_counts, repository_owners, repository_topics, RepoResponse};
+use crate::backend::api::repos::responses::{
+    repository_fork_counts, repository_owners, repository_topics, RepoResponse,
+};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::organizations::{self as orgs, OrganizationOutcome, OrganizationPage};
@@ -46,13 +48,22 @@ pub async fn list_repos(
     let mut topics = repository_topics(&state.pool, &ids).await?;
     let mut fork_counts = repository_fork_counts(&state.pool, None, &ids).await?;
     let readable = db::repositories::access::readable_repository_ids(&state.pool, None, &ids)
-        .await.map_err(|_| access_error(AccessError::Unavailable))?;
+        .await
+        .map_err(|_| access_error(AccessError::Unavailable))?;
     let mut responses = Vec::with_capacity(repos.len());
     for repository in repos {
-        if !readable.contains(&repository.id) { continue; }
+        if !readable.contains(&repository.id) {
+            continue;
+        }
         let owner = owners.remove(&repository.id).expect("validated owner");
         let topics = topics.remove(&repository.id).unwrap_or_default();
-        responses.push(RepoResponse::new(&repository, &owner, topics, None, fork_counts.remove(&repository.id).unwrap_or_default()));
+        responses.push(RepoResponse::new(
+            &repository,
+            &owner,
+            topics,
+            None,
+            fork_counts.remove(&repository.id).unwrap_or_default(),
+        ));
     }
 
     Ok(Json(responses))
@@ -77,7 +88,10 @@ pub async fn create_repo(
 ) -> Result<(StatusCode, Json<RepoResponse>), (StatusCode, Json<ApiError>)> {
     let pool = state.pool.clone();
     let user = get_current_user(&pool, &headers).await?;
-    let authority = crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default()));
+    let authority = crate::backend::db::credentials::Actor::from((
+        user.id,
+        crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+    ));
 
     let creation_owner = db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
@@ -114,7 +128,10 @@ pub async fn create_repo(
         lifecycle::CreationInput {
             owner: creation_owner,
             properties: &properties,
-            admission: db::repositories::creation::CreationAdmission { authority: Some(&authority), advisory: None },
+            admission: db::repositories::creation::CreationAdmission {
+                authority: Some(&authority),
+                advisory: None,
+            },
         },
         &req.name,
         req.description.as_deref(),
@@ -144,8 +161,10 @@ pub async fn create_repo(
                 )),
             )
         })?;
-    let forks = repository_fork_counts(&pool, Some(&headers), &[repo.id]).await?
-        .remove(&repo.id).unwrap_or_default();
+    let forks = repository_fork_counts(&pool, Some(&headers), &[repo.id])
+        .await?
+        .remove(&repo.id)
+        .unwrap_or_default();
     Ok((
         StatusCode::CREATED,
         Json(RepoResponse::new(&repo, &owner, Vec::new(), None, forks)),
@@ -546,7 +565,15 @@ pub(crate) async fn create_repository(
         },
     };
     let result = if !values.source.is_empty() {
-        create_selection(&ctx, creation_owner, &values, files, &property_values, &authority).await
+        create_selection(
+            &ctx,
+            creation_owner,
+            &values,
+            files,
+            &property_values,
+            &authority,
+        )
+        .await
     } else {
         lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
@@ -554,7 +581,10 @@ pub(crate) async fn create_repository(
             lifecycle::CreationInput {
                 owner: creation_owner,
                 properties: &property_values,
-                admission: db::repositories::creation::CreationAdmission { authority: Some(&authority), advisory: None },
+                admission: db::repositories::creation::CreationAdmission {
+                    authority: Some(&authority),
+                    advisory: None,
+                },
             },
             &values.name,
             Some(&values.description)
@@ -657,8 +687,12 @@ async fn create_selection(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
             &ctx.state.repos_path,
             lifecycle::CreationInput {
-                owner, properties,
-                admission: db::repositories::creation::CreationAdmission { authority: Some(authority), advisory: None },
+                owner,
+                properties,
+                admission: db::repositories::creation::CreationAdmission {
+                    authority: Some(authority),
+                    advisory: None,
+                },
             },
             &values.name,
             description,

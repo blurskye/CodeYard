@@ -115,7 +115,10 @@ pub(crate) async fn bind(socket: &Path, uid: u32) -> Result<(UnixListener, Socke
         Ok(_) => {
             let stale_metadata = || -> Result<Metadata> {
                 let meta = std::fs::symlink_metadata(socket)?;
-                ensure!(meta.file_type().is_socket() && meta.uid() == uid, "unsafe existing socket path");
+                ensure!(
+                    meta.file_type().is_socket() && meta.uid() == uid,
+                    "unsafe existing socket path"
+                );
                 Ok(meta)
             };
             let before = stale_metadata()?;
@@ -219,7 +222,8 @@ mod tests {
 
     #[tokio::test]
     async fn owned_cleanup_never_removes_a_replacement_path() {
-        let directory = codeyard_actions::fs::private_tempdir("openssh-replacement-", None).unwrap();
+        let directory =
+            codeyard_actions::fs::private_tempdir("openssh-replacement-", None).unwrap();
         let socket = directory.path().join("broker.sock");
         let (listener, guard) = bind(&socket, effective_uid()).await.unwrap();
         std::fs::remove_file(&socket).unwrap();

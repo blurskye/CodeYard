@@ -32,7 +32,12 @@ pub async fn serving_lock(pool: &DbPool, identity: &str) -> Result<ServingLock> 
         DbPool::Sqlite(pool) => {
             let mut path = pool.connect_options().get_filename().as_os_str().to_owned();
             path.push(".serve.lock");
-            Ok(ServingLock { postgres: None, _file: Some(crate::backend::locks::exclusive_file(std::path::Path::new(&path))?) })
+            Ok(ServingLock {
+                postgres: None,
+                _file: Some(crate::backend::locks::exclusive_file(
+                    std::path::Path::new(&path),
+                )?),
+            })
         }
     }
 }
@@ -253,7 +258,11 @@ pub(crate) fn members_to_move(
     from: i64,
     automatic: bool,
 ) -> Option<Vec<(i64, Option<i64>, i64)>> {
-    let members: Vec<_> = family.iter().filter(|(_, primary, _)| *primary == Some(from)).copied().collect();
+    let members: Vec<_> = family
+        .iter()
+        .filter(|(_, primary, _)| *primary == Some(from))
+        .copied()
+        .collect();
     let whole = members.len() == family.len();
     (members.iter().any(|(id, _, _)| *id == repository) && (whole || !automatic)).then_some(members)
 }

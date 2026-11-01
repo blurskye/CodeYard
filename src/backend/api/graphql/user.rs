@@ -28,7 +28,10 @@ pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<Value> {
 }
 
 fn actor_value(mut value: Value) -> Value {
-    if value["login"].as_str().is_some_and(|login| login.ends_with("[bot]")) {
+    if value["login"]
+        .as_str()
+        .is_some_and(|login| login.ends_with("[bot]"))
+    {
         value["__typename"] = json!("Bot");
     }
     value
@@ -76,20 +79,36 @@ pub(super) async fn resolve(
         "team" if ty == "Organization" => {
             super::team::by_slug(id, &super::arg(ctx, "slug")?, request).await
         }
-        "email" if ty == "User" => {
-            Ok(json!(db::users::profiles::public_email(&request.state.pool, id)
-                .await.map_err(unavailable)?.unwrap_or_default()))
-        }
-        "company" if ty == "User" => Ok(json!(db::users::profiles::get_profile_settings(&request.state.pool, id)
-            .await.map_err(unavailable)?.company)),
+        "email" if ty == "User" => Ok(json!(db::users::profiles::public_email(
+            &request.state.pool,
+            id
+        )
+        .await
+        .map_err(unavailable)?
+        .unwrap_or_default())),
+        "company" if ty == "User" => Ok(json!(
+            db::users::profiles::get_profile_settings(&request.state.pool, id)
+                .await
+                .map_err(unavailable)?
+                .company
+        )),
         "repositories" => super::repository_list::list(ctx, request, parent).await,
         "gists" if ty == "User" => super::gists::list(ctx, request, parent).await,
-        "viewerCanFollow" => Ok(json!(id != request.auth.user.id
-            && !db::users::blocks::is_blocked(&request.state.pool, request.auth.user.id, id).await.map_err(unavailable)?
-            && !db::users::blocks::is_blocked(&request.state.pool, id, request.auth.user.id).await.map_err(unavailable)?)),
-        "viewerIsFollowing" => Ok(json!(id != request.auth.user.id &&
-            db::following::is_user_following(&request.state.pool, request.auth.user.id, id)
-                .await.map_err(unavailable)?)),
+        "viewerCanFollow" => Ok(json!(
+            id != request.auth.user.id
+                && !db::users::blocks::is_blocked(&request.state.pool, request.auth.user.id, id)
+                    .await
+                    .map_err(unavailable)?
+                && !db::users::blocks::is_blocked(&request.state.pool, id, request.auth.user.id)
+                    .await
+                    .map_err(unavailable)?
+        )),
+        "viewerIsFollowing" => Ok(json!(
+            id != request.auth.user.id
+                && db::following::is_user_following(&request.state.pool, request.auth.user.id, id)
+                    .await
+                    .map_err(unavailable)?
+        )),
         _ => Err(async_graphql::Error::new(format!(
             "Codeyard does not support {ty}.{field} yet"
         ))),

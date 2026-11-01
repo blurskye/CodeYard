@@ -77,8 +77,13 @@ fn qualify(
     visited: &mut usize,
     out: &mut BTreeMap<String, String>,
 ) -> Result<()> {
-    ensure!(prefix.matches('/').count() < codeyard_actions::workflow::MAX_REUSABLE_LEVELS, "Called workflow nesting exceeds limit");
-    let Some(workflow) = definitions.get(path) else { return Ok(()); };
+    ensure!(
+        prefix.matches('/').count() < codeyard_actions::workflow::MAX_REUSABLE_LEVELS,
+        "Called workflow nesting exceeds limit"
+    );
+    let Some(workflow) = definitions.get(path) else {
+        return Ok(());
+    };
     let jobs = workflow
         .get("jobs")
         .and_then(serde_yaml::Value::as_mapping)
@@ -121,7 +126,10 @@ mod tests {
                 b"jobs:\n  deploy: {}\n  build: {}\n".to_vec(),
             ),
         ]);
-        let definitions = definitions.into_iter().map(|(path, bytes)| (path, super::super::workflows::parse_yaml(&bytes).unwrap())).collect();
+        let definitions = definitions
+            .into_iter()
+            .map(|(path, bytes)| (path, super::super::workflows::parse_yaml(&bytes).unwrap()))
+            .collect();
         let local = BTreeMap::from([(
             "ci.yml".to_owned(),
             BTreeMap::from([("deploy".to_owned(), "production".to_owned())]),

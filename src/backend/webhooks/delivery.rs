@@ -1,13 +1,13 @@
 //! One webhook request: signed, sent with a timeout and no redirects, retried on server
 //! errors and timeouts, and recorded with what was sent and what came back.
 use super::outbound::{self, Refusal};
+use crate::backend::crypto::hmac_sha256;
 use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::webhooks::{self as hooks, NewDelivery};
 use crate::backend::db::DbPool;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
-use crate::backend::crypto::hmac_sha256;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
 use url::Url;
@@ -210,9 +210,12 @@ async fn transmit(
         ("X-GitHub-Delivery", outgoing.guid.clone()),
         ("X-GitHub-Hook-ID", hook.id.to_string()),
     ];
-    if let Some((id, kind)) = hook.app_id.map(|id| (id, "integration"))
+    if let Some((id, kind)) = hook
+        .app_id
+        .map(|id| (id, "integration"))
         .or_else(|| hook.org_id.map(|id| (id, "organization")))
-        .or_else(|| hook.repo_id.map(|id| (id, "repository"))) {
+        .or_else(|| hook.repo_id.map(|id| (id, "repository")))
+    {
         headers.push(("X-GitHub-Hook-Installation-Target-ID", id.to_string()));
         headers.push(("X-GitHub-Hook-Installation-Target-Type", kind.to_owned()));
     }
@@ -319,17 +322,29 @@ async fn attempt(url: &Url, ssl_verify: bool, headers: &[(&str, String)], body: 
         Err(failure) => return failure,
     };
     let status = response.status().as_u16();
-    let headers = join_headers(response.headers().iter().map(|(name, value)| (name.as_str(), value.to_str().unwrap_or(""))));
+    let headers = join_headers(
+        response
+            .headers()
+            .iter()
+            .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or(""))),
+    );
     // Response text is diagnostic only: once headers acknowledge the event, a slow body
     // must not turn that acknowledgement into another POST.
-    let body = match tokio::time::timeout(Duration::from_secs(2), read_limited(&mut response)).await {
+    let body = match tokio::time::timeout(Duration::from_secs(2), read_limited(&mut response)).await
+    {
         Ok(Ok(bytes)) => response_text(&bytes),
         _ => String::new(),
     };
-    Attempt::Responded { status, headers, body }
+    Attempt::Responded {
+        status,
+        headers,
+        body,
+    }
 }
 
-async fn bounded_attempt(future: impl std::future::Future<Output = Result<reqwest::Response, Attempt>>) -> Result<reqwest::Response, Attempt> {
+async fn bounded_attempt(
+    future: impl std::future::Future<Output = Result<reqwest::Response, Attempt>>,
+) -> Result<reqwest::Response, Attempt> {
     tokio::time::timeout(TIMEOUT, future)
         .await
         .unwrap_or(Err(Attempt::Failed {

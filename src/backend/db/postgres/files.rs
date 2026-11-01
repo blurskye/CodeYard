@@ -138,7 +138,15 @@ pub async fn reserve_upload(pool: &PgPool, req: ReserveUpload<'_>) -> Result<Fil
     .bind(PUT_LIFETIME_SECONDS)
     .fetch_one(&mut *tx)
     .await?;
-    charge(&mut tx, req.user_id, req.reason.as_str(), req.file_size, Some(file_id), &limits).await?;
+    charge(
+        &mut tx,
+        req.user_id,
+        req.reason.as_str(),
+        req.file_size,
+        Some(file_id),
+        &limits,
+    )
+    .await?;
     tx.commit().await?;
     Ok(file)
 }
@@ -193,20 +201,43 @@ pub(super) async fn charge_upload_in_transaction(
 }
 
 fn file_authority_error(error: anyhow::Error) -> sqlx::Error {
-    error.downcast::<sqlx::Error>().unwrap_or_else(|_| sqlx::Error::Protocol("File authority unavailable".into()))
+    error
+        .downcast::<sqlx::Error>()
+        .unwrap_or_else(|_| sqlx::Error::Protocol("File authority unavailable".into()))
 }
 
-async fn require_file_actor(tx: &mut Transaction<'_, Postgres>, actor: &FileAuthority) -> Result<bool, sqlx::Error> {
-    let Some(user) = actor.user_id else { return Ok(false); };
+async fn require_file_actor(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: &FileAuthority,
+) -> Result<bool, sqlx::Error> {
+    let Some(user) = actor.user_id else {
+        return Ok(false);
+    };
     if let Some(session) = &actor.session {
-        match super::users::transitions::require_account(tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(session)).await {
+        match super::users::transitions::require_account(
+            tx,
+            user,
+            &crate::backend::db::users::accounts::AccountCredential::Session(session),
+        )
+        .await
+        {
             Ok(()) => return Ok(true),
-            Err(error) if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => return Ok(false),
+            Err(error) if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => {
+                return Ok(false)
+            }
             Err(error) => return Err(file_authority_error(error)),
         }
     }
-    super::users::transitions::lock_membership_shared(tx).await.map_err(file_authority_error)?;
-    Ok(sqlx::query_scalar::<_, bool>("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR UPDATE").bind(user).fetch_optional(&mut **tx).await?.unwrap_or(false))
+    super::users::transitions::lock_membership_shared(tx)
+        .await
+        .map_err(file_authority_error)?;
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR UPDATE",
+    )
+    .bind(user)
+    .fetch_optional(&mut **tx)
+    .await?
+    .unwrap_or(false))
 }
 
 /// Files anyone may download: the owner's own, public ones, and avatars.
@@ -246,9 +277,15 @@ pub async fn verify_pending_upload(
     Ok(changed.rows_affected() == 1)
 }
 
-pub async fn can_publish_upload(pool: &PgPool, file_id: Uuid, actor: FileAuthority) -> Result<bool, sqlx::Error> {
+pub async fn can_publish_upload(
+    pool: &PgPool,
+    file_id: Uuid,
+    actor: FileAuthority,
+) -> Result<bool, sqlx::Error> {
     let mut tx = pool.begin().await?;
-    if !require_file_actor(&mut tx, &actor).await? { return Ok(false); }
+    if !require_file_actor(&mut tx, &actor).await? {
+        return Ok(false);
+    }
     let allowed = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM files WHERE id=$1 AND user_id=$2 AND NOT is_active AND upload_expires_at>NOW())").bind(file_id).bind(actor.user_id).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(allowed)
@@ -262,7 +299,9 @@ pub async fn activate_upload(
 ) -> Result<bool, sqlx::Error> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
-    if !require_file_actor(&mut tx, &actor).await? { return Ok(false); }
+    if !require_file_actor(&mut tx, &actor).await? {
+        return Ok(false);
+    }
     let user_id = actor.user_id;
     let changed = sqlx::query(
         "UPDATE files SET is_active = TRUE, confirmed_at = NOW(), upload_expires_at = NULL, updated_at = NOW()
@@ -375,7 +414,9 @@ pub async fn delete_file(
     let mut tx = pool.begin().await?;
     // Organization assignment and account transitions take membership, organizations,
     // accounts, then files. File deletion must not invert that order.
-    super::users::transitions::lock_membership_shared(&mut tx).await.map_err(file_authority_error)?;
+    super::users::transitions::lock_membership_shared(&mut tx)
+        .await
+        .map_err(file_authority_error)?;
     let organizations: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM organizations WHERE avatar_file_id=$1 ORDER BY id FOR UPDATE",
     )

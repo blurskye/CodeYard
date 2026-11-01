@@ -409,17 +409,45 @@ async fn update(
     }
     let mut files = input.files.unwrap_or_default();
     let mut expected = None;
-    if method == axum::http::Method::POST && input.updated_at.as_deref() == Some("0001-01-01T00:00:00Z") {
+    if method == axum::http::Method::POST
+        && input.updated_at.as_deref() == Some("0001-01-01T00:00:00Z")
+    {
         let original = domain::load(&state, &id, None).await.map_err(failure)?;
-        let existing: std::collections::HashSet<_> = original.snapshot.files.iter().map(|file| file.path.as_str()).collect();
-        let removed: Vec<_> = files.iter().filter(|(name, file)| file.is_none() && existing.contains(name.as_str())).map(|(name, _)| name.clone()).collect();
-        let added: Vec<_> = files.iter().filter(|(name, file)| file.is_some() && !existing.contains(name.as_str())).map(|(name, _)| name.clone()).collect();
+        let existing: std::collections::HashSet<_> = original
+            .snapshot
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect();
+        let removed: Vec<_> = files
+            .iter()
+            .filter(|(name, file)| file.is_none() && existing.contains(name.as_str()))
+            .map(|(name, _)| name.clone())
+            .collect();
+        let added: Vec<_> = files
+            .iter()
+            .filter(|(name, file)| file.is_some() && !existing.contains(name.as_str()))
+            .map(|(name, _)| name.clone())
+            .collect();
         if removed.len() == 1 && added.len() == 1 {
             files.remove(&added[0]);
-            files.insert(removed[0].clone(), Some(EditedFile { filename: Some(added[0].clone()), content: None, truncated: None }));
+            files.insert(
+                removed[0].clone(),
+                Some(EditedFile {
+                    filename: Some(added[0].clone()),
+                    content: None,
+                    truncated: None,
+                }),
+            );
             for (name, file) in &mut files {
                 if let Some(file) = file {
-                    if file.truncated == Some(true) && existing.contains(name.as_str()) && file.filename.as_deref().is_none_or(|filename| filename == name.as_str()) {
+                    if file.truncated == Some(true)
+                        && existing.contains(name.as_str())
+                        && file
+                            .filename
+                            .as_deref()
+                            .is_none_or(|filename| filename == name.as_str())
+                    {
                         file.content = None;
                     }
                 }
@@ -427,10 +455,25 @@ async fn update(
             expected = Some(original.snapshot.sha);
         }
     }
-    if files.values().flatten().any(|file| file.truncated == Some(true) && file.content.is_some()) {
+    if files
+        .values()
+        .flatten()
+        .any(|file| file.truncated == Some(true) && file.content.is_some())
+    {
         return Err(Error::validation("Gist", "content", "truncated"));
     }
-    let files = files.into_iter().map(|(name, file)| (name, file.map(|file| GistFileChange { filename: file.filename, content: file.content }))).collect();
+    let files = files
+        .into_iter()
+        .map(|(name, file)| {
+            (
+                name,
+                file.map(|file| GistFileChange {
+                    filename: file.filename,
+                    content: file.content,
+                }),
+            )
+        })
+        .collect();
     let loaded = domain::update(
         state.clone(),
         actor.user.id,

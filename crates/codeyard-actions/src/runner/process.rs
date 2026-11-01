@@ -17,14 +17,23 @@ const MAX_LINE: usize = 64 * 1024;
 const OUTPUT_DRAIN: Duration = Duration::from_secs(3);
 
 pub(crate) async fn read_lines(
-    reader: impl AsyncRead + Unpin, sender: mpsc::Sender<Result<(String, bool)>>, stderr: bool,
+    reader: impl AsyncRead + Unpin,
+    sender: mpsc::Sender<Result<(String, bool)>>,
+    stderr: bool,
 ) {
     let mut reader = BufReader::new(reader);
     loop {
         match crate::process::read_line(&mut reader, MAX_LINE, None).await {
-            Ok(Some(line)) => if sender.send(Ok((line, stderr))).await.is_err() { return; },
+            Ok(Some(line)) => {
+                if sender.send(Ok((line, stderr))).await.is_err() {
+                    return;
+                }
+            }
             Ok(None) => return,
-            Err(error) => { let _ = sender.send(Err(error.into())).await; return; }
+            Err(error) => {
+                let _ = sender.send(Err(error.into())).await;
+                return;
+            }
         }
     }
 }
@@ -64,10 +73,18 @@ pub(crate) async fn output(
     let result = tokio::time::timeout(timeout, async {
         let (status, stdout, stderr) = tokio::try_join!(
             async { child.wait().await.map_err(anyhow::Error::from) },
-            capture(stdout), capture(stderr),
+            capture(stdout),
+            capture(stderr),
         )?;
-        Ok::<_, anyhow::Error>(std::process::Output { status, stdout, stderr })
-    }).await.context("The operation has timed out.").and_then(|result| result);
+        Ok::<_, anyhow::Error>(std::process::Output {
+            status,
+            stdout,
+            stderr,
+        })
+    })
+    .await
+    .context("The operation has timed out.")
+    .and_then(|result| result);
     group.kill();
     if result.is_err() {
         let _ = child.kill().await;
@@ -99,14 +116,21 @@ pub(super) async fn execute(
     #[cfg(unix)]
     command.process_group(0);
     let mut child = command.spawn().context("Unable to start process")?;
-    let mut group = ProcessGroup::new(Some(child.id().context("Process has no id")?), Duration::ZERO);
+    let mut group = ProcessGroup::new(
+        Some(child.id().context("Process has no id")?),
+        Duration::ZERO,
+    );
     let (tx, mut rx) = mpsc::channel(128);
     let stdout = tokio::spawn(read_lines(
         child.stdout.take().context("No stdout")?,
         tx.clone(),
         false,
     ));
-    let stderr = tokio::spawn(read_lines(child.stderr.take().context("No stderr")?, tx, true));
+    let stderr = tokio::spawn(read_lines(
+        child.stderr.take().context("No stderr")?,
+        tx,
+        true,
+    ));
     let end = tokio::time::sleep_until(deadline.into());
     tokio::pin!(end);
     let drain = tokio::time::sleep_until(deadline.into());
@@ -186,17 +210,31 @@ mod tests {
     async fn a_closed_cancel_channel_lets_the_process_finish() {
         let task = tokio::spawn(async {
             let temp = tempfile::tempdir().unwrap();
-            let log = Log { prefix: "test".into(), ..Default::default() };
+            let log = Log {
+                prefix: "test".into(),
+                ..Default::default()
+            };
             let mut commands = Commands::new(temp.path().into(), Default::default(), false);
             let (sender, mut cancel) = watch::channel(false);
             drop(sender);
             let mut command = Command::new("sh");
             command.args(["-c", "sleep 0.2; echo finished"]);
-            execute(&mut command, &log, &mut commands, &mut cancel, Instant::now() + Duration::from_secs(30), false, false)
-                .await
-                .unwrap()
+            execute(
+                &mut command,
+                &log,
+                &mut commands,
+                &mut cancel,
+                Instant::now() + Duration::from_secs(30),
+                false,
+                false,
+            )
+            .await
+            .unwrap()
         });
-        let ok = tokio::time::timeout(Duration::from_secs(20), task).await.expect("the process finishes").unwrap();
+        let ok = tokio::time::timeout(Duration::from_secs(20), task)
+            .await
+            .expect("the process finishes")
+            .unwrap();
         assert!(ok);
     }
 

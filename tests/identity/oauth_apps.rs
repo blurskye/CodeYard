@@ -367,10 +367,11 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(app.status, StatusCode::OK, "{}", app.text());
-    let applications = db::oauth_apps::applications(f.pool(), actor, 0, db::oauth_apps::APPLICATION_PAGE_SIZE)
-        .await
-        .unwrap()
-        .unwrap();
+    let applications =
+        db::oauth_apps::applications(f.pool(), actor, 0, db::oauth_apps::APPLICATION_PAGE_SIZE)
+            .await
+            .unwrap()
+            .unwrap();
     assert_eq!(applications.len(), 1);
     assert!(app.text().contains(&applications[0].client_id));
     let (status, page) = user.page("/settings/applications").await;
@@ -441,7 +442,9 @@ async fn contract(pg: bool) {
     assert!(!oauth::allows_git(f.pool(), limited.id, None, false, false)
         .await
         .unwrap());
-    assert!(!oauth::allows_git(f.pool(), limited.id, None, true, false).await.unwrap());
+    assert!(!oauth::allows_git(f.pool(), limited.id, None, true, false)
+        .await
+        .unwrap());
     assert_eq!(limited.scope, "read");
     let authorization = format!("Bearer {}", limited_token(&router, &user).await);
     super::github::request(
@@ -675,12 +678,16 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    assert!(oauth::allows_git(f.pool(), repo_only.id, None, false, false)
-        .await
-        .unwrap());
-    assert!(!oauth::allows_git(f.pool(), repo_only.id, None, true, false)
-        .await
-        .unwrap());
+    assert!(
+        oauth::allows_git(f.pool(), repo_only.id, None, false, false)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !oauth::allows_git(f.pool(), repo_only.id, None, true, false)
+            .await
+            .unwrap()
+    );
     // Revoking the approving session before exchange must not mint a new credential.
     let bob = f.actor("bob").await;
     let browser = Client::login(&router, f.pool(), bob).await;
@@ -736,10 +743,23 @@ async fn contract(pg: bool) {
     .unwrap();
     // Alice's application can issue a credential to a different, unrestricted account.
     let bob_browser = Client::login(&router, f.pool(), bob).await;
-    let bob_token = db::users::tokens::create_token(f.pool(), bob, &bob_browser.session, "Issued OAuth", &token_hash("borrowed-oauth"), "read", None)
-        .await.unwrap().unwrap();
+    let bob_token = db::users::tokens::create_token(
+        f.pool(),
+        bob,
+        &bob_browser.session,
+        "Issued OAuth",
+        &token_hash("borrowed-oauth"),
+        "read",
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
     f.execute(&format!("INSERT INTO oauth_app_tokens(token_id,client_id,scopes) VALUES($1,'{owned_id}','repo')"), &[bob_token.id]).await;
-    assert!(db::users::tokens::token_user(f.pool(), bob_token.id, false).await.unwrap().is_some());
+    assert!(db::users::tokens::token_user(f.pool(), bob_token.id, false)
+        .await
+        .unwrap()
+        .is_some());
     let owned_basic = format!(
         "Basic {}",
         base64::engine::general_purpose::STANDARD.encode(format!("{owned_id}:owned-secret"))
@@ -757,7 +777,10 @@ async fn contract(pg: bool) {
     // Suspending an account invalidates OAuth tokens just like personal tokens.
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[actor])
         .await;
-    assert!(db::users::tokens::token_user(f.pool(), bob_token.id, false).await.unwrap().is_none());
+    assert!(db::users::tokens::token_user(f.pool(), bob_token.id, false)
+        .await
+        .unwrap()
+        .is_none());
     super::github::request(
         &router,
         "users/get-authenticated",

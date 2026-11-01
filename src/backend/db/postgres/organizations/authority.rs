@@ -7,7 +7,12 @@ use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use OrganizationOutcome::{Applied, Denied, Missing, Suspended};
 
 /// Revalidate the initiating credential only after the operation has acquired its authority locks.
-pub(super) async fn credential(connection: &mut PgConnection, actor: &crate::backend::db::credentials::Actor, org: i64, permission: &str) -> Result<bool> {
+pub(super) async fn credential(
+    connection: &mut PgConnection,
+    actor: &crate::backend::db::credentials::Actor,
+    org: i64,
+    permission: &str,
+) -> Result<bool> {
     super::super::credentials::writes(connection, actor, None, Some(org), permission).await
 }
 
@@ -15,7 +20,9 @@ pub(super) async fn begin(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
     Ok(pool.begin().await?)
 }
 // Authorization and projection share a committed snapshot; no locks or effects.
-pub(in crate::backend::db::postgres) async fn begin_read(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
+pub(in crate::backend::db::postgres) async fn begin_read(
+    pool: &PgPool,
+) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)

@@ -229,14 +229,19 @@ struct Search {
 }
 
 fn supports_semver2(level: Option<&str>) -> Result<bool> {
-    level.map(|level| normalize(level).map(|level| compare(&level, "2.0.0").is_ge())).transpose().map(|level| level.unwrap_or(false))
+    level
+        .map(|level| normalize(level).map(|level| compare(&level, "2.0.0").is_ge()))
+        .transpose()
+        .map(|level| level.unwrap_or(false))
 }
 
 fn compatible_versions(versions: Vec<Version>, semver2: bool) -> Result<Vec<Version>> {
     let mut output = Vec::with_capacity(versions.len());
     for version in versions {
-        if semver2 || !metadata(&version)?["semver2"].as_bool()
-            .unwrap_or_else(|| crate::backend::nuget::semver2(&version.name))
+        if semver2
+            || !metadata(&version)?["semver2"]
+                .as_bool()
+                .unwrap_or_else(|| crate::backend::nuget::semver2(&version.name))
         {
             output.push(version);
         }
@@ -267,7 +272,12 @@ async fn dispatch(
     }
     let auth = authenticate(state, &headers, !read).await?;
     let _metadata_slot = if read {
-        Some(state.storage.try_acquire_download().ok_or_else(Error::unavailable)?)
+        Some(
+            state
+                .storage
+                .try_acquire_download()
+                .ok_or_else(Error::unavailable)?,
+        )
     } else {
         None
     };
@@ -299,9 +309,13 @@ async fn dispatch(
             catalog["packageHash"] = json!(STANDARD.encode(Sha512::digest(&bytes)));
             catalog["packageHashAlgorithm"] = json!("SHA512");
             catalog["nuspec"] = json!(String::from_utf8(spec).map_err(|_| Error::invalid())?);
-            catalog["semver2"] = json!(crate::backend::nuget::metadata_semver2(&version, &catalog).map_err(Error::db)?);
+            catalog["semver2"] =
+                json!(crate::backend::nuget::metadata_semver2(&version, &catalog)
+                    .map_err(Error::db)?);
             Ok::<_, Error>((bytes, name, version, catalog, slot))
-        }).await.map_err(|_| Error::unavailable())??;
+        })
+        .await
+        .map_err(|_| Error::unavailable())??;
         let package = super::package(state, &owner, "nuget", &name, Some(auth), true).await?;
         let blob = packages::store(
             &state.pool,
@@ -341,7 +355,11 @@ async fn dispatch(
         let Query(query) =
             Query::<Search>::try_from_uri(request.uri()).map_err(|_| Error::invalid())?;
         let semver2 = supports_semver2(query.semver_level.as_deref())?;
-        let registration_kind = if semver2 { "registration-semver2" } else { "registration" };
+        let registration_kind = if semver2 {
+            "registration-semver2"
+        } else {
+            "registration"
+        };
         let needle = query.q.unwrap_or_default().to_lowercase();
         let skip = query.skip.unwrap_or(0).min(1_000_000);
         let take = query.take.unwrap_or(20).min(100);
@@ -375,29 +393,58 @@ async fn dispatch(
             }
             let selected = total >= skip && data.len() < take;
             total += 1;
-            if !selected { continue; }
+            if !selected {
+                continue;
+            }
             // Count text, repeated URLs and JSON container overhead before constructing
             // the selected record. Unselected matches retain no response document.
             fn allocation(value: &Value) -> usize {
                 128usize.saturating_add(match value {
-                    Value::Array(values) => values.iter().map(allocation).fold(0usize, usize::saturating_add),
-                    Value::Object(values) => values.iter().map(|(key, value)| key.len().saturating_add(allocation(value))).fold(0usize, usize::saturating_add),
+                    Value::Array(values) => values
+                        .iter()
+                        .map(allocation)
+                        .fold(0usize, usize::saturating_add),
+                    Value::Object(values) => values
+                        .iter()
+                        .map(|(key, value)| key.len().saturating_add(allocation(value)))
+                        .fold(0usize, usize::saturating_add),
                     Value::String(value) => value.len(),
                     _ => 0,
                 })
             }
-            let metadata_cost = catalog.to_string().len().saturating_add(allocation(&catalog))
-                .saturating_add(catalog["authors"].as_str().unwrap_or("").split(',').count().saturating_mul(64));
-            let cost = versions.iter().try_fold(metadata_cost, |bytes, version| {
-                bytes.checked_add(version.name.len().saturating_mul(2))
-                    .and_then(|bytes| bytes.checked_add(base.len() + package.name.len() + 768))
-            }).ok_or_else(Error::unavailable)?;
-            constructed = constructed.checked_add(cost).ok_or_else(Error::unavailable)?;
-            if constructed > db::packages::MAX_METADATA_RESPONSE_BYTES { return Err(Error::unavailable()); }
+            let metadata_cost = catalog
+                .to_string()
+                .len()
+                .saturating_add(allocation(&catalog))
+                .saturating_add(
+                    catalog["authors"]
+                        .as_str()
+                        .unwrap_or("")
+                        .split(',')
+                        .count()
+                        .saturating_mul(64),
+                );
+            let cost = versions
+                .iter()
+                .try_fold(metadata_cost, |bytes, version| {
+                    bytes
+                        .checked_add(version.name.len().saturating_mul(2))
+                        .and_then(|bytes| bytes.checked_add(base.len() + package.name.len() + 768))
+                })
+                .ok_or_else(Error::unavailable)?;
+            constructed = constructed
+                .checked_add(cost)
+                .ok_or_else(Error::unavailable)?;
+            if constructed > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                return Err(Error::unavailable());
+            }
             data.push(json!({"id":catalog["id"],"version":latest.name,"description":catalog["description"],"title":catalog["title"],"authors":catalog["authors"].as_str().unwrap_or("").split(',').map(str::trim).collect::<Vec<_>>(),"tags":catalog["tags"],"totalDownloads":downloads,"registration":format!("{base}/{registration_kind}/{}/index.json",package.name),"versions":versions.iter().map(|v| json!({"version":v.name,"downloads":v.downloads,"@id":format!("{base}/{registration_kind}/{}/{}.json",package.name,v.name)})).collect::<Vec<_>>()}));
         }
-        let bytes = serde_json::to_vec(&json!({"totalHits":total,"data":data})).map_err(|_| Error::unavailable())?;
-        if bytes.len() > db::packages::MAX_METADATA_RESPONSE_BYTES { return Err(Error::unavailable()); }
+        let bytes = serde_json::to_vec(&json!({"totalHits":total,"data":data}))
+            .map_err(|_| Error::unavailable())?;
+        if bytes.len() > db::packages::MAX_METADATA_RESPONSE_BYTES {
+            return Err(Error::unavailable());
+        }
         return Ok(([(header::CONTENT_TYPE, "application/json")], bytes).into_response());
     }
     let parts: Vec<_> = path.split('/').collect();
@@ -409,7 +456,8 @@ async fn dispatch(
     let token = auth.as_ref().map(|a| a.token.id.into());
     if parts[0] == "flatcontainer" {
         if parts.len() == 3 && parts[2] == "index.json" {
-            let mut versions = super::all_version_fields(state, package.id, auth.as_ref(), true).await?;
+            let mut versions =
+                super::all_version_fields(state, package.id, auth.as_ref(), true).await?;
             versions.sort_by(|a, b| compare(&a.name, &b.name));
             return Ok(Json(
                 json!({"versions":versions.iter().map(|v| &v.name).collect::<Vec<_>>()}),
@@ -428,7 +476,10 @@ async fn dispatch(
             return Ok((
                 [
                     (header::CONTENT_TYPE, "application/xml"),
-                    (header::CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox"),
+                    (
+                        header::CONTENT_SECURITY_POLICY,
+                        "default-src 'none'; sandbox",
+                    ),
                 ],
                 catalog["nuspec"]
                     .as_str()
@@ -461,7 +512,10 @@ async fn dispatch(
     }
     if matches!(parts[0], "registration" | "registration-semver2") && parts.len() == 3 {
         let registration_kind = parts[0];
-        let versions = compatible_versions(versions(state, &package, auth.as_ref()).await?, registration_kind == "registration-semver2")?;
+        let versions = compatible_versions(
+            versions(state, &package, auth.as_ref()).await?,
+            registration_kind == "registration-semver2",
+        )?;
         if versions.is_empty() {
             return Err(Error::missing());
         }
@@ -491,9 +545,11 @@ async fn dispatch(
         let version = db::packages::version(&state.pool, package.id, token, key)
             .await
             .map_err(Error::db)?;
-        return Ok(
-            Json(registration(&base, "registration-semver2", &package, &version)?["catalogEntry"].clone()).into_response(),
-        );
+        return Ok(Json(
+            registration(&base, "registration-semver2", &package, &version)?["catalogEntry"]
+                .clone(),
+        )
+        .into_response());
     }
     Err(Error::missing())
 }
@@ -506,7 +562,12 @@ async fn versions(
     versions.sort_by(|a, b| compare(&a.name, &b.name));
     Ok(versions)
 }
-fn registration(base: &str, registration_kind: &str, package: &Package, version: &Version) -> Result<Value> {
+fn registration(
+    base: &str,
+    registration_kind: &str,
+    package: &Package,
+    version: &Version,
+) -> Result<Value> {
     let mut catalog = metadata(version)?;
     let object = catalog.as_object_mut().ok_or_else(Error::unavailable)?;
     object.remove("nuspec");

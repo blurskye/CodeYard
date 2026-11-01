@@ -341,7 +341,10 @@ pub(super) async fn resolve(
                     pool,
                     &request.state.ci_runs,
                     broadcaster,
-                    crate::backend::repositories::store::PullHeadActor { user: actor, token: Some(request.auth.token.id) },
+                    crate::backend::repositories::store::PullHeadActor {
+                        user: actor,
+                        token: Some(request.auth.token.id),
+                    },
                     repository::owner(&repo, request).await?,
                     repo.name,
                     pull_requests::mutations::CreatePullRequestRequest {
@@ -454,7 +457,12 @@ pub(super) async fn resolve(
                     // contents write there, as on REST.
                     request
                         .auth
-                        .repository_scope(pool, current.head_repo_id.ok_or_else(missing)?, "contents", true)
+                        .repository_scope(
+                            pool,
+                            current.head_repo_id.ok_or_else(missing)?,
+                            "contents",
+                            true,
+                        )
                         .await
                         .map_err(|error| super::auth::scope_error(error).graphql())?;
                     let expected = input

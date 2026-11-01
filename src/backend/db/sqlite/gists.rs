@@ -66,18 +66,32 @@ pub async fn git_repositories(pool: &SqlitePool, repo_ids: &[i64]) -> Result<Vec
     if repo_ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_as("SELECT * FROM repositories WHERE id IN (SELECT value FROM json_each(?1)) AND is_gist")
-        .bind(serde_json::to_string(repo_ids)?)
-        .fetch_all(pool)
-        .await?)
+    Ok(sqlx::query_as(
+        "SELECT * FROM repositories WHERE id IN (SELECT value FROM json_each(?1)) AND is_gist",
+    )
+    .bind(serde_json::to_string(repo_ids)?)
+    .fetch_all(pool)
+    .await?)
 }
 pub async fn list(pool: &SqlitePool, input: &GistList) -> Result<Vec<Gist>> {
     list_on(&mut *pool.acquire().await?, input).await
 }
-pub async fn list_for_session(pool: &SqlitePool, input: &GistList, session: &str) -> Result<Vec<Gist>> {
-    let actor = match input.scope { ListScope::Owner(actor, true) | ListScope::Starred(actor) => actor, _ => return list(pool, input).await };
+pub async fn list_for_session(
+    pool: &SqlitePool,
+    input: &GistList,
+    session: &str,
+) -> Result<Vec<Gist>> {
+    let actor = match input.scope {
+        ListScope::Owner(actor, true) | ListScope::Starred(actor) => actor,
+        _ => return list(pool, input).await,
+    };
     let mut tx = pool.begin().await?;
-    super::users::transitions::require_account(&mut tx, actor, &AccountCredential::Session(session)).await?;
+    super::users::transitions::require_account(
+        &mut tx,
+        actor,
+        &AccountCredential::Session(session),
+    )
+    .await?;
     let entries = list_on(&mut tx, input).await?;
     tx.commit().await?;
     Ok(entries)
@@ -318,7 +332,11 @@ pub async fn delete(
     tx.commit().await?;
     Ok(repo)
 }
-pub async fn discard(pool: &SqlitePool, repo: i64, orphan_only: bool) -> Result<Option<Repository>> {
+pub async fn discard(
+    pool: &SqlitePool,
+    repo: i64,
+    orphan_only: bool,
+) -> Result<Option<Repository>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let deleted = sqlx::query_as("DELETE FROM repositories WHERE id=?1 AND is_gist AND NOT EXISTS(SELECT 1 FROM gists g WHERE g.repo_id=repositories.id AND (?2 OR g.ready OR g.pending_sha IS NOT NULL)) RETURNING *").bind(repo).bind(orphan_only).fetch_optional(&mut *tx).await?;
     tx.commit().await?;
@@ -384,7 +402,13 @@ pub async fn comment(pool: &SqlitePool, repo: i64, id: i64) -> Result<Option<Com
     )
 }
 pub async fn comment_position(pool: &SqlitePool, repo: i64, id: i64) -> Result<i64> {
-    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM gist_comments WHERE repo_id=?1 AND id<=?2").bind(repo).bind(id).fetch_one(pool).await?)
+    Ok(
+        sqlx::query_scalar("SELECT COUNT(*) FROM gist_comments WHERE repo_id=?1 AND id<=?2")
+            .bind(repo)
+            .bind(id)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 pub async fn create_comment(

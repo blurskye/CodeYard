@@ -244,7 +244,9 @@ fn normalize_ref(reference: &str) -> String {
 }
 impl Filters {
     fn pull_request(&self, resource: &str) -> Result<Option<i32>> {
-        if self.pr.is_some_and(|number| number <= 0) { return Err(Error::validation(resource, "pr", "invalid")); }
+        if self.pr.is_some_and(|number| number <= 0) {
+            return Err(Error::validation(resource, "pr", "invalid"));
+        }
         Ok(self.pr)
     }
     fn pagination(&self) -> Pagination {
@@ -381,11 +383,10 @@ async fn analysis(
         // An analysis keeps up to 100 MiB of SARIF. The shared download slots bound how many
         // are loaded and rewritten at once, the rewrite runs off the async workers, and the
         // slot is held until the client has the last byte.
-        let permit = crate::backend::api::http::middleware::wait_for_slot(
-            &state.repository_downloads,
-        )
-        .await
-        .ok_or_else(|| Error::unavailable(()))?;
+        let permit =
+            crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+                .await
+                .ok_or_else(|| Error::unavailable(()))?;
         let raw = records::analysis_sarif(&state.pool, repo.id, id)
             .await
             .map_err(failure)?
@@ -408,7 +409,11 @@ async fn analysis(
 }
 /// The stored SARIF with only the results that became alerts, each tagged with its alert
 /// number and URL as GitHub returns it.
-fn sarif_download(raw: String, alerts: Vec<(i64, i64)>, alerts_url: &str) -> anyhow::Result<Vec<u8>> {
+fn sarif_download(
+    raw: String,
+    alerts: Vec<(i64, i64)>,
+    alerts_url: &str,
+) -> anyhow::Result<Vec<u8>> {
     let mut sarif: Value = serde_json::from_str(&raw)?;
     drop(raw);
     let mut source = match sarif["runs"][0]["results"].take() {
@@ -454,7 +459,12 @@ async fn delete_analysis(
         json!({"next_analysis_url":url,"confirm_delete_url":url.map(|url|format!("{url}?confirm_delete=true"))}),
     ))
 }
-async fn alert_repository(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<db::models::Repository> {
+async fn alert_repository(
+    state: &AppState,
+    headers: &HeaderMap,
+    owner: &str,
+    name: &str,
+) -> Result<db::models::Repository> {
     let (repo, _) = repository(state, headers, owner, name, false).await?;
     if repo.is_private {
         scope(state, headers, owner, name, false, false).await?;
@@ -515,7 +525,17 @@ async fn alerts(
     let next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
-        values.push(listed_alert(&state, row, &repo, &owner, reference.as_deref(), filters.pull_request).await?);
+        values.push(
+            listed_alert(
+                &state,
+                row,
+                &repo,
+                &owner,
+                reference.as_deref(),
+                filters.pull_request,
+            )
+            .await?,
+        );
     }
     query.pagination().response(&uri, values, next)
 }
@@ -527,8 +547,18 @@ async fn listed_alert(
     reference: Option<&str>,
     pull_request: Option<i32>,
 ) -> Result<Value> {
-    let default = pull_request.is_none().then(|| format!("refs/heads/{}", repo.default_branch));
-    alert_document(state, row, owner, &repo.name, reference.or(default.as_deref()), pull_request).await
+    let default = pull_request
+        .is_none()
+        .then(|| format!("refs/heads/{}", repo.default_branch));
+    alert_document(
+        state,
+        row,
+        owner,
+        &repo.name,
+        reference.or(default.as_deref()),
+        pull_request,
+    )
+    .await
 }
 async fn org_alerts(
     State(state): State<Arc<AppState>>,
@@ -559,7 +589,14 @@ async fn org_alerts(
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
         let repo = &row.repository;
-        let mut alert = payloads::code_scanning_alert(&row.alert, std::slice::from_ref(&row.instance), &name, &repo.name, row.dismissed_by.as_ref().map(payloads::user)).map_err(Error::unavailable)?;
+        let mut alert = payloads::code_scanning_alert(
+            &row.alert,
+            std::slice::from_ref(&row.instance),
+            &name,
+            &repo.name,
+            row.dismissed_by.as_ref().map(payloads::user),
+        )
+        .map_err(Error::unavailable)?;
         alert["repository"] = payloads::repository(repo, &name);
         values.push(alert);
     }
@@ -630,7 +667,8 @@ async fn instances(
         .iter()
         .take(limit)
         .map(|instance| {
-            payloads::code_scanning_instance(instance, &owner, &name, number).map_err(Error::unavailable)
+            payloads::code_scanning_instance(instance, &owner, &name, number)
+                .map_err(Error::unavailable)
         })
         .collect::<Result<Vec<_>>>()?;
     query.pagination().response(&uri, values, next)

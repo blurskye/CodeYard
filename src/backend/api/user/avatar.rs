@@ -89,7 +89,15 @@ async fn upload(
     };
     let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential = AccountCredential::Session(&session);
-    match avatars::upload_user_avatar(&ctx.state.pool, &ctx.state.storage, &user, &credential, bytes).await {
+    match avatars::upload_user_avatar(
+        &ctx.state.pool,
+        &ctx.state.storage,
+        &user,
+        &credential,
+        bytes,
+    )
+    .await
+    {
         Ok(()) => ctx.redirect("/settings?tab=profile&saved=avatar"),
         Err(error) => refused(&ctx, avatar_status(&error).0, &error.to_string()).await,
     }
@@ -113,7 +121,13 @@ async fn remove_form(
         Err(response) => return response,
     };
     let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match avatars::remove_user_avatar(&ctx.state.pool, &user, &AccountCredential::Session(&session)).await {
+    match avatars::remove_user_avatar(
+        &ctx.state.pool,
+        &user,
+        &AccountCredential::Session(&session),
+    )
+    .await
+    {
         Ok(()) => ctx.redirect("/settings?tab=profile&saved=avatar-removed"),
         Err(error) => refused(&ctx, avatar_status(&error).0, &error.to_string()).await,
     }

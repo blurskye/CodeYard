@@ -51,13 +51,21 @@ impl ActionsSettings {
     }
 
     pub fn cache_size_bytes(&self, repo: &RepoActionsSettings) -> i64 {
-        i64::from(CacheLimit::Storage.effective(self.cache_size_gib, repo.org_cache_size_gib, repo.cache_size_gib)) * 1024
+        i64::from(CacheLimit::Storage.effective(
+            self.cache_size_gib,
+            repo.org_cache_size_gib,
+            repo.cache_size_gib,
+        )) * 1024
             * 1024
             * 1024
     }
 
     pub fn cache_expiry_days(&self, repo: &RepoActionsSettings) -> i32 {
-        CacheLimit::Retention.effective(self.cache_retention_days, repo.org_cache_retention_days, repo.cache_retention_days)
+        CacheLimit::Retention.effective(
+            self.cache_retention_days,
+            repo.org_cache_retention_days,
+            repo.cache_retention_days,
+        )
     }
 }
 
@@ -138,8 +146,15 @@ impl CacheLimit {
             Self::Retention => "cache_retention_days",
         }
     }
-    pub(crate) fn effective(self, site: Option<i32>, organization: Option<i32>, repository: Option<i32>) -> i32 {
-        site.unwrap_or_else(|| self.default_value()).min(organization.unwrap_or(i32::MAX)).min(repository.unwrap_or(i32::MAX))
+    pub(crate) fn effective(
+        self,
+        site: Option<i32>,
+        organization: Option<i32>,
+        repository: Option<i32>,
+    ) -> i32 {
+        site.unwrap_or_else(|| self.default_value())
+            .min(organization.unwrap_or(i32::MAX))
+            .min(repository.unwrap_or(i32::MAX))
     }
     pub(crate) fn default_value(self) -> i32 {
         match self {

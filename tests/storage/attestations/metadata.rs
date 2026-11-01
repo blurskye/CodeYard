@@ -442,7 +442,11 @@ async fn contract(pg: bool) {
     // records no job for this organization either.
     let count_jobs = "SELECT COUNT(*) FROM artifact_metadata_jobs";
     let before = f.scalar(count_jobs, &[]).await;
-    for (credential, body) in [(&writer, &rejected), (&outsider, &rejected), (&outsider, &mixed)] {
+    for (credential, body) in [
+        (&writer, &rejected),
+        (&outsider, &rejected),
+        (&outsider, &mixed),
+    ] {
         call(
             &router,
             "orgs/create-cluster-deployment-records-job",

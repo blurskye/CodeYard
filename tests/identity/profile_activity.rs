@@ -207,7 +207,16 @@ async fn repository_pages(pg: bool) {
     let alice_session = uuid::Uuid::new_v4().to_string();
     let bob_session = uuid::Uuid::new_v4().to_string();
     for (actor, session) in [(alice, &alice_session), (bob, &bob_session)] {
-        db::users::sessions::create_session(f.pool(), session, actor, None, None, chrono::Utc::now() + chrono::Duration::days(1)).await.unwrap();
+        db::users::sessions::create_session(
+            f.pool(),
+            session,
+            actor,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
     }
     for index in 0..65 {
         db::repositories::records::create_repository(

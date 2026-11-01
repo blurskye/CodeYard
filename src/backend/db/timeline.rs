@@ -92,24 +92,52 @@ native_operation!(crate::backend::db::postgres::timeline::list_events,
 
 /// Structured issue-type snapshots must remain valid JSON; display-only details are bounded.
 pub(crate) fn event_details(kind: &str, detail: &str, previous: &str) -> Result<(String, String)> {
-    if matches!(kind, "issue_type_added" | "issue_type_removed" | "issue_type_changed") {
-        for value in [detail, previous].into_iter().filter(|value| !value.is_empty()) {
+    if matches!(
+        kind,
+        "issue_type_added" | "issue_type_removed" | "issue_type_changed"
+    ) {
+        for value in [detail, previous]
+            .into_iter()
+            .filter(|value| !value.is_empty())
+        {
             serde_json::from_str::<serde_json::Value>(value)?;
         }
         Ok((detail.to_owned(), previous.to_owned()))
     } else {
-        Ok((detail.chars().take(255).collect(), previous.chars().take(255).collect()))
+        Ok((
+            detail.chars().take(255).collect(),
+            previous.chars().take(255).collect(),
+        ))
     }
 }
 
-pub(crate) fn edit_events<'a>(old_title: &'a str, old_state: &str, title: &'a str, state: &str) -> Vec<(&'static str, &'a str, &'a str)> {
+pub(crate) fn edit_events<'a>(
+    old_title: &'a str,
+    old_state: &str,
+    title: &'a str,
+    state: &str,
+) -> Vec<(&'static str, &'a str, &'a str)> {
     let mut events = Vec::new();
-    if old_title != title { events.push(("renamed", title, old_title)); }
-    if old_state != state { events.push((if state == "open" { "reopened" } else { "closed" }, "", "")); }
+    if old_title != title {
+        events.push(("renamed", title, old_title));
+    }
+    if old_state != state {
+        events.push((
+            if state == "open" {
+                "reopened"
+            } else {
+                "closed"
+            },
+            "",
+            "",
+        ));
+    }
     events
 }
 
-pub(crate) fn item_subject(item: crate::backend::db::assignees::AssignedItem) -> (&'static str, i64) {
+pub(crate) fn item_subject(
+    item: crate::backend::db::assignees::AssignedItem,
+) -> (&'static str, i64) {
     use crate::backend::db::assignees::AssignedItem;
     match item {
         AssignedItem::Issue(id) => ("issue", id),

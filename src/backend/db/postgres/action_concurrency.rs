@@ -29,14 +29,24 @@ pub(crate) async fn record(
 }
 
 pub(crate) async fn eligible(connection: &mut PgConnection, run: &CiRun) -> Result<bool> {
-    let request: Option<(String, i64)> =
-        sqlx::query_as("SELECT name_key,request_order FROM actions_run_concurrency WHERE run_id=$1")
-            .bind(run.id)
-            .fetch_optional(&mut *connection)
-            .await?;
-    let Some((key, order)) = request else { return Ok(true) };
+    let request: Option<(String, i64)> = sqlx::query_as(
+        "SELECT name_key,request_order FROM actions_run_concurrency WHERE run_id=$1",
+    )
+    .bind(run.id)
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some((key, order)) = request else {
+        return Ok(true);
+    };
     let sql = crate::backend::db::action_concurrency::blockers_sql(true);
-    let blocked: bool = sqlx::query_scalar(&sql).bind(run.repo_id).bind(&key).bind(order).bind(Some(run.id)).bind(None::<i64>).fetch_one(&mut *connection).await?;
+    let blocked: bool = sqlx::query_scalar(&sql)
+        .bind(run.repo_id)
+        .bind(&key)
+        .bind(order)
+        .bind(Some(run.id))
+        .bind(None::<i64>)
+        .fetch_one(&mut *connection)
+        .await?;
     if blocked {
         return Ok(false);
     }
@@ -91,7 +101,13 @@ pub(crate) async fn admit_job(
     run: &CiRun,
     job: i64,
 ) -> Result<Option<bool>> {
-    let key: String = sqlx::query_scalar("SELECT name_key FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2").bind(job).bind(run.repo_id).fetch_one(&mut *connection).await?;
+    let key: String = sqlx::query_scalar(
+        "SELECT name_key FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2",
+    )
+    .bind(job)
+    .bind(run.repo_id)
+    .fetch_one(&mut *connection)
+    .await?;
     sqlx::query("SELECT repo_id FROM actions_concurrency_groups WHERE repo_id=$1 AND name_key=$2 FOR UPDATE").bind(run.repo_id).bind(&key).fetch_one(&mut *connection).await?;
     let (holding, cancelled, order): (bool, bool, i64) = sqlx::query_as("SELECT holding,cancelled,request_order FROM actions_job_concurrency WHERE job_id=$1 AND repo_id=$2").bind(job).bind(run.repo_id).fetch_one(&mut *connection).await?;
     if cancelled {
@@ -101,7 +117,14 @@ pub(crate) async fn admit_job(
         return Ok(Some(true));
     }
     let sql = crate::backend::db::action_concurrency::blockers_sql(true);
-    let blocked: bool = sqlx::query_scalar(&sql).bind(run.repo_id).bind(&key).bind(order).bind(None::<i64>).bind(Some(job)).fetch_one(&mut *connection).await?;
+    let blocked: bool = sqlx::query_scalar(&sql)
+        .bind(run.repo_id)
+        .bind(&key)
+        .bind(order)
+        .bind(None::<i64>)
+        .bind(Some(job))
+        .fetch_one(&mut *connection)
+        .await?;
     if blocked {
         return Ok(None);
     }
@@ -115,9 +138,17 @@ pub(crate) async fn admit_job(
 
 pub async fn groups(pool: &PgPool, repo: i64, run: Option<i64>) -> Result<Vec<Group>> {
     let sql = crate::backend::db::action_concurrency::groups_sql(true);
-    Ok(sqlx::query_as(&sql).bind(repo).bind(run).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&sql)
+        .bind(repo)
+        .bind(run)
+        .fetch_all(pool)
+        .await?)
 }
 pub async fn members(pool: &PgPool, repo: i64, group: &str) -> Result<Vec<Member>> {
     let sql = crate::backend::db::action_concurrency::members_sql(true);
-    Ok(sqlx::query_as(&sql).bind(repo).bind(group.to_lowercase()).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&sql)
+        .bind(repo)
+        .bind(group.to_lowercase())
+        .fetch_all(pool)
+        .await?)
 }

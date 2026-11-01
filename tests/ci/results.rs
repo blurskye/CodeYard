@@ -760,9 +760,16 @@ async fn eviction(pg: bool) {
     f.execute("UPDATE actions_objects SET accessed_at=accessed_at-10,expires_at=expires_at-10 WHERE id=$1", &[b]).await;
     assert_eq!(restore(&router, &token.token, "a", &[]).await["ok"], true);
     // Exercise the same finalization transaction with a byte-sized quota, avoiding GiB fixtures.
-    assert!(objects::finalize_object(f.pool(), run.id, &codeyard::backend::ci::runtime::token_hash(&token.token), b, 4, 6)
-        .await
-        .unwrap());
+    assert!(objects::finalize_object(
+        f.pool(),
+        run.id,
+        &codeyard::backend::ci::runtime::token_hash(&token.token),
+        b,
+        4,
+        6
+    )
+    .await
+    .unwrap());
     assert_eq!(restore(&router, &token.token, "a", &[]).await["ok"], true);
     assert_eq!(restore(&router, &token.token, "b", &[]).await["ok"], false);
     assert_eq!(
@@ -770,9 +777,16 @@ async fn eviction(pg: bool) {
             .await,
         1
     );
-    assert!(!objects::finalize_object(f.pool(), run.id, &codeyard::backend::ci::runtime::token_hash(&token.token), a, 4, 3)
-        .await
-        .unwrap());
+    assert!(!objects::finalize_object(
+        f.pool(),
+        run.id,
+        &codeyard::backend::ci::runtime::token_hash(&token.token),
+        a,
+        4,
+        3
+    )
+    .await
+    .unwrap());
     f.finish().await;
 }
 
@@ -844,8 +858,12 @@ async fn pending_uploads_share_the_cache_quota(pg: bool) {
         object_key: format!("actions/{}", Uuid::new_v4()),
         size,
     };
-    assert!(objects::grant_blob(f.pool(), a, auth.id, "grant-a", true).await.unwrap());
-    assert!(objects::grant_blob(f.pool(), b, auth.id, "grant-b", true).await.unwrap());
+    assert!(objects::grant_blob(f.pool(), a, auth.id, "grant-a", true)
+        .await
+        .unwrap());
+    assert!(objects::grant_blob(f.pool(), b, auth.id, "grant-b", true)
+        .await
+        .unwrap());
     // Four bytes of `a` are in flight, so `b` cannot stage four more under a six-byte quota.
     assert!(objects::stage_block(f.pool(), a, "grant-a", &part(4), 6)
         .await

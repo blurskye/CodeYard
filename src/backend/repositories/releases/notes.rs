@@ -262,7 +262,10 @@ pub async fn generate_notes(
             encode(&format!("refs/tags/{}", input.tag))
         )
     } else {
-        format!("{base}/commits/{}", encode(&format!("refs/tags/{}", input.tag)))
+        format!(
+            "{base}/commits/{}",
+            encode(&format!("refs/tags/{}", input.tag))
+        )
     };
     let _ = write!(body, "**Full Changelog**: {comparison}");
     validate_fields(&ReleaseFields {

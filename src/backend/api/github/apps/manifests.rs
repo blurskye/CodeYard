@@ -31,9 +31,14 @@ pub(super) async fn convert(
         .ok_or_else(Error::missing)?;
     let value: Value = serde_json::from_str(&draft.manifest).map_err(Error::unavailable)?;
     let manifest = apps::manifest(&value).ok_or_else(|| {
-        Error::invalid_simple("Invalid manifest or unsupported permissions, events or setup automation")
+        Error::invalid_simple(
+            "Invalid manifest or unsupported permissions, events or setup automation",
+        )
     })?;
-    let webhook_secret = manifest.hook_url.as_ref().map(|_| crate::backend::crypto::random_hex());
+    let webhook_secret = manifest
+        .hook_url
+        .as_ref()
+        .map(|_| crate::backend::crypto::random_hex());
     let fields = if let Some(url) = &manifest.hook_url {
         let form = HookForm {
             username: None,

@@ -348,7 +348,10 @@ jobs:
     );
     success(&output);
     let raw = raw_log(&output);
-    assert!(raw.contains("] Step started: Run echo push-name\n"), "{raw}");
+    assert!(
+        raw.contains("] Step started: Run echo push-name\n"),
+        "{raw}"
+    );
     assert!(raw.contains("] Step started: Named push\n"), "{raw}");
     assert!(raw.contains("] Step skipped: Run ./missing\n"), "{raw}");
 }
@@ -376,7 +379,11 @@ fn action_metadata_that_links_outside_the_action_is_refused() {
         "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo SHOULD-NOT-RUN\n",
     )
     .unwrap();
-    std::os::unix::fs::symlink("../outside/action.yml", workspace.path().join("action/action.yml")).unwrap();
+    std::os::unix::fs::symlink(
+        "../outside/action.yml",
+        workspace.path().join("action/action.yml"),
+    )
+    .unwrap();
     std::fs::write(
         workspace.path().join("workflow.yml"),
         "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - uses: ./action\n",
@@ -384,7 +391,11 @@ fn action_metadata_that_links_outside_the_action_is_refused() {
     .unwrap();
     let output = command(workspace.path()).output().unwrap();
     assert!(!output.status.success());
-    assert!(log(&output).contains("metadata file must be inside the action"), "{}", log(&output));
+    assert!(
+        log(&output).contains("metadata file must be inside the action"),
+        "{}",
+        log(&output)
+    );
     assert!(!log(&output).contains("SHOULD-NOT-RUN"));
 }
 
@@ -947,7 +958,12 @@ jobs:
 
 /// Puts a fetched action ref "v1" into the runner's cache, which names each ref by the SHA-256
 /// digest of its source URL and the ref.
-fn cache_action(workspace: &Path, repository: &str, source: &str, files: &[(&str, &str)]) -> std::path::PathBuf {
+fn cache_action(
+    workspace: &Path,
+    repository: &str,
+    source: &str,
+    files: &[(&str, &str)],
+) -> std::path::PathBuf {
     let digest = <sha2::Sha256 as sha2::Digest>::digest(format!("{source}\0v1"));
     let cached = workspace
         .join("cache/codeyard-actions/actions")
@@ -1012,7 +1028,12 @@ fn remote_actions_come_from_the_configured_server() {
         ("https://ghe.example.com/", "from-enterprise"),
     ] {
         let action = format!("runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo action-{marker}\n");
-        cache_action(workspace.path(), "example/action", source, &[("action.yml", action.as_str())]);
+        cache_action(
+            workspace.path(),
+            "example/action",
+            source,
+            &[("action.yml", action.as_str())],
+        );
     }
     std::fs::write(workspace.path().join("workflow.yml"), "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - uses: example/action@v1\n").unwrap();
     let output = command(workspace.path())
@@ -1020,13 +1041,25 @@ fn remote_actions_come_from_the_configured_server() {
         .output()
         .unwrap();
     success(&output);
-    assert!(log(&output).contains("action-from-github"), "{}", log(&output));
+    assert!(
+        log(&output).contains("action-from-github"),
+        "{}",
+        log(&output)
+    );
     let output = command(workspace.path())
-        .args(["--action-offline-mode", "--env", "GITHUB_SERVER_URL=https://GHE.example.com"])
+        .args([
+            "--action-offline-mode",
+            "--env",
+            "GITHUB_SERVER_URL=https://GHE.example.com",
+        ])
         .output()
         .unwrap();
     success(&output);
-    assert!(log(&output).contains("action-from-enterprise"), "{}", log(&output));
+    assert!(
+        log(&output).contains("action-from-enterprise"),
+        "{}",
+        log(&output)
+    );
     assert!(!log(&output).contains("action-from-github"));
     for server in [
         "ghe.example.com",
@@ -1040,7 +1073,11 @@ fn remote_actions_come_from_the_configured_server() {
             .output()
             .unwrap();
         assert!(!output.status.success(), "accepted {server:?}");
-        assert!(log(&output).contains("Invalid action forge URL"), "{}", log(&output));
+        assert!(
+            log(&output).contains("Invalid action forge URL"),
+            "{}",
+            log(&output)
+        );
     }
 }
 
@@ -1072,7 +1109,10 @@ fn a_remote_action_pre_runs_at_job_start_and_a_local_pre_never_runs() {
     );
     std::fs::create_dir_all(workspace.path().join("local")).unwrap();
     for (name, contents) in [
-        ("action.yml", "runs:\n  using: node24\n  pre: pre.js\n  main: main.js\n"),
+        (
+            "action.yml",
+            "runs:\n  using: node24\n  pre: pre.js\n  main: main.js\n",
+        ),
         ("pre.js", "echo local-pre-ran\n"),
         ("main.js", "echo local-main-ok\n"),
     ] {
@@ -1095,7 +1135,11 @@ jobs:
 "#,
     )
     .unwrap();
-    let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
+    let path = format!(
+        "{}:{}",
+        bin.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
     let output = command(workspace.path())
         .arg("--action-offline-mode")
         .env("PATH", path)
@@ -1113,7 +1157,10 @@ jobs:
         assert!(text.contains(expected), "missing {expected}: {text}");
     }
     assert!(!text.contains("local-pre-ran"), "{text}");
-    assert!(text.find("remote-pre-push") < text.find("remote-main-ok"), "{text}");
+    assert!(
+        text.find("remote-pre-push") < text.find("remote-main-ok"),
+        "{text}"
+    );
 }
 
 // The worker gives each run a delegated cgroup; this test makes one below its own.
@@ -1161,7 +1208,11 @@ jobs:
     let removed = std::fs::remove_dir(&path);
     success(&output);
     removed.unwrap();
-    assert!(log(&output).contains("background-alive"), "{}", log(&output));
+    assert!(
+        log(&output).contains("background-alive"),
+        "{}",
+        log(&output)
+    );
     assert!(elapsed >= std::time::Duration::from_secs(3), "{elapsed:?}");
     assert!(elapsed < std::time::Duration::from_secs(20), "{elapsed:?}");
     let heartbeat = workspace.path().join("heartbeat");

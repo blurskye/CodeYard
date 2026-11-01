@@ -14,10 +14,7 @@ use axum::{
     response::Response,
     routing::{get, MethodRouter},
 };
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 fn boolean(q: &HashMap<String, String>, name: &str, default: bool) -> Result<bool> {
     match q.get(name).map(String::as_str) {
@@ -160,7 +157,14 @@ async fn run(
         } else {
             AssignedItem::Issue(id)
         };
-        let mut value = issues::document(&state.pool, issues::Reader::Request(&state, Some(&auth)), repo, owner, item).await?;
+        let mut value = issues::document(
+            &state.pool,
+            issues::Reader::Request(&state, Some(&auth)),
+            repo,
+            owner,
+            item,
+        )
+        .await?;
         value["repository"] = payloads::repository(repo, owner);
         items.push(value);
     }

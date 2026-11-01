@@ -70,13 +70,19 @@ async fn snapshot(
     delivery: Option<i64>,
     history: DeliveryWindow,
 ) -> Result<(Webhook, HookSettings)> {
-    let mut settings =
-        db::webhooks::read_settings(&state.pool, owner, actor.user.id, &actor.credential(), Some(hook), delivery, 0, history)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(|| {
-                Error::new(StatusCode::FORBIDDEN, "Repository administration required")
-            })?;
+    let mut settings = db::webhooks::read_settings(
+        &state.pool,
+        owner,
+        actor.user.id,
+        &actor.credential(),
+        Some(hook),
+        delivery,
+        0,
+        history,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(|| Error::new(StatusCode::FORBIDDEN, "Repository administration required"))?;
     let hook = settings.hook.take().ok_or_else(Error::missing)?;
     Ok((hook, settings))
 }
@@ -88,7 +94,8 @@ async fn read_hook(
     actor: &auth::Authentication,
     hook: i64,
 ) -> Result<Value> {
-    let (hook, settings) = snapshot(state, owner, actor, hook, None, DeliveryWindow::default()).await?;
+    let (hook, settings) =
+        snapshot(state, owner, actor, hook, None, DeliveryWindow::default()).await?;
     Ok(document(params, &hook, settings.deliveries.first()))
 }
 
@@ -121,8 +128,17 @@ async fn list(
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, false).await?;
     let (offset, limit) = page.window()?;
-    let hooks = db::webhooks::list_managed_webhooks(&state.pool, owner, actor.user.id, &actor.credential(), offset as i64, (limit + 1) as i64)
-        .await.map_err(Error::unavailable)?.ok_or_else(|| hook_error(HookError::Denied))?;
+    let hooks = db::webhooks::list_managed_webhooks(
+        &state.pool,
+        owner,
+        actor.user.id,
+        &actor.credential(),
+        offset as i64,
+        (limit + 1) as i64,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(|| hook_error(HookError::Denied))?;
     let next = hooks.len() > limit;
     let mut values = Vec::new();
     for hook in hooks.iter().take(limit) {
@@ -208,8 +224,13 @@ async fn save(
                 add_events: input.add_events.unwrap_or_default(),
                 remove_events: input.remove_events.unwrap_or_default(),
                 ..Default::default()
-            }.changed_events("push").map_err(|error| Error::invalid(error.0))?
-                .unwrap_or_else(|| "push".to_owned()).split(',').map(str::to_owned).collect();
+            }
+            .changed_events("push")
+            .map_err(|error| Error::invalid(error.0))?
+            .unwrap_or_else(|| "push".to_owned())
+            .split(',')
+            .map(str::to_owned)
+            .collect();
             let form = HookForm {
                 username: None,
                 password: None,
@@ -246,7 +267,11 @@ async fn save(
                 remove_events: input.remove_events.unwrap_or_default(),
                 active: input.active,
                 ssl_verify,
-                secret: if replaces_config { Some(config.secret.unwrap_or_default()) } else { config.secret },
+                secret: if replaces_config {
+                    Some(config.secret.unwrap_or_default())
+                } else {
+                    config.secret
+                },
                 ..Default::default()
             };
             settings::update(
@@ -317,9 +342,15 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
-    settings::delete(&state.pool, owner, &actor.user, &actor.credential(), id(&params, "hook_id")?)
-        .await
-        .map_err(hook_error)?;
+    settings::delete(
+        &state.pool,
+        owner,
+        &actor.user,
+        &actor.credential(),
+        id(&params, "hook_id")?,
+    )
+    .await
+    .map_err(hook_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -410,7 +441,8 @@ async fn deliveries(
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, false).await?;
     let window = query.window(false)?;
-    let (hook, settings) = snapshot(&state, owner, &actor, id(&params, "hook_id")?, None, window).await?;
+    let (hook, settings) =
+        snapshot(&state, owner, &actor, id(&params, "hook_id")?, None, window).await?;
     let (headers, rows) = delivery_page(settings.deliveries, query, &uri)?;
     let rows = rows
         .iter()

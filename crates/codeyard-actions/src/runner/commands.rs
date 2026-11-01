@@ -35,7 +35,12 @@ impl Masker {
     /// New jobs inherit credentials, but not each other's subsequent stdout commands.
     pub(super) fn fork(&self) -> Self {
         Self {
-            masks: Arc::new(Mutex::new(self.masks.lock().unwrap_or_else(|error| error.into_inner()).clone())),
+            masks: Arc::new(Mutex::new(
+                self.masks
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .clone(),
+            )),
             requested: Arc::new(AtomicUsize::new(0)),
             hidden: Arc::new(AtomicBool::new(self.hidden.load(Ordering::Relaxed))),
         }
@@ -64,7 +69,10 @@ impl Masker {
 
     pub fn add(&self, value: &str) {
         let mut masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
-        for part in std::iter::once(value).chain(value.lines()).chain(value.lines().map(|line| line.trim_end_matches('\r'))) {
+        for part in std::iter::once(value)
+            .chain(value.lines())
+            .chain(value.lines().map(|line| line.trim_end_matches('\r')))
+        {
             if part.trim().is_empty() {
                 continue;
             }
@@ -109,19 +117,36 @@ impl Masker {
             return "***".into();
         }
         let mut masks = self.masks.lock().unwrap_or_else(|error| error.into_inner());
-        if masks.values.is_empty() { return value.to_owned(); }
+        if masks.values.is_empty() {
+            return value.to_owned();
+        }
         if masks.matcher.is_none() {
             masks.build_bytes = masks.build_bytes.saturating_add(masks.bytes);
-            if masks.build_bytes > 64 * 1024 * 1024 { self.hide_all(); return "***".into(); }
+            if masks.build_bytes > 64 * 1024 * 1024 {
+                self.hide_all();
+                return "***".into();
+            }
             let matcher = aho_corasick::AhoCorasick::builder()
-                .kind(Some(aho_corasick::AhoCorasickKind::ContiguousNFA)).build(masks.values.iter().map(String::as_bytes));
-            let Ok(matcher) = matcher else { self.hide_all(); return "***".into(); };
+                .kind(Some(aho_corasick::AhoCorasickKind::ContiguousNFA))
+                .build(masks.values.iter().map(String::as_bytes));
+            let Ok(matcher) = matcher else {
+                self.hide_all();
+                return "***".into();
+            };
             masks.matcher = Some(matcher);
         }
         // Redact the union of original-text matches, without sequential replacement.
         let mut boundaries = vec![0i32; value.len() + 1];
-        for (index, found) in masks.matcher.as_ref().expect("compiled masks").find_overlapping_iter(value).enumerate() {
-            if index >= 100_000 { return "***".into(); }
+        for (index, found) in masks
+            .matcher
+            .as_ref()
+            .expect("compiled masks")
+            .find_overlapping_iter(value)
+            .enumerate()
+        {
+            if index >= 100_000 {
+                return "***".into();
+            }
             boundaries[found.start()] += 1;
             boundaries[found.end()] -= 1;
         }
@@ -173,8 +198,14 @@ impl Progress {
             update,
         };
         if let Some(output) = &self.output {
-            output.line(format!("::codeyard-progress::{}:{}", self.nonce,
-                serde_json::to_string(&event).expect("runner progress is serializable")), essential);
+            output.line(
+                format!(
+                    "::codeyard-progress::{}:{}",
+                    self.nonce,
+                    serde_json::to_string(&event).expect("runner progress is serializable")
+                ),
+                essential,
+            );
         }
     }
 }
@@ -255,7 +286,12 @@ impl Log {
                 let number = progress.step.load(Ordering::Relaxed);
                 let step = (number > 0).then_some(number);
                 let mut rest = line;
-                let chunk = if line.starts_with("Step started: ") || line.starts_with("Step completed: ") { 2048 } else { 512 };
+                let chunk =
+                    if line.starts_with("Step started: ") || line.starts_with("Step completed: ") {
+                        2048
+                    } else {
+                        512
+                    };
                 loop {
                     let mut end = rest.len().min(chunk);
                     while !rest.is_char_boundary(end) {
@@ -297,7 +333,11 @@ pub(super) struct Commands {
 }
 
 impl Commands {
-    pub fn new(workspace: std::path::PathBuf, matchers: super::matchers::Matchers, debug: bool) -> Self {
+    pub fn new(
+        workspace: std::path::PathBuf,
+        matchers: super::matchers::Matchers,
+        debug: bool,
+    ) -> Self {
         Self {
             workspace,
             matchers,
@@ -387,14 +427,28 @@ impl Commands {
         // Echo prints the commands that leave no trace in the log; the others show themselves.
         if self.echo
             && !from_matcher
-            && ["set-env", "add-path", "set-output", "add-matcher", "remove-matcher", "save-state", "echo"]
-                .contains(&name.as_str())
+            && [
+                "set-env",
+                "add-path",
+                "set-output",
+                "add-matcher",
+                "remove-matcher",
+                "save-state",
+                "echo",
+            ]
+            .contains(&name.as_str())
         {
             log.line(line);
         }
-        if matches!(name.as_str(), "set-output" | "save-state" | "set-env" | "add-path") {
-            let bytes = data.len().saturating_add(properties.get("name").map_or(0, String::len));
-            if self.storage_full || self.retained_commands >= 4096
+        if matches!(
+            name.as_str(),
+            "set-output" | "save-state" | "set-env" | "add-path"
+        ) {
+            let bytes = data
+                .len()
+                .saturating_add(properties.get("name").map_or(0, String::len));
+            if self.storage_full
+                || self.retained_commands >= 4096
                 || bytes > (1usize << 20).saturating_sub(self.retained_bytes)
             {
                 self.failed = true;
@@ -494,8 +548,21 @@ impl Commands {
                     .and_then(|line| line.parse::<u32>().ok())
                     .filter(|line| *line >= start_line)
                     .unwrap_or(start_line);
-                let start_column = (start_line == end_line).then(|| properties.get("col").and_then(|column| column.parse::<u32>().ok()).filter(|column| *column > 0)).flatten();
-                let end_column = start_column.map(|start| properties.get("endcolumn").and_then(|column| column.parse::<u32>().ok()).filter(|column| *column >= start).unwrap_or(start));
+                let start_column = (start_line == end_line)
+                    .then(|| {
+                        properties
+                            .get("col")
+                            .and_then(|column| column.parse::<u32>().ok())
+                            .filter(|column| *column > 0)
+                    })
+                    .flatten();
+                let end_column = start_column.map(|start| {
+                    properties
+                        .get("endcolumn")
+                        .and_then(|column| column.parse::<u32>().ok())
+                        .filter(|column| *column >= start)
+                        .unwrap_or(start)
+                });
                 log.emit(Update::Annotation {
                     annotation: crate::progress::Annotation {
                         path: bounded(
@@ -541,7 +608,7 @@ impl Commands {
                 }
             }
             "debug" if self.debug => log.line(&format!("debug: {data}")),
-            "debug" => {},
+            "debug" => {}
             "echo" => match data.trim().to_ascii_lowercase().as_str() {
                 "on" => self.echo = true,
                 "off" => self.echo = false,
@@ -566,7 +633,10 @@ impl Commands {
     }
 }
 
-pub(super) fn update_outputs(target: &mut BTreeMap<String, String>, values: impl IntoIterator<Item = (String, String)>) {
+pub(super) fn update_outputs(
+    target: &mut BTreeMap<String, String>,
+    values: impl IntoIterator<Item = (String, String)>,
+) {
     for (key, value) in values {
         target.retain(|name, _| !name.eq_ignore_ascii_case(&key));
         target.insert(key, value);
@@ -634,8 +704,12 @@ pub(super) fn words(text: &str) -> Result<Vec<String>> {
     let mut started = false;
     for ch in text.chars() {
         if escaped {
-            if quote == Some('"') && !matches!(ch, '$' | '`' | '"' | '\\' | '\n') { word.push('\\'); }
-            if ch != '\n' { word.push(ch); }
+            if quote == Some('"') && !matches!(ch, '$' | '`' | '"' | '\\' | '\n') {
+                word.push('\\');
+            }
+            if ch != '\n' {
+                word.push(ch);
+            }
             escaped = false;
         } else if ch == '\\' && quote != Some('\'') {
             escaped = true;
@@ -701,7 +775,9 @@ mod tests {
         masker.add("abc123");
         masker.add("123456");
         assert_eq!(masker.mask("abc123456"), "***");
-        for _ in 0..30 { masker.add("*"); }
+        for _ in 0..30 {
+            masker.add("*");
+        }
         assert_eq!(masker.mask("***"), "***");
         masker.add("long secret\nshort");
         assert_eq!(masker.mask("long secret and short"), "*** and ***");
@@ -738,13 +814,25 @@ mod tests {
         let mut commands = Commands::new(temp.path().into(), Default::default(), false);
         commands.line(&log, "##[add-matcher]matcher%5D%3B.json", false);
         assert!(!commands.failed);
-        assert!(commands.matchers.matches("diagnostic", false).unwrap().is_some());
+        assert!(commands
+            .matchers
+            .matches("diagnostic", false)
+            .unwrap()
+            .is_some());
         commands.line(&log, "::stop-commands::paused", false);
         commands.line(&log, "##[remove-matcher OWNER=legacy%3B%5D;]", false);
-        assert!(commands.matchers.matches("diagnostic", false).unwrap().is_some());
+        assert!(commands
+            .matchers
+            .matches("diagnostic", false)
+            .unwrap()
+            .is_some());
         commands.line(&log, "::paused::", false);
         commands.line(&log, "##[remove-matcher OWNER=legacy%3B%5D;]", false);
-        assert!(commands.matchers.matches("diagnostic", false).unwrap().is_none());
+        assert!(commands
+            .matchers
+            .matches("diagnostic", false)
+            .unwrap()
+            .is_none());
         commands.line(&log, "##[set-env name=X;]blocked", false);
         assert!(commands.failed);
         assert!(commands.env.is_empty());

@@ -126,7 +126,8 @@ async fn enqueue(f: &Database, repo: i64, actor: i64, attempt: Option<&CiRun>) -
             None,
         )
         .await
-        .unwrap().0
+        .unwrap()
+        .0
     } else {
         db::ci::enqueue_ci_run(f.pool(), input, &[actor])
             .await
@@ -312,10 +313,16 @@ async fn contract(pg: bool) {
     assert_eq!(gates.len(), 1);
     assert_eq!(gates[0].app_id, provider.id);
     assert_eq!(gates[0].state, "pending");
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels()
+    )
+    .await
+    .unwrap()
+    .is_none());
 
     // The normal sender records its SSRF refusal; the payload still proves targeting and callback identity.
     webhooks::deployment_protection::requested(f.pool(), &run)
@@ -407,21 +414,33 @@ async fn contract(pg: bool) {
     .unwrap()
     .id;
     decide(&f, token, &run, None).await.unwrap();
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels()
+    )
+    .await
+    .unwrap()
+    .is_none());
     decide(&f, token, &run, Some("approved")).await.unwrap();
     decide(&f, token, &run, Some("approved")).await.unwrap();
     refused(decide(&f, token, &run, Some("rejected")).await, |error| {
         matches!(error, Refusal::Conflict)
     });
     assert_eq!(
-        db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-            .await
-            .unwrap()
-            .unwrap()
-            .id,
+        db::ci::claim_ci_run(
+            f.pool(),
+            "worker",
+            "local",
+            &[alice],
+            &codeyard::backend::ci::CiConfig::default().platform_labels()
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id,
         run.id
     );
     db::ci::finish_ci_run(f.pool(), run.id, "worker", "success", None)
@@ -434,15 +453,27 @@ async fn contract(pg: bool) {
         protection::gates(f.pool(), retry.id).await.unwrap()[0].state,
         "pending"
     );
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels()
+    )
+    .await
+    .unwrap()
+    .is_none());
     decide(&f, token, &retry, Some("rejected")).await.unwrap();
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels()
+    )
+    .await
+    .unwrap()
+    .is_none());
     assert_eq!(
         db::ci::get_ci_run_by_id(f.pool(), repo.id, retry.id)
             .await
@@ -496,11 +527,17 @@ async fn contract(pg: bool) {
         "disabled"
     );
     assert_eq!(
-        db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-            .await
-            .unwrap()
-            .unwrap()
-            .id,
+        db::ci::claim_ci_run(
+            f.pool(),
+            "worker",
+            "local",
+            &[alice],
+            &codeyard::backend::ci::CiConfig::default().platform_labels()
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .id,
         waiting.id
     );
     db::ci::finish_ci_run(f.pool(), waiting.id, "worker", "success", None)
@@ -517,17 +554,29 @@ async fn contract(pg: bool) {
         decide(&f, token, &unavailable, Some("approved")).await,
         |error| matches!(error, Refusal::Denied),
     );
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels()
+    )
+    .await
+    .unwrap()
+    .is_none());
     db::environments::delete(f.pool(), alice, repo.id, "production")
         .await
         .unwrap();
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .is_none());
+    assert!(db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels()
+    )
+    .await
+    .unwrap()
+    .is_none());
     f.finish().await;
 }
 

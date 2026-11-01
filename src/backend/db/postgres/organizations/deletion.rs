@@ -16,7 +16,16 @@ pub async fn delete_organization(
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
-    if role != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
+    if role != OrgRole::Owner
+        || !super::super::credentials::organization(
+            &mut tx,
+            &owner,
+            org,
+            "organization_administration",
+            true,
+        )
+        .await?
+    {
         return Ok(Denied);
     }
     // The row lock keeps a concurrent repository insert from referencing the organization mid-delete.
@@ -76,7 +85,16 @@ pub async fn list_organization_deletion_repositories(
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
+    if require_org!(tx, actor, org) != OrgRole::Owner
+        || !super::super::credentials::organization(
+            &mut tx,
+            &owner,
+            org,
+            "organization_administration",
+            true,
+        )
+        .await?
+    {
         return Ok(Denied);
     }
     let repository = sqlx::query_scalar(
@@ -102,7 +120,16 @@ pub async fn delete_organization_repository(
     // Deletion locks membership and the initiating credential before organization/fork rows.
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
-    if require_org!(tx, actor, org) != OrgRole::Owner || !super::super::credentials::organization(&mut tx, &owner, org, "organization_administration", true).await? {
+    if require_org!(tx, actor, org) != OrgRole::Owner
+        || !super::super::credentials::organization(
+            &mut tx,
+            &owner,
+            org,
+            "organization_administration",
+            true,
+        )
+        .await?
+    {
         return Ok(Denied);
     }
     crate::backend::db::postgres::repositories::records::lock_fork_ancestors(

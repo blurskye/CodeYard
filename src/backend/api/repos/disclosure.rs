@@ -82,7 +82,10 @@ async fn toggle(
 }
 fn failure(error: &anyhow::Error) -> (StatusCode, &str) {
     if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
-        return (StatusCode::FORBIDDEN, "A live unrestricted credential is required.");
+        return (
+            StatusCode::FORBIDDEN,
+            "A live unrestricted credential is required.",
+        );
     }
     if let Some(refusal) = error.downcast_ref::<advisories::Refusal>() {
         let status = match refusal {
@@ -394,11 +397,33 @@ async fn change(
     let intent = field(&form, "intent");
     let result = match intent.as_str() {
         // A reply returns how many replies came before it, which names the page that shows it.
-        "reply" => records::reply(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, id, &body).await.map(Some),
-        "close" => records::set_state(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, id, true).await.map(|()| None),
-        "reopen" => {
-            records::set_state(&ctx.state.pool, ctx.database_actor(actor), loaded.repository.id, id, false).await.map(|()| None)
-        }
+        "reply" => records::reply(
+            &ctx.state.pool,
+            ctx.database_actor(actor),
+            loaded.repository.id,
+            id,
+            &body,
+        )
+        .await
+        .map(Some),
+        "close" => records::set_state(
+            &ctx.state.pool,
+            ctx.database_actor(actor),
+            loaded.repository.id,
+            id,
+            true,
+        )
+        .await
+        .map(|()| None),
+        "reopen" => records::set_state(
+            &ctx.state.pool,
+            ctx.database_actor(actor),
+            loaded.repository.id,
+            id,
+            false,
+        )
+        .await
+        .map(|()| None),
         _ => return ctx.error(StatusCode::BAD_REQUEST, "Unknown report action"),
     };
     match result {

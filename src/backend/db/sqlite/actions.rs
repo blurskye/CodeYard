@@ -118,8 +118,10 @@ pub async fn save_actions_settings(
     .execute(&mut *tx)
     .await?;
     if settings.tightens_cache_limits(&previous) {
-        let cached: Vec<i64> = sqlx::query_scalar("SELECT DISTINCT repo_id FROM actions_objects WHERE kind='cache'")
-            .fetch_all(&mut *tx).await?;
+        let cached: Vec<i64> =
+            sqlx::query_scalar("SELECT DISTINCT repo_id FROM actions_objects WHERE kind='cache'")
+                .fetch_all(&mut *tx)
+                .await?;
         for repo in cached {
             super::action_objects::apply_cache_policy(&mut tx, repo).await?;
         }
@@ -157,7 +159,8 @@ pub async fn set_repo_enabled(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
+            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
+                .await?,
         Refusal::Denied
     );
     sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now')")
@@ -179,7 +182,8 @@ pub async fn save_repo_actions_settings(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_admin_authority(&mut tx, actor.user_id, repo_id).await?
-            && super::credentials::repository(&mut tx, &actor, repo_id, "administration", true).await?,
+            && super::credentials::repository(&mut tx, &actor, repo_id, "administration", true)
+                .await?,
         Refusal::Denied
     );
     let result = sqlx::query(

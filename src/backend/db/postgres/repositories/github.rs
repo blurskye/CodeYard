@@ -21,8 +21,7 @@ pub async fn repository_teams(
         "Invalid team page"
     );
     // Repository access, organization role and team rows come from one snapshot.
-    let mut tx =
-        crate::backend::db::postgres::organizations::authority::begin_read(pool).await?;
+    let mut tx = crate::backend::db::postgres::organizations::authority::begin_read(pool).await?;
     // Anyone who can read the repository may list the teams of its organization they can see.
     if !super::access::user_repo_access_in_transaction(&mut tx, actor, repo_id)
         .await?
@@ -46,19 +45,37 @@ pub async fn repository_teams(
         return Ok(None);
     };
     let privileged = matches!(role, OrgRole::Owner | OrgRole::Admin);
-    let mut teams: Vec<crate::backend::db::repositories::github::RepositoryTeam> = sqlx::query_as(REPOSITORY_TEAMS_SQL)
-        .bind(repo_id)
-        .bind(org)
-        .bind(privileged)
-        .bind(actor)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&mut *tx)
-        .await?;
-    let parents: Vec<_> = teams.iter().filter(|row| row.team.privacy == "visible").filter_map(|row| row.team.parent_team_id).collect();
-    let parents: Vec<crate::backend::db::models::Team> = sqlx::query_as("SELECT * FROM teams WHERE id=ANY($1) AND org_id=$2 AND privacy='visible'").bind(parents).bind(org).fetch_all(&mut *tx).await?;
-    let parents: std::collections::HashMap<_, _> = parents.into_iter().map(|team| (team.id, team)).collect();
-    for row in &mut teams { if row.team.privacy == "visible" { row.parent = row.team.parent_team_id.and_then(|id| parents.get(&id).cloned()); } }
+    let mut teams: Vec<crate::backend::db::repositories::github::RepositoryTeam> =
+        sqlx::query_as(REPOSITORY_TEAMS_SQL)
+            .bind(repo_id)
+            .bind(org)
+            .bind(privileged)
+            .bind(actor)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&mut *tx)
+            .await?;
+    let parents: Vec<_> = teams
+        .iter()
+        .filter(|row| row.team.privacy == "visible")
+        .filter_map(|row| row.team.parent_team_id)
+        .collect();
+    let parents: Vec<crate::backend::db::models::Team> =
+        sqlx::query_as("SELECT * FROM teams WHERE id=ANY($1) AND org_id=$2 AND privacy='visible'")
+            .bind(parents)
+            .bind(org)
+            .fetch_all(&mut *tx)
+            .await?;
+    let parents: std::collections::HashMap<_, _> =
+        parents.into_iter().map(|team| (team.id, team)).collect();
+    for row in &mut teams {
+        if row.team.privacy == "visible" {
+            row.parent = row
+                .team
+                .parent_team_id
+                .and_then(|id| parents.get(&id).cloned());
+        }
+    }
     tx.commit().await?;
     Ok(Some(teams))
 }

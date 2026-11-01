@@ -179,8 +179,14 @@ pub(crate) async fn reset_code_post(
     let code = field(&form, "code").trim();
     match identity::accounts::reset_password(&ctx.state.pool, code, password).await {
         Ok(()) => {
-            let target = if redirect == "/" { "/login?reset=done".to_owned() }
-                else { format!("/login?reset=done&redirect={}", crate::webui::encode_component(&redirect)) };
+            let target = if redirect == "/" {
+                "/login?reset=done".to_owned()
+            } else {
+                format!(
+                    "/login?reset=done&redirect={}",
+                    crate::webui::encode_component(&redirect)
+                )
+            };
             ctx.redirect(&target)
         }
         Err(PasswordResetError::Input(_)) => code_page(
@@ -191,11 +197,19 @@ pub(crate) async fn reset_code_post(
             Some("Password must be between 8 and 1024 bytes."),
         ),
         Err(PasswordResetError::UnchangedPassword) => code_page(
-            &ctx, email, &redirect, StatusCode::BAD_REQUEST, Some("Choose a password different from your temporary password."),
+            &ctx,
+            email,
+            &redirect,
+            StatusCode::BAD_REQUEST,
+            Some("Choose a password different from your temporary password."),
         ),
-        Err(PasswordResetError::InvalidLink) => {
-            code_page(&ctx, email, &redirect, StatusCode::BAD_REQUEST, Some(INVALID_CODE))
-        }
+        Err(PasswordResetError::InvalidLink) => code_page(
+            &ctx,
+            email,
+            &redirect,
+            StatusCode::BAD_REQUEST,
+            Some(INVALID_CODE),
+        ),
         Err(PasswordResetError::Password(_) | PasswordResetError::AccountUnavailable) => code_page(
             &ctx,
             email,
@@ -299,9 +313,15 @@ pub(crate) async fn reset_post(
             )
             .await
         }
-        Err(PasswordResetError::UnchangedPassword) => reset_page(
-            &ctx, token, StatusCode::BAD_REQUEST, Some("Choose a password different from your temporary password."),
-        ).await,
+        Err(PasswordResetError::UnchangedPassword) => {
+            reset_page(
+                &ctx,
+                token,
+                StatusCode::BAD_REQUEST,
+                Some("Choose a password different from your temporary password."),
+            )
+            .await
+        }
         Err(PasswordResetError::InvalidLink) => {
             reset_page(&ctx, token, StatusCode::BAD_REQUEST, Some(INVALID_LINK)).await
         }

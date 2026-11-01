@@ -30,8 +30,10 @@ async fn fill(
         .filter(|value| value.is_object())
     {
         // A source subscription does not grant access to its private remediation forks.
-        let forks = db::repositories::discovery::public_fork_counts(pool, &[repo.id]).await?
-            .remove(&repo.id).unwrap_or_default();
+        let forks = db::repositories::discovery::public_fork_counts(pool, &[repo.id])
+            .await?
+            .remove(&repo.id)
+            .unwrap_or_default();
         payloads::set_fork_counts(repository, forks);
         repository["topics"] = json!(topics(pool, repo.id).await?);
     }
@@ -124,9 +126,11 @@ async fn still_here(
     let AssignedItem::Issue(id) = item else {
         return Ok(true);
     };
-    Ok(db::issues::get_issue_by_id(pool, id).await?.is_some_and(|issue| {
-        issue.repo_id == repo.id && Some(i64::from(issue.number)) == event["number"].as_i64()
-    }))
+    Ok(db::issues::get_issue_by_id(pool, id)
+        .await?
+        .is_some_and(|issue| {
+            issue.repo_id == repo.id && Some(i64::from(issue.number)) == event["number"].as_i64()
+        }))
 }
 
 /// A pull request's issue document has a `pull_request` object and the pull request's id.
@@ -178,28 +182,37 @@ pub(crate) async fn review_comment_reactions(
     };
     let counts =
         db::reactions::reaction_counts(pool, Subject::PullRequestComment.name(), &[id], 0).await?;
-    Ok(payloads::reaction_rollup(&format!("{url}/reactions"), &counts))
+    Ok(payloads::reaction_rollup(
+        &format!("{url}/reactions"),
+        &counts,
+    ))
 }
 
 /// Fills a review comment's reactions, and its diff hunk and positions from the diff it was
 /// written on. The diff is read from this node's copy of the repository; where another node
 /// stores it, the hunk stays empty rather than delaying the event.
-async fn review_comment(pool: &DbPool, repo: &Repository, document: &mut Value) -> anyhow::Result<()> {
+async fn review_comment(
+    pool: &DbPool,
+    repo: &Repository,
+    document: &mut Value,
+) -> anyhow::Result<()> {
     let reactions = review_comment_reactions(pool, document).await?;
     document["reactions"] = reactions;
     let Some(id) = document["id"].as_i64() else {
         return Ok(());
     };
-    let Some(comment) = db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id).await?
+    let Some(comment) =
+        db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id).await?
     else {
         return Ok(());
     };
     let Some(path) = comment.path.as_deref() else {
         return Ok(());
     };
-    let Some(pull) = db::pull_requests::records::get_pull_request_by_id(pool, comment.pull_request_id)
-        .await?
-        .filter(|pull| pull.repo_id == repo.id)
+    let Some(pull) =
+        db::pull_requests::records::get_pull_request_by_id(pool, comment.pull_request_id)
+            .await?
+            .filter(|pull| pull.repo_id == repo.id)
     else {
         return Ok(());
     };
@@ -232,8 +245,14 @@ async fn pull_request(
     document["author_association"] =
         json!(access::author_association(pool, repo, pull.author_id).await?);
     let base_user = document["base"]["repo"]["owner"].clone();
-    let base_branch = document["base"]["ref"].as_str().unwrap_or(&pull.base_branch).to_owned();
-    let head_branch = document["head"]["ref"].as_str().unwrap_or(&pull.head_branch).to_owned();
+    let base_branch = document["base"]["ref"]
+        .as_str()
+        .unwrap_or(&pull.base_branch)
+        .to_owned();
+    let head_branch = document["head"]["ref"]
+        .as_str()
+        .unwrap_or(&pull.head_branch)
+        .to_owned();
     document["base"]["label"] = json!(format!("{owner}:{base_branch}"));
     document["base"]["user"] = base_user;
     document["base"]["repo"]["topics"] = json!(topics(pool, repo.id).await?);
@@ -317,7 +336,10 @@ async fn pull_request(
     document["requested_reviewers"] =
         json!(reviewers.iter().map(payloads::user).collect::<Vec<_>>());
     let teams = db::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), None).await?;
-    document["requested_teams"] = json!(teams.iter().map(|row| payloads::team_document(&row.team, &row.org_slug, row.permission)).collect::<Vec<_>>());
+    document["requested_teams"] = json!(teams
+        .iter()
+        .map(|row| payloads::team_document(&row.team, &row.org_slug, row.permission))
+        .collect::<Vec<_>>());
     let (comments, review_comments) =
         db::pull_requests::reviews::pull_request_comment_counts(pool, pull.id).await?;
     document["comments"] = json!(comments);
@@ -350,12 +372,27 @@ pub(crate) async fn release_assets(
     owner: &str,
     release: &Release,
 ) -> anyhow::Result<Vec<Value>> {
-    Ok(db::releases::list_asset_files(pool, release.id).await?.into_iter().map(|row| {
-        let uploader = row.uploader_id.zip(row.uploader_name).map(|(id, login)| {
-            payloads::simple_person(&payloads::Person { id, login, site_admin: row.uploader_is_admin.unwrap_or(false) })
-        });
-        payloads::release_asset(&row.asset, release, owner, &repo.name, uploader, &row.sha256_hex)
-    }).collect())
+    Ok(db::releases::list_asset_files(pool, release.id)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let uploader = row.uploader_id.zip(row.uploader_name).map(|(id, login)| {
+                payloads::simple_person(&payloads::Person {
+                    id,
+                    login,
+                    site_admin: row.uploader_is_admin.unwrap_or(false),
+                })
+            });
+            payloads::release_asset(
+                &row.asset,
+                release,
+                owner,
+                &repo.name,
+                uploader,
+                &row.sha256_hex,
+            )
+        })
+        .collect())
 }
 
 /// A release asset as REST and webhooks show it. `None` when its stored file is gone.

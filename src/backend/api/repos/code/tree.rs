@@ -2,8 +2,8 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
 use crate::backend::api::repos::chrome::{
-    branch_name, commit, default_ref, ref_names_under, resolve,
-    root_if_missing, store_error, Loaded,
+    branch_name, commit, default_ref, ref_names_under, resolve, root_if_missing, store_error,
+    Loaded,
 };
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::api::repos::responses::CommitResponse;
@@ -287,7 +287,14 @@ async fn about_languages(
     store: &RepoStore,
     branch: &str,
 ) -> Vec<LanguageShare> {
-    let languages = match repo_languages::compute_and_store(&state.pool, store, &loaded.repository, branch).await {
+    let languages = match repo_languages::compute_and_store(
+        &state.pool,
+        store,
+        &loaded.repository,
+        branch,
+    )
+    .await
+    {
         Ok(languages) => languages,
         Err(error) => {
             tracing::warn!(repo_id = loaded.repository.id, %error, "could not compute the language bar");

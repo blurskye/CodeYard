@@ -1,5 +1,9 @@
 //! A user's public activity, filtered to the repositories the viewer may read.
-use crate::backend::db::{self, activity::{ActivityRow, ActivityViewer, SCAN_ROWS}, DbPool};
+use crate::backend::db::{
+    self,
+    activity::{ActivityRow, ActivityViewer, SCAN_ROWS},
+    DbPool,
+};
 use anyhow::Result;
 
 pub const PAGE_SIZE: usize = 30;

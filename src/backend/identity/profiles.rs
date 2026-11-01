@@ -55,12 +55,17 @@ pub enum ProfileError {
 
 fn website(input: &str) -> Result<Option<String>, ProfileError> {
     let input = input.trim();
-    let text = if matches!(url::Url::parse(input), Err(url::ParseError::RelativeUrlWithoutBase)) && !input.is_empty() {
+    let text = if matches!(
+        url::Url::parse(input),
+        Err(url::ParseError::RelativeUrlWithoutBase)
+    ) && !input.is_empty()
+    {
         format!("https://{input}")
     } else {
         input.to_owned()
     };
-    crate::backend::db::repositories::topics::parse_website(&text).map_err(|_| ProfileError::Website)
+    crate::backend::db::repositories::topics::parse_website(&text)
+        .map_err(|_| ProfileError::Website)
 }
 
 pub fn validate(input: &ProfileUpdate<'_>) -> Result<(), ProfileError> {
@@ -104,10 +109,17 @@ pub async fn repositories_on_profile(
         .map_err(|_| ProfileReadError::UserUnavailable)?
         .ok_or(ProfileReadError::Missing)?;
     let offset = i64::try_from(page.saturating_sub(1).saturating_mul(30)).unwrap_or(i64::MAX);
-    let (repositories, count) =
-        repositories::records::list_user_repository_page(pool, user.id, owner_session, text, true, 30, offset)
-            .await
-            .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
+    let (repositories, count) = repositories::records::list_user_repository_page(
+        pool,
+        user.id,
+        owner_session,
+        text,
+        true,
+        30,
+        offset,
+    )
+    .await
+    .map_err(|_| ProfileReadError::RepositoriesUnavailable)?;
     Ok((
         user,
         repositories,

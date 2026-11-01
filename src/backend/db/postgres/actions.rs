@@ -147,12 +147,19 @@ pub async fn get_repo_actions_settings(pool: &PgPool, repo_id: i64) -> Result<Re
     Ok(row.unwrap_or_default())
 }
 
-pub async fn set_repo_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_repo_enabled(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo: i64,
+    enabled: bool,
+) -> Result<()> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo)
+            .await?
+            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
+                .await?,
         Refusal::Denied
     );
     sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET enabled=EXCLUDED.enabled,updated_at=NOW()")
@@ -173,8 +180,10 @@ pub async fn save_repo_actions_settings(
     let actor = actor_id.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo_id).await?
-            && super::credentials::repository(&mut tx, &actor, repo_id, "administration", true).await?,
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo_id)
+            .await?
+            && super::credentials::repository(&mut tx, &actor, repo_id, "administration", true)
+                .await?,
         Refusal::Denied
     );
     let result = sqlx::query(

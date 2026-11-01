@@ -394,7 +394,11 @@ impl Search {
         if fields.is_empty() {
             fields = vec!["title", "body", "comments"];
         }
-        let search = Self { expr, fields, policy_token: None };
+        let search = Self {
+            expr,
+            fields,
+            policy_token: None,
+        };
         // Validate before admission to a database connection.
         search.statement(false, "TRUE")?;
         Ok(search)
@@ -504,9 +508,12 @@ impl Statement {
         format!("{}{index}", if self.postgres { '$' } else { '?' })
     }
     pub(crate) fn repository_policy(&mut self, readable: &str, token: Option<i64>) -> String {
-        let Some(token) = token else { return readable.to_owned() };
+        let Some(token) = token else {
+            return readable.to_owned();
+        };
         let token = self.bind(token.to_string());
-        let allowed = super::fine_grained_tokens::classic_allowed_condition(&token, "r.owner_org_id");
+        let allowed =
+            super::fine_grained_tokens::classic_allowed_condition(&token, "r.owner_org_id");
         format!("({readable}) AND (NOT r.is_private OR ({allowed}))")
     }
     pub(crate) fn bind(&mut self, value: impl Into<String>) -> String {
@@ -639,8 +646,11 @@ impl Statement {
     }
     fn status(&self, value: &str) -> Result<String, &'static str> {
         let source = "SELECT s.state FROM commit_statuses_latest s JOIN pull_requests pr ON pr.repo_id=s.repo_id AND pr.head_sha=s.sha WHERE pr.id=i.id UNION ALL SELECT CASE WHEN c.status<>'completed' OR c.conclusion IS NULL THEN 'pending' WHEN c.conclusion IN ('success','neutral','skipped') THEN 'success' ELSE 'failure' END AS state FROM check_runs c JOIN check_suites suite ON suite.id=c.suite_id JOIN pull_requests pr ON pr.repo_id=c.repo_id AND pr.head_sha=suite.head_sha WHERE pr.id=i.id AND NOT EXISTS(SELECT 1 FROM check_runs newer JOIN check_suites ns ON ns.id=newer.suite_id WHERE newer.repo_id=c.repo_id AND newer.name=c.name AND ns.head_sha=suite.head_sha AND (ns.app_id=suite.app_id OR (ns.app_id IS NULL AND suite.app_id IS NULL)) AND newer.id>c.id)";
-        let failure = format!("EXISTS(SELECT 1 FROM ({source}) outcomes WHERE outcomes.state IN ('error','failure'))");
-        let pending = format!("EXISTS(SELECT 1 FROM ({source}) outcomes WHERE outcomes.state='pending')");
+        let failure = format!(
+            "EXISTS(SELECT 1 FROM ({source}) outcomes WHERE outcomes.state IN ('error','failure'))"
+        );
+        let pending =
+            format!("EXISTS(SELECT 1 FROM ({source}) outcomes WHERE outcomes.state='pending')");
         let exists = format!("EXISTS(SELECT 1 FROM ({source}) outcomes)");
         let predicate = match value {
             "failure" => failure,
@@ -768,7 +778,11 @@ mod tests {
         assert!(sql.args.iter().any(|s| s == "a' bug"));
         // Restricted classic-token repositories must be excluded by the counted relation itself.
         for postgres in [true, false] {
-            let guarded = query.clone().with_classic_policy(Some(987654321)).statement(postgres, "r.id>0").unwrap();
+            let guarded = query
+                .clone()
+                .with_classic_policy(Some(987654321))
+                .statement(postgres, "r.id>0")
+                .unwrap();
             assert!(guarded.prefix.contains("organization_token_policies"));
             assert!(guarded.prefix.contains("NOT r.is_private OR"));
             assert!(guarded.args.iter().any(|arg| arg == "987654321"));

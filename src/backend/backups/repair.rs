@@ -5,7 +5,11 @@
 //! backup sits in `deleted/`. Verify finds these and, with `--repair`, brings the database and
 //! the pull request refs back in line with Git. Problems it cannot repair, such as a commit the
 //! database names that Git lacks, are listed and make the command fail.
-use crate::backend::{db, git::{self, mirror}, repositories};
+use crate::backend::{
+    db,
+    git::{self, mirror},
+    repositories,
+};
 use anyhow::{ensure, Context, Result};
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -38,21 +42,27 @@ async fn retain_matching_head(
     pull: &db::backups::PullRequestHead,
     candidate: &str,
 ) -> Result<Option<Arc<git::locks::PublicationGuard>>> {
-    let Some(head_id) = pull.head_repo_id else { return Ok(None) };
+    let Some(head_id) = pull.head_repo_id else {
+        return Ok(None);
+    };
     let Some(head) = db::repositories::records::get_repository_by_id(pool, head_id).await? else {
         return Ok(None);
     };
     if head.storage_node_id.is_some() || head.is_gist {
         return Ok(None);
     }
-    let Some(reference) = git::branch_ref(&pull.head_branch) else { return Ok(None) };
+    let Some(reference) = git::branch_ref(&pull.head_branch) else {
+        return Ok(None);
+    };
     let path = Path::new(&head.disk_path);
     if !path.join("HEAD").is_file() {
         return Ok(None);
     }
     let held = git::locks::publication(path).await?;
-    let matches = mirror::refs(path, &reference).await?
-        .into_iter().any(|(name, sha)| name == reference && sha == candidate);
+    let matches = mirror::refs(path, &reference)
+        .await?
+        .into_iter()
+        .any(|(name, sha)| name == reference && sha == candidate);
     Ok(matches.then_some(held))
 }
 
@@ -79,7 +89,9 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                 .context("a repository path has no name")?;
             let copies = match deleted.entry(root.to_owned()) {
                 std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
-                std::collections::hash_map::Entry::Vacant(entry) => entry.insert(mirror::deleted_copies(root)?),
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert(mirror::deleted_copies(root)?)
+                }
             };
             match copies.get(name).cloned() {
                 Some(kept) if repair => {
@@ -132,7 +144,10 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
         let mut updates = String::new();
         let pulls = db::backups::list_pull_request_heads(pool, repository.id).await?;
         let ci_revisions = db::backups::list_ci_revisions(pool, repository.id).await?;
-        let branches: HashMap<String, String> = mirror::refs(path, "refs/heads/").await?.into_iter().collect();
+        let branches: HashMap<String, String> = mirror::refs(path, "refs/heads/")
+            .await?
+            .into_iter()
+            .collect();
         let mut revisions = ci_revisions.clone();
         revisions.extend(refs.values().cloned());
         revisions.extend(branches.values().cloned());
@@ -180,11 +195,7 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                 }
                 // A pull request reopened after the backup moved its head in Git. A closed row
                 // keeps the head it recorded, so the ref goes back to that commit.
-                Some(sha)
-                    if repair
-                        && pull.state != "open"
-                        && present.contains(&pull.head_sha) =>
-                {
+                Some(sha) if repair && pull.state != "open" && present.contains(&pull.head_sha) => {
                     updates.push_str(&format!("update {name} {} {sha}\n", pull.head_sha));
                     println!(
                         "{label}: pull request #{number} ({}) reset {name} to {}",
@@ -209,14 +220,31 @@ pub async fn verify(pool: &db::DbPool, repair: bool) -> Result<usize> {
                 )),
             }
             if pull.state == "open" {
-                if let Some(base) = branches.get(&format!("refs/heads/{}", pull.base_branch)).filter(|base| **base != pull.base_sha) {
+                if let Some(base) = branches
+                    .get(&format!("refs/heads/{}", pull.base_branch))
+                    .filter(|base| **base != pull.base_sha)
+                {
                     if !repair {
-                        report(format!("{label}: pull request #{number} records base {}, Git has {base}", pull.base_sha));
-                    } else if db::pull_requests::records::move_open_pull_request_base(pool, pull.id, &pull.base_sha, base, &pull.base_branch, pull.fork_sha.as_deref()).await? {
+                        report(format!(
+                            "{label}: pull request #{number} records base {}, Git has {base}",
+                            pull.base_sha
+                        ));
+                    } else if db::pull_requests::records::move_open_pull_request_base(
+                        pool,
+                        pull.id,
+                        &pull.base_sha,
+                        base,
+                        &pull.base_branch,
+                        pull.fork_sha.as_deref(),
+                    )
+                    .await?
+                    {
                         pull.base_sha = base.clone();
                         println!("{label}: pull request #{number} now records base {base}");
                     } else {
-                        report(format!("{label}: pull request #{number} base changed meanwhile"));
+                        report(format!(
+                            "{label}: pull request #{number} base changed meanwhile"
+                        ));
                     }
                 }
             }

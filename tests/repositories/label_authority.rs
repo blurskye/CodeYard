@@ -95,7 +95,11 @@ async fn snapshot(pool: &db::DbPool, repos: &[i64]) -> Value {
         // Every listed repository's labels, so a foreign label attached here still shows.
         let mut associations = Vec::new();
         for owner in repos {
-            associations.extend(db::labels::get_issue_labels(pool, *owner, issue.id).await.unwrap());
+            associations.extend(
+                db::labels::get_issue_labels(pool, *owner, issue.id)
+                    .await
+                    .unwrap(),
+            );
         }
         rows.push(json!({
             "repo": db::repositories::records::get_repository_by_id(pool, *repo).await.unwrap(),
@@ -547,29 +551,59 @@ async fn revoked_session(pg: bool) {
     let repo = f.label_repo(owner, None).await;
     let (issue, label) = seed(f.pool(), owner, repo).await;
     let session = crate::support::live_session(f.pool(), owner).await;
-    db::labels::create_label(f.pool(), (owner, session.clone()), repo, "live", "#123456", None)
-        .await
-        .unwrap();
+    db::labels::create_label(
+        f.pool(),
+        (owner, session.clone()),
+        repo,
+        "live",
+        "#123456",
+        None,
+    )
+    .await
+    .unwrap();
     db::milestones::create_milestone(f.pool(), (owner, session.clone()), repo, "live", None, None)
         .await
         .unwrap();
-    db::users::sessions::delete_session(f.pool(), &session).await.unwrap();
+    db::users::sessions::delete_session(f.pool(), &session)
+        .await
+        .unwrap();
     let before = snapshot(f.pool(), &[repo]).await;
     for mutation in MUTATIONS {
         refusal(
-            mutate(f.pool(), (owner, session.clone()), repo, issue, label, mutation).await,
+            mutate(
+                f.pool(),
+                (owner, session.clone()),
+                repo,
+                issue,
+                label,
+                mutation,
+            )
+            .await,
             LabelWriteRefusal::Denied,
         );
     }
     for result in [
-        db::milestones::create_milestone(f.pool(), (owner, session.clone()), repo, "late", None, None)
-            .await
-            .map(|_| ()),
+        db::milestones::create_milestone(
+            f.pool(),
+            (owner, session.clone()),
+            repo,
+            "late",
+            None,
+            None,
+        )
+        .await
+        .map(|_| ()),
         db::milestones::set_milestone_state(f.pool(), (owner, session.clone()), repo, 1, "closed")
             .await
             .map(|_| ()),
-        db::milestones::set_issue_milestone(f.pool(), (owner, session.clone()), repo, issue, Some(1))
-            .await,
+        db::milestones::set_issue_milestone(
+            f.pool(),
+            (owner, session.clone()),
+            repo,
+            issue,
+            Some(1),
+        )
+        .await,
     ] {
         let error = result.expect_err("a revoked session must not write");
         assert_eq!(
@@ -578,9 +612,15 @@ async fn revoked_session(pg: bool) {
         );
     }
     assert_eq!(snapshot(f.pool(), &[repo]).await, before);
-    let milestone = db::milestones::get_milestone(f.pool(), repo, 1).await.unwrap().unwrap();
+    let milestone = db::milestones::get_milestone(f.pool(), repo, 1)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(milestone.milestone.state, "open");
-    assert!(db::milestones::get_milestone(f.pool(), repo, 2).await.unwrap().is_none());
+    assert!(db::milestones::get_milestone(f.pool(), repo, 2)
+        .await
+        .unwrap()
+        .is_none());
     f.finish().await;
 }
 

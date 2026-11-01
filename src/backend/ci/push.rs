@@ -32,13 +32,29 @@ pub(crate) async fn push_document(
         .context("push sender is unavailable")?;
     let sender = payloads::Person::of(&sender);
     if is_zero_oid(&update.new) {
-        return Ok(payloads::push(&update.reference, update.old.as_deref().unwrap_or(ZERO_OID), ZERO_OID, &payloads::PushedCommits { commits: Vec::new(), head: None, forced: false }, repo, owner, &sender));
+        return Ok(payloads::push(
+            &update.reference,
+            update.old.as_deref().unwrap_or(ZERO_OID),
+            ZERO_OID,
+            &payloads::PushedCommits {
+                commits: Vec::new(),
+                head: None,
+                forced: false,
+            },
+            repo,
+            owner,
+            &sender,
+        ));
     }
     let head = store.commit(&update.new).await?;
     let previous = match update.old.as_deref().filter(|old| !is_zero_oid(old)) {
         Some(old) if update.reference.starts_with("refs/tags/") => match store.commit(old).await {
             Ok(commit) => Some(commit.sha),
-            Err(error) if error.kind == crate::backend::repositories::store::ErrorKind::NotFound => None,
+            Err(error)
+                if error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
+            {
+                None
+            }
             Err(error) => return Err(error.into()),
         },
         old => old.map(str::to_owned),
@@ -49,7 +65,10 @@ pub(crate) async fn push_document(
             store.commits_between(old, &head.sha, 20).await?,
             !store.is_ancestor(old, &head.sha).await?,
         ),
-        None => (store.commits(&head.sha, 0, 20, &Default::default()).await?, update.old.as_deref().is_some_and(|old| !is_zero_oid(old))),
+        None => (
+            store.commits(&head.sha, 0, 20, &Default::default()).await?,
+            update.old.as_deref().is_some_and(|old| !is_zero_oid(old)),
+        ),
     };
     // Bounded as in the push webhook, so a huge message cannot outgrow the run's claim.
     let pushed = |commit: &CommitInfo| payloads::PushedCommit {
@@ -108,7 +127,9 @@ impl CiRuns {
         actor_id: i64,
         update: RefUpdate,
     ) {
-        if update.old.as_deref() == Some(update.new.as_str()) { return; }
+        if update.old.as_deref() == Some(update.new.as_str()) {
+            return;
+        }
         match self.actor_may_discover_workflows(repo.id, actor_id).await {
             Ok(true) => {}
             Ok(false) => return,
@@ -219,8 +240,15 @@ async fn push_asks_to_skip(
         .commits_between(old, &update.new, MAX_COMMIT_PAGE_SIZE)
         .await
     {
-        Ok(commits) => Ok(commits.iter().any(|commit| should_skip_run_from_message(&commit.message))),
-        Err(error) if update.reference.starts_with("refs/tags/") && error.kind == crate::backend::repositories::store::ErrorKind::NotFound => Ok(false),
+        Ok(commits) => Ok(commits
+            .iter()
+            .any(|commit| should_skip_run_from_message(&commit.message))),
+        Err(error)
+            if update.reference.starts_with("refs/tags/")
+                && error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
+        {
+            Ok(false)
+        }
         Err(error) => Err(error.into()),
     }
 }
@@ -233,7 +261,9 @@ pub(crate) async fn matching_push_workflows(
     message: Option<&str>,
     budget: &mut WorkflowMatchBudget,
 ) -> Result<Vec<WorkflowDefinition>> {
-    if update.old.as_deref() == Some(update.new.as_str()) { return Ok(Vec::new()); }
+    if update.old.as_deref() == Some(update.new.as_str()) {
+        return Ok(Vec::new());
+    }
     let mut candidates = Vec::new();
     for workflow in workflows {
         if workflow.matches_event_with_budget("push", &update.reference, budget)? {
@@ -241,7 +271,9 @@ pub(crate) async fn matching_push_workflows(
         }
     }
     // Deletions have no pushed commit whose message could skip the event.
-    if candidates.is_empty() || (!is_zero_oid(&update.new) && push_asks_to_skip(store, update, message).await?) {
+    if candidates.is_empty()
+        || (!is_zero_oid(&update.new) && push_asks_to_skip(store, update, message).await?)
+    {
         return Ok(Vec::new());
     }
     let needs_paths =

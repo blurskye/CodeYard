@@ -11,10 +11,7 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 async fn content(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -76,7 +73,8 @@ async fn content(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    let readable = auth::readable_repositories(&state, authentication.as_ref(), &ids, "contents").await?;
+    let readable =
+        auth::readable_repositories(&state, authentication.as_ref(), &ids, "contents").await?;
     let previous = results.items.len();
     results
         .items

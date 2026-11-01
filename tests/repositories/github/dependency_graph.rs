@@ -84,7 +84,14 @@ async fn contract(pg: bool) {
     }
     let (writer, reader, outsider) = (&credentials[0], &credentials[1], &credentials[2]);
     // As on GitHub, a private repository's graph is off until Dependabot alerts are enabled.
-    let (status, _, body) = request(&router, "GET", &format!("{BASE}/sbom"), Some(writer), Value::Null).await;
+    let (status, _, body) = request(
+        &router,
+        "GET",
+        &format!("{BASE}/sbom"),
+        Some(writer),
+        Value::Null,
+    )
+    .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
     let (status, _, body) = request(
         &router,
@@ -612,9 +619,10 @@ async fn vulnerability_contract(pg: bool) {
         .await
         .unwrap();
     let viewer = db::dependency_graph::Reader::Viewer(Some(owner.into()));
-    let saved = db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
-        .await
-        .unwrap();
+    let saved =
+        db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
+            .await
+            .unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].detector.name, "Codeyard");
     assert_eq!(saved[0].manifests["Cargo.lock"].resolved.len(), 1);
@@ -627,9 +635,10 @@ async fn vulnerability_contract(pg: bool) {
     db::vulnerabilities::save_snapshot(f.pool(), repo_id, generation, &stale)
         .await
         .unwrap();
-    let latest = db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
-        .await
-        .unwrap();
+    let latest =
+        db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
+            .await
+            .unwrap();
     assert_eq!(latest[0].manifests["Cargo.lock"].resolved.len(), 1);
     let (status, _, catalogue) = request(
         &router,

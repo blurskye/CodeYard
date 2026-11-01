@@ -11,9 +11,12 @@ async fn authorize(
     permission: &str,
 ) -> Result<(), ValueError> {
     let actor = actor.into();
-    let allowed = super::discussions::lock_admin_authority(connection, actor.user_id, repo).await
+    let allowed = super::discussions::lock_admin_authority(connection, actor.user_id, repo)
+        .await
         .map_err(ValueError::Authority)?
-        && super::credentials::repository(connection, &actor, repo, permission, true).await.map_err(ValueError::Authority)?;
+        && super::credentials::repository(connection, &actor, repo, permission, true)
+            .await
+            .map_err(ValueError::Authority)?;
     if allowed {
         Ok(())
     } else {
@@ -57,7 +60,12 @@ async fn require_environment(
     }
 }
 
-pub async fn create(pool: &Pool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, name: &str) -> Result<(), ValueError> {
+pub async fn create(
+    pool: &Pool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo: i64,
+    name: &str,
+) -> Result<(), ValueError> {
     let key = environment_values::environment_key(name)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize(&mut tx, actor, repo, "administration").await?;
@@ -66,7 +74,12 @@ pub async fn create(pool: &Pool, actor: impl Into<crate::backend::db::credential
     Ok(())
 }
 
-pub async fn environments(pool: &Pool, actor: i64, repo: i64, offset: i64) -> Result<Vec<String>, ValueError> {
+pub async fn environments(
+    pool: &Pool,
+    actor: i64,
+    repo: i64,
+    offset: i64,
+) -> Result<Vec<String>, ValueError> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize_read(&mut tx, actor, repo, true).await?;
     let names = sqlx::query_scalar(
@@ -81,12 +94,22 @@ pub async fn environments(pool: &Pool, actor: i64, repo: i64, offset: i64) -> Re
     Ok(names)
 }
 
-pub async fn environment(pool: &Pool, actor: i64, repo: i64, name: &str) -> Result<Option<String>, ValueError> {
+pub async fn environment(
+    pool: &Pool,
+    actor: i64,
+    repo: i64,
+    name: &str,
+) -> Result<Option<String>, ValueError> {
     let key = environment_values::environment_key(name)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     authorize_read(&mut tx, actor, repo, true).await?;
-    let name = sqlx::query_scalar("SELECT name FROM deployment_environments WHERE repo_id=$1 AND name_key=$2")
-        .bind(repo).bind(key).fetch_optional(&mut *tx).await?;
+    let name = sqlx::query_scalar(
+        "SELECT name FROM deployment_environments WHERE repo_id=$1 AND name_key=$2",
+    )
+    .bind(repo)
+    .bind(key)
+    .fetch_optional(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(name)
 }
@@ -149,7 +172,10 @@ pub async fn save(
         super::super::secrets::ensure_room_for_secret(count, bytes, &name, value)
             .map_err(|_| ValueError::SecretsSize)?;
     }
-    if input.kind == Kind::Variable && bytes + (name.len() + value.len()) as i64 > codeyard_actions::values::MAX_VARIABLE_BYTES as i64 {
+    if input.kind == Kind::Variable
+        && bytes + (name.len() + value.len()) as i64
+            > codeyard_actions::values::MAX_VARIABLE_BYTES as i64
+    {
         return Err(ValueError::Size);
     }
     let (plain, encrypted, nonce) = if input.kind == Kind::Secret {

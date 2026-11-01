@@ -1,5 +1,6 @@
 use crate::backend::db::packages::{
-    self, Actor, Blob, Charge, Credential, Listing, Owner, Package, Permission, Publish, Refusal, Upload, Version,
+    self, Actor, Blob, Charge, Credential, Listing, Owner, Package, Permission, Publish, Refusal,
+    Upload, Version,
 };
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
@@ -34,7 +35,10 @@ async fn actor<'a>(
             let id: Option<i64> = sqlx::query_scalar("SELECT u.id FROM users u WHERE EXISTS(SELECT 1 FROM sessions s WHERE s.id=$1 AND s.user_id=u.id) AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF u")
                 .bind(session).fetch_optional(&mut **tx).await?;
             let user = id.ok_or(Refusal::Unauthorized)?;
-            ensure!(super::users::transitions::live_session(tx, user, session).await?, Refusal::Unauthorized);
+            ensure!(
+                super::users::transitions::live_session(tx, user, session).await?,
+                Refusal::Unauthorized
+            );
             return Ok(Actor {
                 id: Some(id.ok_or(Refusal::Unauthorized)?),
                 repo: None,
@@ -52,7 +56,11 @@ async fn actor<'a>(
     // read:packages scope; neither collapses into account-wide identity otherwise.
     let app: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=$1) OR EXISTS(SELECT 1 FROM oauth_app_tokens o JOIN github_apps a ON a.client_id=o.client_id WHERE o.token_id=$1)").bind(token).fetch_one(&mut **tx).await?;
     ensure!(!app, Refusal::Forbidden);
-    let oauth: Option<String> = sqlx::query_scalar("SELECT scopes FROM oauth_app_tokens WHERE token_id=$1").bind(token).fetch_optional(&mut **tx).await?;
+    let oauth: Option<String> =
+        sqlx::query_scalar("SELECT scopes FROM oauth_app_tokens WHERE token_id=$1")
+            .bind(token)
+            .fetch_optional(&mut **tx)
+            .await?;
     ensure!(
         oauth.is_none_or(|scopes| !write
             && crate::backend::identity::oauth_apps::has_scope(&scopes, "read:packages")),
@@ -62,8 +70,11 @@ async fn actor<'a>(
     let mut owner = None;
     let mut selected = None;
     let mut classic = name != crate::backend::db::ci_tokens::BOT;
-    let _: Option<i64> = sqlx::query_scalar("SELECT token_id FROM fine_grained_tokens WHERE token_id=$1 FOR SHARE")
-        .bind(token).fetch_optional(&mut **tx).await?;
+    let _: Option<i64> =
+        sqlx::query_scalar("SELECT token_id FROM fine_grained_tokens WHERE token_id=$1 FOR SHARE")
+            .bind(token)
+            .fetch_optional(&mut **tx)
+            .await?;
     let bounds: Option<crate::backend::db::fine_grained_tokens::Bounds> =
         sqlx::query_as(super::fine_grained_tokens::BOUNDS)
             .bind(token)
@@ -89,7 +100,9 @@ async fn actor<'a>(
     }
     let mut repo = None;
     if name == crate::backend::db::ci_tokens::BOT {
-        let job = super::ci_tokens::get_in_connection(&mut *tx, token).await?.ok_or(Refusal::Unauthorized)?;
+        let job = super::ci_tokens::get_in_connection(&mut *tx, token)
+            .await?
+            .ok_or(Refusal::Unauthorized)?;
         let (repo_id, permissions) = (job.repo_id, job.permissions);
         let permissions: crate::backend::ci::tokens::Permissions =
             serde_json::from_str(&permissions)?;
@@ -161,8 +174,13 @@ async fn authorize<'a>(
         .bind(id).bind(actor.id).fetch_one(&mut **tx).await?;
     ensure!(readable, Refusal::Missing);
     if !matches!(permission, Permission::Read) {
-        let scoped: bool = sqlx::query_scalar(&format!("SELECT {} FROM packages p WHERE p.id=$1", actor.scope_condition()))
-            .bind(id).fetch_one(&mut **tx).await?;
+        let scoped: bool = sqlx::query_scalar(&format!(
+            "SELECT {} FROM packages p WHERE p.id=$1",
+            actor.scope_condition()
+        ))
+        .bind(id)
+        .fetch_one(&mut **tx)
+        .await?;
         ensure!(scoped, Refusal::Forbidden);
     }
     if !matches!(permission, Permission::Read) {
@@ -202,14 +220,24 @@ pub async fn container_namespace(pool: &PgPool, owner: &Owner) -> Result<String>
     if let Some(namespace) = sqlx::query_scalar::<_, String>("SELECT namespace FROM registry_namespaces WHERE ($1='user' AND owner_user_id=$2) OR ($1='org' AND owner_org_id=$2)")
         .bind(&owner.kind).bind(owner.id).fetch_optional(&mut *tx).await? { return Ok(namespace); }
     let base = owner.name.to_ascii_lowercase();
-    let base = if crate::backend::packages::valid_name(&base) { base } else { format!("cy-{}-{}", owner.kind, owner.id) };
+    let base = if crate::backend::packages::valid_name(&base) {
+        base
+    } else {
+        format!("cy-{}-{}", owner.kind, owner.id)
+    };
     for attempt in 0..1024 {
-        let candidate = if attempt == 0 { base.clone() } else { format!("{base}-{}-{}-{attempt}", owner.kind, owner.id) };
+        let candidate = if attempt == 0 {
+            base.clone()
+        } else {
+            format!("{base}-{}-{}-{attempt}", owner.kind, owner.id)
+        };
         // Never steal the literal namespace of an existing lower-case account. Once
         // assigned, the mapping remains stable across case collisions and renames.
         let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM registry_namespaces WHERE namespace=$1) OR EXISTS(SELECT 1 FROM users WHERE username=$1 AND NOT ($2='user' AND id=$3)) OR EXISTS(SELECT 1 FROM organizations WHERE name=$1 AND NOT ($2='org' AND id=$3))")
             .bind(&candidate).bind(&owner.kind).bind(owner.id).fetch_one(&mut *tx).await?;
-        if occupied { continue; }
+        if occupied {
+            continue;
+        }
         sqlx::query("INSERT INTO registry_namespaces(namespace,owner_user_id,owner_org_id) VALUES($1,$2,$3)")
             .bind(&candidate).bind((owner.kind == "user").then_some(owner.id)).bind((owner.kind == "org").then_some(owner.id))
             .execute(&mut *tx).await?;
@@ -220,14 +248,20 @@ pub async fn container_namespace(pool: &PgPool, owner: &Owner) -> Result<String>
 }
 
 pub async fn container_owner(pool: &PgPool, namespace: &str) -> Result<Option<Owner>> {
-    if !crate::backend::packages::valid_name(namespace) || namespace.contains('/') { return Ok(None); }
+    if !crate::backend::packages::valid_name(namespace) || namespace.contains('/') {
+        return Ok(None);
+    }
     let mapped: Option<Owner> = sqlx::query_as("SELECT u.id,u.username AS name,'user' AS kind FROM registry_namespaces n JOIN users u ON u.id=n.owner_user_id WHERE n.namespace=$1 UNION ALL SELECT o.id,o.name,'org' AS kind FROM registry_namespaces n JOIN organizations o ON o.id=n.owner_org_id WHERE n.namespace=$1")
         .bind(namespace).fetch_optional(pool).await?;
-    if mapped.is_some() { return Ok(mapped); }
+    if mapped.is_some() {
+        return Ok(mapped);
+    }
     let owner: Option<Owner> = sqlx::query_as("SELECT * FROM (SELECT id,username AS name,'user' AS kind FROM users UNION ALL SELECT id,name,'org' AS kind FROM organizations) owners WHERE LOWER(name)=$1 ORDER BY CASE WHEN name=$1 THEN 0 ELSE 1 END,id LIMIT 1")
         .bind(namespace).fetch_optional(pool).await?;
     if let Some(owner) = owner {
-        if container_namespace(pool, &owner).await? == namespace { return Ok(Some(owner)); }
+        if container_namespace(pool, &owner).await? == namespace {
+            return Ok(Some(owner));
+        }
     }
     Ok(None)
 }
@@ -261,15 +295,43 @@ pub async fn find(
     Ok(result)
 }
 
-pub async fn list(pool: &PgPool, token: Option<Credential<'_>>, query: Listing<'_>) -> Result<Vec<Package>> {
+pub async fn list(
+    pool: &PgPool,
+    token: Option<Credential<'_>>,
+    query: Listing<'_>,
+) -> Result<Vec<Package>> {
     listing(pool, token, query, None).await
 }
 
-pub async fn owner_page(pool: &PgPool, token: Option<Credential<'_>>, owner: &Owner, kind: &str, before: i64) -> Result<Vec<Package>> {
-    listing(pool, token, Listing { owner: Some(owner), repo: None, kind: Some(kind), visibility: None, offset: 0, limit: 100 }, Some(before)).await
+pub async fn owner_page(
+    pool: &PgPool,
+    token: Option<Credential<'_>>,
+    owner: &Owner,
+    kind: &str,
+    before: i64,
+) -> Result<Vec<Package>> {
+    listing(
+        pool,
+        token,
+        Listing {
+            owner: Some(owner),
+            repo: None,
+            kind: Some(kind),
+            visibility: None,
+            offset: 0,
+            limit: 100,
+        },
+        Some(before),
+    )
+    .await
 }
 
-async fn listing(pool: &PgPool, token: Option<Credential<'_>>, query: Listing<'_>, before: Option<i64>) -> Result<Vec<Package>> {
+async fn listing(
+    pool: &PgPool,
+    token: Option<Credential<'_>>,
+    query: Listing<'_>,
+    before: Option<i64>,
+) -> Result<Vec<Package>> {
     let mut tx = begin(pool).await?;
     let actor = actor(&mut tx, token, Permission::Read).await?;
     let actor = match query.owner {
@@ -342,15 +404,27 @@ pub async fn create(
         Refusal::Forbidden
     );
     let user = actor.id.ok_or(Refusal::Unauthorized)?;
-    let scoped: bool = sqlx::query_scalar(&format!("SELECT {} FROM (SELECT $1::bigint AS owner_org_id,$2::bigint AS repo_id) p", actor.scope_condition()))
-        .bind(candidate.owner_org_id).bind(repo).fetch_one(&mut *tx).await?;
+    let scoped: bool = sqlx::query_scalar(&format!(
+        "SELECT {} FROM (SELECT $1::bigint AS owner_org_id,$2::bigint AS repo_id) p",
+        actor.scope_condition()
+    ))
+    .bind(candidate.owner_org_id)
+    .bind(repo)
+    .fetch_one(&mut *tx)
+    .await?;
     ensure!(scoped, Refusal::Forbidden);
     let owner_access = owner_level(&mut tx, &candidate, user).await?;
     let mut allowed = owner_access >= 3;
     if let Some(repo) = repo {
         let locked = super::repositories::access::lock_user_repo_access_in_transaction(
-            &mut tx, user, repo, super::repositories::access::RepositoryRowLock::Shared, false,
-        ).await?.ok_or(Refusal::Missing)?;
+            &mut tx,
+            user,
+            repo,
+            super::repositories::access::RepositoryRowLock::Shared,
+            false,
+        )
+        .await?
+        .ok_or(Refusal::Missing)?;
         let repository: Option<(String, Option<i64>, Option<i64>)> = sqlx::query_as(
             "SELECT owner_kind,owner_user_id,owner_org_id FROM repositories WHERE id=$1",
         )
@@ -486,14 +560,27 @@ pub async fn version_counts(pool: &PgPool, ids: &[i64]) -> Result<Vec<(i64, i64)
 
 pub async fn version_tags(pool: &PgPool, ids: &[i64]) -> Result<Vec<(i64, String)>> {
     ensure!(ids.len() <= 100, "Version page exceeds its limit");
-    Ok(sqlx::query_as("SELECT version_id,tag FROM package_tags WHERE version_id=ANY($1) ORDER BY version_id,tag").bind(ids).fetch_all(pool).await?)
+    Ok(sqlx::query_as(
+        "SELECT version_id,tag FROM package_tags WHERE version_id=ANY($1) ORDER BY version_id,tag",
+    )
+    .bind(ids)
+    .fetch_all(pool)
+    .await?)
 }
 
-pub async fn version_count(pool: &PgPool, package: i64, token: Option<Credential<'_>>) -> Result<i64> {
+pub async fn version_count(
+    pool: &PgPool,
+    package: i64,
+    token: Option<Credential<'_>>,
+) -> Result<i64> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
-    let count = sqlx::query_scalar("SELECT COUNT(*) FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL")
-        .bind(package).fetch_one(&mut *tx).await?;
+    let count = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL",
+    )
+    .bind(package)
+    .fetch_one(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(count)
 }
@@ -514,7 +601,13 @@ pub async fn tag_page(
 }
 
 /// Points `tag` at the published version named `version`.
-pub async fn set_tag(pool: &PgPool, package: i64, token: i64, tag: &str, version: &str) -> Result<()> {
+pub async fn set_tag(
+    pool: &PgPool,
+    package: i64,
+    token: i64,
+    tag: &str,
+    version: &str,
+) -> Result<()> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
     let changed = sqlx::query("INSERT INTO package_tags(package_id,tag,version_id) SELECT $1,$2,id FROM package_versions WHERE package_id=$1 AND name=$3 AND deleted_at IS NULL ON CONFLICT(package_id,tag) DO UPDATE SET version_id=excluded.version_id")
@@ -533,7 +626,10 @@ pub async fn delete_tag(pool: &PgPool, package: i64, token: i64, tag: &str) -> R
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, Some(token), Permission::Write, false).await?;
     let changed = sqlx::query("DELETE FROM package_tags WHERE package_id=$1 AND tag=$2")
-        .bind(package).bind(tag).execute(&mut *tx).await?;
+        .bind(package)
+        .bind(tag)
+        .execute(&mut *tx)
+        .await?;
     ensure!(changed.rows_affected() == 1, Refusal::Missing);
     sqlx::query("UPDATE packages SET updated_at=$2 WHERE id=$1")
         .bind(package)
@@ -544,7 +640,12 @@ pub async fn delete_tag(pool: &PgPool, package: i64, token: i64, tag: &str) -> R
     Ok(())
 }
 
-pub async fn rubygems_file(pool: &PgPool, owner: &Owner, token: Option<Credential<'_>>, filename: &str) -> Result<Blob> {
+pub async fn rubygems_file(
+    pool: &PgPool,
+    owner: &Owner,
+    token: Option<Credential<'_>>,
+    filename: &str,
+) -> Result<Blob> {
     ensure!(filename.len() <= 465, Refusal::Missing);
     let mut tx = begin(pool).await?;
     let rows: Vec<(i64, String, i64)> = sqlx::query_as("SELECT p.id,b.digest,b.size FROM packages p JOIN package_versions v ON v.package_id=p.id JOIN package_blobs b ON b.digest=v.digest WHERE p.owner_kind=$1 AND COALESCE(p.owner_user_id,p.owner_org_id)=$2 AND p.package_type='rubygems' AND p.deleted_at IS NULL AND v.deleted_at IS NULL AND b.ready AND NOT b.deleting AND p.name||'-'||v.name=$3 LIMIT 2")
@@ -558,11 +659,21 @@ pub async fn rubygems_file(pool: &PgPool, owner: &Owner, token: Option<Credentia
     Ok(Blob { digest, size })
 }
 
-pub async fn tags(pool: &PgPool, package: i64, token: Option<Credential<'_>>, version: i64) -> Result<Vec<String>> {
+pub async fn tags(
+    pool: &PgPool,
+    package: i64,
+    token: Option<Credential<'_>>,
+    version: i64,
+) -> Result<Vec<String>> {
     let mut tx = begin(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
-    let tags = sqlx::query_scalar("SELECT tag FROM package_tags WHERE version_id=$1 AND package_id=$2 ORDER BY tag")
-        .bind(version).bind(package).fetch_all(&mut *tx).await?;
+    let tags = sqlx::query_scalar(
+        "SELECT tag FROM package_tags WHERE version_id=$1 AND package_id=$2 ORDER BY tag",
+    )
+    .bind(version)
+    .bind(package)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(tags)
 }
@@ -683,7 +794,10 @@ pub async fn publish(pool: &PgPool, token: i64, new: Publish<'_>) -> Result<Vers
         false,
     )
     .await?;
-    ensure!(packages::listed_metadata_fits(&package.package_type, new.manifest), Refusal::Conflict);
+    ensure!(
+        packages::listed_metadata_fits(&package.package_type, new.manifest),
+        Refusal::Conflict
+    );
     if package.package_type == "rubygems" {
         let collision: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM packages p JOIN package_versions v ON v.package_id=p.id WHERE p.owner_kind=$1 AND COALESCE(p.owner_user_id,p.owner_org_id)=$2 AND p.package_type='rubygems' AND p.id<>$3 AND p.name||'-'||v.name=$4)")
             .bind(&package.owner_kind).bind(package.owner_user_id.or(package.owner_org_id)).bind(package.id).bind(format!("{}-{}", package.name, new.name)).fetch_one(&mut *tx).await?;
@@ -867,12 +981,26 @@ pub async fn reserve_blob(
     let now = packages::now();
     match charge {
         Charge::Upload => {
-            super::files::charge_upload_in_transaction(&mut tx, user, "package", blob.size.max(1), None).await?;
+            super::files::charge_upload_in_transaction(
+                &mut tx,
+                user,
+                "package",
+                blob.size.max(1),
+                None,
+            )
+            .await?;
         }
         Charge::Chunk(upload) => {
             let earlier: Option<uuid::Uuid> = sqlx::query_scalar("SELECT charge_id FROM package_uploads WHERE id=$1 AND package_id=$2 AND token_id=$3 AND expires_at>$4 FOR UPDATE")
                 .bind(upload).bind(package).bind(token).bind(now).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
-            let charge = super::files::charge_upload_in_transaction(&mut tx, user, "package", blob.size.max(1), earlier).await?;
+            let charge = super::files::charge_upload_in_transaction(
+                &mut tx,
+                user,
+                "package",
+                blob.size.max(1),
+                earlier,
+            )
+            .await?;
             sqlx::query("UPDATE package_uploads SET charge_id=$2 WHERE id=$1")
                 .bind(upload)
                 .bind(charge)
@@ -983,11 +1111,20 @@ pub async fn cancel_upload(pool: &PgPool, package: i64, token: i64, id: &str) ->
     Ok(())
 }
 
-pub async fn finish_upload(pool: &PgPool, package: i64, token: i64, id: &str, offset: i64) -> Result<()> {
+pub async fn finish_upload(
+    pool: &PgPool,
+    package: i64,
+    token: i64,
+    id: &str,
+    offset: i64,
+) -> Result<()> {
     let mut tx = begin(pool).await?;
     let upload = get_upload(&mut tx, package, token, id).await?;
     ensure!(upload.offset == offset, Refusal::Offset);
-    sqlx::query("DELETE FROM package_uploads WHERE id=$1").bind(id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM package_uploads WHERE id=$1")
+        .bind(id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(())
 }
@@ -1068,9 +1205,11 @@ pub async fn registry_source(
 pub async fn collector_lock(pool: &PgPool) -> Result<Option<sqlx::pool::PoolConnection<Postgres>>> {
     let mut connection = pool.acquire().await?;
     connection.close_on_drop();
-    let taken: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext(COALESCE(current_schema(),'')), 723947123)")
-        .fetch_one(&mut *connection)
-        .await?;
+    let taken: bool = sqlx::query_scalar(
+        "SELECT pg_try_advisory_lock(hashtext(COALESCE(current_schema(),'')), 723947123)",
+    )
+    .fetch_one(&mut *connection)
+    .await?;
     Ok(taken.then_some(connection))
 }
 

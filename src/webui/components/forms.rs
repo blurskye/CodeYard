@@ -203,7 +203,13 @@ pub fn DraftSelect(
     let mut value = use_signal(move || initial_value);
     let mut enhanced = use_signal(|| false);
     // Only the browser build writes it, when the select mounts.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut, reason = "Only the browser build writes it, when the select mounts."))]
+    #[cfg_attr(
+        not(target_arch = "wasm32"),
+        allow(
+            unused_mut,
+            reason = "Only the browser build writes it, when the select mounts."
+        )
+    )]
     let mut transfer_focus = use_signal(|| false);
     let enhance = options.len() <= 100;
     use_effect(move || enhanced.set(enhance));
@@ -497,7 +503,10 @@ fn scroll_into_view(id: &str) {
         if let Some(element) = element {
             if let Some(parent) = element.parent_element() {
                 use wasm_bindgen::JsCast;
-                if let (Some(list), Some(option)) = (parent.dyn_ref::<web_sys::HtmlElement>(), element.dyn_ref::<web_sys::HtmlElement>()) {
+                if let (Some(list), Some(option)) = (
+                    parent.dyn_ref::<web_sys::HtmlElement>(),
+                    element.dyn_ref::<web_sys::HtmlElement>(),
+                ) {
                     let top = option.offset_top();
                     let bottom = top + option.offset_height();
                     if top < list.scroll_top() {

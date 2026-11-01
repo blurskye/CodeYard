@@ -57,13 +57,22 @@ pub struct SuiteDetails {
 }
 
 pub(crate) fn projection_ids(ids: &[i64]) -> Result<()> {
-    ensure!(ids.len() <= 100 && ids.iter().all(|id| *id > 0), "Invalid Checks projection window");
+    ensure!(
+        ids.len() <= 100 && ids.iter().all(|id| *id > 0),
+        "Invalid Checks projection window"
+    );
     Ok(())
 }
 
 pub(crate) fn projection_heads(heads: &[String]) -> Result<()> {
     // An empty key represents an unavailable workflow head, not a Git object lookup.
-    ensure!(heads.len() <= 100 && heads.iter().all(|head| head.len() <= 64 && !head.contains('\0')), "Invalid Checks head projection window");
+    ensure!(
+        heads.len() <= 100
+            && heads
+                .iter()
+                .all(|head| head.len() <= 64 && !head.contains('\0')),
+        "Invalid Checks head projection window"
+    );
     Ok(())
 }
 
@@ -376,7 +385,13 @@ impl RunPatch {
 }
 
 pub(crate) fn validate_automatic(sha: &str, branch: &str, after: i64) -> Result<()> {
-    ensure!(crate::backend::git::is_full_commit_id(sha) && !branch.is_empty() && text(branch, 1024) && after >= 0, Refusal::Invalid);
+    ensure!(
+        crate::backend::git::is_full_commit_id(sha)
+            && !branch.is_empty()
+            && text(branch, 1024)
+            && after >= 0,
+        Refusal::Invalid
+    );
     Ok(())
 }
 

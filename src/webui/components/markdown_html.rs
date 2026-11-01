@@ -157,11 +157,7 @@ fn attribute(html: &str, from: usize) -> Option<((String, &str), usize)> {
     let value = skip_space(bytes, equals + 1);
     match bytes.get(value) {
         Some(&quote @ (b'"' | b'\'')) => {
-            let close = value
-                + 1
-                + bytes[value + 1..]
-                    .iter()
-                    .position(|&b| b == quote)?;
+            let close = value + 1 + bytes[value + 1..].iter().position(|&b| b == quote)?;
             if bytes[close] != quote {
                 return None;
             }
@@ -361,7 +357,9 @@ fn attribute_value(
 ) -> Option<String> {
     let (mut text, unknown) = decode_references(raw);
     if matches!(name, "href" | "src") {
-        text = text.trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}')).to_owned();
+        text = text
+            .trim_matches(|c: char| matches!(c, ' ' | '\t' | '\n' | '\r' | '\u{c}'))
+            .to_owned();
     }
     if matches!(name, "dir" | "align") {
         text.make_ascii_lowercase();
@@ -381,8 +379,17 @@ fn attribute_value(
         "title" | "alt" => Some(text),
         "lang" => (!text.is_empty()
             && text.len() <= 63
-            && text.split('-').enumerate().all(|(index, subtag)| !subtag.is_empty() && subtag.len() <= 8
-                && subtag.bytes().all(|b| if index == 0 { b.is_ascii_alphabetic() } else { b.is_ascii_alphanumeric() })))
+            && text.split('-').enumerate().all(|(index, subtag)| {
+                !subtag.is_empty()
+                    && subtag.len() <= 8
+                    && subtag.bytes().all(|b| {
+                        if index == 0 {
+                            b.is_ascii_alphabetic()
+                        } else {
+                            b.is_ascii_alphanumeric()
+                        }
+                    })
+            }))
         .then_some(text),
         "dir" => matches!(text.as_str(), "ltr" | "rtl" | "auto").then_some(text),
         "align" => {
@@ -475,8 +482,12 @@ fn descriptor(word: &str) -> bool {
     }
     word.strip_suffix('x').is_some_and(|density| {
         !density.starts_with(['-', '+'])
-            && density.bytes().all(|b| b.is_ascii_digit() || b".eE+-".contains(&b))
-            && density.parse::<f64>().is_ok_and(|value| value.is_finite() && value >= 0.0)
+            && density
+                .bytes()
+                .all(|b| b.is_ascii_digit() || b".eE+-".contains(&b))
+            && density
+                .parse::<f64>()
+                .is_ok_and(|value| value.is_finite() && value >= 0.0)
     })
 }
 
@@ -578,7 +589,10 @@ fn reference(after: &str) -> Option<(Option<String>, usize)> {
             .ok()
             .and_then(char::from_u32)
             .filter(|character| *character != '\0');
-        return Some((character.map(|c| c.to_string()), after.len() - digits.len() + len + 1));
+        return Some((
+            character.map(|c| c.to_string()),
+            after.len() - digits.len() + len + 1,
+        ));
     }
     let len = after.bytes().take_while(u8::is_ascii_alphanumeric).count();
     if len == 0 || after.as_bytes().get(len) != Some(&b';') {
@@ -591,12 +605,16 @@ fn reference(after: &str) -> Option<(Option<String>, usize)> {
 fn named(name: &str) -> Option<String> {
     // The CommonMark parser owns the complete HTML5 entity table, including names
     // expanding to two code points. Parse only this bounded, delimiter-free reference.
-    if name.len() > 31 { return None; }
+    if name.len() > 31 {
+        return None;
+    }
     let source = format!("&{name};");
-    let decoded = pulldown_cmark::Parser::new(&source).filter_map(|event| match event {
-        pulldown_cmark::Event::Text(text) => Some(text.into_string()),
-        _ => None,
-    }).collect::<String>();
+    let decoded = pulldown_cmark::Parser::new(&source)
+        .filter_map(|event| match event {
+            pulldown_cmark::Event::Text(text) => Some(text.into_string()),
+            _ => None,
+        })
+        .collect::<String>();
     (decoded != source).then_some(decoded)
 }
 
@@ -645,7 +663,11 @@ mod tests {
         );
         assert_eq!(
             all("<a title=\"x<y\">"),
-            vec![Piece::Open { name: "a", attrs: vec![("title".to_owned(), "x<y")], raw: "<a title=\"x<y\">" }]
+            vec![Piece::Open {
+                name: "a",
+                attrs: vec![("title".to_owned(), "x<y")],
+                raw: "<a title=\"x<y\">"
+            }]
         );
         assert_eq!(
             all("<img src=x/onerror=alert(1)>"),

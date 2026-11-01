@@ -56,10 +56,16 @@ async fn contract(pg: bool) {
         .await;
         ids.push(body["workflow_run_id"].as_i64().unwrap());
     }
-    let first = db::ci::claim_ci_run(f.pool(), "documents", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let first = db::ci::claim_ci_run(
+        f.pool(),
+        "documents",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(first.id, ids[0]);
     db::ci::finish_ci_run(
         f.pool(),
@@ -71,10 +77,16 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .unwrap();
-    let running = db::ci::claim_ci_run(f.pool(), "documents", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let running = db::ci::claim_ci_run(
+        f.pool(),
+        "documents",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(running.id, ids[1]);
     let mut workflow = 0;
     for (index, number, status, conclusion) in [

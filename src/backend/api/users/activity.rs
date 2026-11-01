@@ -24,7 +24,10 @@ fn activity_item(row: ActivityRow) -> ProfileActivityItem {
     let url = match row.kind.as_str() {
         "push" => format!(
             "{repo_path}/commits?ref={}",
-            crate::webui::encode_component(&format!("refs/heads/{}", row.branch.as_deref().unwrap_or_default()))
+            crate::webui::encode_component(&format!(
+                "refs/heads/{}",
+                row.branch.as_deref().unwrap_or_default()
+            ))
         ),
         "issue_opened" | "issue_comment" => format!("{repo_path}/issues/{number}"),
         "pull_request_opened" | "pull_request_merged" | "pull_request_comment" => {

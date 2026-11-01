@@ -166,11 +166,25 @@ pub fn NavLink(
 pub const MAX_TARGET_BYTES: usize = 8192;
 
 pub fn safe_page_target(target: &str) -> bool {
-    if target.len() > MAX_TARGET_BYTES || !target.starts_with('/') || target.starts_with("//")
-        || target.chars().any(|character| character.is_control() || character == '\\') { return false; }
+    if target.len() > MAX_TARGET_BYTES
+        || !target.starts_with('/')
+        || target.starts_with("//")
+        || target
+            .chars()
+            .any(|character| character.is_control() || character == '\\')
+    {
+        return false;
+    }
     // Encoded delimiters in the path affect routing; a query or fragment is data.
-    let lower = target.split(['?', '#']).next().unwrap_or_default().to_ascii_lowercase();
-    !lower.starts_with("/%2f") && !["%5c", "%0d", "%0a", "%00"].iter().any(|bad| lower.contains(bad))
+    let lower = target
+        .split(['?', '#'])
+        .next()
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    !lower.starts_with("/%2f")
+        && !["%5c", "%0d", "%0a", "%00"]
+            .iter()
+            .any(|bad| lower.contains(bad))
 }
 
 /// Repeated polls of one slow read are coalesced; a new location replaces it.
@@ -271,7 +285,10 @@ fn PageRouteView(target: String) -> Element {
             let request_active = active.clone();
             let task = spawn(async move {
                 let request = load::load_page(&request_target, &signal, navigation);
-                let result = load::with_abort_timeout(request, &timeout_controller, MODEL_TIMEOUT_MS).await.unwrap_or(Err(load::LoadError::Timeout));
+                let result =
+                    load::with_abort_timeout(request, &timeout_controller, MODEL_TIMEOUT_MS)
+                        .await
+                        .unwrap_or(Err(load::LoadError::Timeout));
                 if *generation.peek() != next {
                     return;
                 }
@@ -375,8 +392,16 @@ fn history_scroll() -> [f64; 2] {
     value
         .map(|state| {
             [
-                state.get(0).as_f64().filter(|n| n.is_finite() && *n >= 0.0).unwrap_or(0.0),
-                state.get(1).as_f64().filter(|n| n.is_finite() && *n >= 0.0).unwrap_or(0.0),
+                state
+                    .get(0)
+                    .as_f64()
+                    .filter(|n| n.is_finite() && *n >= 0.0)
+                    .unwrap_or(0.0),
+                state
+                    .get(1)
+                    .as_f64()
+                    .filter(|n| n.is_finite() && *n >= 0.0)
+                    .unwrap_or(0.0),
             ]
         })
         .unwrap_or([0.0, 0.0])

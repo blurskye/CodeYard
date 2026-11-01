@@ -116,8 +116,13 @@ pub async fn change(
     let _: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM repositories WHERE id IN ({repositories}) AND (id IN (SELECT repo_id FROM stars WHERE user_id=$2) OR id IN (SELECT repo_id FROM watches WHERE user_id=$2)) ORDER BY id FOR UPDATE"))
         .bind(org).bind(target).fetch_all(&mut *tx).await?;
     for table in ["stars", "watches", "repo_access"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE user_id=$2 AND repo_id IN ({repositories})"))
-            .bind(org).bind(target).execute(&mut *tx).await?;
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE user_id=$2 AND repo_id IN ({repositories})"
+        ))
+        .bind(org)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
     }
     sqlx::query(&format!("DELETE FROM issue_assignees WHERE user_id=$2 AND issue_id IN (SELECT id FROM issues WHERE repo_id IN ({repositories}))"))
         .bind(org).bind(target).execute(&mut *tx).await?;

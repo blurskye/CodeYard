@@ -8,7 +8,7 @@ mod environment_values;
 mod matchers;
 mod output;
 mod process;
-pub(crate) use process::{read_lines, output as capture_output};
+pub(crate) use process::{output as capture_output, read_lines};
 mod reusable;
 
 use crate::expressions::{self, Contexts, Status, Value};
@@ -18,8 +18,8 @@ use crate::progress::{
 use crate::workflow::{self, Container, PlannedJob, Step, StepAction};
 use anyhow::{bail, Context, Result};
 use clap::Parser;
-use commands::{Commands, Log, Progress};
 pub use commands::Masker;
+use commands::{Commands, Log, Progress};
 use containers::Podman;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -102,10 +102,19 @@ pub struct Options {
     containment_lost: Arc<std::sync::atomic::AtomicBool>,
 }
 
-fn validate_replay_matrix(expected: &BTreeMap<u32, serde_json::Value>, plans: &[PlannedJob]) -> Result<()> {
-    anyhow::ensure!(expected.len() == plans.len() && plans.iter().enumerate().all(|(index, plan)| {
-        expected.get(&(index as u32)).is_some_and(|matrix| Value::from_json(matrix) == plan.matrix)
-    }), "Matrix context has changed; re-run the whole workflow");
+fn validate_replay_matrix(
+    expected: &BTreeMap<u32, serde_json::Value>,
+    plans: &[PlannedJob],
+) -> Result<()> {
+    anyhow::ensure!(
+        expected.len() == plans.len()
+            && plans.iter().enumerate().all(|(index, plan)| {
+                expected
+                    .get(&(index as u32))
+                    .is_some_and(|matrix| Value::from_json(matrix) == plan.matrix)
+            }),
+        "Matrix context has changed; re-run the whole workflow"
+    );
     Ok(())
 }
 
@@ -142,7 +151,10 @@ fn minutes(value: f64) -> Result<Duration> {
 /// How long cleanup steps and post steps may run after a job is cancelled or times out.
 fn cancel_grace(options: &Options) -> Result<Duration> {
     let grace = minutes(options.cancel_timeout_minutes)?;
-    anyhow::ensure!(grace <= CLEANUP_GRACE, "The cancel timeout is at most one minute");
+    anyhow::ensure!(
+        grace <= CLEANUP_GRACE,
+        "The cancel timeout is at most one minute"
+    );
     Ok(grace)
 }
 
@@ -217,7 +229,10 @@ fn expand_with_dependency_status(
         .get("jobs")
         .and_then(|jobs| jobs.get(id))
         .and_then(|job| job.get("if"));
-    let condition = condition.map(|value| workflow::scalar_text(value, "job.if")).transpose()?.unwrap_or_else(|| "success()".into());
+    let condition = condition
+        .map(|value| workflow::scalar_text(value, "job.if"))
+        .transpose()?
+        .unwrap_or_else(|| "success()".into());
     let condition = condition.trim();
     let condition = condition
         .strip_prefix("${{")
@@ -281,19 +296,35 @@ fn ref_name(reference: &str) -> &str {
 
 /// Dispatch inputs arrive as text. The `inputs` context uses the declared types, as on GitHub,
 /// so `if: inputs.publish` sees a boolean. `github.event.inputs` keeps the text.
-struct DispatchInputs { typed: serde_json::Value, event: serde_json::Value }
-fn typed_dispatch_inputs(raw: &serde_yaml::Value, inputs: serde_json::Value) -> Result<DispatchInputs> {
+struct DispatchInputs {
+    typed: serde_json::Value,
+    event: serde_json::Value,
+}
+fn typed_dispatch_inputs(
+    raw: &serde_yaml::Value,
+    inputs: serde_json::Value,
+) -> Result<DispatchInputs> {
     use crate::workflow::dispatch_inputs::{self, InputKind};
-    let declared = dispatch_inputs::parse(raw.get("on").and_then(|on| on.get("workflow_dispatch")).unwrap_or(&serde_yaml::Value::Null))?;
-    let submitted = inputs.as_object().context("Dispatch inputs must be an object")?.iter().map(|(key, value)| {
-        let text = match value {
-            serde_json::Value::String(value) => value.clone(),
-            serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
-            _ => bail!("Dispatch input must be a scalar"),
-        };
-        Ok((key.clone(), text))
-    }).collect::<Result<BTreeMap<_, _>>>()?;
-    let values = dispatch_inputs::validate_inputs(&declared, &submitted).map_err(anyhow::Error::msg)?;
+    let declared = dispatch_inputs::parse(
+        raw.get("on")
+            .and_then(|on| on.get("workflow_dispatch"))
+            .unwrap_or(&serde_yaml::Value::Null),
+    )?;
+    let submitted = inputs
+        .as_object()
+        .context("Dispatch inputs must be an object")?
+        .iter()
+        .map(|(key, value)| {
+            let text = match value {
+                serde_json::Value::String(value) => value.clone(),
+                serde_json::Value::Bool(_) | serde_json::Value::Number(_) => value.to_string(),
+                _ => bail!("Dispatch input must be a scalar"),
+            };
+            Ok((key.clone(), text))
+        })
+        .collect::<Result<BTreeMap<_, _>>>()?;
+    let values =
+        dispatch_inputs::validate_inputs(&declared, &submitted).map_err(anyhow::Error::msg)?;
     let mut inputs = serde_json::Map::new();
     for input in declared {
         let value = &values[&input.name];
@@ -304,7 +335,10 @@ fn typed_dispatch_inputs(raw: &serde_yaml::Value, inputs: serde_json::Value) -> 
         };
         inputs.insert(input.name, value);
     }
-    Ok(DispatchInputs { typed: serde_json::Value::Object(inputs), event: serde_json::to_value(values)? })
+    Ok(DispatchInputs {
+        typed: serde_json::Value::Object(inputs),
+        event: serde_json::to_value(values)?,
+    })
 }
 
 /// Bounds an action's preparation (fetching, runtime probing, image builds) by the step deadline.
@@ -333,9 +367,9 @@ async fn git_value(directory: &Path, args: &[&str]) -> String {
     )
     .await
     {
-        Ok(output) if output.status.success() => {
-            String::from_utf8_lossy(&output.stdout).trim_end_matches(['\r', '\n']).into()
-        }
+        Ok(output) if output.status.success() => String::from_utf8_lossy(&output.stdout)
+            .trim_end_matches(['\r', '\n'])
+            .into(),
         _ => String::new(),
     }
 }
@@ -399,20 +433,31 @@ impl JobTokens {
         })
     }
     fn reserve_calls(&self, prefix: &str, count: usize) {
-        let mut completions = self.completions.lock().unwrap_or_else(|error| error.into_inner());
+        let mut completions = self
+            .completions
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         for id in self.tokens.keys().filter(|id| id.starts_with(prefix)) {
             *completions.entry(id.clone()).or_insert(1) += count.saturating_sub(1);
         }
     }
     fn completed(&self, id: &str) {
         if !self.completion_secret.is_empty() {
-            let mut completions = self.completions.lock().unwrap_or_else(|error| error.into_inner());
+            let mut completions = self
+                .completions
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
             let remaining = completions.entry(id.to_owned()).or_insert(1);
-            if *remaining == 0 { return; }
+            if *remaining == 0 {
+                return;
+            }
             *remaining -= 1;
             if *remaining == 0 {
                 if let Some(output) = &self.output {
-                    output.line(format!("::codeyard-job-completed::{}:{id}", self.completion_secret), true);
+                    output.line(
+                        format!("::codeyard-job-completed::{}:{id}", self.completion_secret),
+                        true,
+                    );
                 }
             }
         }
@@ -457,8 +502,13 @@ pub async fn run(mut options: Options) -> Result<bool> {
         environment_values,
     )
     .await;
-    result.map_err(|error| if error.is::<Cancelled>() { error }
-        else { anyhow::anyhow!(masker.mask(&format!("{error:#}"))) })
+    result.map_err(|error| {
+        if error.is::<Cancelled>() {
+            error
+        } else {
+            anyhow::anyhow!(masker.mask(&format!("{error:#}")))
+        }
+    })
 }
 
 async fn run_workflow(
@@ -535,22 +585,43 @@ async fn run_workflow(
     } else {
         serde_json::json!({})
     };
-    let submitted_inputs = event.get("inputs").cloned().unwrap_or_else(|| serde_json::json!({}));
+    let submitted_inputs = event
+        .get("inputs")
+        .cloned()
+        .unwrap_or_else(|| serde_json::json!({}));
     let inputs = if options.event == "workflow_dispatch" {
         let inputs = typed_dispatch_inputs(&raw, submitted_inputs)?;
-        event.as_object_mut().context("Dispatch event must be an object")?.insert("inputs".into(), inputs.event);
+        event
+            .as_object_mut()
+            .context("Dispatch event must be an object")?
+            .insert("inputs".into(), inputs.event);
         inputs.typed
-    } else { submitted_inputs };
+    } else {
+        submitted_inputs
+    };
     let mut env = environment_file(options.env_file.as_deref())?;
     for pair in &options.env {
         let (key, value) = pair.split_once('=').context("--env requires KEY=VALUE")?;
         env.insert(key.to_owned(), value.to_owned());
     }
-    let workflow_name = raw.get("name").and_then(serde_yaml::Value::as_str)
-        .filter(|name| !name.trim().is_empty()).map(str::to_owned).unwrap_or_else(|| {
-            env.get("GITHUB_WORKFLOW_REF").and_then(|reference| reference.split_once('@'))
-                .and_then(|(path, _)| path.splitn(3, '/').nth(2)).map(str::to_owned)
-                .unwrap_or_else(|| options.workflow.strip_prefix(&options.directory).unwrap_or(&options.workflow).to_string_lossy().replace('\\', "/"))
+    let workflow_name = raw
+        .get("name")
+        .and_then(serde_yaml::Value::as_str)
+        .filter(|name| !name.trim().is_empty())
+        .map(str::to_owned)
+        .unwrap_or_else(|| {
+            env.get("GITHUB_WORKFLOW_REF")
+                .and_then(|reference| reference.split_once('@'))
+                .and_then(|(path, _)| path.splitn(3, '/').nth(2))
+                .map(str::to_owned)
+                .unwrap_or_else(|| {
+                    options
+                        .workflow
+                        .strip_prefix(&options.directory)
+                        .unwrap_or(&options.workflow)
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                })
         });
     if options.debug {
         for (key, value) in [
@@ -599,7 +670,11 @@ async fn run_workflow(
             })
         })
     };
-    let workflow_file = options.workflow.file_name().and_then(|name| name.to_str()).unwrap_or("workflow");
+    let workflow_file = options
+        .workflow
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("workflow");
     let workflow_ref = env
         .get("GITHUB_WORKFLOW_REF")
         .cloned()
@@ -669,9 +744,18 @@ async fn run_workflow(
     let files = reusable::files(&raw, &options.directory)?;
     let workspace = if options.concurrent_jobs > 1 {
         let source = options.directory.clone();
-        Some(Arc::new(tokio::task::spawn_blocking(move || crate::fs::snapshot_tree(&source, crate::fs::SnapshotLinks::Preserve)).await??))
-    } else { None };
-    let permits = Arc::new(tokio::sync::Semaphore::new(options.concurrent_jobs.max(1) as usize));
+        Some(Arc::new(
+            tokio::task::spawn_blocking(move || {
+                crate::fs::snapshot_tree(&source, crate::fs::SnapshotLinks::Preserve)
+            })
+            .await??,
+        ))
+    } else {
+        None
+    };
+    let permits = Arc::new(tokio::sync::Semaphore::new(
+        options.concurrent_jobs.max(1) as usize
+    ));
     let execution = WorkflowRun {
         options,
         permits,
@@ -691,7 +775,9 @@ async fn run_workflow(
     output_task.abort();
     flushed?;
     let result = result?;
-    if result.result == "cancelled" { return Err(Cancelled.into()); }
+    if result.result == "cancelled" {
+        return Err(Cancelled.into());
+    }
     Ok(result.result == "success")
 }
 
@@ -709,10 +795,19 @@ struct WorkflowRun {
 }
 
 impl WorkflowRun {
-    #[expect(clippy::too_many_arguments, reason = "A leaf job takes its plan, contexts, environment, log and cancel signal as the scheduler owns them.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A leaf job takes its plan, contexts, environment, log and cancel signal as the scheduler owns them."
+    )]
     async fn run_leaf(
-        &self, job: PlannedJob, index: usize, options: Arc<Options>, mut contexts: Contexts,
-        env: BTreeMap<String, String>, log: Log, mut cancel: watch::Receiver<bool>,
+        &self,
+        job: PlannedJob,
+        index: usize,
+        options: Arc<Options>,
+        mut contexts: Contexts,
+        env: BTreeMap<String, String>,
+        log: Log,
+        mut cancel: watch::Receiver<bool>,
     ) -> JobResult {
         let result = async {
             let _permit = tokio::select! {
@@ -740,13 +835,26 @@ impl WorkflowRun {
                 let cancelled = error.is::<Cancelled>();
                 log.emit(Update::Started);
                 log.line(&format!("Job preparation failed: {error:#}"));
-                log.emit(Update::Finished { conclusion: if cancelled { Conclusion::Cancelled } else { Conclusion::Failure }, duration_ms: 0 });
-                JobResult { result: if cancelled { "cancelled" } else { "failure" }.into(), outputs: BTreeMap::new() }
+                log.emit(Update::Finished {
+                    conclusion: if cancelled {
+                        Conclusion::Cancelled
+                    } else {
+                        Conclusion::Failure
+                    },
+                    duration_ms: 0,
+                });
+                JobResult {
+                    result: if cancelled { "cancelled" } else { "failure" }.into(),
+                    outputs: BTreeMap::new(),
+                }
             }
         }
     }
 
-    #[expect(clippy::too_many_arguments, reason = "Each job carries its workflow, dependencies, saved state, contexts, environment and name and token prefixes.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "Each job carries its workflow, dependencies, saved state, contexts, environment and name and token prefixes."
+    )]
     fn execute_job(
         &self,
         raw: Arc<serde_yaml::Value>,
@@ -788,397 +896,450 @@ impl WorkflowRun {
                     "workflow name exceeds the progress metadata limit"
                 );
             }
-                anyhow::ensure!(!options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
-                    "Container cleanup failed; refusing further execution");
-                if *cancel.borrow() {
-                    return Ok(JobResult { result: "cancelled".into(), outputs: BTreeMap::new() });
+            anyhow::ensure!(
+                !options
+                    .containment_lost
+                    .load(std::sync::atomic::Ordering::Acquire),
+                "Container cleanup failed; refusing further execution"
+            );
+            if *cancel.borrow() {
+                return Ok(JobResult {
+                    result: "cancelled".into(),
+                    outputs: BTreeMap::new(),
+                });
+            }
+            let token_id = format!("{token_prefix}{id}");
+            if options.job_token_file.is_some()
+                && replay.is_none_or(|replay| replay.selected.contains_key(&id))
+            {
+                let token = tokens
+                    .tokens
+                    .get(&token_id)
+                    .context("Missing job credential")?;
+                if let Some(Value::Object(github)) = contexts.values.get_mut("github") {
+                    github.insert("token".into(), Value::String(token.clone()));
                 }
-                let token_id = format!("{token_prefix}{id}");
-                if options.job_token_file.is_some()
-                    && replay.is_none_or(|replay| replay.selected.contains_key(&id))
-                {
-                    let token = tokens
-                        .tokens
-                        .get(&token_id)
-                        .context("Missing job credential")?;
-                    if let Some(Value::Object(github)) = contexts.values.get_mut("github") {
-                        github.insert("token".into(), Value::String(token.clone()));
-                    }
-                    if let Some(Value::Object(secrets)) = contexts.values.get_mut("secrets") {
-                        secrets.insert("GITHUB_TOKEN".into(), Value::String(token.clone()));
-                    }
-                    env.insert("GITHUB_TOKEN".into(), token.clone());
-                    for name in [
-                        "ACTIONS_ID_TOKEN_REQUEST_URL",
-                        "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
-                    ] {
-                        env.remove(name);
-                    }
-                    if tokens.oidc_jobs.contains(&token_id) {
-                        env.insert(
-                            "ACTIONS_ID_TOKEN_REQUEST_URL".into(),
-                            tokens.oidc_url.clone(),
-                        );
-                        env.insert("ACTIONS_ID_TOKEN_REQUEST_TOKEN".into(), token.clone());
-                    }
+                if let Some(Value::Object(secrets)) = contexts.values.get_mut("secrets") {
+                    secrets.insert("GITHUB_TOKEN".into(), Value::String(token.clone()));
                 }
-                // expand checks the job's own dependencies; unrelated failures must not skip it.
-                let mut needs = BTreeMap::new();
-                let mut status = Status::default();
-                let mut dependency_success = true;
-                let mut direct_status = Status::default();
-                for (name, result, ancestor) in dependencies {
-                        status.failed |= result.result == "failure";
-                        status.cancelled |= result.result == "cancelled";
-                        dependency_success &= result.result == "success";
-                        direct_status.failed |= result.result == "failure";
-                        direct_status.cancelled |= result.result == "cancelled";
-                        status.failed |= ancestor.failed;
-                        status.cancelled |= ancestor.cancelled;
-                        needs.insert(
+                env.insert("GITHUB_TOKEN".into(), token.clone());
+                for name in [
+                    "ACTIONS_ID_TOKEN_REQUEST_URL",
+                    "ACTIONS_ID_TOKEN_REQUEST_TOKEN",
+                ] {
+                    env.remove(name);
+                }
+                if tokens.oidc_jobs.contains(&token_id) {
+                    env.insert(
+                        "ACTIONS_ID_TOKEN_REQUEST_URL".into(),
+                        tokens.oidc_url.clone(),
+                    );
+                    env.insert("ACTIONS_ID_TOKEN_REQUEST_TOKEN".into(), token.clone());
+                }
+            }
+            // expand checks the job's own dependencies; unrelated failures must not skip it.
+            let mut needs = BTreeMap::new();
+            let mut status = Status::default();
+            let mut dependency_success = true;
+            let mut direct_status = Status::default();
+            for (name, result, ancestor) in dependencies {
+                status.failed |= result.result == "failure";
+                status.cancelled |= result.result == "cancelled";
+                dependency_success &= result.result == "success";
+                direct_status.failed |= result.result == "failure";
+                direct_status.cancelled |= result.result == "cancelled";
+                status.failed |= ancestor.failed;
+                status.cancelled |= ancestor.cancelled;
+                needs.insert(
                     name,
                     Value::from_json(
                         &serde_json::json!({"result":result.result,"outputs":result.outputs}),
                     ),
                 );
-                }
-                contexts.values.insert("needs".into(), Value::Object(needs));
-                if let Some(replay) = &replay {
-                    if !replay.selected.contains_key(&id) {
-                        let result = replay
-                            .state
-                            .jobs
-                            .get(&id)
-                            .context("Source dependency state is unavailable")?
-                            .clone();
-                        if let Some(expected) = replay.matrices.get(&id) {
-                            let plans = workflow::expand(&workflow, &id, &contexts, status)?
-                                .context("Retained matrix context has changed; re-run the whole workflow")?;
-                            validate_replay_matrix(expected, &plans)?;
-                        }
-                        return Ok(result);
+            }
+            contexts.values.insert("needs".into(), Value::Object(needs));
+            if let Some(replay) = &replay {
+                if !replay.selected.contains_key(&id) {
+                    let result = replay
+                        .state
+                        .jobs
+                        .get(&id)
+                        .context("Source dependency state is unavailable")?
+                        .clone();
+                    if let Some(expected) = replay.matrices.get(&id) {
+                        let plans = workflow::expand(&workflow, &id, &contexts, status)?.context(
+                            "Retained matrix context has changed; re-run the whole workflow",
+                        )?;
+                        validate_replay_matrix(expected, &plans)?;
                     }
+                    return Ok(result);
                 }
-                let expanded = if !dependency_success
-                    && !direct_status.failed
-                    && !direct_status.cancelled
+            }
+            let expanded =
+                if !dependency_success && !direct_status.failed && !direct_status.cancelled
                     || status != direct_status
                 {
                     expand_with_dependency_status(&raw, &id, &contexts, status, dependency_success)
                 } else {
                     workflow::expand(&workflow, &id, &contexts, status)
                 };
-                let expanded = match expanded {
-                    Ok(expanded) => expanded,
-                    Err(error) => {
-                        Log { prefix: format!("{name_prefix}{id}"), masker: masker.clone(), progress: None, output: tokens.output.clone() }
-                            .line(&format!("Job expansion failed: {error:#}"));
-                        let result = JobResult { result: "failure".into(), outputs: BTreeMap::new() };
-                        self.record_state(&saved, |saved| { saved.jobs.insert(id.clone(), result.clone()); })?;
-                        tokens.completed(&token_id);
-                        return Ok(result);
+            let expanded = match expanded {
+                Ok(expanded) => expanded,
+                Err(error) => {
+                    Log {
+                        prefix: format!("{name_prefix}{id}"),
+                        masker: masker.clone(),
+                        progress: None,
+                        output: tokens.output.clone(),
                     }
-                };
-                // A matrix whose excludes remove every combination runs nothing, like a skipped job.
-                let Some(mut plans) = expanded.filter(|plans| !plans.is_empty()) else {
-                    if let Some(progress) = tokens.progress(&id, 0) {
-                        let name = raw
-                            .get("jobs")
-                            .and_then(|jobs| jobs.get(&id))
-                            .and_then(|job| job.get("name"))
-                            .and_then(serde_yaml::Value::as_str)
-                            .filter(|name| !name.contains("${{"))
-                            .unwrap_or(&id);
-                        anyhow::ensure!(
-                            id.len() <= 128 && name.len() <= 1024,
-                            "job metadata exceeds the progress limit"
-                        );
-                        progress.emit(Update::Queued {
-                            workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
-                            name: commands::bounded(&masker.mask(name), 1024),
-                            labels: vec![],
-                            matrix: None,
-                        });
-                        progress.emit(Update::Started);
-                        progress.emit(Update::Finished {
-                            conclusion: Conclusion::Skipped,
-                            duration_ms: 0,
-                        });
-                    }
+                    .line(&format!("Job expansion failed: {error:#}"));
                     let result = JobResult {
-                        result: "skipped".into(),
+                        result: "failure".into(),
                         outputs: BTreeMap::new(),
                     };
-                    self.record_state(&saved, |saved| { saved.jobs.insert(id.clone(), result.clone()); })?;
-                    if token_prefix.is_empty() {
-                        tokens.completed(&token_id);
-                    }
+                    self.record_state(&saved, |saved| {
+                        saved.jobs.insert(id.clone(), result.clone());
+                    })?;
+                    tokens.completed(&token_id);
                     return Ok(result);
-                };
-                let variants = replay
-                    .as_ref()
-                    .and_then(|replay| replay.selected.get(&id))
-                    .and_then(Option::as_ref);
-                anyhow::ensure!(
-                    variants.is_none_or(|variants| !variants.is_empty()
-                        && variants.iter().all(|index| (*index as usize) < plans.len())),
-                    "selected matrix variant is unavailable"
-                );
-                if variants.is_some() {
-                    if let Some(expected) = replay.as_ref().and_then(|source| source.matrices.get(&id)) {
-                        validate_replay_matrix(expected, &plans)?;
-                    } else {
-                        anyhow::ensure!(raw["jobs"][id.as_str()]["strategy"].get("matrix").is_none(),
-                            "Source matrix metadata is unavailable");
-                    }
                 }
-                for job in &mut plans {
-                    job.name = masker.mask(&job.name);
-                    if job.name.chars().count() > 100 {
-                        job.name = job.name.chars().take(97).collect::<String>() + "...";
-                    }
+            };
+            // A matrix whose excludes remove every combination runs nothing, like a skipped job.
+            let Some(mut plans) = expanded.filter(|plans| !plans.is_empty()) else {
+                if let Some(progress) = tokens.progress(&id, 0) {
+                    let name = raw
+                        .get("jobs")
+                        .and_then(|jobs| jobs.get(&id))
+                        .and_then(|job| job.get("name"))
+                        .and_then(serde_yaml::Value::as_str)
+                        .filter(|name| !name.contains("${{"))
+                        .unwrap_or(&id);
+                    anyhow::ensure!(
+                        id.len() <= 128 && name.len() <= 1024,
+                        "job metadata exceeds the progress limit"
+                    );
+                    progress.emit(Update::Queued {
+                        workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
+                        name: commands::bounded(&masker.mask(name), 1024),
+                        labels: vec![],
+                        matrix: None,
+                    });
+                    progress.emit(Update::Started);
+                    progress.emit(Update::Finished {
+                        conclusion: Conclusion::Skipped,
+                        duration_ms: 0,
+                    });
                 }
-                for (index, job) in plans.iter().enumerate() {
-                    if variants.is_some_and(|variants| !variants.contains(&(index as u32))) {
-                        continue;
-                    }
-                    if let Some(progress) = tokens.progress(&id, index) {
-                        anyhow::ensure!(
-                            id.len() <= 128 && job.name.len() <= 1024,
-                            "job metadata exceeds the progress limit"
-                        );
-                        progress.emit(Update::Queued {
-                            workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
-                            name: job.name.clone(),
-                            labels: job.runs_on.iter().map(|label| commands::bounded(&masker.mask(label), 1024)).take(64).collect(),
-                            matrix: matrix_metadata(&job.matrix, masker),
-                        });
-                    }
-                }
-                let limit = plans
-                    .first()
-                    .and_then(|job| job.max_parallel)
-                    .unwrap_or(options.concurrent_jobs)
-                    .min(options.concurrent_jobs)
-                    .max(1) as usize;
-                let fail_fast = plans.first().is_none_or(|job| job.fail_fast);
-                let called = plans.first().is_some_and(|job| job.call.is_some());
-                let total = plans.len();
-                if called {
-                    tokens.reserve_calls(&format!("{token_id}/"), variants.map_or(total, |variants| variants.len()));
-                }
-                let mut plans = plans.into_iter().enumerate().filter(|(index, _)| {
-                    variants.is_none_or(|variants| variants.contains(&(*index as u32)))
-                });
-                let mut tasks = tokio::task::JoinSet::new();
-                let (matrix_tx, matrix_cancel) = watch::channel(*cancel.borrow());
-                let relay_tx = matrix_tx.clone();
-                let mut global_cancel = cancel.clone();
-                let relay = tokio::spawn(async move {
-                    loop {
-                        if *global_cancel.borrow() {
-                            let _ = relay_tx.send(true);
-                            break;
-                        }
-                        if global_cancel.changed().await.is_err() { break; }
-                    }
-                });
-                let _relay_guard = BackgroundTask(relay.abort_handle());
-                let mut aggregate = JobResult {
-                    result: "success".into(),
+                let result = JobResult {
+                    result: "skipped".into(),
                     outputs: BTreeMap::new(),
                 };
-                if let Some(selected) = variants {
-                    let source = &replay
-                        .as_ref()
-                        .expect("a variant selection requires a replay")
-                        .state;
-                    aggregate.outputs = source
-                        .retained_outputs(&id, selected, total, called)
-                        .map_err(anyhow::Error::msg)?;
-                    for index in (0..total as u32).filter(|index| !selected.contains(index)) {
-                        let result = source
-                            .variants
-                            .get(&id)
-                            .and_then(|variants| variants.get(&index))
-                            .context("Source matrix state is unavailable")?;
-                        if result.result == "failure" {
-                            aggregate.result = "failure".into();
-                        } else if result.result == "cancelled" && aggregate.result == "success" {
-                            aggregate.result = "cancelled".into();
-                        }
+                self.record_state(&saved, |saved| {
+                    saved.jobs.insert(id.clone(), result.clone());
+                })?;
+                if token_prefix.is_empty() {
+                    tokens.completed(&token_id);
+                }
+                return Ok(result);
+            };
+            let variants = replay
+                .as_ref()
+                .and_then(|replay| replay.selected.get(&id))
+                .and_then(Option::as_ref);
+            anyhow::ensure!(
+                variants.is_none_or(|variants| !variants.is_empty()
+                    && variants.iter().all(|index| (*index as usize) < plans.len())),
+                "selected matrix variant is unavailable"
+            );
+            if variants.is_some() {
+                if let Some(expected) = replay.as_ref().and_then(|source| source.matrices.get(&id))
+                {
+                    validate_replay_matrix(expected, &plans)?;
+                } else {
+                    anyhow::ensure!(
+                        raw["jobs"][id.as_str()]["strategy"].get("matrix").is_none(),
+                        "Source matrix metadata is unavailable"
+                    );
+                }
+            }
+            for job in &mut plans {
+                job.name = masker.mask(&job.name);
+                if job.name.chars().count() > 100 {
+                    job.name = job.name.chars().take(97).collect::<String>() + "...";
+                }
+            }
+            for (index, job) in plans.iter().enumerate() {
+                if variants.is_some_and(|variants| !variants.contains(&(index as u32))) {
+                    continue;
+                }
+                if let Some(progress) = tokens.progress(&id, index) {
+                    anyhow::ensure!(
+                        id.len() <= 128 && job.name.len() <= 1024,
+                        "job metadata exceeds the progress limit"
+                    );
+                    progress.emit(Update::Queued {
+                        workflow_name: commands::bounded(&masker.mask(&workflow_name), 1024),
+                        name: job.name.clone(),
+                        labels: job
+                            .runs_on
+                            .iter()
+                            .map(|label| commands::bounded(&masker.mask(label), 1024))
+                            .take(64)
+                            .collect(),
+                        matrix: matrix_metadata(&job.matrix, masker),
+                    });
+                }
+            }
+            let limit = plans
+                .first()
+                .and_then(|job| job.max_parallel)
+                .unwrap_or(options.concurrent_jobs)
+                .min(options.concurrent_jobs)
+                .max(1) as usize;
+            let fail_fast = plans.first().is_none_or(|job| job.fail_fast);
+            let called = plans.first().is_some_and(|job| job.call.is_some());
+            let total = plans.len();
+            if called {
+                tokens.reserve_calls(
+                    &format!("{token_id}/"),
+                    variants.map_or(total, |variants| variants.len()),
+                );
+            }
+            let mut plans = plans.into_iter().enumerate().filter(|(index, _)| {
+                variants.is_none_or(|variants| variants.contains(&(*index as u32)))
+            });
+            let mut tasks = tokio::task::JoinSet::new();
+            let (matrix_tx, matrix_cancel) = watch::channel(*cancel.borrow());
+            let relay_tx = matrix_tx.clone();
+            let mut global_cancel = cancel.clone();
+            let relay = tokio::spawn(async move {
+                loop {
+                    if *global_cancel.borrow() {
+                        let _ = relay_tx.send(true);
+                        break;
+                    }
+                    if global_cancel.changed().await.is_err() {
+                        break;
                     }
                 }
-                loop {
-                    while tasks.len() < limit && !*matrix_cancel.borrow() {
-                        let Some((index, job)) = plans.next() else {
-                            break;
-                        };
-                        let options = options.clone();
-                        let mut contexts = contexts.clone();
-                        // Bindings are keyed by run-wide job identity, so a called workflow's job
-                        // never takes a root job's bindings.
-                        environment_values.apply(&token_id, &mut contexts);
-                        contexts.values.insert(
-                            "strategy".into(),
-                            Value::from_json(&serde_json::json!({"job-index":index,"job-total":total,"fail-fast":job.fail_fast,"max-parallel":job.max_parallel.map_or(total as f64, f64::from)})),
-                        );
-                        contexts.values.insert("matrix".into(), job.matrix.clone());
-                        let env = env.clone();
-                        let job_masker = masker.fork();
-                        let name = format!("{name_prefix}{}", job.name);
-                        let log = Log {
-                            prefix: format!("{workflow_name}/{name}"),
-                            masker: job_masker.clone(),
-                            progress: tokens.progress(&id, index),
-                            output: tokens.output.clone(),
-                        };
-                        let cancel = matrix_cancel.clone();
-                        let mut execution = self.clone();
-                        execution.masker = job_masker;
-                        execution.cancel = cancel.clone();
-                        let mut nested_options = (*options).clone();
-                        nested_options.job_state_file = None;
-                        execution.options = Arc::new(nested_options);
-                        let mut nested_tokens = (**tokens).clone();
-                        nested_tokens.nested = true;
-                        execution.tokens = Arc::new(nested_tokens);
-                        let called_prefix = format!("{token_id}/");
-                        tasks.spawn(async move {
-                            let Some(cancel) = admit(&job, index, &options, &log, cancel).await
-                            else {
-                                log.emit(Update::Started);
-                                log.line("Job cancelled: a newer job took its concurrency group");
-                                log.emit(Update::Finished {
-                                    conclusion: Conclusion::Cancelled,
-                                    duration_ms: 0,
-                                });
-                                let result = JobResult {
-                                    result: "cancelled".into(),
-                                    outputs: BTreeMap::new(),
-                                };
-                                return (index, result);
-                            };
-                            execution.cancel = cancel.clone();
-                            let result = if let Some(call) = &job.call {
-                                log.emit(Update::Started);
-                                let started = Instant::now();
-                                let result = async {
-                                    let reference = call
-                                        .get("uses")
-                                        .and_then(serde_yaml::Value::as_str)
-                                        .context("Missing called workflow")?;
-                                    let raw = execution
-                                        .files
-                                        .get(reference)
-                                        .context("Called workflow was not resolved")?
-                                        .clone();
-                                    let contexts = reusable::contexts(
-                                        call,
-                                        &raw,
-                                        &contexts,
-                                        &execution.masker,
-                                    )?;
-                                    execution
-                                        .execute(
-                                            raw,
-                                            contexts,
-                                            env,
-                                            format!("{name} / "),
-                                            called_prefix,
-                                        )
-                                        .await
-                                }
-                                .await;
-                                let result = match result {
-                                    Ok(result) => result,
-                                    Err(error) => {
-                                        log.line(&format!("Error: {error:#}"));
-                                        JobResult {
-                                            result: "failure".into(),
-                                            outputs: BTreeMap::new(),
-                                        }
-                                    }
-                                };
-                                log.emit(Update::Finished {
-                                    conclusion: Conclusion::from_result(&result.result)
-                                        .expect("known workflow result"),
-                                    duration_ms: started
-                                        .elapsed()
-                                        .as_millis()
-                                        .try_into()
-                                        .unwrap_or(u64::MAX),
-                                });
-                                result
-                            } else {
-                                execution.run_leaf(job, index, options, contexts, env, log, cancel).await
-                            };
-                            (index, result)
-                        });
-                    }
-                    let Some(result) = tasks.join_next().await else {
-                        break;
-                    };
-                    let (index, result) = match result {
-                        Ok(result) => result,
-                        Err(error) => {
-                            options.containment_lost.store(true, std::sync::atomic::Ordering::Release);
-                            let _ = matrix_tx.send(true);
-                            tasks.shutdown().await;
-                            relay.abort();
-                            return Err(anyhow::anyhow!("Job task failed: {error}"));
-                        }
-                    };
-                    if let Err(error) = self.record_state(&saved, |saved| {
-                        saved.variants.entry(id.clone()).or_default().insert(index.try_into().expect("matrix is bounded"), result.clone());
-                        saved.variant_order.entry(id.clone()).or_default().push(index.try_into().expect("matrix is bounded"));
-                    }) {
-                        let _ = matrix_tx.send(true);
-                        tasks.shutdown().await;
-                        relay.abort();
-                        return Err(error);
-                    }
+            });
+            let _relay_guard = BackgroundTask(relay.abort_handle());
+            let mut aggregate = JobResult {
+                result: "success".into(),
+                outputs: BTreeMap::new(),
+            };
+            if let Some(selected) = variants {
+                let source = &replay
+                    .as_ref()
+                    .expect("a variant selection requires a replay")
+                    .state;
+                aggregate.outputs = source
+                    .retained_outputs(&id, selected, total, called)
+                    .map_err(anyhow::Error::msg)?;
+                for index in (0..total as u32).filter(|index| !selected.contains(index)) {
+                    let result = source
+                        .variants
+                        .get(&id)
+                        .and_then(|variants| variants.get(&index))
+                        .context("Source matrix state is unavailable")?;
                     if result.result == "failure" {
                         aggregate.result = "failure".into();
-                        if fail_fast {
-                            let _ = matrix_tx.send(true);
-                        }
                     } else if result.result == "cancelled" && aggregate.result == "success" {
                         aggregate.result = "cancelled".into();
                     }
-                    if !called {
-                        aggregate.outputs.extend(result.outputs);
-                    } else if result.result == "success" {
-                        merge_outputs(&mut aggregate.outputs, result.outputs);
-                    }
                 }
-                relay.abort();
-                for (index, _) in plans {
-                    if let Some(progress) = tokens.progress(&id, index) {
-                        progress.emit(Update::Finished {
-                            conclusion: Conclusion::Cancelled,
-                            duration_ms: 0,
-                        });
-                    }
-                    let index = index.try_into().expect("matrix is bounded");
-                    self.record_state(&saved, |saved| {
-                        saved.variants.entry(id.clone()).or_default().insert(index, JobResult { result: "cancelled".into(), outputs: BTreeMap::new() });
-                        saved.variant_order.entry(id.clone()).or_default().push(index);
-                    })?;
-                    if aggregate.result == "success" {
-                        aggregate.result = "cancelled".into();
-                    }
+            }
+            loop {
+                while tasks.len() < limit && !*matrix_cancel.borrow() {
+                    let Some((index, job)) = plans.next() else {
+                        break;
+                    };
+                    let options = options.clone();
+                    let mut contexts = contexts.clone();
+                    // Bindings are keyed by run-wide job identity, so a called workflow's job
+                    // never takes a root job's bindings.
+                    environment_values.apply(&token_id, &mut contexts);
+                    contexts.values.insert(
+                            "strategy".into(),
+                            Value::from_json(&serde_json::json!({"job-index":index,"job-total":total,"fail-fast":job.fail_fast,"max-parallel":job.max_parallel.map_or(total as f64, f64::from)})),
+                        );
+                    contexts.values.insert("matrix".into(), job.matrix.clone());
+                    let env = env.clone();
+                    let job_masker = masker.fork();
+                    let name = format!("{name_prefix}{}", job.name);
+                    let log = Log {
+                        prefix: format!("{workflow_name}/{name}"),
+                        masker: job_masker.clone(),
+                        progress: tokens.progress(&id, index),
+                        output: tokens.output.clone(),
+                    };
+                    let cancel = matrix_cancel.clone();
+                    let mut execution = self.clone();
+                    execution.masker = job_masker;
+                    execution.cancel = cancel.clone();
+                    let mut nested_options = (*options).clone();
+                    nested_options.job_state_file = None;
+                    execution.options = Arc::new(nested_options);
+                    let mut nested_tokens = (**tokens).clone();
+                    nested_tokens.nested = true;
+                    execution.tokens = Arc::new(nested_tokens);
+                    let called_prefix = format!("{token_id}/");
+                    tasks.spawn(async move {
+                        let Some(cancel) = admit(&job, index, &options, &log, cancel).await else {
+                            log.emit(Update::Started);
+                            log.line("Job cancelled: a newer job took its concurrency group");
+                            log.emit(Update::Finished {
+                                conclusion: Conclusion::Cancelled,
+                                duration_ms: 0,
+                            });
+                            let result = JobResult {
+                                result: "cancelled".into(),
+                                outputs: BTreeMap::new(),
+                            };
+                            return (index, result);
+                        };
+                        execution.cancel = cancel.clone();
+                        let result = if let Some(call) = &job.call {
+                            log.emit(Update::Started);
+                            let started = Instant::now();
+                            let result = async {
+                                let reference = call
+                                    .get("uses")
+                                    .and_then(serde_yaml::Value::as_str)
+                                    .context("Missing called workflow")?;
+                                let raw = execution
+                                    .files
+                                    .get(reference)
+                                    .context("Called workflow was not resolved")?
+                                    .clone();
+                                let contexts =
+                                    reusable::contexts(call, &raw, &contexts, &execution.masker)?;
+                                execution
+                                    .execute(
+                                        raw,
+                                        contexts,
+                                        env,
+                                        format!("{name} / "),
+                                        called_prefix,
+                                    )
+                                    .await
+                            }
+                            .await;
+                            let result = match result {
+                                Ok(result) => result,
+                                Err(error) => {
+                                    log.line(&format!("Error: {error:#}"));
+                                    JobResult {
+                                        result: "failure".into(),
+                                        outputs: BTreeMap::new(),
+                                    }
+                                }
+                            };
+                            log.emit(Update::Finished {
+                                conclusion: Conclusion::from_result(&result.result)
+                                    .expect("known workflow result"),
+                                duration_ms: started
+                                    .elapsed()
+                                    .as_millis()
+                                    .try_into()
+                                    .unwrap_or(u64::MAX),
+                            });
+                            result
+                        } else {
+                            execution
+                                .run_leaf(job, index, options, contexts, env, log, cancel)
+                                .await
+                        };
+                        (index, result)
+                    });
                 }
-                self.record_state(&saved, |saved| { saved.jobs.insert(id, aggregate.clone()); })?;
-                tokens.completed(&token_id);
-                Ok(aggregate)
+                let Some(result) = tasks.join_next().await else {
+                    break;
+                };
+                let (index, result) = match result {
+                    Ok(result) => result,
+                    Err(error) => {
+                        options
+                            .containment_lost
+                            .store(true, std::sync::atomic::Ordering::Release);
+                        let _ = matrix_tx.send(true);
+                        tasks.shutdown().await;
+                        relay.abort();
+                        return Err(anyhow::anyhow!("Job task failed: {error}"));
+                    }
+                };
+                if let Err(error) = self.record_state(&saved, |saved| {
+                    saved
+                        .variants
+                        .entry(id.clone())
+                        .or_default()
+                        .insert(index.try_into().expect("matrix is bounded"), result.clone());
+                    saved
+                        .variant_order
+                        .entry(id.clone())
+                        .or_default()
+                        .push(index.try_into().expect("matrix is bounded"));
+                }) {
+                    let _ = matrix_tx.send(true);
+                    tasks.shutdown().await;
+                    relay.abort();
+                    return Err(error);
+                }
+                if result.result == "failure" {
+                    aggregate.result = "failure".into();
+                    if fail_fast {
+                        let _ = matrix_tx.send(true);
+                    }
+                } else if result.result == "cancelled" && aggregate.result == "success" {
+                    aggregate.result = "cancelled".into();
+                }
+                if !called {
+                    aggregate.outputs.extend(result.outputs);
+                } else if result.result == "success" {
+                    merge_outputs(&mut aggregate.outputs, result.outputs);
+                }
+            }
+            relay.abort();
+            for (index, _) in plans {
+                if let Some(progress) = tokens.progress(&id, index) {
+                    progress.emit(Update::Finished {
+                        conclusion: Conclusion::Cancelled,
+                        duration_ms: 0,
+                    });
+                }
+                let index = index.try_into().expect("matrix is bounded");
+                self.record_state(&saved, |saved| {
+                    saved.variants.entry(id.clone()).or_default().insert(
+                        index,
+                        JobResult {
+                            result: "cancelled".into(),
+                            outputs: BTreeMap::new(),
+                        },
+                    );
+                    saved
+                        .variant_order
+                        .entry(id.clone())
+                        .or_default()
+                        .push(index);
+                })?;
+                if aggregate.result == "success" {
+                    aggregate.result = "cancelled".into();
+                }
+            }
+            self.record_state(&saved, |saved| {
+                saved.jobs.insert(id, aggregate.clone());
+            })?;
+            tokens.completed(&token_id);
+            Ok(aggregate)
         })
     }
 }
 
 struct BackgroundTask(tokio::task::AbortHandle);
 impl Drop for BackgroundTask {
-    fn drop(&mut self) { self.0.abort(); }
+    fn drop(&mut self) {
+        self.0.abort();
+    }
 }
 
 /// Resolves once the signal is raised. A signal whose sender is gone can never be raised.
@@ -1223,7 +1384,10 @@ async fn admit(
         group,
         cancel_in_progress: concurrency.cancel_in_progress,
     });
-    log.line(&format!("Waiting for concurrency group '{}'", log.masker.mask(&concurrency.group)));
+    log.line(&format!(
+        "Waiting for concurrency group '{}'",
+        log.masker.mask(&concurrency.group)
+    ));
     let path = directory.join(format!("{}.{index}", job.job_id));
     loop {
         match admission(&path) {
@@ -1275,18 +1439,35 @@ fn save_job_state(options: &Options, state: &mut JobState, masker: &Masker) -> R
         path.parent()
             .context("job state needs a parent directory")?,
     )?;
-    struct Bounded<'a> { file: &'a mut std::fs::File, remaining: usize }
+    struct Bounded<'a> {
+        file: &'a mut std::fs::File,
+        remaining: usize,
+    }
     impl std::io::Write for Bounded<'_> {
         fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
-            if bytes.len() > self.remaining { return Err(std::io::ErrorKind::FileTooLarge.into()); }
+            if bytes.len() > self.remaining {
+                return Err(std::io::ErrorKind::FileTooLarge.into());
+            }
             let written = std::io::Write::write(self.file, bytes)?;
             self.remaining -= written;
             Ok(written)
         }
-        fn flush(&mut self) -> std::io::Result<()> { std::io::Write::flush(self.file) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            std::io::Write::flush(self.file)
+        }
     }
-    let written = serde_json::to_writer(Bounded { file: file.as_file_mut(), remaining: crate::progress::MAX_STATE_BYTES }, state);
-    if written.as_ref().err().is_some_and(|error| error.io_error_kind() == Some(std::io::ErrorKind::FileTooLarge)) {
+    let written = serde_json::to_writer(
+        Bounded {
+            file: file.as_file_mut(),
+            remaining: crate::progress::MAX_STATE_BYTES,
+        },
+        state,
+    );
+    if written
+        .as_ref()
+        .err()
+        .is_some_and(|error| error.io_error_kind() == Some(std::io::ErrorKind::FileTooLarge))
+    {
         match std::fs::remove_file(path) {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
@@ -1550,7 +1731,10 @@ async fn run_job(
             .try_into()
             .unwrap_or(u64::MAX),
     });
-    if continued && result.result == "failure" && !containment.load(std::sync::atomic::Ordering::Acquire) {
+    if continued
+        && result.result == "failure"
+        && !containment.load(std::sync::atomic::Ordering::Acquire)
+    {
         log.line("Job failure ignored (continue-on-error)");
         result.result = "success".into();
     }
@@ -1572,20 +1756,28 @@ struct JobScope {
 impl Job {
     fn checkpoint_scope(&mut self) {
         self.scope = Some(JobScope {
-            contexts: self.contexts.clone(), env: self.env.clone(),
-            shell: self.default_shell.clone(), directory: self.default_working_directory.clone(),
-            planned_shell: self.plan.default_shell.clone(), planned_directory: self.plan.default_working_directory.clone(),
-            deadline: self.deadline, status: self.status,
+            contexts: self.contexts.clone(),
+            env: self.env.clone(),
+            shell: self.default_shell.clone(),
+            directory: self.default_working_directory.clone(),
+            planned_shell: self.plan.default_shell.clone(),
+            planned_directory: self.plan.default_working_directory.clone(),
+            deadline: self.deadline,
+            status: self.status,
         });
     }
 
     fn restore_scope(&mut self) {
         if let Some(scope) = self.scope.take() {
-            self.contexts = scope.contexts; self.env = scope.env;
+            self.contexts = scope.contexts;
+            self.env = scope.env;
             self.saved_env = self.job_exports.clone();
-            self.default_shell = scope.shell; self.default_working_directory = scope.directory;
-            self.plan.default_shell = scope.planned_shell; self.plan.default_working_directory = scope.planned_directory;
-            self.deadline = scope.deadline; self.status = scope.status;
+            self.default_shell = scope.shell;
+            self.default_working_directory = scope.directory;
+            self.plan.default_shell = scope.planned_shell;
+            self.plan.default_working_directory = scope.planned_directory;
+            self.deadline = scope.deadline;
+            self.status = scope.status;
         }
     }
 
@@ -1597,20 +1789,33 @@ impl Job {
     }
 
     async fn evaluate<T: Send + 'static>(
-        &self, deadline: Instant, evaluate: impl FnOnce(&Contexts, Status) -> Result<T> + Send + 'static,
+        &self,
+        deadline: Instant,
+        evaluate: impl FnOnce(&Contexts, Status) -> Result<T> + Send + 'static,
     ) -> Result<T> {
-        anyhow::ensure!(Instant::now() < deadline && !*self.cancel.borrow(), "Expression evaluation interrupted");
+        anyhow::ensure!(
+            Instant::now() < deadline && !*self.cancel.borrow(),
+            "Expression evaluation interrupted"
+        );
         let contexts = self.contexts.clone();
         let status = self.visible_status();
         let cancel = self.cancel.clone();
-        tokio::time::timeout_at(deadline.into(), tokio::task::spawn_blocking(move ||
-            expressions::with_execution_limits(deadline, cancel, || evaluate(&contexts, status))
-        )).await.context("Expression evaluation timed out")??
+        tokio::time::timeout_at(
+            deadline.into(),
+            tokio::task::spawn_blocking(move || {
+                expressions::with_execution_limits(deadline, cancel, || evaluate(&contexts, status))
+            }),
+        )
+        .await
+        .context("Expression evaluation timed out")??
     }
 
     async fn text(&self, template: &str, deadline: Instant) -> Result<String> {
         let template = template.to_owned();
-        self.evaluate(deadline, move |contexts, status| text(&template, contexts, status)).await
+        self.evaluate(deadline, move |contexts, status| {
+            text(&template, contexts, status)
+        })
+        .await
     }
 
     /// Whether a step's condition still holds once the job is cancelled or times out, as GitHub
@@ -1619,7 +1824,14 @@ impl Job {
         let previous = self.status;
         self.status.cancelled = true;
         self.sync_status();
-        let holds = self.evaluate(self.deadline, move |contexts, status| Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await.unwrap_or(false);
+        let holds = self
+            .evaluate(self.deadline, move |contexts, status| {
+                Ok(expressions::evaluate_condition(
+                    &condition, contexts, status,
+                )?)
+            })
+            .await
+            .unwrap_or(false);
         self.status = previous;
         self.sync_status();
         holds
@@ -1627,7 +1839,14 @@ impl Job {
 
     /// The step that was running when the job was cancelled or timed out ends cancelled.
     fn record_interrupted_step(&mut self) {
-        let Some(id) = self.next_step.checked_sub(1).and_then(|index| self.plan.steps.get(index)).and_then(|step| step.id.clone()) else { return };
+        let Some(id) = self
+            .next_step
+            .checked_sub(1)
+            .and_then(|index| self.plan.steps.get(index))
+            .and_then(|step| step.id.clone())
+        else {
+            return;
+        };
         if let Some(Value::Object(steps)) = self.contexts.values.get_mut("steps") {
             steps.entry(id).or_insert_with(|| Value::from_json(&serde_json::json!({"outputs":{},"outcome":"cancelled","conclusion":"cancelled"})));
         }
@@ -1651,21 +1870,42 @@ impl Job {
     /// The status expressions see. GitHub reports a cancelled or timed-out job as cancelled, so
     /// `success()` and `failure()` are false then and only `always()` and `cancelled()` hold.
     fn visible_status(&self) -> Status {
-        Status { failed: self.status.failed && !self.status.cancelled, cancelled: self.status.cancelled }
+        Status {
+            failed: self.status.failed && !self.status.cancelled,
+            cancelled: self.status.cancelled,
+        }
     }
 
     fn sync_status(&mut self) {
         if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
-            job.insert("status".into(), Value::String(if self.status.cancelled { "cancelled" } else if self.status.failed { "failure" } else { "success" }.into()));
+            job.insert(
+                "status".into(),
+                Value::String(
+                    if self.status.cancelled {
+                        "cancelled"
+                    } else if self.status.failed {
+                        "failure"
+                    } else {
+                        "success"
+                    }
+                    .into(),
+                ),
+            );
         }
     }
 
     fn restore_event(&self) -> Result<PathBuf> {
         let path = self.temp.path().join("event.json");
-        let payload = self.contexts.values.get("github").and_then(|github| match github {
-            Value::Object(values) => values.get("event"),
-            _ => None,
-        }).map(Value::to_json).unwrap_or_else(|| serde_json::json!({}));
+        let payload = self
+            .contexts
+            .values
+            .get("github")
+            .and_then(|github| match github {
+                Value::Object(values) => values.get("event"),
+                _ => None,
+            })
+            .map(Value::to_json)
+            .unwrap_or_else(|| serde_json::json!({}));
         crate::fs::replace_file(&path, &serde_json::to_vec(&payload)?)?;
         Ok(path)
     }
@@ -1691,7 +1931,13 @@ impl Job {
             .insert("matrix".into(), self.plan.matrix.clone());
         if let Some(Value::Object(strategy)) = self.contexts.values.get_mut("strategy") {
             strategy.insert("fail-fast".into(), Value::Bool(self.plan.fail_fast));
-            strategy.entry("max-parallel".into()).or_insert_with(|| Value::Number(self.plan.max_parallel.unwrap_or(self.options.concurrent_jobs) as f64));
+            strategy.entry("max-parallel".into()).or_insert_with(|| {
+                Value::Number(
+                    self.plan
+                        .max_parallel
+                        .unwrap_or(self.options.concurrent_jobs) as f64,
+                )
+            });
         }
         self.contexts.values.insert("runner".into(), Value::from_json(&serde_json::json!({"os":runner_os(),"arch":runner_arch(),"name":RUNNER_NAME,"temp":self.temp.path(),"tool_cache":self.cache.join("tool_cache"),"environment":"self-hosted","debug":self.env.get("RUNNER_DEBUG").cloned().unwrap_or_default()})));
         std::fs::create_dir_all(self.cache.join("tool_cache"))?;
@@ -1757,27 +2003,49 @@ impl Job {
             )
             .await?;
         if self.podman.job.is_some() {
-            self.runtime_path = self.podman.path.clone().unwrap_or_else(|| "/usr/bin:/bin".into());
+            self.runtime_path = self
+                .podman
+                .path
+                .clone()
+                .unwrap_or_else(|| "/usr/bin:/bin".into());
         }
         self.contexts.values.insert("job".into(), Value::from_json(&serde_json::json!({"status":"success","services":services,"container":{"id":self.podman.job,"network":self.podman.network}})));
-        self.default_shell = self.plan.default_shell.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
-        self.default_working_directory = self.plan.default_working_directory.as_ref().map(|value| text(value, &self.contexts, self.status)).transpose()?;
+        self.default_shell = self
+            .plan
+            .default_shell
+            .as_ref()
+            .map(|value| text(value, &self.contexts, self.status))
+            .transpose()?;
+        self.default_working_directory = self
+            .plan
+            .default_working_directory
+            .as_ref()
+            .map(|value| text(value, &self.contexts, self.status))
+            .transpose()?;
         let steps = self.plan.steps.clone();
-        for (index, step) in steps.iter().enumerate() { self.prepare_step(step, index, 0).await?; }
+        for (index, step) in steps.iter().enumerate() {
+            self.prepare_step(step, index, 0).await?;
+        }
         self.log.finish_step(1, Conclusion::Success, setup);
         let mut outputs = BTreeMap::new();
         for (index, step) in steps.iter().enumerate() {
             anyhow::ensure!(!*self.cancel.borrow(), "The job was cancelled.");
             anyhow::ensure!(Instant::now() < self.deadline, "The job has timed out.");
             self.next_step = index + 1;
-            anyhow::ensure!(!self.options.containment_lost.load(std::sync::atomic::Ordering::Acquire),
-                "Container cleanup failed; refusing further execution");
+            anyhow::ensure!(
+                !self
+                    .options
+                    .containment_lost
+                    .load(std::sync::atomic::Ordering::Acquire),
+                "Container cleanup failed; refusing further execution"
+            );
             self.public_step += 1;
             let started = Instant::now();
             if let Err(error) = self.step(step, index, 0, &mut outputs).await {
                 self.status.failed = true;
                 self.log.line(&format!("Error evaluating step: {error:#}"));
-                self.log.finish_step(self.public_step, Conclusion::Failure, started);
+                self.log
+                    .finish_step(self.public_step, Conclusion::Failure, started);
                 if let Some(Value::Object(job)) = self.contexts.values.get_mut("job") {
                     job.insert("status".into(), Value::String("failure".into()));
                 }
@@ -1905,7 +2173,9 @@ impl Job {
         parent_outputs: &'a mut BTreeMap<String, String>,
     ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<()>> + Send + 'a>> {
         Box::pin(async move {
-            if depth == 0 { self.checkpoint_scope(); }
+            if depth == 0 {
+                self.checkpoint_scope();
+            }
             let result = async {
             if depth > 20 {
                 bail!("Composite actions nested more than 20 levels");
@@ -1976,7 +2246,9 @@ impl Job {
             self.sync_status();
             Ok(())
             }.await;
-            if depth == 0 { self.scope = None; }
+            if depth == 0 {
+                self.scope = None;
+            }
             result
         })
     }
@@ -1994,8 +2266,13 @@ impl Job {
     ) -> Result<(&'static str, &'static str)> {
         let condition = step.condition.clone().unwrap_or_else(|| "success()".into());
         let template = condition.clone();
-        let condition = self.evaluate(self.deadline, move |contexts, status|
-            Ok(expressions::evaluate_condition(&condition, contexts, status)?)).await?;
+        let condition = self
+            .evaluate(self.deadline, move |contexts, status| {
+                Ok(expressions::evaluate_condition(
+                    &condition, contexts, status,
+                )?)
+            })
+            .await?;
         if !condition {
             self.log.line(&format!("Step skipped: {name}"));
             return Ok(("skipped", "skipped"));
@@ -2004,11 +2281,19 @@ impl Job {
         // GitHub tests a running top-level step's condition again when the job is cancelled or
         // times out. One that still holds, such as `if: always()`, ignores the stop and may run
         // past the job's deadline within the cancel timeout.
-        let survives = depth == 0 && step.condition.is_some() && !self.status.cancelled
+        let survives = depth == 0
+            && step.condition.is_some()
+            && !self.status.cancelled
             && self.holds_when_stopped(template).await;
-        let limit = if survives { self.deadline + self.cancel_grace } else { self.deadline };
+        let limit = if survives {
+            self.deadline + self.cancel_grace
+        } else {
+            self.deadline
+        };
         let deadline = if let Some(template) = &step.timeout_minutes {
-            let value = self.text(template, self.deadline).await?
+            let value = self
+                .text(template, self.deadline)
+                .await?
                 .parse::<f64>()
                 .context("timeout-minutes must be a number")?;
             limit.min(Instant::now() + minutes(value)?)
@@ -2017,19 +2302,32 @@ impl Job {
         };
         let continued = if let Some(template) = &step.continue_on_error {
             let template = template.clone();
-            self.evaluate(deadline, move |contexts, status| boolean(&template, contexts, status)).await?
-        } else { false };
+            self.evaluate(deadline, move |contexts, status| {
+                boolean(&template, contexts, status)
+            })
+            .await?
+        } else {
+            false
+        };
         self.action_path.push(index);
         let stop = if survives {
-            self.surviving.store(true, std::sync::atomic::Ordering::Release);
+            self.surviving
+                .store(true, std::sync::atomic::Ordering::Release);
             let (quiet_sender, quiet) = watch::channel(false);
-            Some((quiet_sender, std::mem::replace(&mut self.cancel, quiet), std::mem::replace(&mut self.deadline, limit)))
+            Some((
+                quiet_sender,
+                std::mem::replace(&mut self.cancel, quiet),
+                std::mem::replace(&mut self.deadline, limit),
+            ))
         } else {
             None
         };
-        let result = self.action(&step.action, env, deadline, depth, outputs).await;
+        let result = self
+            .action(&step.action, env, deadline, depth, outputs)
+            .await;
         if let Some((_quiet_sender, cancel, deadline)) = stop {
-            self.surviving.store(false, std::sync::atomic::Ordering::Release);
+            self.surviving
+                .store(false, std::sync::atomic::Ordering::Release);
             self.cancel = cancel;
             self.deadline = deadline;
         }
@@ -2048,8 +2346,14 @@ impl Job {
         } else {
             "failure"
         };
-        let conclusion = if outcome == "failure" && continued { "success" } else { outcome };
-        self.log.line(&format!("Step completed: {name} ({conclusion}; outcome: {outcome})"));
+        let conclusion = if outcome == "failure" && continued {
+            "success"
+        } else {
+            outcome
+        };
+        self.log.line(&format!(
+            "Step completed: {name} ({conclusion}; outcome: {outcome})"
+        ));
         Ok((outcome, conclusion))
     }
 
@@ -2089,8 +2393,16 @@ impl Job {
                     .await
                 }
                 StepAction::Uses { reference, with } => {
-                    self.uses(reference, with, env, deadline, depth, outputs, actions::ActionStage::Main)
-                        .await
+                    self.uses(
+                        reference,
+                        with,
+                        env,
+                        deadline,
+                        depth,
+                        outputs,
+                        actions::ActionStage::Main,
+                    )
+                    .await
                 }
             }
         })
@@ -2200,11 +2512,18 @@ impl Job {
         );
         let mut paths = self.paths.iter().rev().cloned().collect::<Vec<_>>();
         let base = env.get("PATH").cloned().or_else(|| {
-            if self.podman.job.is_some() { self.podman.path.clone() }
-            else { Some(self.runtime_path.clone()) }
+            if self.podman.job.is_some() {
+                self.podman.path.clone()
+            } else {
+                Some(self.runtime_path.clone())
+            }
         });
-        if let Some(base) = base { paths.push(base); }
-        if !paths.is_empty() { env.insert("PATH".into(), paths.join(":")); }
+        if let Some(base) = base {
+            paths.push(base);
+        }
+        if !paths.is_empty() {
+            env.insert("PATH".into(), paths.join(":"));
+        }
         env
     }
 
@@ -2225,7 +2544,10 @@ impl Job {
         Ok(())
     }
 
-    #[expect(clippy::too_many_arguments, reason = "A step's process takes its command, directory, environment, deadline and output maps one by one.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A step's process takes its command, directory, environment, deadline and output maps one by one."
+    )]
     async fn invoke(
         &mut self,
         program: &str,
@@ -2296,32 +2618,58 @@ impl Job {
                 self.export_env([(key, value)]);
             }
         }
-        commands::update_outputs(outputs, commands::entries(&read_command_file(&files.join("OUTPUT"))?)?);
+        commands::update_outputs(
+            outputs,
+            commands::entries(&read_command_file(&files.join("OUTPUT"))?)?,
+        );
         if let Some(state) = state {
             state.extend(commands::pairs(&read_command_file(&files.join("STATE"))?)?);
         }
         let summary = files.join("STEP_SUMMARY");
         let summary_file = match open_command_file(&summary, false) {
             Ok(file) => Some(file),
-            Err(error) if error.downcast_ref::<std::io::Error>().is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => None,
+            Err(error)
+                if error
+                    .downcast_ref::<std::io::Error>()
+                    .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+            {
+                None
+            }
             Err(error) => return Err(error),
         };
         if let Some(file) = summary_file {
             if file.metadata()?.len() > COMMAND_FILE_LIMIT {
-                self.log.line("Error: Step summary exceeds the maximum allowed size of 1024k.");
+                self.log
+                    .line("Error: Step summary exceeds the maximum allowed size of 1024k.");
                 write_command_file(&summary, "")?;
             } else {
-                let contents = self.log.masker.mask(&read_command_file(&summary)?).replace('\0', "");
+                let contents = self
+                    .log
+                    .masker
+                    .mask(&read_command_file(&summary)?)
+                    .replace('\0', "");
                 write_command_file(&summary, &contents)?;
                 if !contents.is_empty() {
                     let stored = self.summaries.entry(self.public_step).or_default();
-                    let remaining = crate::progress::MAX_STEP_SUMMARY_BYTES.saturating_sub(stored.len())
-                        .min(crate::progress::MAX_RUN_SUMMARY_BYTES.saturating_sub(self.summary_bytes));
-                    if contents.len() > remaining { self.log.line("Warning: Persisted summaries reached their delivery budget."); }
+                    let remaining = crate::progress::MAX_STEP_SUMMARY_BYTES
+                        .saturating_sub(stored.len())
+                        .min(
+                            crate::progress::MAX_RUN_SUMMARY_BYTES
+                                .saturating_sub(self.summary_bytes),
+                        );
+                    if contents.len() > remaining {
+                        self.log
+                            .line("Warning: Persisted summaries reached their delivery budget.");
+                    }
                     let piece = commands::bounded(&contents, remaining);
                     self.summary_bytes += piece.len();
                     stored.push_str(&piece);
-                    if !stored.is_empty() { self.log.emit(Update::Summary { number: self.public_step, markdown: stored.clone() }); }
+                    if !stored.is_empty() {
+                        self.log.emit(Update::Summary {
+                            number: self.public_step,
+                            markdown: stored.clone(),
+                        });
+                    }
                 }
             }
         }
@@ -2367,7 +2715,9 @@ fn read_command_file(path: &Path) -> Result<String> {
         contents.len() as u64 <= COMMAND_FILE_LIMIT,
         "A command file exceeds the maximum allowed size"
     );
-    if contents.starts_with('\u{feff}') { contents.drain(..3); }
+    if contents.starts_with('\u{feff}') {
+        contents.drain(..3);
+    }
     Ok(contents)
 }
 
@@ -2497,7 +2847,11 @@ mod tests {
         planned_job(steps, 1.0, cancel).await
     }
 
-    async fn planned_job(steps: Vec<Step>, timeout_minutes: f64, cancel: watch::Receiver<bool>) -> JobResult {
+    async fn planned_job(
+        steps: Vec<Step>,
+        timeout_minutes: f64,
+        cancel: watch::Receiver<bool>,
+    ) -> JobResult {
         let workspace = tempfile::tempdir().unwrap();
         let mut options =
             Options::try_parse_from(["codeyard-actions", "push", "-W", "unused"]).unwrap();
@@ -2647,7 +3001,9 @@ mod tests {
             typed_dispatch_inputs(
                 &raw,
                 serde_json::json!({"publish": "false", "count": "2.5"})
-            ).unwrap().typed,
+            )
+            .unwrap()
+            .typed,
             serde_json::json!({"publish": false, "count": 2.5, "name": "true"})
         );
     }

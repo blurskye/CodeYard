@@ -124,8 +124,7 @@ async fn remove_label(
             db::labels::remove_issue_label(pool, actor, repo_id, item_id, label_id).await?
         }
         AssignedItem::PullRequest(item_id) => {
-            db::labels::remove_pull_request_label(pool, actor, repo_id, item_id, label_id)
-                .await?
+            db::labels::remove_pull_request_label(pool, actor, repo_id, item_id, label_id).await?
         }
     };
     Ok(removed)
@@ -143,7 +142,12 @@ pub(crate) async fn native_add_label(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
-    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
+    crate::backend::api::repos::discussion::require_item_binding(
+        &ctx,
+        &form,
+        repo.record.id,
+        value.id,
+    )?;
     let draft = submitted_detail(&form, "label");
     let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
         .await
@@ -205,7 +209,12 @@ pub(crate) async fn native_remove_label(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
-    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
+    crate::backend::api::repos::discussion::require_item_binding(
+        &ctx,
+        &form,
+        repo.record.id,
+        value.id,
+    )?;
     if !value.labels.iter().any(|l| l.id == label_id) {
         return Err(ctx.error(
             StatusCode::CONFLICT,

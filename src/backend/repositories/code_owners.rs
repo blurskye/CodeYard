@@ -333,7 +333,9 @@ pub async fn resolve_owners<'a>(
     }
     for emails in emails.chunks(500) {
         // The same verified-address attribution as commits; banned accounts own nothing.
-        for (email, user) in crate::backend::repositories::reads::commit_authors(pool, emails).await? {
+        for (email, user) in
+            crate::backend::repositories::reads::commit_authors(pool, emails).await?
+        {
             if let Some(ids) = resolved.get_mut(&email) {
                 ids.push(user.id);
             }
@@ -348,7 +350,10 @@ pub async fn resolve_owners<'a>(
             .map(|team| team.team.slug)
             .collect()
     };
-    teams.retain(|team| team.split_once('/').is_some_and(|(_, slug)| review_teams.contains(slug)));
+    teams.retain(|team| {
+        team.split_once('/')
+            .is_some_and(|(_, slug)| review_teams.contains(slug))
+    });
     let mut members = 0;
     for teams in teams.chunks(500) {
         let Some(org_id) = repository.owner_org_id else {

@@ -15,10 +15,7 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-use std::{
-    collections::HashMap,
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 pub(in crate::backend::api) static SEARCHES: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(4);
@@ -32,7 +29,8 @@ async fn search_issues(
 ) -> Result<Response> {
     let auth = auth::authenticate(&state, &headers, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
-    let query = Search::parse(q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?
+    let query = Search::parse(q.get("q").map_or("", String::as_str))
+        .map_err(Error::invalid)?
         .with_classic_policy(auth.as_ref().map(|auth| auth.token.id));
     if query.needs_viewer() && viewer.is_none() {
         return Err(auth::required());
@@ -115,8 +113,19 @@ async fn search_issues(
         scores.push(score);
     }
     let mut items = Vec::<Value>::new();
-    for (mut value, score) in issues::documents_across(&state.pool, issues::Reader::Request(&state, auth.as_ref()), &selected).await?.into_iter().zip(scores) {
-        if value.is_null() { incomplete = true; continue; }
+    for (mut value, score) in issues::documents_across(
+        &state.pool,
+        issues::Reader::Request(&state, auth.as_ref()),
+        &selected,
+    )
+    .await?
+    .into_iter()
+    .zip(scores)
+    {
+        if value.is_null() {
+            incomplete = true;
+            continue;
+        }
         value["score"] = json!(score);
         items.push(value);
     }

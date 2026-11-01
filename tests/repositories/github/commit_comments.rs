@@ -42,7 +42,9 @@ pub(super) async fn run(
         pool,
         hook_owner,
         alice,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, alice).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, alice).await,
+        ),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,
@@ -648,10 +650,18 @@ pub(super) async fn run(
     assert!(!notices
         .iter()
         .any(|notice| notice.metadata["commit_comment_id"] == second["id"]));
-    assert!(db::webhooks::delete_webhook(pool, hook_owner, alice, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, alice).await), hook)
-        .await
-        .unwrap()
-        .unwrap());
+    assert!(db::webhooks::delete_webhook(
+        pool,
+        hook_owner,
+        alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, alice).await
+        ),
+        hook
+    )
+    .await
+    .unwrap()
+    .unwrap());
     change_collaborator(pool, alice, repo, "bob", None)
         .await
         .unwrap();
@@ -675,7 +685,9 @@ pub(super) async fn run(
     ));
     // The owner still has access, but the session that sent the comment has ended.
     let ended = crate::support::live_session(pool, alice).await;
-    db::users::sessions::delete_session(pool, &ended).await.unwrap();
+    db::users::sessions::delete_session(pool, &ended)
+        .await
+        .unwrap();
     let refused = records::create_comment(
         pool,
         records::CommentCreate {

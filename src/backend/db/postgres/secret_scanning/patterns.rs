@@ -85,17 +85,33 @@ pub async fn create(
     ensure!(!input.is_empty() && input.len() <= 100, Refusal::Invalid);
     let mut admission = pool.begin().await?;
     authority(&mut admission, actor, owner, true).await?;
-    ensure!(super::super::users::transitions::credential_live(&mut admission, actor, credential, true).await?, Refusal::Denied);
+    ensure!(
+        super::super::users::transitions::credential_live(&mut admission, actor, credential, true)
+            .await?,
+        Refusal::Denied
+    );
     admission.commit().await?;
-    crate::backend::repositories::secret_scanning::patterns::validate_batch(input).await.map_err(|_| Refusal::Invalid)?;
+    crate::backend::repositories::secret_scanning::patterns::validate_batch(input)
+        .await
+        .map_err(|_| Refusal::Invalid)?;
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, owner, true).await?;
-    ensure!(super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    ensure!(
+        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let (repo, org) = owner.ids();
-    let previous: Vec<String> = sqlx::query_scalar("SELECT name FROM secret_scanning_patterns WHERE repo_id=$1 OR org_id=$2")
-        .bind(repo).bind(org).fetch_all(&mut *tx).await?;
+    let previous: Vec<String> = sqlx::query_scalar(
+        "SELECT name FROM secret_scanning_patterns WHERE repo_id=$1 OR org_id=$2",
+    )
+    .bind(repo)
+    .bind(org)
+    .fetch_all(&mut *tx)
+    .await?;
     ensure!(previous.len() + input.len() <= 500, Refusal::Invalid);
-    let mut names = previous.into_iter().collect::<std::collections::HashSet<_>>();
+    let mut names = previous
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
     let mut patterns = Vec::new();
     for item in input {
         ensure!(names.insert(item.name.clone()), Refusal::Invalid);
@@ -117,7 +133,10 @@ pub async fn update(
 ) -> Result<Pattern> {
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, owner, true).await?;
-    ensure!(super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    ensure!(
+        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let mut pattern = read_one(&mut tx, owner, id).await?;
     ensure!(
         input.custom_pattern_version.is_null() || input.custom_pattern_version.is_string(),
@@ -135,10 +154,19 @@ pub async fn update(
     tx.commit().await?;
     Ok(pattern)
 }
-pub async fn publish(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, owner: Owner, id: i64) -> Result<()> {
+pub async fn publish(
+    pool: &PgPool,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    owner: Owner,
+    id: i64,
+) -> Result<()> {
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, owner, true).await?;
-    ensure!(super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    ensure!(
+        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let mut pattern = read_one(&mut tx, owner, id).await?;
     if pattern.state == "published" {
         tx.commit().await?;
@@ -172,7 +200,10 @@ pub async fn delete(
     ensure!(!input.is_empty() && input.len() <= 500, Refusal::Invalid);
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, owner, true).await?;
-    ensure!(super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    ensure!(
+        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let patterns = read(&mut tx, owner).await?;
     let (repo, org) = owner.ids();
     for item in input {
@@ -275,7 +306,10 @@ pub async fn configure(
     );
     let mut tx = pool.begin().await?;
     authority(&mut tx, actor, Owner::Organization(org), true).await?;
-    ensure!(super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    ensure!(
+        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let mut config = config(&mut tx, org).await?;
     ensure!(
         config.version == input.pattern_config_version,

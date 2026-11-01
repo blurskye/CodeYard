@@ -36,7 +36,11 @@ pub(crate) async fn release_history(
         let output = std::str::from_utf8(&output)?;
         let described = output.strip_suffix('\n').unwrap_or(output);
         // --long tags end in -<distance>-g<hash>; --always's hash-only fallback does not.
-        described.rsplit_once("-g").and_then(|(tag, _)| tag.rsplit_once('-')).filter(|(_, distance)| distance.parse::<u64>().is_ok()).map(|(tag, _)| tag.to_owned())
+        described
+            .rsplit_once("-g")
+            .and_then(|(tag, _)| tag.rsplit_once('-'))
+            .filter(|(_, distance)| distance.parse::<u64>().is_ok())
+            .map(|(tag, _)| tag.to_owned())
     };
     let range = {
         let repo = Repository::open_bare(path)?;
@@ -71,9 +75,7 @@ pub(crate) async fn release_history(
         "Release notes span too many commits; choose a closer previous tag"
     );
     ensure!(
-        commits
-            .iter()
-            .all(crate::git_ids::is_full_commit_id),
+        commits.iter().all(crate::git_ids::is_full_commit_id),
         "Git returned invalid commit IDs"
     );
     Ok(ReleaseHistory {

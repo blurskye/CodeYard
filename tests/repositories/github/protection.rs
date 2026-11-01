@@ -104,10 +104,18 @@ async fn branch_operations_contract(pg: bool) {
     // A required check named without an app_id pins the App that reported it last, also from
     // the deprecated contexts list; -1 keeps any producer.
     let app = f
-        .scalar("SELECT id FROM github_apps WHERE slug='protection-app'", &[])
+        .scalar(
+            "SELECT id FROM github_apps WHERE slug='protection-app'",
+            &[],
+        )
         .await;
     f.execute("INSERT INTO check_suites(repo_id,publisher,app_id,head_sha,created_at,updated_at) SELECT $1,'app:protection',o.id,'0000000000000000000000000000000000000000',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM oauth_applications o WHERE o.client_id='protection-app-client'", &[repo.id]).await;
-    let check = f.scalar("INSERT INTO check_run_identities DEFAULT VALUES RETURNING id", &[]).await;
+    let check = f
+        .scalar(
+            "INSERT INTO check_run_identities DEFAULT VALUES RETURNING id",
+            &[],
+        )
+        .await;
     f.execute("INSERT INTO check_runs(id,repo_id,suite_id,name,data,created_at,updated_at) SELECT $2,repo_id,id,'security-scan','{}',CURRENT_TIMESTAMP,CURRENT_TIMESTAMP FROM check_suites WHERE repo_id=$1 AND publisher='app:protection'", &[repo.id,check]).await;
     // branch_admission renamed main to trunk.
     let saved = call(
@@ -123,7 +131,9 @@ async fn branch_operations_contract(pg: bool) {
         ("repos/update-branch-protection", 200),
     )
     .await;
-    let checks = saved["required_status_checks"]["checks"].as_array().unwrap();
+    let checks = saved["required_status_checks"]["checks"]
+        .as_array()
+        .unwrap();
     assert!(
         checks.contains(&json!({"context":"security-scan","app_id":app})),
         "{checks:?}"

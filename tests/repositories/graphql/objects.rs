@@ -52,7 +52,9 @@ pub(super) async fn exercise(
     let asset = db::releases::add_release_asset(
         pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, actor).await,
+        ),
         repo,
         release.id,
         &db::releases::NewReleaseAsset {

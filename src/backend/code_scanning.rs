@@ -84,7 +84,9 @@ fn no_nul(value: &Value) -> bool {
     match value {
         Value::String(text) => !text.contains('\0'),
         Value::Array(values) => values.iter().all(no_nul),
-        Value::Object(values) => values.iter().all(|(key, value)| !key.contains('\0') && no_nul(value)),
+        Value::Object(values) => values
+            .iter()
+            .all(|(key, value)| !key.contains('\0') && no_nul(value)),
         _ => true,
     }
 }
@@ -94,8 +96,10 @@ fn result_message(message: &Value, rule: Option<&Value>, component: &Driver) -> 
         text(message)
     } else {
         let id = message["id"].as_str().context("Missing result message")?;
-        let value = rule.and_then(|rule| rule["messageStrings"].get(id))
-            .or_else(|| component.global_messages.get(id)).context("Unknown result message ID")?;
+        let value = rule
+            .and_then(|rule| rule["messageStrings"].get(id))
+            .or_else(|| component.global_messages.get(id))
+            .context("Unknown result message ID")?;
         text(value)
     };
     let mut output = String::new();
@@ -109,12 +113,20 @@ fn result_message(message: &Value, rule: Option<&Value>, component: &Driver) -> 
                 let mut index = String::new();
                 loop {
                     let ch = chars.next().context("Invalid message placeholder")?;
-                    if ch == '}' { break; }
-                    ensure!(ch.is_ascii_digit() && index.len() < 8, "Invalid message placeholder");
+                    if ch == '}' {
+                        break;
+                    }
+                    ensure!(
+                        ch.is_ascii_digit() && index.len() < 8,
+                        "Invalid message placeholder"
+                    );
                     index.push(ch);
                 }
                 let index: usize = index.parse().context("Invalid message argument index")?;
-                let argument = message["arguments"].get(index).and_then(Value::as_str).context("Missing message argument")?;
+                let argument = message["arguments"]
+                    .get(index)
+                    .and_then(Value::as_str)
+                    .context("Missing message argument")?;
                 output.push_str(argument);
             }
         } else if ch == '}' && chars.peek() == Some(&'}') {
@@ -147,19 +159,36 @@ fn measure_json(bytes: &[u8]) -> Result<()> {
     }
     impl<'de> DeserializeSeed<'de> for Measure<'_> {
         type Value = ();
-        fn deserialize<D: serde::Deserializer<'de>>(self, deserializer: D) -> std::result::Result<(), D::Error> {
+        fn deserialize<D: serde::Deserializer<'de>>(
+            self,
+            deserializer: D,
+        ) -> std::result::Result<(), D::Error> {
             deserializer.deserialize_any(self)
         }
     }
     impl<'de> de::Visitor<'de> for Measure<'_> {
         type Value = ();
-        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("bounded SARIF JSON") }
-        fn visit_unit<E: de::Error>(self) -> std::result::Result<(), E> { self.add(0) }
-        fn visit_bool<E: de::Error>(self, _: bool) -> std::result::Result<(), E> { self.add(0) }
-        fn visit_i64<E: de::Error>(self, _: i64) -> std::result::Result<(), E> { self.add(0) }
-        fn visit_u64<E: de::Error>(self, _: u64) -> std::result::Result<(), E> { self.add(0) }
-        fn visit_f64<E: de::Error>(self, _: f64) -> std::result::Result<(), E> { self.add(0) }
-        fn visit_str<E: de::Error>(self, text: &str) -> std::result::Result<(), E> { self.add(text.len()) }
+        fn expecting(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.write_str("bounded SARIF JSON")
+        }
+        fn visit_unit<E: de::Error>(self) -> std::result::Result<(), E> {
+            self.add(0)
+        }
+        fn visit_bool<E: de::Error>(self, _: bool) -> std::result::Result<(), E> {
+            self.add(0)
+        }
+        fn visit_i64<E: de::Error>(self, _: i64) -> std::result::Result<(), E> {
+            self.add(0)
+        }
+        fn visit_u64<E: de::Error>(self, _: u64) -> std::result::Result<(), E> {
+            self.add(0)
+        }
+        fn visit_f64<E: de::Error>(self, _: f64) -> std::result::Result<(), E> {
+            self.add(0)
+        }
+        fn visit_str<E: de::Error>(self, text: &str) -> std::result::Result<(), E> {
+            self.add(text.len())
+        }
         fn visit_seq<A: SeqAccess<'de>>(self, mut seq: A) -> std::result::Result<(), A::Error> {
             self.add(0)?;
             while seq.next_element_seed(self)?.is_some() {}
@@ -167,7 +196,9 @@ fn measure_json(bytes: &[u8]) -> Result<()> {
         }
         fn visit_map<A: MapAccess<'de>>(self, mut map: A) -> std::result::Result<(), A::Error> {
             self.add(0)?;
-            while map.next_key_seed(self)?.is_some() { map.next_value_seed(self)?; }
+            while map.next_key_seed(self)?.is_some() {
+                map.next_value_seed(self)?;
+            }
             Ok(())
         }
     }
@@ -198,8 +229,14 @@ fn artifact_path(run: &SarifRun, physical: &Value, checkout: Option<&str>) -> Re
     let mut next = base_id;
     let mut seen = HashSet::new();
     while let Some(id) = next {
-        ensure!(seen.len() < 32 && seen.insert(id), "Cyclic or excessive artifact URI bases");
-        let base = run.original_uri_base_ids.get(id).context("Unknown artifact URI base")?;
+        ensure!(
+            seen.len() < 32 && seen.insert(id),
+            "Cyclic or excessive artifact URI bases"
+        );
+        let base = run
+            .original_uri_base_ids
+            .get(id)
+            .context("Unknown artifact URI base")?;
         let uri = base["uri"].as_str().context("Missing artifact base URI")?;
         ensure!(uri.len() <= 16 * 1024, "Artifact base URI exceeds 16 KiB");
         parts.push(uri);
@@ -207,7 +244,13 @@ fn artifact_path(run: &SarifRun, physical: &Value, checkout: Option<&str>) -> Re
     }
     let fallback = "https://codeyard.invalid/";
     // The checkout names a directory, also without a trailing slash.
-    let checkout = checkout.map(|base| if base.ends_with('/') { base.to_owned() } else { format!("{base}/") });
+    let checkout = checkout.map(|base| {
+        if base.ends_with('/') {
+            base.to_owned()
+        } else {
+            format!("{base}/")
+        }
+    });
     let mut absolute = url::Url::parse(checkout.as_deref().unwrap_or(fallback))?;
     for part in parts.into_iter().rev() {
         absolute = absolute.join(part)?;
@@ -239,7 +282,10 @@ fn artifact_path(run: &SarifRun, physical: &Value, checkout: Option<&str>) -> Re
 }
 
 pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
-    ensure!(upload.ref_name.len() <= MAX_REFERENCE_BYTES, "Analysis reference exceeds 1 KiB");
+    ensure!(
+        upload.ref_name.len() <= MAX_REFERENCE_BYTES,
+        "Analysis reference exceeds 1 KiB"
+    );
     ensure!(
         upload
             .checkout_uri
@@ -271,7 +317,10 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
     let mut raw: Value = serde_json::from_slice(&bytes).context("Invalid SARIF document")?;
     ensure!(raw["version"] == "2.1.0", "SARIF 2.1.0 is required");
     let raw_runs = raw["runs"].as_array_mut().context("Missing SARIF runs")?;
-    ensure!(!raw_runs.is_empty() && raw_runs.len() <= 20, "SARIF requires 1 to 20 runs");
+    ensure!(
+        !raw_runs.is_empty() && raw_runs.len() <= 20,
+        "SARIF requires 1 to 20 runs"
+    );
     let mut keys = HashSet::new();
     let mut runs = Vec::new();
     // A small rule may be referenced by thousands of results. Bound the expanded projection too.
@@ -357,7 +406,12 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
                 uuid::Uuid::parse_str(guid).context("Invalid tool GUID")?;
             }
         }
-        let driver_guid = driver.guid.as_deref().map(uuid::Uuid::parse_str).transpose()?.map(|guid| guid.to_string());
+        let driver_guid = driver
+            .guid
+            .as_deref()
+            .map(uuid::Uuid::parse_str)
+            .transpose()?
+            .map(|guid| guid.to_string());
         let tool_key = driver_guid.as_deref().unwrap_or(&driver.name).to_owned();
         // SARIF separates the category from the run ID at the final slash.
         let category = run.automation_details["id"]
@@ -379,7 +433,18 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
         let mut fingerprints = HashSet::new();
         for (source_index, result) in run.results.iter().enumerate() {
             let kind = result.kind.as_deref().unwrap_or("fail");
-            ensure!(["fail", "pass", "notApplicable", "open", "review", "informational"].contains(&kind), "Invalid result kind");
+            ensure!(
+                [
+                    "fail",
+                    "pass",
+                    "notApplicable",
+                    "open",
+                    "review",
+                    "informational"
+                ]
+                .contains(&kind),
+                "Invalid result kind"
+            );
             if matches!(kind, "pass" | "notApplicable") {
                 continue;
             }
@@ -428,18 +493,26 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
                 .rule_id
                 .as_deref()
                 .or_else(|| result.rule.as_ref().and_then(|rule| rule["id"].as_str()));
-            let rule_index = result.rule_index.or_else(|| {
-                result.rule.as_ref().and_then(|rule| rule["index"].as_i64())
-            });
-            ensure!(rule_index.is_none_or(|index| index >= -1), "Invalid rule index");
-            let rule_index = rule_index.filter(|index| *index >= 0).map(|index| index as usize);
+            let rule_index = result
+                .rule_index
+                .or_else(|| result.rule.as_ref().and_then(|rule| rule["index"].as_i64()));
+            ensure!(
+                rule_index.is_none_or(|index| index >= -1),
+                "Invalid rule index"
+            );
+            let rule_index = rule_index
+                .filter(|index| *index >= 0)
+                .map(|index| index as usize);
             let rule = rule_index
                 .and_then(|i| component.rules.get(i))
                 .or_else(|| rule_id.and_then(|id| rules.get(id).copied()));
             let id = rule_id
                 .or_else(|| rule.and_then(|r| r["id"].as_str()))
                 .context("Missing result rule")?;
-            let location = result.locations.first().context("Result has no usable location")?;
+            let location = result
+                .locations
+                .first()
+                .context("Result has no usable location")?;
             let physical = &location["physicalLocation"];
             let path = artifact_path(&run, physical, upload.checkout_uri.as_deref())?;
             let region = &physical["region"];
@@ -479,10 +552,18 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
             } else {
                 format!("{message}:{start}")
             };
-            let component_key = (component_index != 0).then(|| component.guid.as_deref()
-                .and_then(|guid| uuid::Uuid::parse_str(guid).ok()).map(|guid| guid.to_string())
-                .unwrap_or_else(|| component.name.clone()));
-            let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(&(component_key, id, &path, stable))?));
+            let component_key = (component_index != 0).then(|| {
+                component
+                    .guid
+                    .as_deref()
+                    .and_then(|guid| uuid::Uuid::parse_str(guid).ok())
+                    .map(|guid| guid.to_string())
+                    .unwrap_or_else(|| component.name.clone())
+            });
+            let fingerprint = format!(
+                "{:x}",
+                Sha256::digest(serde_json::to_vec(&(component_key, id, &path, stable))?)
+            );
             if !fingerprints.insert(fingerprint.clone()) {
                 continue;
             }
@@ -522,13 +603,25 @@ pub fn parse(upload: &Upload) -> Result<Vec<Run>> {
             };
             let start_column = region["startColumn"].as_i64().unwrap_or(1);
             let end_column = region["endColumn"].as_i64();
-            ensure!(start_column > 0 && end_column.is_none_or(|column| column > 0 && (end > start || column >= start_column)), "Invalid SARIF columns");
-            let mut location = json!({"path":path,"start_line":start,"end_line":end,"start_column":start_column});
+            ensure!(
+                start_column > 0
+                    && end_column
+                        .is_none_or(|column| column > 0 && (end > start || column >= start_column)),
+                "Invalid SARIF columns"
+            );
+            let mut location =
+                json!({"path":path,"start_line":start,"end_line":end,"start_column":start_column});
             if let Some(column) = end_column {
                 location["end_column"] = json!(column);
             }
-            findings.push(Finding { fingerprint, rule, message, priority, source_index:source_index as i64,
-                location:location.to_string() });
+            findings.push(Finding {
+                fingerprint,
+                rule,
+                message,
+                priority,
+                source_index: source_index as i64,
+                location: location.to_string(),
+            });
         }
         if findings.len() > 5000 {
             findings.sort_by_key(|finding| std::cmp::Reverse(finding.priority));
@@ -552,9 +645,23 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
     let changes = match parsed {
         Ok(runs) => match db::code_scanning::finish(pool, &upload, &runs, None).await {
             Ok(changes) => changes,
-            Err(error) if error.downcast_ref::<sqlx::Error>().and_then(|error| error.as_database_error()).and_then(|error| error.code()).is_some_and(|code| code.starts_with("22") || code.starts_with("54") || code == "23514") => {
+            Err(error)
+                if error
+                    .downcast_ref::<sqlx::Error>()
+                    .and_then(|error| error.as_database_error())
+                    .and_then(|error| error.code())
+                    .is_some_and(|code| {
+                        code.starts_with("22") || code.starts_with("54") || code == "23514"
+                    }) =>
+            {
                 tracing::warn!(upload = %upload.id, "SARIF processing rejected by storage constraints");
-                db::code_scanning::finish(pool, &upload, &[], Some("Analysis exceeds storage constraints")).await?
+                db::code_scanning::finish(
+                    pool,
+                    &upload,
+                    &[],
+                    Some("Analysis exceeds storage constraints"),
+                )
+                .await?
             }
             Err(error) => return Err(error),
         },
@@ -576,7 +683,8 @@ pub async fn process_next(pool: &DbPool) -> Result<bool> {
                 Some((&upload.ref_name, &upload.commit_sha)),
                 change.instance.as_ref(),
             )
-            .await {
+            .await
+            {
                 tracing::warn!(%error, alert_id=change.alert.id, "code scanning notification failed after commit");
             }
         }
@@ -644,7 +752,8 @@ pub async fn dismiss(
         None,
         None,
     )
-    .await {
+    .await
+    {
         tracing::warn!(%error, alert_id=alert.id, "code scanning notification failed after commit");
     }
     Ok(alert)

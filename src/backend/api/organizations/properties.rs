@@ -182,16 +182,25 @@ async fn apply(
                     organization::optional(form, "values_editable_by").unwrap_or("org_actors"),
                 )?,
             };
-            Ok(data::define(&ctx.state.pool, ctx.database_actor(actor), org, &[input])
-                .await?
-                .map(|_| ()))
+            Ok(
+                data::define(&ctx.state.pool, ctx.database_actor(actor), org, &[input])
+                    .await?
+                    .map(|_| ()),
+            )
         }
         "delete-property" => {
             ensure!(organization::field(form,"confirm")==name,data::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
             let definition = organization::id(form, "definition_id").map_err(|()| {
                 data::invalid("definition_id", "Reload the property and try again")
             })?;
-            data::remove(&ctx.state.pool, ctx.database_actor(actor), org, name, Some(definition)).await
+            data::remove(
+                &ctx.state.pool,
+                ctx.database_actor(actor),
+                org,
+                name,
+                Some(definition),
+            )
+            .await
         }
         "set-property-value" => {
             let definition = match data::definition(&ctx.state.pool, actor, org, name).await? {

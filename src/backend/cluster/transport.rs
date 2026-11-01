@@ -3,14 +3,20 @@
 use super::{identity::NodeKey, link::Link, pairing::PairingHandler, tcp};
 use crate::backend::db::{self, DbPool};
 use anyhow::{anyhow, bail, Context, Result};
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use iroh::{
     endpoint::{presets, AfterHandshakeOutcome, Connection, EndpointHooks, QuicTransportConfig},
     protocol::{Router, RouterBuilder},
     Endpoint, EndpointAddr, PublicKey, RelayMode, RelayUrl, TransportAddr,
 };
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, fmt, net::SocketAddr, str::FromStr, sync::{Arc, Mutex, OnceLock}};
-use futures_util::{stream::FuturesUnordered, StreamExt};
+use std::{
+    collections::HashMap,
+    fmt,
+    net::SocketAddr,
+    str::FromStr,
+    sync::{Arc, Mutex, OnceLock},
+};
 use tokio::sync::{OnceCell, Semaphore};
 use tracing::warn;
 
@@ -323,8 +329,12 @@ pub async fn dial_node(
         attempts.push(async move {
             // Later healthy addresses still get a complete attempt when earlier ones stall.
             tokio::time::sleep(std::time::Duration::from_millis(index.min(5) as u64 * 200)).await;
-            tokio::time::timeout(DIAL_TIMEOUT, Box::pin(tcp::dial(iroh.key(), *tcp_address, node, alpn)))
-                .await.map_err(|_| anyhow!("timed out reaching {tcp_address} over TCP"))?
+            tokio::time::timeout(
+                DIAL_TIMEOUT,
+                Box::pin(tcp::dial(iroh.key(), *tcp_address, node, alpn)),
+            )
+            .await
+            .map_err(|_| anyhow!("timed out reaching {tcp_address} over TCP"))?
         });
     }
     while let Ok(Some(result)) = tokio::time::timeout_at(budget, attempts.next()).await {
@@ -365,7 +375,12 @@ async fn dial(endpoint: &Endpoint, address: EndpointAddr, alpn: &[u8]) -> Result
 /// The next request stream a peer opens on an accepted connection. `None` once the
 /// connection has ended.
 pub async fn accept_stream(connection: &Connection) -> Option<Link> {
-    let (send, recv) = match tokio::time::timeout(std::time::Duration::from_secs(30), connection.accept_bi()).await {
+    let (send, recv) = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        connection.accept_bi(),
+    )
+    .await
+    {
         Ok(Ok(stream)) => stream,
         _ => {
             connection.close(CLOSE_UNAVAILABLE.into(), b"request stream timeout");
@@ -381,10 +396,15 @@ pub async fn accept_stream(connection: &Connection) -> Option<Link> {
     ))
 }
 
-pub(crate) fn connection_slot(connection: &Connection) -> Result<tokio::sync::OwnedSemaphorePermit> {
+pub(crate) fn connection_slot(
+    connection: &Connection,
+) -> Result<tokio::sync::OwnedSemaphorePermit> {
     static CONNECTIONS: OnceLock<Arc<Semaphore>> = OnceLock::new();
-    CONNECTIONS.get_or_init(|| Arc::new(Semaphore::new(64))).clone()
-        .try_acquire_owned().map_err(|error| {
+    CONNECTIONS
+        .get_or_init(|| Arc::new(Semaphore::new(64)))
+        .clone()
+        .try_acquire_owned()
+        .map_err(|error| {
             connection.close(CLOSE_UNAVAILABLE.into(), b"connection admission busy");
             error.into()
         })
@@ -397,7 +417,10 @@ pub(crate) fn peer_header_slot(
     let slots = {
         let mut headers = registry.lock().unwrap_or_else(|error| error.into_inner());
         headers.retain(|_, slots| Arc::strong_count(slots) > 1);
-        headers.entry(peer).or_insert_with(|| Arc::new(Semaphore::new(4))).clone()
+        headers
+            .entry(peer)
+            .or_insert_with(|| Arc::new(Semaphore::new(4)))
+            .clone()
     };
     Ok(slots.try_acquire_owned()?)
 }

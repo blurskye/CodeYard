@@ -111,7 +111,11 @@ const BUILT_IN_FIELDS: [(store::BuiltInField, &str, &str); 6] = [
     ),
     (store::BuiltInField::Milestone, "MILESTONE", "milestone"),
     (store::BuiltInField::Repository, "REPOSITORY", "repository"),
-    (store::BuiltInField::Reviewers, "REVIEWERS", "reviewRequests"),
+    (
+        store::BuiltInField::Reviewers,
+        "REVIEWERS",
+        "reviewRequests",
+    ),
 ];
 fn built_in_field(project: &Value, name: &str, data_type: &str) -> Value {
     let id = project["_project"].as_i64().unwrap_or_default();
@@ -124,9 +128,16 @@ fn order_fields(ctx: &Arguments, values: &mut [Value]) -> Result<()> {
         let field = order.try_get("field")?.enum_name()?;
         if field != "POSITION" {
             let key = if field == "NAME" { "name" } else { "createdAt" };
-            values.sort_by(|a, b| a[key].as_str().cmp(&b[key].as_str()).then(a["id"].as_str().cmp(&b["id"].as_str())));
+            values.sort_by(|a, b| {
+                a[key]
+                    .as_str()
+                    .cmp(&b[key].as_str())
+                    .then(a["id"].as_str().cmp(&b["id"].as_str()))
+            });
         }
-        if order.try_get("direction")?.enum_name()? == "DESC" { values.reverse(); }
+        if order.try_get("direction")?.enum_name()? == "DESC" {
+            values.reverse();
+        }
     }
     Ok(())
 }
@@ -143,8 +154,17 @@ fn project_fields(project: &Value, fields: &[store::Field]) -> Result<Vec<Value>
 }
 /// The built-in field values of an issue or pull request item. Empty values are left out,
 /// as GitHub leaves them out.
-async fn built_in_values(item: &store::Item, request: &RequestContext, selected: Option<&str>, include_deleted: bool) -> Result<Vec<Value>> {
-    if selected.is_some_and(|name| !BUILT_IN_FIELDS.iter().any(|(field, _, _)| field.name() == name)) {
+async fn built_in_values(
+    item: &store::Item,
+    request: &RequestContext,
+    selected: Option<&str>,
+    include_deleted: bool,
+) -> Result<Vec<Value>> {
+    if selected.is_some_and(|name| {
+        !BUILT_IN_FIELDS
+            .iter()
+            .any(|(field, _, _)| field.name() == name)
+    }) {
         return Ok(Vec::new());
     }
     let ty = item.content_type();
@@ -178,7 +198,9 @@ async fn built_in_values(item: &store::Item, request: &RequestContext, selected:
     let mut values = Vec::new();
     for (field, data_type, source) in BUILT_IN_FIELDS {
         let name = field.name();
-        if selected.is_some_and(|selected| selected != name) { continue; }
+        if selected.is_some_and(|selected| selected != name) {
+            continue;
+        }
         let applies = match data_type {
             "REVIEWERS" => ty == "PullRequest",
             "LINKED_PULL_REQUESTS" => ty == "Issue",
@@ -228,10 +250,21 @@ fn draft_object(item: &store::Item) -> Value {
     json!({"__typename":"DraftIssue","id":node_id::encode("DI",item.id),"title":item.draft_title,"body":item.draft_body.as_deref().unwrap_or(""),"createdAt":item.created_at,"updatedAt":item.updated_at,"_creator":item.creator_id,"_project":item.project_id})
 }
 fn charge_item(item: &store::Item, request: &RequestContext) -> Result<()> {
-    request.charge(item.field_values.len() + item.title.len() + item.draft_title.as_ref().map_or(0, |s| s.len()) + item.draft_body.as_ref().map_or(0, |s| s.len()) + 256)
+    request.charge(
+        item.field_values.len()
+            + item.title.len()
+            + item.draft_title.as_ref().map_or(0, |s| s.len())
+            + item.draft_body.as_ref().map_or(0, |s| s.len())
+            + 256,
+    )
 }
 fn charge_fields(fields: &[store::Field], request: &RequestContext) -> Result<()> {
-    request.charge(fields.iter().map(|field| field.configuration.len() + field.name.len() + 128).sum())
+    request.charge(
+        fields
+            .iter()
+            .map(|field| field.configuration.len() + field.name.len() + 128)
+            .sum(),
+    )
 }
 
 async fn item_object(item: &store::Item, request: &RequestContext) -> Result<Value> {
@@ -251,7 +284,9 @@ async fn item_object(item: &store::Item, request: &RequestContext) -> Result<Val
             .map_err(unavailable)?
             .ok_or_else(missing)?;
         repository::by_id(pull.repo_id, request).await?;
-        request.authorize(pull.repo_id, "pull-requests", false).await?;
+        request
+            .authorize(pull.repo_id, "pull-requests", false)
+            .await?;
         request.charge(pull.body.len() + pull.title.len())?;
         issue::pull_object(&pull)
     } else {
@@ -328,13 +363,31 @@ pub(super) async fn content_items(
         .transpose()?
         .unwrap_or(true);
     connection::validate(ctx)?;
-    let total = store::content_items(pool, viewer, &content, include_archived, 0, 0, true).await.map_err(operation)?.0;
+    let total = store::content_items(pool, viewer, &content, include_archived, 0, 0, true)
+        .await
+        .map_err(operation)?
+        .0;
     let page = connection::Page::new(ctx, total)?;
-    let rows = if page.limit == 0 { Vec::new() } else {
-        store::content_items(pool, viewer, &content, include_archived, page.offset, page.limit, false).await.map_err(operation)?.1
+    let rows = if page.limit == 0 {
+        Vec::new()
+    } else {
+        store::content_items(
+            pool,
+            viewer,
+            &content,
+            include_archived,
+            page.offset,
+            page.limit,
+            false,
+        )
+        .await
+        .map_err(operation)?
+        .1
     };
     let mut nodes = Vec::new();
-    for item in rows { nodes.push(item_object(&item, request).await?); }
+    for item in rows {
+        nodes.push(item_object(&item, request).await?);
+    }
     Ok(page.finish(nodes))
 }
 
@@ -352,43 +405,100 @@ async fn project_items(ctx: &Arguments, request: &RequestContext, parent: &Value
     let viewer = Some(request.auth.user.id);
     let project = parent["_project"].as_i64().ok_or_else(missing)?;
     let include_deleted = parent["_deleted"] == true;
-    let states: Option<Vec<String>> = ctx.args.get("archivedStates").filter(|value| !value.is_null()).map(|value| value.deserialize()).transpose()?;
+    let states: Option<Vec<String>> = ctx
+        .args
+        .get("archivedStates")
+        .filter(|value| !value.is_null())
+        .map(|value| value.deserialize())
+        .transpose()?;
     let archived = match states {
         None => Some(false),
-        Some(states) => match (states.iter().any(|value| value == "ARCHIVED"), states.iter().any(|value| value == "NOT_ARCHIVED")) {
-            (true, true) => None, (true, false) => Some(true), (false, true) => Some(false),
+        Some(states) => match (
+            states.iter().any(|value| value == "ARCHIVED"),
+            states.iter().any(|value| value == "NOT_ARCHIVED"),
+        ) {
+            (true, true) => None,
+            (true, false) => Some(true),
+            (false, true) => Some(false),
             (false, false) => return Ok(connection::Page::new(ctx, 0)?.finish(Vec::new())),
         },
     };
-    let query = ctx.args.get("query").filter(|value| !value.is_null()).map(|value| value.string()).transpose()?.unwrap_or("");
-    let descending = if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) { order.object()?.try_get("direction")?.enum_name()? == "DESC" } else { false };
+    let query = ctx
+        .args
+        .get("query")
+        .filter(|value| !value.is_null())
+        .map(|value| value.string())
+        .transpose()?
+        .unwrap_or("");
+    let descending = if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
+        order.object()?.try_get("direction")?.enum_name()? == "DESC"
+    } else {
+        false
+    };
     let removed = removed_contents(parent)?;
     let (page, rows) = if query.trim().is_empty() && removed.is_none() {
-        let mut window = store::ItemWindow { project, include_deleted, archived, descending, offset: 0, limit: 0, count: true };
-        let total = store::items_window(pool, viewer, &window).await.map_err(operation)?.0;
+        let mut window = store::ItemWindow {
+            project,
+            include_deleted,
+            archived,
+            descending,
+            offset: 0,
+            limit: 0,
+            count: true,
+        };
+        let total = store::items_window(pool, viewer, &window)
+            .await
+            .map_err(operation)?
+            .0;
         let page = connection::Page::new(ctx, total)?;
-        window.offset = page.offset; window.limit = page.limit; window.count = false;
-        let rows = if page.limit == 0 { Vec::new() } else { store::items_window(pool, viewer, &window).await.map_err(operation)?.1 };
+        window.offset = page.offset;
+        window.limit = page.limit;
+        window.count = false;
+        let rows = if page.limit == 0 {
+            Vec::new()
+        } else {
+            store::items_window(pool, viewer, &window)
+                .await
+                .map_err(operation)?
+                .1
+        };
         (page, rows)
     } else {
         let (fields, rows) = match removed {
             Some(removed) => (removed.fields, removed.items),
             None => (
-                store::fields_at(pool, viewer, project, include_deleted).await.map_err(operation)?,
-                store::items_at(pool, viewer, project, include_deleted).await.map_err(operation)?,
+                store::fields_at(pool, viewer, project, include_deleted)
+                    .await
+                    .map_err(operation)?,
+                store::items_at(pool, viewer, project, include_deleted)
+                    .await
+                    .map_err(operation)?,
             ),
         };
         charge_fields(&fields, request)?;
-        for item in &rows { charge_item(item, request)?; }
-        let rows = rows.into_iter().filter(|item| archived.is_none_or(|value| value == item.archived)).collect();
+        for item in &rows {
+            charge_item(item, request)?;
+        }
+        let rows = rows
+            .into_iter()
+            .filter(|item| archived.is_none_or(|value| value == item.archived))
+            .collect();
         let mut rows = domain::filter_items(rows, &fields, query, None).map_err(operation)?;
-        if descending { rows.reverse(); }
+        if descending {
+            rows.reverse();
+        }
         let page = connection::Page::new(ctx, rows.len() as i64)?;
-        let rows = rows.into_iter().skip(page.offset as usize).take(page.limit as usize).collect();
+        let rows = rows
+            .into_iter()
+            .skip(page.offset as usize)
+            .take(page.limit as usize)
+            .collect();
         (page, rows)
     };
     let mut nodes = Vec::new();
-    for item in rows { nodes.push(item_object(&item, request).await?); }
+    for item in rows {
+        nodes.push(item_object(&item, request).await?);
+    }
     Ok(page.finish(nodes))
 }
 
@@ -413,7 +523,9 @@ async fn project_connection(
             _ => terms.push(term),
         }
     }
-    if !terms.is_empty() { filter.titles.push(terms.join(" ")); }
+    if !terms.is_empty() {
+        filter.titles.push(terms.join(" "));
+    }
     if let Some(permission) = ctx.args.get("minPermissionLevel").filter(|p| !p.is_null()) {
         filter.writable = permission.enum_name()? != "READ";
     }
@@ -430,14 +542,21 @@ async fn project_connection(
     }
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
-    let (count, _) = store::list(pool, viewer, &filter, 0, 0).await.map_err(operation)?;
+    let (count, _) = store::list(pool, viewer, &filter, 0, 0)
+        .await
+        .map_err(operation)?;
     let page = connection::Page::new(ctx, count)?;
-    let (_, projects) = store::list(pool, viewer, &filter, page.offset, page.limit).await.map_err(operation)?;
-    let nodes = projects.iter().map(|project| {
-        let mut value = project_object(project);
-        value.as_object_mut().unwrap().remove("readme");
-        value
-    }).collect();
+    let (_, projects) = store::list(pool, viewer, &filter, page.offset, page.limit)
+        .await
+        .map_err(operation)?;
+    let nodes = projects
+        .iter()
+        .map(|project| {
+            let mut value = project_object(project);
+            value.as_object_mut().unwrap().remove("readme");
+            value
+        })
+        .collect();
     Ok(page.finish(nodes))
 }
 
@@ -478,18 +597,34 @@ pub(super) async fn resource(ctx: &Arguments, request: &RequestContext) -> Resul
 
 fn mark_deleted(value: &mut Value, project: i64) {
     match value {
-        Value::Array(values) => for value in values { mark_deleted(value, project); },
+        Value::Array(values) => {
+            for value in values {
+                mark_deleted(value, project);
+            }
+        }
         Value::Object(values) => {
-            if values.get("_project").and_then(Value::as_i64) == Some(project) { values.insert("_deleted".into(), json!(true)); }
-            for value in values.values_mut() { mark_deleted(value, project); }
+            if values.get("_project").and_then(Value::as_i64) == Some(project) {
+                values.insert("_deleted".into(), json!(true));
+            }
+            for value in values.values_mut() {
+                mark_deleted(value, project);
+            }
         }
         _ => {}
     }
 }
 
-pub(super) async fn resolve(ty: &str, field: &str, ctx: &Arguments, request: &RequestContext, parent: &Value) -> Result<Value> {
+pub(super) async fn resolve(
+    ty: &str,
+    field: &str,
+    ctx: &Arguments,
+    request: &RequestContext,
+    parent: &Value,
+) -> Result<Value> {
     let mut value = resolve_at(ty, field, ctx, request, parent).await?;
-    if parent["_deleted"] == true { mark_deleted(&mut value, parent["_project"].as_i64().ok_or_else(missing)?); }
+    if parent["_deleted"] == true {
+        mark_deleted(&mut value, parent["_project"].as_i64().ok_or_else(missing)?);
+    }
     Ok(value)
 }
 
@@ -502,9 +637,20 @@ async fn resolve_at(
 ) -> Result<Value> {
     authorize_account(request)?;
     if let Some(id) = parent["_project"].as_i64() {
-        let project = store::by_id_at(&request.state.pool, Some(request.auth.user.id), id, parent["_deleted"] == true)
-            .await.map_err(operation)?;
-        request.charge(project.readme.len() + project.title.len() + project.description.as_ref().map_or(0, |text| text.len()) + 128)?;
+        let project = store::by_id_at(
+            &request.state.pool,
+            Some(request.auth.user.id),
+            id,
+            parent["_deleted"] == true,
+        )
+        .await
+        .map_err(operation)?;
+        request.charge(
+            project.readme.len()
+                + project.title.len()
+                + project.description.as_ref().map_or(0, |text| text.len())
+                + 128,
+        )?;
         if project.owner_kind == "org" {
             request.authorize_organization(project.owner_id).await?;
         }
@@ -525,7 +671,15 @@ async fn resolve_at(
     if ty == "Repository" && field == "projectsV2" {
         let repo = parent["databaseId"].as_i64().ok_or_else(missing)?;
         repository::by_id(repo, request).await?;
-        return project_connection(ctx, request, store::ListFilter { repo: Some(repo), ..Default::default() }).await;
+        return project_connection(
+            ctx,
+            request,
+            store::ListFilter {
+                repo: Some(repo),
+                ..Default::default()
+            },
+        )
+        .await;
     }
     if matches!(ty, "User" | "Organization") {
         let target = parent["databaseId"].as_i64().ok_or_else(missing)?;
@@ -535,14 +689,24 @@ async fn resolve_at(
             store::Owner::Organization(target)
         };
         return match field {
-            "team" if ty == "Organization" => super::team::by_slug(target, &arg(ctx, "slug")?, request).await,
+            "team" if ty == "Organization" => {
+                super::team::by_slug(target, &arg(ctx, "slug")?, request).await
+            }
             "projectV2" => Ok(project_object(
                 &store::get(pool, viewer, owner, ctx.args.try_get("number")?.i64()?)
                     .await
                     .map_err(operation)?,
             )),
             "projectsV2" => {
-                project_connection(ctx, request, store::ListFilter { owner: Some(owner), ..Default::default() }).await
+                project_connection(
+                    ctx,
+                    request,
+                    store::ListFilter {
+                        owner: Some(owner),
+                        ..Default::default()
+                    },
+                )
+                .await
             }
             "viewerCanCreateProjects" => Ok(json!(store::can_write(pool, actor, owner)
                 .await
@@ -578,10 +742,26 @@ async fn resolve_at(
     }
     match (ty, field) {
         ("ProjectV2", "readme") => {
-            let project = store::by_id_at(pool, viewer, parent["databaseId"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?;
+            let project = store::by_id_at(
+                pool,
+                viewer,
+                parent["databaseId"].as_i64().ok_or_else(missing)?,
+                parent["_deleted"] == true,
+            )
+            .await
+            .map_err(operation)?;
             Ok(json!(project.readme))
         }
-        (_, "project") if parent["_deleted"] == true => Ok(project_object(&store::by_id_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, true).await.map_err(operation)?)),
+        (_, "project") if parent["_deleted"] == true => Ok(project_object(
+            &store::by_id_at(
+                pool,
+                viewer,
+                parent["_project"].as_i64().ok_or_else(missing)?,
+                true,
+            )
+            .await
+            .map_err(operation)?,
+        )),
         (_, "project") => {
             node(
                 "PVT",
@@ -620,7 +800,11 @@ async fn resolve_at(
             );
             Ok(json!(if field == "url" { url(&path) } else { path }))
         }
-        ("ProjectV2", "viewerCanUpdate" | "viewerCanClose" | "viewerCanReopen") if parent["_deleted"] == true => Ok(json!(false)),
+        ("ProjectV2", "viewerCanUpdate" | "viewerCanClose" | "viewerCanReopen")
+            if parent["_deleted"] == true =>
+        {
+            Ok(json!(false))
+        }
         ("ProjectV2", "viewerCanUpdate" | "viewerCanClose" | "viewerCanReopen") => {
             let project = store::by_id(
                 pool,
@@ -640,7 +824,14 @@ async fn resolve_at(
         ("ProjectV2", "fields" | "field") => {
             let fields = match removed_contents(parent)? {
                 Some(removed) => removed.fields,
-                None => store::fields_at(pool, viewer, parent["_project"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?,
+                None => store::fields_at(
+                    pool,
+                    viewer,
+                    parent["_project"].as_i64().ok_or_else(missing)?,
+                    parent["_deleted"] == true,
+                )
+                .await
+                .map_err(operation)?,
             };
             charge_fields(&fields, request)?;
             let mut values = project_fields(parent, &fields)?;
@@ -656,14 +847,30 @@ async fn resolve_at(
         }
         ("ProjectV2", "items") => project_items(ctx, request, parent).await,
         ("ProjectV2Item", "fieldValues" | "fieldValueByName") => {
-            let item = store::item_by_id_at(pool, viewer, parent["_item"].as_i64().ok_or_else(missing)?, parent["_deleted"] == true).await.map_err(operation)?;
+            let item = store::item_by_id_at(
+                pool,
+                viewer,
+                parent["_item"].as_i64().ok_or_else(missing)?,
+                parent["_deleted"] == true,
+            )
+            .await
+            .map_err(operation)?;
             charge_item(&item, request)?;
-            let fields = store::fields_at(pool, viewer, item.project_id, parent["_deleted"] == true).await.map_err(operation)?;
+            let fields =
+                store::fields_at(pool, viewer, item.project_id, parent["_deleted"] == true)
+                    .await
+                    .map_err(operation)?;
             charge_fields(&fields, request)?;
-            let selected = if field == "fieldValueByName" { Some(arg(ctx, "name")?) } else { None };
+            let selected = if field == "fieldValueByName" {
+                Some(arg(ctx, "name")?)
+            } else {
+                None
+            };
             let mut values = Vec::new();
             for f in fields {
-                if selected.as_ref().is_some_and(|name| name != &f.name) { continue; }
+                if selected.as_ref().is_some_and(|name| name != &f.name) {
+                    continue;
+                }
                 let value = item.value(&f).map_err(operation)?;
                 if value.is_null() {
                     continue;
@@ -705,17 +912,39 @@ async fn resolve_at(
                 entry["__typename"] = json!(format!("ProjectV2ItemField{suffix}Value"));
                 values.push(entry);
             }
-            if selected.is_some() && !values.is_empty() { return Ok(values.remove(0)); }
-            values.extend(built_in_values(&item, request, selected.as_deref(), parent["_deleted"] == true).await?);
+            if selected.is_some() && !values.is_empty() {
+                return Ok(values.remove(0));
+            }
+            values.extend(
+                built_in_values(
+                    &item,
+                    request,
+                    selected.as_deref(),
+                    parent["_deleted"] == true,
+                )
+                .await?,
+            );
             if let Some(name) = selected {
-                return Ok(values.into_iter().find(|value| value["field"]["name"] == name).unwrap_or(Value::Null));
+                return Ok(values
+                    .into_iter()
+                    .find(|value| value["field"]["name"] == name)
+                    .unwrap_or(Value::Null));
             }
             if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
-                if order.object()?.try_get("direction")?.enum_name()? == "DESC" { values.reverse(); }
+                if order.object()?.try_get("direction")?.enum_name()? == "DESC" {
+                    values.reverse();
+                }
             }
             connection::slice(ctx, values)
         }
-        ("ProjectV2ItemFieldReviewerValue", "reviewers") => super::review_requests::reviewers(ctx, request, parent["_reviewPull"].as_i64().ok_or_else(missing)?).await,
+        ("ProjectV2ItemFieldReviewerValue", "reviewers") => {
+            super::review_requests::reviewers(
+                ctx,
+                request,
+                parent["_reviewPull"].as_i64().ok_or_else(missing)?,
+            )
+            .await
+        }
         (
             "ProjectV2ItemFieldLabelValue"
             | "ProjectV2ItemFieldPullRequestValue"
@@ -832,13 +1061,26 @@ pub(super) async fn mutation(
                 public: input["public"].as_bool(),
                 closed: input["closed"].as_bool(),
             };
-            let mut updated = store::save(pool, actor, &request.auth.credential(), project.id, &settings)
+            let mut updated = store::save(
+                pool,
+                actor,
+                &request.auth.credential(),
+                project.id,
+                &settings,
+            )
+            .await
+            .map_err(operation)?;
+            if let Some(readme) = input["readme"].as_str() {
+                updated = store::metadata(
+                    pool,
+                    actor,
+                    &request.auth.credential(),
+                    project.id,
+                    Some(readme),
+                    None,
+                )
                 .await
                 .map_err(operation)?;
-            if let Some(readme) = input["readme"].as_str() {
-                updated = store::metadata(pool, actor, &request.auth.credential(), project.id, Some(readme), None)
-                    .await
-                    .map_err(operation)?;
             }
             payload["projectV2"] = project_object(&updated);
         }
@@ -857,7 +1099,9 @@ pub(super) async fn mutation(
             );
         }
         "deleteProjectV2" => {
-            let removed = store::delete(pool, actor, &request.auth.credential(), project.id).await.map_err(operation)?;
+            let removed = store::delete(pool, actor, &request.auth.credential(), project.id)
+                .await
+                .map_err(operation)?;
             let mut object = project_object(&project);
             // Deletion purges the fields and items, so the answer keeps what it removed.
             object["_removed"] = serde_json::to_value(&removed).map_err(unavailable)?;
@@ -880,15 +1124,19 @@ pub(super) async fn mutation(
             );
         }
         "createProjectV2Field" => {
-            let options = input.get("singleSelectOptions").filter(|value| !value.is_null()).map(|value| {
-                super::metadata_mutations::list(value).iter()
-                    .map(|o| store::SelectOption {
-                        name: o["name"].as_str().unwrap_or("").into(),
-                        color: o["color"].as_str().map(str::to_owned),
-                        description: o["description"].as_str().map(str::to_owned),
-                    })
-                    .collect()
-            });
+            let options = input
+                .get("singleSelectOptions")
+                .filter(|value| !value.is_null())
+                .map(|value| {
+                    super::metadata_mutations::list(value)
+                        .iter()
+                        .map(|o| store::SelectOption {
+                            name: o["name"].as_str().unwrap_or("").into(),
+                            color: o["color"].as_str().map(str::to_owned),
+                            description: o["description"].as_str().map(str::to_owned),
+                        })
+                        .collect()
+                });
             let config = &input["iterationConfiguration"];
             let iteration = if config.is_null() {
                 None
@@ -952,9 +1200,15 @@ pub(super) async fn mutation(
                     store::Content::PullRequest(target)
                 }
             };
-            let item = store::add_item(pool, actor, &request.auth.credential(), project.id, &content)
-                .await
-                .map_err(operation)?;
+            let item = store::add_item(
+                pool,
+                actor,
+                &request.auth.credential(),
+                project.id,
+                &content,
+            )
+            .await
+            .map_err(operation)?;
             payload[if field == "addProjectV2DraftIssue" {
                 "projectItem"
             } else {
@@ -1010,9 +1264,15 @@ pub(super) async fn mutation(
             payload["item"] = item_object(&item, request).await?;
         }
         "deleteProjectV2Item" => {
-            store::delete_item(pool, actor, &request.auth.credential(), project.id, id(&input["itemId"], &["PVTI"])?)
-                .await
-                .map_err(operation)?;
+            store::delete_item(
+                pool,
+                actor,
+                &request.auth.credential(),
+                project.id,
+                id(&input["itemId"], &["PVTI"])?,
+            )
+            .await
+            .map_err(operation)?;
             payload["deletedItemId"] = input["itemId"].clone();
         }
         "updateProjectV2ItemPosition" => {

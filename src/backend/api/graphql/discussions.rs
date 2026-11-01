@@ -158,12 +158,30 @@ async fn list(
     request.require_oauth_scope("repo")?;
     connection::validate(ctx)?;
     let pool = &request.state.pool;
-    let (count, _) = store::list(pool, request.auth.user.id, &request.auth.credential(), filter, 0, 0)
-        .await
-        .map_err(operation)?;
+    let (count, _) = store::list(
+        pool,
+        request.auth.user.id,
+        &request.auth.credential(),
+        filter,
+        0,
+        0,
+    )
+    .await
+    .map_err(operation)?;
     let page = connection::Page::new(ctx, if search { count.min(1000) } else { count })?;
-    let rows = if page.limit == 0 { Vec::new() } else {
-        store::list_rows(pool, request.auth.user.id, &request.auth.credential(), filter, page.offset, page.limit).await.map_err(operation)?
+    let rows = if page.limit == 0 {
+        Vec::new()
+    } else {
+        store::list_rows(
+            pool,
+            request.auth.user.id,
+            &request.auth.credential(),
+            filter,
+            page.offset,
+            page.limit,
+        )
+        .await
+        .map_err(operation)?
     };
     let mut nodes = Vec::new();
     for d in rows {
@@ -197,7 +215,9 @@ pub(super) async fn resolve(
     let pool = &request.state.pool;
     match field {
         "repository" => Ok(repository::object(&repo)),
-        "author" => user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request).await,
+        "author" => {
+            user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request).await
+        }
         "answerChosenBy" => match parent["_answerBy"].as_i64() {
             Some(id) => user::retained_author(id, request).await,
             None => Ok(Value::Null),
@@ -224,9 +244,13 @@ pub(super) async fn resolve(
         "discussion" => Ok(object(
             &load(parent["_discussion"].as_i64().ok_or_else(missing)?, request).await?,
         )),
-        "labels" => repository::label_connection(ctx,
+        "labels" => repository::label_connection(
+            ctx,
             store::labels(pool, parent["databaseId"].as_i64().ok_or_else(missing)?)
-                .await.map_err(unavailable)?, "discussions"),
+                .await
+                .map_err(unavailable)?,
+            "discussions",
+        ),
         "comments" | "replies" => {
             connection::validate(ctx)?;
             let (discussion, reply) = if ty == "Discussion" {
@@ -259,7 +283,10 @@ pub(super) async fn resolve(
                 crate::webui::encode_component(&repo.name)
             );
             if ty == "DiscussionComment" {
-                path.push_str(&format!("?comment={0}#discussioncomment-{0}", parent["databaseId"]));
+                path.push_str(&format!(
+                    "?comment={0}#discussioncomment-{0}",
+                    parent["databaseId"]
+                ));
             }
             Ok(json!(url(&path)))
         }
@@ -332,9 +359,16 @@ pub(super) async fn mutation(
             title: string("title")?,
             body: string("body")?,
         };
-        let saved = store::write(pool, request.auth.user.id, &request.auth.credential(), repo, None, &change)
-            .await
-            .map_err(operation)?;
+        let saved = store::write(
+            pool,
+            request.auth.user.id,
+            &request.auth.credential(),
+            repo,
+            None,
+            &change,
+        )
+        .await
+        .map_err(operation)?;
         payload["discussion"] = object(&load(saved, request).await?);
         return Ok(payload);
     }
@@ -403,9 +437,16 @@ pub(super) async fn mutation(
         },
         _ => return Err(missing()),
     };
-    let saved = store::write(pool, request.auth.user.id, &request.auth.credential(), d.repo_id, Some(d.id), &change)
-        .await
-        .map_err(operation)?;
+    let saved = store::write(
+        pool,
+        request.auth.user.id,
+        &request.auth.credential(),
+        d.repo_id,
+        Some(d.id),
+        &change,
+    )
+    .await
+    .map_err(operation)?;
     let key = if field.ends_with("AsAnswer") {
         "discussion"
     } else if is_comment || field == "addDiscussionComment" {

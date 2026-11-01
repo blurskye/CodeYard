@@ -43,15 +43,28 @@ impl CiRuns {
             ));
         }
         let payload = crate::backend::webhooks::emit_repository_dispatch(
-            &self.pool, repo, actor, sender, event_type, client_payload, credential.clone(),
-        ).await;
+            &self.pool,
+            repo,
+            actor,
+            sender,
+            event_type,
+            client_payload,
+            credential.clone(),
+        )
+        .await;
         // No payload means its reads failed, so the dispatch did not happen and must not be
         // acknowledged.
         if payload.is_null() {
             return Err(AdmissionError::Unavailable);
         }
-        self.queue_repository_event(repo, actor, "repository_dispatch", &payload, Some(credential))
-            .await
+        self.queue_repository_event(
+            repo,
+            actor,
+            "repository_dispatch",
+            &payload,
+            Some(credential),
+        )
+        .await
     }
 
     pub(crate) async fn emit_workflow_run(&self, run: &db::models::CiRun, action: &str) {
@@ -81,14 +94,21 @@ impl CiRuns {
         let mut may_chain = true;
         while source.event == "workflow_run" {
             depth += 1;
-            if depth >= 3 { may_chain = false; break; }
+            if depth >= 3 {
+                may_chain = false;
+                break;
+            }
             let Some(id) = source
                 .event_payload
                 .as_ref()
                 .and_then(|payload| payload["workflow_run"]["id"].as_i64())
-            else { may_chain = false; break; };
+            else {
+                may_chain = false;
+                break;
+            };
             let Some(previous) = db::ci::get_ci_run_by_id(&self.pool, repo.id, id).await? else {
-                may_chain = false; break;
+                may_chain = false;
+                break;
             };
             source = previous;
         }
@@ -101,29 +121,42 @@ impl CiRuns {
             .ok_or(AdmissionError::Unavailable)?;
         let metadata = db::action_runs::metadata(&self.pool, repo.id, &[run.id])
             .await?
-            .into_iter().next().ok_or(AdmissionError::Unavailable)?;
+            .into_iter()
+            .next()
+            .ok_or(AdmissionError::Unavailable)?;
         let repository = payloads::repository(&repo, &owner);
-        let head_repository = if !run.is_fork { repository.clone() } else {
+        let head_repository = if !run.is_fork {
+            repository.clone()
+        } else {
             match metadata.head_repository.as_ref() {
-                Some(snapshot) => match db::repositories::records::get_repository_by_id(&self.pool, snapshot.0.id).await.ok().flatten() {
-                    Some(head) if head.id == repo.id => repository.clone(),
-                    Some(head) if !head.is_private => match db::ci::ci_repository_owner(&self.pool, head.id).await.ok().flatten() {
-                        Some(owner) => payloads::repository(&head, &owner),
-                        None => Value::Null,
-                    },
-                    _ => Value::Null,
-                },
+                Some(snapshot) => {
+                    match db::repositories::records::get_repository_by_id(&self.pool, snapshot.0.id)
+                        .await
+                        .ok()
+                        .flatten()
+                    {
+                        Some(head) if head.id == repo.id => repository.clone(),
+                        Some(head) if !head.is_private => {
+                            match db::ci::ci_repository_owner(&self.pool, head.id)
+                                .await
+                                .ok()
+                                .flatten()
+                            {
+                                Some(owner) => payloads::repository(&head, &owner),
+                                None => Value::Null,
+                            }
+                        }
+                        _ => Value::Null,
+                    }
+                }
                 None => Value::Null,
             }
         };
         let head_commit = match run.head_sha.as_deref() {
-            Some(sha) => store
-                .commit(sha)
-                .await
-                .map_or(Value::Null, |mut commit| {
-                    commit.message = payloads::bounded_text(&commit.message, 4096);
-                    payloads::simple_commit(&commit)
-                }),
+            Some(sha) => store.commit(sha).await.map_or(Value::Null, |mut commit| {
+                commit.message = payloads::bounded_text(&commit.message, 4096);
+                payloads::simple_commit(&commit)
+            }),
             None => Value::Null,
         };
         let workflow_document =
@@ -133,10 +166,18 @@ impl CiRuns {
                     payloads::action_workflow(&workflow, &owner, &repo.name)
                 });
         let pull = match run.pull_request_id {
-            Some(id) => db::pull_requests::records::get_pull_request_by_id(&self.pool, id).await?.filter(|pull| pull.repo_id == repo.id),
+            Some(id) => db::pull_requests::records::get_pull_request_by_id(&self.pool, id)
+                .await?
+                .filter(|pull| pull.repo_id == repo.id),
             None => None,
         };
-        let pull_requests = payloads::action_run_pull_requests(run, pull.as_ref(), &repository, &head_repository, false);
+        let pull_requests = payloads::action_run_pull_requests(
+            run,
+            pull.as_ref(),
+            &repository,
+            &head_repository,
+            false,
+        );
         let mut document = payloads::action_run(
             run,
             &owner,
@@ -150,7 +191,11 @@ impl CiRuns {
         if document["run_started_at"].is_null() {
             document["run_started_at"] = document["created_at"].clone();
         }
-        document["name"] = workflow_document.get("name").filter(|name| name.is_string()).cloned().unwrap_or_else(|| serde_json::json!(run.workflow_path));
+        document["name"] = workflow_document
+            .get("name")
+            .filter(|name| name.is_string())
+            .cloned()
+            .unwrap_or_else(|| serde_json::json!(run.workflow_path));
         // A rerun keeps the first attempt's actor; whoever reran it is the triggering actor, as
         // in the REST document.
         let first = match run.workflow_run_id.filter(|id| *id != run.id) {
@@ -187,8 +232,14 @@ impl CiRuns {
             },
         )
         .await;
-        anyhow::ensure!(!payload.is_null(), "workflow run payload could not be emitted");
-        if may_chain { self.queue_repository_event(&repo, actor, "workflow_run", &payload, None).await?; }
+        anyhow::ensure!(
+            !payload.is_null(),
+            "workflow run payload could not be emitted"
+        );
+        if may_chain {
+            self.queue_repository_event(&repo, actor, "workflow_run", &payload, None)
+                .await?;
+        }
         Ok(())
     }
 

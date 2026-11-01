@@ -37,7 +37,10 @@ impl IssueMetadata<'_> {
         let mut ids = Vec::new();
         for &id in self.assignees {
             if !ids.contains(&id) {
-                anyhow::ensure!(ids.len() < crate::backend::db::assignees::MAX_ASSIGNEES as usize, crate::backend::db::assignees::AssignmentRefusal::TooMany);
+                anyhow::ensure!(
+                    ids.len() < crate::backend::db::assignees::MAX_ASSIGNEES as usize,
+                    crate::backend::db::assignees::AssignmentRefusal::TooMany
+                );
                 ids.push(id);
             }
         }
@@ -57,8 +60,12 @@ pub struct OwnedIssueMetadata {
 impl OwnedIssueMetadata {
     pub fn borrowed(&self) -> IssueMetadata<'_> {
         IssueMetadata {
-            parent: self.parent, parent_repository: None, labels: &self.labels, assignees: &self.assignees,
-            milestone: self.milestone, issue_type: self.issue_type,
+            parent: self.parent,
+            parent_repository: None,
+            labels: &self.labels,
+            assignees: &self.assignees,
+            milestone: self.milestone,
+            issue_type: self.issue_type,
         }
     }
 }

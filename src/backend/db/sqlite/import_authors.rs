@@ -16,12 +16,19 @@ pub async fn record(
     for authors in crate::backend::db::import_authors::identities(authors).chunks(200) {
         let mut insert = sqlx::QueryBuilder::<sqlx::Sqlite>::new("INSERT INTO repository_import_authors(repo_id,identity_hash,author_name,author_email) ");
         insert.push_values(authors, |mut row, (hash, name, email)| {
-            row.push_bind(repo).push_bind(hash).push_bind(*name).push_bind(*email);
+            row.push_bind(repo)
+                .push_bind(hash)
+                .push_bind(*name)
+                .push_bind(*email);
         });
         insert.push(" ON CONFLICT(repo_id,identity_hash) DO NOTHING");
         insert.build().execute(&mut *tx).await?;
     }
-    let rows = sqlx::query_as("SELECT * FROM repository_import_authors WHERE repo_id=$1 ORDER BY id").bind(repo).fetch_all(&mut *tx).await?;
+    let rows =
+        sqlx::query_as("SELECT * FROM repository_import_authors WHERE repo_id=$1 ORDER BY id")
+            .bind(repo)
+            .fetch_all(&mut *tx)
+            .await?;
     tx.commit().await?;
     Ok(rows)
 }

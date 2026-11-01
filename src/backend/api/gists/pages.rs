@@ -4,31 +4,67 @@ use anyhow::Result;
 /// Listed metadata is reused; storage still owns placement checks and pending-write recovery.
 async fn cards(ctx: &PageContext, entries: Vec<db::gists::Gist>) -> Result<Vec<view::Card>> {
     use futures_util::{stream, StreamExt};
-    let owners = db::users::accounts::get_users_by_ids(&ctx.state.pool, &entries.iter().map(|gist| gist.owner_id).collect::<Vec<_>>()).await?
-        .into_iter().map(|user| (user.id, user.username)).collect::<std::collections::HashMap<_, _>>();
-    let repositories = db::gists::git_repositories(&ctx.state.pool, &entries.iter().map(|gist| gist.repo_id).collect::<Vec<_>>()).await?
-        .into_iter().map(|repo| (repo.id, repo)).collect::<std::collections::HashMap<_, _>>();
+    let owners = db::users::accounts::get_users_by_ids(
+        &ctx.state.pool,
+        &entries.iter().map(|gist| gist.owner_id).collect::<Vec<_>>(),
+    )
+    .await?
+    .into_iter()
+    .map(|user| (user.id, user.username))
+    .collect::<std::collections::HashMap<_, _>>();
+    let repositories = db::gists::git_repositories(
+        &ctx.state.pool,
+        &entries.iter().map(|gist| gist.repo_id).collect::<Vec<_>>(),
+    )
+    .await?
+    .into_iter()
+    .map(|repo| (repo.id, repo))
+    .collect::<std::collections::HashMap<_, _>>();
     let (owners, repositories) = (&owners, &repositories);
-    let results = stream::iter(entries).map(|entry| async move {
-        let (Some(owner), Some(repository)) = (owners.get(&entry.owner_id), repositories.get(&entry.repo_id)) else { return Ok::<_, anyhow::Error>(None); };
-        let snapshot = repo_store(repository, ctx.state.cluster.as_ref()).gist_snapshot(&ctx.state.pool, entry.repo_id, None).await;
-        let (files, unavailable) = match snapshot {
-            Ok(snapshot) => (snapshot.files, false),
-            Err(failure) => match refusal(&failure.clone().into()).0 {
-                StatusCode::NOT_FOUND => return Ok(None),
-                StatusCode::SERVICE_UNAVAILABLE => (Vec::new(), true),
-                _ => return Err(failure.into()),
-            }
-        };
-        Ok(Some(view::Card {
-            id: entry.id, owner: owner.clone(), description: entry.description, public: entry.is_public,
-            filenames: files.iter().take(5).map(|entry| entry.path.clone()).collect(),
-            file_count: files.len(), files_unavailable: unavailable, comments: entry.comments,
-            updated_at: entry.updated_at.to_rfc3339(),
-        }))
-    }).buffered(4).collect::<Vec<_>>().await;
+    let results = stream::iter(entries)
+        .map(|entry| async move {
+            let (Some(owner), Some(repository)) = (
+                owners.get(&entry.owner_id),
+                repositories.get(&entry.repo_id),
+            ) else {
+                return Ok::<_, anyhow::Error>(None);
+            };
+            let snapshot = repo_store(repository, ctx.state.cluster.as_ref())
+                .gist_snapshot(&ctx.state.pool, entry.repo_id, None)
+                .await;
+            let (files, unavailable) = match snapshot {
+                Ok(snapshot) => (snapshot.files, false),
+                Err(failure) => match refusal(&failure.clone().into()).0 {
+                    StatusCode::NOT_FOUND => return Ok(None),
+                    StatusCode::SERVICE_UNAVAILABLE => (Vec::new(), true),
+                    _ => return Err(failure.into()),
+                },
+            };
+            Ok(Some(view::Card {
+                id: entry.id,
+                owner: owner.clone(),
+                description: entry.description,
+                public: entry.is_public,
+                filenames: files
+                    .iter()
+                    .take(5)
+                    .map(|entry| entry.path.clone())
+                    .collect(),
+                file_count: files.len(),
+                files_unavailable: unavailable,
+                comments: entry.comments,
+                updated_at: entry.updated_at.to_rfc3339(),
+            }))
+        })
+        .buffered(4)
+        .collect::<Vec<_>>()
+        .await;
     let mut cards = Vec::new();
-    for result in results { if let Some(card) = result? { cards.push(card); } }
+    for result in results {
+        if let Some(card) = result? {
+            cards.push(card);
+        }
+    }
     Ok(cards)
 }
 async fn list_model(ctx: &PageContext) -> Result<view::Listing> {
@@ -126,17 +162,34 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
     for entry in &loaded.snapshot.files {
         let size = entry.size.unwrap_or(0);
         let length = remaining.min(64 * 1024).min(size);
-        let mut bytes = if length == 0 { Vec::new() } else {
-            store.blob_range(&loaded.snapshot.sha, &entry.path, crate::backend::repositories::store::BlobRange::Window { offset: 0, length: length as u64 }).await?.bytes
+        let mut bytes = if length == 0 {
+            Vec::new()
+        } else {
+            store
+                .blob_range(
+                    &loaded.snapshot.sha,
+                    &entry.path,
+                    crate::backend::repositories::store::BlobRange::Window {
+                        offset: 0,
+                        length: length as u64,
+                    },
+                )
+                .await?
+                .bytes
         };
         remaining -= bytes.len();
         if bytes.len() < size {
             if let Err(error) = std::str::from_utf8(&bytes) {
-                if error.error_len().is_none() { bytes.truncate(error.valid_up_to()); }
+                if error.error_len().is_none() {
+                    bytes.truncate(error.valid_up_to());
+                }
             }
         }
-        let content = (length > 0 || size == 0).then(|| domain::text_preview(&bytes, length).map(str::to_owned)).flatten();
-        let truncated = content.as_ref().is_some_and(|text| text.len() < size) || (length == 0 && size > 0);
+        let content = (length > 0 || size == 0)
+            .then(|| domain::text_preview(&bytes, length).map(str::to_owned))
+            .flatten();
+        let truncated =
+            content.as_ref().is_some_and(|text| text.len() < size) || (length == 0 && size > 0);
         files.push(view::File {
             filename: entry.path.clone(),
             content,
@@ -164,7 +217,14 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
     let history_more = history.len() > PAGE_SIZE;
     history.truncate(PAGE_SIZE);
     let mut revisions = Vec::new();
-    let authors = crate::backend::repositories::reads::commit_authors(&ctx.state.pool, &history.iter().map(|revision| revision.author_email.clone()).collect::<Vec<_>>()).await?;
+    let authors = crate::backend::repositories::reads::commit_authors(
+        &ctx.state.pool,
+        &history
+            .iter()
+            .map(|revision| revision.author_email.clone())
+            .collect::<Vec<_>>(),
+    )
+    .await?;
     for revision in history {
         let author = authors.get(&revision.author_email);
         let timestamp = chrono::DateTime::from_timestamp(revision.timestamp, 0)
@@ -451,16 +511,15 @@ pub(super) async fn raw(
     if crate::backend::api::http::static_files::not_modified(&ctx.headers, &etag) {
         return ctx.with_cookie((StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response());
     }
-    let (range, partial) =
-        match crate::backend::api::http::range::requested(&ctx.headers, None) {
-            Ok(range) => range,
-            Err(()) => {
-                return ctx.error(
-                    StatusCode::RANGE_NOT_SATISFIABLE,
-                    "Byte range is not satisfiable.",
-                )
-            }
-        };
+    let (range, partial) = match crate::backend::api::http::range::requested(&ctx.headers, None) {
+        Ok(range) => range,
+        Err(()) => {
+            return ctx.error(
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                "Byte range is not satisfiable.",
+            )
+        }
+    };
     let Some(permit) =
         crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await
     else {

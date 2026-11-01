@@ -11,9 +11,13 @@ pub async fn issue(
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
     let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM ci_runs WHERE id=$1")
-        .bind(run_id).fetch_one(&mut *tx).await?;
+        .bind(run_id)
+        .fetch_one(&mut *tx)
+        .await?;
     sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR SHARE")
-        .bind(repo).fetch_one(&mut *tx).await?;
+        .bind(repo)
+        .fetch_one(&mut *tx)
+        .await?;
     let (repo, fork): (i64, bool) = sqlx::query_as("SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested FOR UPDATE")
         .bind(run_id).bind(worker).fetch_one(&mut *tx).await?;
     ensure!(

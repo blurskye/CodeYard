@@ -72,24 +72,41 @@ impl Value {
     }
 }
 
-struct ExecutionLimits { deadline: std::time::Instant, cancel: tokio::sync::watch::Receiver<bool> }
+struct ExecutionLimits {
+    deadline: std::time::Instant,
+    cancel: tokio::sync::watch::Receiver<bool>,
+}
 thread_local! {
     static EXECUTION_LIMITS: std::cell::RefCell<Option<ExecutionLimits>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Used only inside a bounded blocking evaluation, never across an async suspension.
-pub(crate) fn with_execution_limits<T>(deadline: std::time::Instant, cancel: tokio::sync::watch::Receiver<bool>, evaluate: impl FnOnce() -> T) -> T {
+pub(crate) fn with_execution_limits<T>(
+    deadline: std::time::Instant,
+    cancel: tokio::sync::watch::Receiver<bool>,
+    evaluate: impl FnOnce() -> T,
+) -> T {
     struct Restore(Option<ExecutionLimits>);
     impl Drop for Restore {
-        fn drop(&mut self) { EXECUTION_LIMITS.with(|limits| { limits.replace(self.0.take()); }); }
+        fn drop(&mut self) {
+            EXECUTION_LIMITS.with(|limits| {
+                limits.replace(self.0.take());
+            });
+        }
     }
-    let _restore = Restore(EXECUTION_LIMITS.with(|limits| limits.replace(Some(ExecutionLimits { deadline, cancel }))));
+    let _restore = Restore(
+        EXECUTION_LIMITS.with(|limits| limits.replace(Some(ExecutionLimits { deadline, cancel }))),
+    );
     evaluate()
 }
 
 pub(super) fn execution_expired(deadline: std::time::Instant) -> bool {
-    std::time::Instant::now() >= deadline || EXECUTION_LIMITS.with(|limits| limits.borrow().as_ref()
-        .is_some_and(|limits| std::time::Instant::now() >= limits.deadline || *limits.cancel.borrow()))
+    std::time::Instant::now() >= deadline
+        || EXECUTION_LIMITS.with(|limits| {
+            limits.borrow().as_ref().is_some_and(|limits| {
+                std::time::Instant::now() >= limits.deadline || *limits.cancel.borrow()
+            })
+        })
 }
 
 /// The named contexts an expression can read. Lookups ignore case.
@@ -158,7 +175,12 @@ pub fn interpolate(template: &str, contexts: &Contexts, status: Status) -> Resul
 }
 
 /// Interpolates without ever accumulating more than the caller's text budget.
-pub fn interpolate_bounded(template: &str, contexts: &Contexts, status: Status, limit: usize) -> Result<Value, Error> {
+pub fn interpolate_bounded(
+    template: &str,
+    contexts: &Contexts,
+    status: Status,
+    limit: usize,
+) -> Result<Value, Error> {
     let mut remaining = template;
     let mut output = String::new();
     while let Some(start) = remaining.find("${{") {
@@ -210,9 +232,7 @@ pub(crate) fn expression_end(inner: &str) -> Result<usize, Error> {
 
 fn lookup<'a, T>(map: &'a BTreeMap<String, T>, key: &str) -> Option<&'a T> {
     let key = fold(key);
-    map.iter()
-        .find(|(k, _)| fold(k) == key)
-        .map(|(_, v)| v)
+    map.iter().find(|(k, _)| fold(k) == key).map(|(_, v)| v)
 }
 
 // OrdinalIgnoreCase uses simple Unicode case folding, not culture-sensitive comparison.
@@ -225,7 +245,11 @@ fn fold(value: &str) -> String {
             let simple = if upper.next().is_some() { c } else { first };
             let mut lower = simple.to_lowercase();
             let first = lower.next().unwrap_or(simple);
-            if lower.next().is_none() { first } else { simple }
+            if lower.next().is_none() {
+                first
+            } else {
+                simple
+            }
         })
         .collect()
 }
@@ -311,7 +335,9 @@ fn json_text(value: &Value) -> Result<String, Error> {
             self.0.extend_from_slice(bytes);
             Ok(bytes.len())
         }
-        fn flush(&mut self) -> std::io::Result<()> { Ok(()) }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
     fn write(value: &Value, out: &mut Bounded, depth: usize) -> std::io::Result<()> {
         use std::io::Write;
@@ -320,23 +346,31 @@ fn json_text(value: &Value) -> Result<String, Error> {
             Value::Array(items) => {
                 out.write_all(b"[")?;
                 for (index, item) in items.iter().enumerate() {
-                    if index > 0 { out.write_all(b",")?; }
+                    if index > 0 {
+                        out.write_all(b",")?;
+                    }
                     write!(out, "\n{}", "  ".repeat(depth + 1))?;
                     write(item, out, depth + 1)?;
                 }
-                if !items.is_empty() { write!(out, "\n{}", "  ".repeat(depth))?; }
+                if !items.is_empty() {
+                    write!(out, "\n{}", "  ".repeat(depth))?;
+                }
                 out.write_all(b"]")
             }
             Value::Object(items) => {
                 out.write_all(b"{")?;
                 for (index, (key, item)) in items.iter().enumerate() {
-                    if index > 0 { out.write_all(b",")?; }
+                    if index > 0 {
+                        out.write_all(b",")?;
+                    }
                     write!(out, "\n{}", "  ".repeat(depth + 1))?;
                     serde_json::to_writer(&mut *out, key).map_err(std::io::Error::other)?;
                     out.write_all(b": ")?;
                     write(item, out, depth + 1)?;
                 }
-                if !items.is_empty() { write!(out, "\n{}", "  ".repeat(depth))?; }
+                if !items.is_empty() {
+                    write!(out, "\n{}", "  ".repeat(depth))?;
+                }
                 out.write_all(b"}")
             }
             Value::Null => out.write_all(b"null"),

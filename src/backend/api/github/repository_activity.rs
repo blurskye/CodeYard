@@ -20,12 +20,17 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let page = activity::page(&state.pool, repo.id, &input, auth.as_ref().map(|auth| auth.user.id))
-        .await
-        .map_err(|error| match error.downcast_ref::<InvalidQuery>() {
-            Some(invalid) => Error::invalid_simple(invalid.to_string()),
-            None => Error::unavailable(error),
-        })?;
+    let page = activity::page(
+        &state.pool,
+        repo.id,
+        &input,
+        auth.as_ref().map(|auth| auth.user.id),
+    )
+    .await
+    .map_err(|error| match error.downcast_ref::<InvalidQuery>() {
+        Some(invalid) => Error::invalid_simple(invalid.to_string()),
+        None => Error::unavailable(error),
+    })?;
     let mut links = Vec::new();
     for (key, relation, cursor) in [
         ("before", "prev", page.previous.as_deref()),

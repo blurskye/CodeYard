@@ -24,14 +24,23 @@ impl CorePeer {
     }
 
     pub async fn resolved_address(&self) -> Result<NodeAddress> {
-        let Some(host) = &self.target else { return Ok(self.address.clone()); };
+        let Some(host) = &self.target else {
+            return Ok(self.address.clone());
+        };
         let target = host.strip_prefix("tcp://").unwrap_or(host);
-        let addresses = tokio::time::timeout(std::time::Duration::from_secs(5), resolve(target)).await??;
+        let addresses =
+            tokio::time::timeout(std::time::Duration::from_secs(5), resolve(target)).await??;
         ensure!(!addresses.is_empty(), "core hostname has no addresses");
         Ok(if host.starts_with("tcp://") {
-            NodeAddress { tcp: addresses, ..Default::default() }
+            NodeAddress {
+                tcp: addresses,
+                ..Default::default()
+            }
         } else {
-            NodeAddress { addrs: addresses, ..Default::default() }
+            NodeAddress {
+                addrs: addresses,
+                ..Default::default()
+            }
         })
     }
 
@@ -79,11 +88,18 @@ pub async fn worker_context(
     for (public_key, host) in &settings.peers {
         // `tcp://host:port` selects TCP for this core node; any other entry uses iroh.
         let target = host.strip_prefix("tcp://").unwrap_or(host);
-        if !target.rsplit_once(':').is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok_and(|port| port > 0)) {
+        if !target.rsplit_once(':').is_some_and(|(host, port)| {
+            !host.is_empty() && port.parse::<u16>().is_ok_and(|port| port > 0)
+        }) {
             tracing::warn!(host, "invalid configured core address; expected host:port");
             continue;
         }
-        let addresses = match tokio::time::timeout(std::time::Duration::from_secs(5), resolve(target)).await {
+        let addresses = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            resolve(target),
+        )
+        .await
+        {
             Ok(Ok(addresses)) if !addresses.is_empty() => addresses,
             result => {
                 tracing::warn!(host, error = ?result.err(), "core address unavailable; trying other peers");
@@ -183,7 +199,8 @@ mod tests {
         let (_, peers) = worker_context(root.path(), settings).await.unwrap();
         assert_eq!(peers.len(), 1);
         let ticket =
-            super::super::JoinTicket::new(peers[0].node().unwrap(), peers[0].address.clone()).unwrap();
+            super::super::JoinTicket::new(peers[0].node().unwrap(), peers[0].address.clone())
+                .unwrap();
         save_core(root.path(), &ticket).unwrap();
         let peer: CorePeer =
             serde_json::from_slice(&std::fs::read(root.path().join("cluster-peer.json")).unwrap())
@@ -194,7 +211,8 @@ mod tests {
         let replacement = super::super::JoinTicket::new(
             super::super::NodeKey::generate().public_key(),
             ticket.address.clone(),
-        ).unwrap();
+        )
+        .unwrap();
         save_core(root.path(), &replacement).unwrap();
         use std::io::Read;
         let mut previous = Vec::new();

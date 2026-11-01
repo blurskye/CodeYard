@@ -13,9 +13,18 @@ pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) 
     for entry in &loaded.snapshot.files {
         let remaining = 1024 * 1024;
         let content = if contents {
-            let mut bytes = store.blob_range(&loaded.snapshot.sha, &entry.path, crate::backend::repositories::store::BlobRange::Window {
-                offset: 0, length: (remaining + 3) as u64,
-            }).await.map_err(failure_store)?.bytes;
+            let mut bytes = store
+                .blob_range(
+                    &loaded.snapshot.sha,
+                    &entry.path,
+                    crate::backend::repositories::store::BlobRange::Window {
+                        offset: 0,
+                        length: (remaining + 3) as u64,
+                    },
+                )
+                .await
+                .map_err(failure_store)?
+                .bytes;
             if let Err(error) = std::str::from_utf8(&bytes) {
                 if error.error_len().is_none() {
                     bytes.truncate(error.valid_up_to());
@@ -95,15 +104,22 @@ pub(super) async fn history(
         )
         .await
         .map_err(failure_store)?;
-    let emails = revisions.iter().map(|revision| revision.author_email.clone()).collect::<Vec<_>>();
+    let emails = revisions
+        .iter()
+        .map(|revision| revision.author_email.clone())
+        .collect::<Vec<_>>();
     let authors = crate::backend::repositories::reads::commit_authors(&state.pool, &emails)
         .await
         .map_err(Error::unavailable)?;
     let mut entries = Vec::new();
     for revision in revisions {
         entries.push(
-            payloads::gist_revision(&loaded.gist.id, &revision, authors.get(&revision.author_email))
-                .map_err(failure_store)?,
+            payloads::gist_revision(
+                &loaded.gist.id,
+                &revision,
+                authors.get(&revision.author_email),
+            )
+            .map_err(failure_store)?,
         );
     }
     Ok(entries)

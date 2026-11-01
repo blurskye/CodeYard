@@ -141,9 +141,10 @@ async fn repository_filters_share_native_search_semantics_and_escape_literals() 
                     .unwrap();
             assert_eq!(count, 1, "owned {pg} {q}");
             assert_eq!(owned[0].id, r.id);
-            let (shared, count) = records::list_shared_repository_page(f.pool(), reader, q, true, 30, 0)
-                .await
-                .unwrap();
+            let (shared, count) =
+                records::list_shared_repository_page(f.pool(), reader, q, true, 30, 0)
+                    .await
+                    .unwrap();
             assert_eq!(count, 1, "shared {pg} {q}");
             assert_eq!(shared[0].repository.id, r.id);
             let public = records::search_public_repositories(
@@ -320,10 +321,28 @@ async fn activity_scan_exposes_exhaustion_even_without_visible_rows() {
         let (rows, exhausted) = (batch.rows, batch.scanned < 2);
         assert!(rows.is_empty() && exhausted);
         let session = uuid::Uuid::new_v4().to_string();
-        db::users::sessions::create_session(f.pool(), &session, owner, None, None, chrono::Utc::now() + chrono::Duration::days(1)).await.unwrap();
-        let batch = db::activity::list_user_activity(f.pool(), owner, Some(db::activity::ActivityViewer { user: owner, session: &session }), 10, 0)
-            .await
-            .unwrap();
+        db::users::sessions::create_session(
+            f.pool(),
+            &session,
+            owner,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
+        let batch = db::activity::list_user_activity(
+            f.pool(),
+            owner,
+            Some(db::activity::ActivityViewer {
+                user: owner,
+                session: &session,
+            }),
+            10,
+            0,
+        )
+        .await
+        .unwrap();
         let (rows, exhausted) = (batch.rows, batch.scanned < 10);
         assert_eq!(rows.len(), 3);
         assert!(exhausted);

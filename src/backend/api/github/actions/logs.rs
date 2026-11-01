@@ -108,9 +108,10 @@ async fn download(
     if let Some(token) = query.codeyard_download {
         // A snapshot holds up to 32 MiB; the shared download slots bound how many are loaded,
         // encoded and sent at once, and the slot is held until the client has the last byte.
-        let permit = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
-            .await
-            .ok_or_else(|| Error::unavailable(()))?;
+        let permit =
+            crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+                .await
+                .ok_or_else(|| Error::unavailable(()))?;
         let snapshot = action_logs::read(&state.pool, &runtime::token_hash(&token), resource)
             .await
             .map_err(Error::unavailable)?
@@ -151,12 +152,21 @@ async fn download(
             {
                 return Err(Error::missing());
             }
-            (repo, db::credentials::Actor::from((user.id, session::extract_session_id(&headers).unwrap_or_default())))
+            (
+                repo,
+                db::credentials::Actor::from((
+                    user.id,
+                    session::extract_session_id(&headers).unwrap_or_default(),
+                )),
+            )
         } else {
             let (repo, authentication) = repository(&state, &headers, owner, name, false).await?;
             (
                 repo,
-                authentication.as_ref().ok_or_else(auth::required)?.database_actor(),
+                authentication
+                    .as_ref()
+                    .ok_or_else(auth::required)?
+                    .database_actor(),
             )
         };
     if query.after.is_some() && params.contains_key("job_id") {
@@ -168,7 +178,9 @@ async fn download(
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         let step = if params.contains_key("step_number") {
-            let position: usize = params["step_number"].parse().map_err(|_| Error::missing())?;
+            let position: usize = params["step_number"]
+                .parse()
+                .map_err(|_| Error::missing())?;
             let steps = db::action_jobs::steps(&state.pool, repo.id, job.id)
                 .await
                 .map_err(Error::unavailable)?;

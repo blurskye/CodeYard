@@ -18,13 +18,17 @@ pub enum InvalidValue {
 
 pub fn valid_name(name: &str) -> bool {
     let mut bytes = name.bytes();
-    !name.is_empty() && name.len() <= MAX_NAME_BYTES
-        && bytes.next().is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
+    !name.is_empty()
+        && name.len() <= MAX_NAME_BYTES
+        && bytes
+            .next()
+            .is_some_and(|byte| byte.is_ascii_alphabetic() || byte == b'_')
         && bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
 }
 
 pub fn reserved_name(name: &str) -> bool {
-    name.get(.."GITHUB_".len()).is_some_and(|prefix| prefix.eq_ignore_ascii_case("GITHUB_"))
+    name.get(.."GITHUB_".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("GITHUB_"))
 }
 
 pub fn validate(name: &str, value: &str) -> Result<(), InvalidValue> {

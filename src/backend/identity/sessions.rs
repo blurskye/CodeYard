@@ -45,7 +45,10 @@ pub async fn issue_authenticated_session<'a>(
         context.fresh_id,
         user_id,
         credential,
-        stored::SessionClient { user_agent: context.user_agent, ip_address: context.client },
+        stored::SessionClient {
+            user_agent: context.user_agent,
+            ip_address: context.client,
+        },
         context.expires_at,
     )
     .await

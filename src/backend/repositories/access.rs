@@ -15,10 +15,18 @@ pub(crate) async fn credential_user(
     use db::users::accounts::{AccountRestricted, OwnedAccountCredential};
     let user = match &actor.credential {
         None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
-        Some(OwnedAccountCredential::Session(session)) => db::users::sessions::get_session_user(pool, session).await?,
-        Some(OwnedAccountCredential::Token(token_id, _)) => db::users::tokens::token_user(pool, *token_id, write).await?,
-    }.ok_or(AccountRestricted)?;
-    anyhow::ensure!(user.id == actor.user_id && !user.is_banned && !user.must_change_password, AccountRestricted);
+        Some(OwnedAccountCredential::Session(session)) => {
+            db::users::sessions::get_session_user(pool, session).await?
+        }
+        Some(OwnedAccountCredential::Token(token_id, _)) => {
+            db::users::tokens::token_user(pool, *token_id, write).await?
+        }
+    }
+    .ok_or(AccountRestricted)?;
+    anyhow::ensure!(
+        user.id == actor.user_id && !user.is_banned && !user.must_change_password,
+        AccountRestricted
+    );
     Ok(user)
 }
 
@@ -29,16 +37,26 @@ pub(crate) async fn check_publication_actor(
     repository: &Repository,
 ) -> Result<()> {
     use db::users::accounts::OwnedAccountCredential;
-    let repository = db::repositories::records::get_repository_by_id(pool, repository.id).await?
+    let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
+        .await?
         .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
     let user = match &actor.credential {
         None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
-        Some(OwnedAccountCredential::Session(session)) => db::users::sessions::get_session_user(pool, session).await?,
-        Some(OwnedAccountCredential::Token(token_id, _)) => Some(super::git_sessions::ReceiveCredential::Token(*token_id)
-            .authorize(pool, &repository, true).await?.0),
-    }.ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
-    anyhow::ensure!(user.id == actor.user_id && can_write(pool, &user, &repository).await?,
-        db::users::accounts::AccountRestricted);
+        Some(OwnedAccountCredential::Session(session)) => {
+            db::users::sessions::get_session_user(pool, session).await?
+        }
+        Some(OwnedAccountCredential::Token(token_id, _)) => Some(
+            super::git_sessions::ReceiveCredential::Token(*token_id)
+                .authorize(pool, &repository, true)
+                .await?
+                .0,
+        ),
+    }
+    .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
+    anyhow::ensure!(
+        user.id == actor.user_id && can_write(pool, &user, &repository).await?,
+        db::users::accounts::AccountRestricted
+    );
     Ok(())
 }
 
@@ -136,8 +154,17 @@ pub async fn author_association(
     })
 }
 
-pub async fn author_associations(pool: &db::DbPool, repository: &Repository, users: &[i64]) -> Result<std::collections::HashMap<i64, String>> {
-    Ok(db::repositories::access::author_associations(pool, repository.id, users).await?.into_iter().collect())
+pub async fn author_associations(
+    pool: &db::DbPool,
+    repository: &Repository,
+    users: &[i64],
+) -> Result<std::collections::HashMap<i64, String>> {
+    Ok(
+        db::repositories::access::author_associations(pool, repository.id, users)
+            .await?
+            .into_iter()
+            .collect(),
+    )
 }
 
 pub async fn can_admin(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
@@ -339,10 +366,12 @@ pub async fn change_collaborator(
         pool, actor, repo_id, username, permission,
     )
     .await
-    .map_err(|error| if error.is::<db::users::accounts::AccountRestricted>() {
-        AccessError::NotFound
-    } else {
-        AccessError::Unavailable
+    .map_err(|error| {
+        if error.is::<db::users::accounts::AccountRestricted>() {
+            AccessError::NotFound
+        } else {
+            AccessError::Unavailable
+        }
     })?;
     match change {
         CollaboratorChange::Applied(user) => Ok(*user),

@@ -175,7 +175,8 @@ impl ListParams {
         {
             return Err("Search text is too long");
         }
-        let unread_only = !matches!(view, NotificationView::Done) && text("unread_only").is_some_and(|value| value == "1" || value == "true");
+        let unread_only = !matches!(view, NotificationView::Done)
+            && text("unread_only").is_some_and(|value| value == "1" || value == "true");
         let before = decode_cursor(fields.get("before").map(String::as_str))
             .map_err(|()| "Invalid notification cursor")?;
         Ok(Self {
@@ -514,7 +515,8 @@ pub(crate) async fn native_action(
         Err(message) => return ctx.error(StatusCode::BAD_REQUEST, message),
     };
     let action = action(&params);
-    let opening = matches!(&action, NotificationInboxAction::Read { .. }) && form.get("open").is_some_and(|value| value == "yes");
+    let opening = matches!(&action, NotificationInboxAction::Read { .. })
+        && form.get("open").is_some_and(|value| value == "yes");
     // A bulk change can empty the page it came from, so it returns to the first page.
     let before = if matches!(action, NotificationInboxAction::DoneAll { .. }) {
         None
@@ -540,12 +542,22 @@ pub(crate) async fn native_action(
     match result {
         Ok(inbox) if !must_match || !inbox.notifications.is_empty() => {
             if opening {
-                match inbox.notifications.first().and_then(|notification| notification.link.as_deref()).filter(|link| crate::webui::navigation::safe_page_target(link)) {
+                match inbox
+                    .notifications
+                    .first()
+                    .and_then(|notification| notification.link.as_deref())
+                    .filter(|link| crate::webui::navigation::safe_page_target(link))
+                {
                     Some(link) => ctx.redirect(link),
-                    None => ctx.error(StatusCode::NOT_FOUND, "The notification destination is no longer available."),
+                    None => ctx.error(
+                        StatusCode::NOT_FOUND,
+                        "The notification destination is no longer available.",
+                    ),
                 }
-            } else { ctx.redirect(&target) }
-        },
+            } else {
+                ctx.redirect(&target)
+            }
+        }
         Ok(_) => ctx.error(
             StatusCode::NOT_FOUND,
             "Notification not found for your account.",

@@ -189,16 +189,29 @@ fn remove_absent_branches(repo: &Repository) -> Result<()> {
                 .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
             && !active.contains(name)
         {
-            let expected = reference.target().context("Publication ref must be direct")?;
+            let expected = reference
+                .target()
+                .context("Publication ref must be direct")?;
             deletes.push_str(&format!("delete {name} {expected}\n"));
         }
     }
     if deletes != "start\n" {
         deletes.push_str("prepare\ncommit\n");
         let mut command = super::repository::process::git_command()?;
-        command.arg("--git-dir").arg(repo.path()).args(["update-ref", "--stdin"]);
-        let output = super::repository::process::run_in_blocking(command, deletes.as_bytes(), 1024 * 1024, std::time::Duration::from_secs(120))?;
-        ensure!(output.status.success(), "Git could not prune obsolete publication refs");
+        command
+            .arg("--git-dir")
+            .arg(repo.path())
+            .args(["update-ref", "--stdin"]);
+        let output = super::repository::process::run_in_blocking(
+            command,
+            deletes.as_bytes(),
+            1024 * 1024,
+            std::time::Duration::from_secs(120),
+        )?;
+        ensure!(
+            output.status.success(),
+            "Git could not prune obsolete publication refs"
+        );
     }
     Ok(())
 }

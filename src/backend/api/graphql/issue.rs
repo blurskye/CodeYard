@@ -1,3 +1,4 @@
+use super::mutations::issue_error as operation;
 use super::{
     bindings::boxed,
     connection::{self, Page},
@@ -10,7 +11,6 @@ use crate::backend::issues::{
     mutations::{CreateIssueRequest, UpdateIssueRequest},
 };
 use async_graphql::Error;
-use super::mutations::issue_error as operation;
 use serde_json::json;
 
 mod management;
@@ -19,8 +19,13 @@ mod mutations;
 pub(super) use metadata::search;
 
 pub(super) async fn linked_branch_node(id: i64, request: &RequestContext) -> Result<Value> {
-    let branch = db::graphql::linked_branch(&request.state.pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
-    management::linked(branch, request).await?.ok_or_else(missing)
+    let branch = db::graphql::linked_branch(&request.state.pool, id)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
+    management::linked(branch, request)
+        .await?
+        .ok_or_else(missing)
 }
 
 fn lock_reason(value: Option<&str>) -> Option<&str> {
@@ -93,18 +98,30 @@ pub(super) async fn resolve(
                 db::labels::get_pull_request_labels(pool, repo.id, id).await
             }
             .map_err(unavailable)?;
-            repository::label_connection(ctx, labels, if ty == "PullRequest" { "pull-requests" } else { "issues" })
+            repository::label_connection(
+                ctx,
+                labels,
+                if ty == "PullRequest" {
+                    "pull-requests"
+                } else {
+                    "issues"
+                },
+            )
         }
         "comments" => {
             connection::validate(ctx)?;
-            let (updated, descending) = if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
-                let order = order.object()?;
-                let updated = match order.try_get("field")?.enum_name()? {
-                    "UPDATED_AT" => true, "CREATED_AT" => false,
-                    _ => return Err(async_graphql::Error::new("Unsupported comment order")),
+            let (updated, descending) =
+                if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
+                    let order = order.object()?;
+                    let updated = match order.try_get("field")?.enum_name()? {
+                        "UPDATED_AT" => true,
+                        "CREATED_AT" => false,
+                        _ => return Err(async_graphql::Error::new("Unsupported comment order")),
+                    };
+                    (updated, order.try_get("direction")?.enum_name()? == "DESC")
+                } else {
+                    (false, false)
                 };
-                (updated, order.try_get("direction")?.enum_name()? == "DESC")
-            } else { (false, false) };
             let count = if ty == "Issue" {
                 db::issues::count_issue_comments(pool, &[id])
                     .await
@@ -120,14 +137,7 @@ pub(super) async fn resolve(
             let page = Page::new(ctx, count)?;
             let mut nodes = Vec::new();
             if ty == "Issue" {
-                for entry in db::issues::list_issue_comments_ordered(pool, id, page.limit, page.offset, updated, descending)
-                    .await
-                    .map_err(unavailable)?
-                {
-                    nodes.push(comment(&entry.comment, request).await?);
-                }
-            } else {
-                for entry in db::pull_requests::reviews::list_pull_request_conversation_comments_ordered(
+                for entry in db::issues::list_issue_comments_ordered(
                     pool,
                     id,
                     page.limit,
@@ -137,6 +147,21 @@ pub(super) async fn resolve(
                 )
                 .await
                 .map_err(unavailable)?
+                {
+                    nodes.push(comment(&entry.comment, request).await?);
+                }
+            } else {
+                for entry in
+                    db::pull_requests::reviews::list_pull_request_conversation_comments_ordered(
+                        pool,
+                        id,
+                        page.limit,
+                        page.offset,
+                        updated,
+                        descending,
+                    )
+                    .await
+                    .map_err(unavailable)?
                 {
                     nodes.push(pull_comment(&entry.comment, request).await?);
                 }
@@ -285,7 +310,14 @@ pub(super) async fn list(
             .map_err(unavailable)?
             .iter()
             .map(|entry| {
-                request.charge(entry.issue.title.len().saturating_add(entry.issue.body.len()).saturating_mul(4))?;
+                request.charge(
+                    entry
+                        .issue
+                        .title
+                        .len()
+                        .saturating_add(entry.issue.body.len())
+                        .saturating_mul(4),
+                )?;
                 Ok(object(&entry.issue))
             })
             .collect::<Result<Vec<_>>>()?
@@ -295,7 +327,14 @@ pub(super) async fn list(
             .map_err(unavailable)?
             .iter()
             .map(|entry| {
-                request.charge(entry.pull_request.title.len().saturating_add(entry.pull_request.body.len()).saturating_mul(4))?;
+                request.charge(
+                    entry
+                        .pull_request
+                        .title
+                        .len()
+                        .saturating_add(entry.pull_request.body.len())
+                        .saturating_mul(4),
+                )?;
                 Ok(pull_object(&entry.pull_request))
             })
             .collect::<Result<Vec<_>>>()?
@@ -424,11 +463,10 @@ pub(super) async fn mutation(
                     error => Error::new(error.to_string()),
                 }
             })?;
-        let position =
-            db::pull_requests::reviews::conversation_comment_position(pool, saved.id)
-                .await
-                .map_err(unavailable)?
-                - 1;
+        let position = db::pull_requests::reviews::conversation_comment_position(pool, saved.id)
+            .await
+            .map_err(unavailable)?
+            - 1;
         payload["commentEdge"] = json!({"cursor":connection::cursor(position),"node":pull_comment(&saved,request).await?});
         payload["subject"] = pull_object(&pull);
     } else {
@@ -477,9 +515,16 @@ pub(super) async fn mutation(
             repository::by_id(target.repo_id, request).await?;
             request.authorize(target.repo_id, "issues", false).await?;
             payload["issue"] = object(
-                &issues::mutations::close_duplicate(pool, broadcaster, request.actor.clone(), repo.id, issue.id, duplicate)
-                    .await
-                    .map_err(operation)?,
+                &issues::mutations::close_duplicate(
+                    pool,
+                    broadcaster,
+                    request.actor.clone(),
+                    repo.id,
+                    issue.id,
+                    duplicate,
+                )
+                .await
+                .map_err(operation)?,
             );
         } else {
             let saved = issues::mutations::update_issue_latest(

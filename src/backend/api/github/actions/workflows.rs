@@ -31,11 +31,17 @@ pub(super) async fn discover(
     if store.refs().await.map_err(store_error)?.is_empty() {
         return Ok(Vec::new());
     }
-    let definitions = ci::list_workflows_for_ref(&store, &format!("refs/heads/{}", repo.default_branch))
+    let definitions =
+        ci::list_workflows_for_ref(&store, &format!("refs/heads/{}", repo.default_branch))
+            .await
+            .map_err(Error::unavailable)?;
+    let definitions: Vec<_> = definitions
+        .into_iter()
+        .map(|definition| (definition.path, definition.name))
+        .collect();
+    workflows::register_workflows(&state.pool, repo.id, &definitions, true)
         .await
-        .map_err(Error::unavailable)?;
-    let definitions: Vec<_> = definitions.into_iter().map(|definition| (definition.path, definition.name)).collect();
-    workflows::register_workflows(&state.pool, repo.id, &definitions, true).await.map_err(Error::unavailable)
+        .map_err(Error::unavailable)
 }
 
 pub(super) async fn lookup(
@@ -138,19 +144,25 @@ async fn enabled(
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
     let authentication = authentication.ok_or_else(auth::required)?;
     let workflow = lookup(state, &repo, key).await?;
-    workflows::set_workflow_enabled(&state.pool, authentication.database_actor(), repo.id, workflow.id, enable)
-        .await
-        .map_err(|error| {
-            if error
-                .downcast_ref::<db::repositories::records::RepositorySettingsRefusal>()
-                .is_some()
-            {
-                Error::new(StatusCode::FORBIDDEN, "Workflow update denied")
-            } else {
-                Error::unavailable(error)
-            }
-        })?
-        .ok_or_else(Error::missing)?;
+    workflows::set_workflow_enabled(
+        &state.pool,
+        authentication.database_actor(),
+        repo.id,
+        workflow.id,
+        enable,
+    )
+    .await
+    .map_err(|error| {
+        if error
+            .downcast_ref::<db::repositories::records::RepositorySettingsRefusal>()
+            .is_some()
+        {
+            Error::new(StatusCode::FORBIDDEN, "Workflow update denied")
+        } else {
+            Error::unavailable(error)
+        }
+    })?
+    .ok_or_else(Error::missing)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

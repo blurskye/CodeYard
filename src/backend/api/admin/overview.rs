@@ -39,7 +39,9 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
             runs: point.runs,
         })
         .collect();
-    let pending = db::users::signup_requests::count_signup_requests(pool, "pending").await.map_err(|_| unavailable())?;
+    let pending = db::users::signup_requests::count_signup_requests(pool, "pending")
+        .await
+        .map_err(|_| unavailable())?;
     let pending_requests = Some(pending as usize);
     Ok(Admin {
         pending_requests,

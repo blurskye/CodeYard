@@ -119,7 +119,10 @@ impl<'a> Resolver<'a> {
         }
     }
 
-    #[expect(clippy::too_many_arguments, reason = "A called workflow's snapshot takes its source, contents, depth and calling ref.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A called workflow's snapshot takes its source, contents, depth and calling ref."
+    )]
     pub fn snapshot<'b>(
         &'b mut self,
         repository: db::models::Repository,
@@ -143,14 +146,18 @@ impl<'a> Resolver<'a> {
                 repository.id,
                 called_ref.as_ref().map_or("", |(name, _)| name.as_str())
             );
-            if depth >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS || !self.active.insert(identity.clone()) {
+            if depth >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS
+                || !self.active.insert(identity.clone())
+            {
                 return Err(AdmissionError::Invalid(
                     "Called workflows exceed four levels or contain a cycle",
                 ));
             }
             if let Some((snapshot, height)) = self.snapshots.get(&identity) {
                 if depth + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS {
-                    return Err(AdmissionError::Invalid("Called workflows exceed four levels"));
+                    return Err(AdmissionError::Invalid(
+                        "Called workflows exceed four levels",
+                    ));
                 }
                 self.active.remove(&identity);
                 return Ok(snapshot.clone());
@@ -158,9 +165,15 @@ impl<'a> Resolver<'a> {
             let mut yaml = if let Some(yaml) = yaml {
                 yaml
             } else {
-                let parsed = super::admission::parse_admission_workflow(path.clone(), content, self.environment.clone()).await?;
-                codeyard_actions::workflow::validate_called_concurrency(&parsed.yaml)
-                    .map_err(|_| AdmissionError::Invalid("Called workflow concurrency is unsupported"))?;
+                let parsed = super::admission::parse_admission_workflow(
+                    path.clone(),
+                    content,
+                    self.environment.clone(),
+                )
+                .await?;
+                codeyard_actions::workflow::validate_called_concurrency(&parsed.yaml).map_err(
+                    |_| AdmissionError::Invalid("Called workflow concurrency is unsupported"),
+                )?;
                 super::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
                 self.environment = parsed.environment;
                 parsed.yaml
@@ -170,7 +183,10 @@ impl<'a> Resolver<'a> {
                 if self.called.len() > codeyard_actions::workflow::MAX_CALLED_WORKFLOWS {
                     return Err(AdmissionError::Invalid("More than twenty called workflows"));
                 }
-                if !codeyard_actions::workflow::events::declares_event(yaml.get("on"), "workflow_call") {
+                if !codeyard_actions::workflow::events::declares_event(
+                    yaml.get("on"),
+                    "workflow_call",
+                ) {
                     return Err(AdmissionError::Invalid(
                         "Called workflow does not declare workflow_call",
                     ));
@@ -284,13 +300,28 @@ impl<'a> Resolver<'a> {
                     Sha256::digest(key.as_bytes())
                 );
                 let mut snapshot = if let Some((snapshot, height)) = self.snapshots.get(&key) {
-                    if self.active.contains(&key) || depth + 1 + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS {
-                        return Err(AdmissionError::Invalid("Called workflows exceed four levels or contain a cycle"));
+                    if self.active.contains(&key)
+                        || depth + 1 + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS
+                    {
+                        return Err(AdmissionError::Invalid(
+                            "Called workflows exceed four levels or contain a cycle",
+                        ));
                     }
                     snapshot.clone()
                 } else {
-                    let file = repo_store(&target, self.context).ci_workflow_file(&target_sha, &target_path).await?;
-                    self.snapshot(target, target_sha, target_path, file.content, None, depth + 1, target_ref.clone()).await?
+                    let file = repo_store(&target, self.context)
+                        .ci_workflow_file(&target_sha, &target_path)
+                        .await?;
+                    self.snapshot(
+                        target,
+                        target_sha,
+                        target_path,
+                        file.content,
+                        None,
+                        depth + 1,
+                        target_ref.clone(),
+                    )
+                    .await?
                 };
                 // The ref a call names is stored with its snapshot, so a called job's OIDC identity can name it.
                 if let (Some((called_ref, full_ref)), Some(stored)) =
@@ -309,7 +340,9 @@ impl<'a> Resolver<'a> {
             let content = serde_yaml::to_string(&yaml).map_err(|_| AdmissionError::Unavailable)?;
             self.snapshot_bytes = self.snapshot_bytes.saturating_add(content.len());
             if self.snapshot_bytes > 2 * 1024 * 1024 {
-                return Err(AdmissionError::Invalid("Called workflow snapshots exceed size limit"));
+                return Err(AdmissionError::Invalid(
+                    "Called workflow snapshots exceed size limit",
+                ));
             }
             let stored = serde_json::json!({
                 "content": content,

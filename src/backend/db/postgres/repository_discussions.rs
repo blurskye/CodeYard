@@ -8,8 +8,15 @@ pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=$1),false)").bind(repo).fetch_one(pool).await?)
 }
 pub async fn categories(pool: &PgPool, repo: i64) -> Result<Vec<Category>> {
-    let existing: Vec<Category> = sqlx::query_as("SELECT * FROM discussion_categories WHERE repo_id=$1 ORDER BY id").bind(repo).fetch_all(pool).await?;
-    if DEFAULT_CATEGORIES.iter().all(|(_, slug, _, _, _)| existing.iter().any(|category| category.slug == *slug)) {
+    let existing: Vec<Category> =
+        sqlx::query_as("SELECT * FROM discussion_categories WHERE repo_id=$1 ORDER BY id")
+            .bind(repo)
+            .fetch_all(pool)
+            .await?;
+    if DEFAULT_CATEGORIES
+        .iter()
+        .all(|(_, slug, _, _, _)| existing.iter().any(|category| category.slug == *slug))
+    {
         return Ok(existing);
     }
     let mut tx = pool.begin().await?;
@@ -80,16 +87,27 @@ pub async fn list(
     limit: i64,
     count_total: bool,
 ) -> Result<(i64, Vec<Discussion>)> {
-    let reader = crate::backend::db::repositories::credentials::Reader::authenticated(viewer, credential);
-    let statement = filter.statement(true, &super::repositories::access::readable_condition(), &reader)?;
+    let reader =
+        crate::backend::db::repositories::credentials::Reader::authenticated(viewer, credential);
+    let statement = filter.statement(
+        true,
+        &super::repositories::access::readable_condition(),
+        &reader,
+    )?;
     let mut connection = super::repositories::discovery::search_connection(pool).await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *connection).await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *connection)
+        .await?;
     let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
     let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
     for value in &statement.args {
         count = count.bind(value);
     }
-    let total = if count_total { count.fetch_one(&mut *connection).await? } else { 0 };
+    let total = if count_total {
+        count.fetch_one(&mut *connection).await?
+    } else {
+        0
+    };
     let sql = format!(
         "SELECT i.* {} ORDER BY {} LIMIT {} OFFSET {}",
         statement.prefix,
@@ -118,7 +136,10 @@ async fn credential_authority(
     scope: &str,
 ) -> Result<()> {
     use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
-    anyhow::ensure!(super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::users::transitions::credential_live(tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let reader = Reader::authenticated(actor, credential);
     let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}))", repository_condition(true, scope, Access::Write, "$3", "$4", "$5")))
         .bind(actor).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut **tx).await?;
@@ -318,13 +339,20 @@ pub async fn write(
                     if removes_answer {
                         clear_answer(&mut tx, id).await?;
                     }
-                    let replies: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE reply_to_id=$1)")
-                        .bind(comment).fetch_one(&mut *tx).await?;
+                    let replies: bool = sqlx::query_scalar(
+                        "SELECT EXISTS(SELECT 1 FROM discussion_comments WHERE reply_to_id=$1)",
+                    )
+                    .bind(comment)
+                    .fetch_one(&mut *tx)
+                    .await?;
                     if replies {
                         sqlx::query("UPDATE discussion_comments SET body='',updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")
                             .bind(comment).execute(&mut *tx).await?;
                     } else {
-                        sqlx::query("DELETE FROM discussion_comments WHERE id=$1").bind(comment).execute(&mut *tx).await?;
+                        sqlx::query("DELETE FROM discussion_comments WHERE id=$1")
+                            .bind(comment)
+                            .execute(&mut *tx)
+                            .await?;
                     }
                 }
             }

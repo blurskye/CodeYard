@@ -5,7 +5,8 @@ use serde_json::Value;
 use sqlx::FromRow;
 
 pub(crate) const PENDING_TIMEOUT_SECONDS: i64 = 10 * 60;
-pub(crate) const TIMEOUT_MESSAGE: &str = "The merge request timed out; check the pull request state before retrying";
+pub(crate) const TIMEOUT_MESSAGE: &str =
+    "The merge request timed out; check the pull request state before retrying";
 
 #[derive(Clone, Debug, FromRow)]
 pub struct AsyncMerge {

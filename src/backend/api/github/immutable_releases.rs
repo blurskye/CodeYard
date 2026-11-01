@@ -34,8 +34,12 @@ async fn check(
     {
         return Err(Error::missing());
     }
-    let (_, enforced_by_owner) = db::repositories::immutable_releases::policy(&state.pool, repo.id).await.map_err(error)?;
-    Ok(Json(json!({"enabled":true,"enforced_by_owner":enforced_by_owner})))
+    let (_, enforced_by_owner) = db::repositories::immutable_releases::policy(&state.pool, repo.id)
+        .await
+        .map_err(error)?;
+    Ok(Json(
+        json!({"enabled":true,"enforced_by_owner":enforced_by_owner}),
+    ))
 }
 async fn change(
     state: &AppState,

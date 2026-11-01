@@ -24,9 +24,13 @@ pub async fn update_pull_request(
     Json(req): Json<UpdatePullRequestRequest>,
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let repository =
-        crate::backend::api::repos::access::readable_repository(&state.pool, &owner, &repo, &headers)
-            .await?;
+    let repository = crate::backend::api::repos::access::readable_repository(
+        &state.pool,
+        &owner,
+        &repo,
+        &headers,
+    )
+    .await?;
     let pull_request = crate::backend::repositories::pull_requests::mutations::update_pull_request(
         &state.pool,
         &state.ci_runs,

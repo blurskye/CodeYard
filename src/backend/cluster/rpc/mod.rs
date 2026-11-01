@@ -192,16 +192,18 @@ impl RpcHandler {
                 self.execute(request, body, peer).await
             } else {
                 let handler = self.clone();
-                self.sessions.spawn_admitted(async move {
-                    // Retain admission until the mutation really ends, not until its
-                    // response deadline or connection expires.
-                    let _slot = slot;
-                    let result = handler.execute(request, body, peer).await;
-                    if let Err(error) = &result {
-                        tracing::warn!(?error, "admitted repository mutation failed");
-                    }
-                    result
-                }).await?
+                self.sessions
+                    .spawn_admitted(async move {
+                        // Retain admission until the mutation really ends, not until its
+                        // response deadline or connection expires.
+                        let _slot = slot;
+                        let result = handler.execute(request, body, peer).await;
+                        if let Err(error) = &result {
+                            tracing::warn!(?error, "admitted repository mutation failed");
+                        }
+                        result
+                    })
+                    .await?
             };
             let (reply, body) = match result {
                 Ok((value, body)) => (Reply { result: Ok(value) }, body),
@@ -225,7 +227,9 @@ impl RpcHandler {
 
 impl ProtocolHandler for RpcHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let Ok(_connection) = transport::connection_slot(&connection) else { return Ok(()); };
+        let Ok(_connection) = transport::connection_slot(&connection) else {
+            return Ok(());
+        };
         // Each stream the peer opens is one request, answered in turn.
         while let Some(link) = transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {

@@ -7,11 +7,7 @@ pub(super) use mutations::operation_error;
 mod reviews;
 mod stacks;
 mod team_reviewers;
-use super::{
-    contents::store_error,
-    pagination::Pagination,
-    repo_url, repository, Error, Result,
-};
+use super::{contents::store_error, pagination::Pagination, repo_url, repository, Error, Result};
 use crate::backend::{
     app::AppState,
     db,
@@ -85,11 +81,18 @@ pub(super) async fn hidden_head(state: &AppState, pull: &db::models::PullRequest
         Some(head) => db::repositories::records::repository_owner_name(&state.pool, head.id)
             .await
             .map_err(Error::unavailable)?
-            .map(|name| (payloads::repository_owner(head, &name), format!("{name}:{}", pull.head_branch))),
+            .map(|name| {
+                (
+                    payloads::repository_owner(head, &name),
+                    format!("{name}:{}", pull.head_branch),
+                )
+            }),
         None => None,
     };
     let (user, label) = owner.unwrap_or((Value::Null, pull.head_branch.clone()));
-    Ok(json!({"label": label, "ref": pull.head_branch, "sha": pull.head_sha, "user": user, "repo": null}))
+    Ok(
+        json!({"label": label, "ref": pull.head_branch, "sha": pull.head_sha, "user": user, "repo": null}),
+    )
 }
 
 pub(super) async fn document(
@@ -109,7 +112,10 @@ pub(super) async fn document(
     value["user"] = payloads::user(&author);
     value["author_association"] = json!(association(&state.pool, repo, author.id).await?);
     let mut base_repo = payloads::repository(repo, owner);
-    payloads::set_fork_counts(&mut base_repo, super::repos::public_fork_count(state, repo.id).await?);
+    payloads::set_fork_counts(
+        &mut base_repo,
+        super::repos::public_fork_count(state, repo.id).await?,
+    );
     value["base"] = json!({"label": format!("{owner}:{}", pull.base_branch), "ref": pull.base_branch, "sha": pull.base_sha, "repo": base_repo, "user": person(state, repo.owner_id()).await?});
     if repo.owner_kind == "org" {
         value["base"]["user"] = value["base"]["repo"]["owner"].clone();
@@ -121,7 +127,10 @@ pub(super) async fn document(
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         let mut head_value = payloads::repository(&head, &head_owner);
-        payloads::set_fork_counts(&mut head_value, super::repos::public_fork_count(state, head.id).await?);
+        payloads::set_fork_counts(
+            &mut head_value,
+            super::repos::public_fork_count(state, head.id).await?,
+        );
         json!({"label": format!("{head_owner}:{}", pull.head_branch), "ref": pull.head_branch, "sha": pull.head_sha, "user": head_value["owner"], "repo": head_value})
     } else {
         hidden_head(state, pull).await?
@@ -372,15 +381,27 @@ async fn files(
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let (offset, limit) = page.window()?;
     let store = repo_store(&repo, state.cluster.as_ref());
-    let page_files = super::commits::file_page(&store, pull.diff_base(), &pull.head_sha, offset, limit).await?;
+    let page_files =
+        super::commits::file_page(&store, pull.diff_base(), &pull.head_sha, offset, limit).await?;
     let has_next = page_files.has_next;
     let files = page_files.files;
     let base = if files.iter().any(|file| file.status == "removed") {
-        store.comparison_from(&store, pull.diff_base(), &pull.head_sha, 0, 0).await.map_err(store_error)?.merge_base_commit.sha
+        store
+            .comparison_from(&store, pull.diff_base(), &pull.head_sha, 0, 0)
+            .await
+            .map_err(store_error)?
+            .merge_base_commit
+            .sha
     } else {
         pull.diff_base().to_owned()
     };
-    let items = super::commits::diff_files(files, &owner, &name, &pull.head_sha, Some((&owner, &name, &base)));
+    let items = super::commits::diff_files(
+        files,
+        &owner,
+        &name,
+        &pull.head_sha,
+        Some((&owner, &name, &base)),
+    );
     page.response(&uri, items, has_next)
 }
 

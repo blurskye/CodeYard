@@ -34,7 +34,8 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
     let Some(administrator) = ctx.administrator() else {
         return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
     };
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = (administrator.id, session).into();
     let after = ctx.query.get("after").map(String::as_str).unwrap_or("");
     let mut nodes = match db::cluster::admin_node_page(&ctx.state.pool, &authority, after).await {
@@ -51,7 +52,9 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
     };
     let more = nodes.len() > 100;
     nodes.truncate(100);
-    let next_after = more.then(|| nodes.last().map(|node| node.name.clone())).flatten();
+    let next_after = more
+        .then(|| nodes.last().map(|node| node.name.clone()))
+        .flatten();
     let Ok(cluster_enabled) = db::cluster::cluster_enabled(&ctx.state.pool).await else {
         return ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
@@ -124,7 +127,11 @@ async fn change(
     if let Err(response) = mutation_guard(&ctx, &form, true) {
         return response;
     }
-    let actor = ctx.user.as_ref().expect("mutation guard checked account").id;
+    let actor = ctx
+        .user
+        .as_ref()
+        .expect("mutation guard checked account")
+        .id;
     let session =
         crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = db::cluster::Authority::Administrator {

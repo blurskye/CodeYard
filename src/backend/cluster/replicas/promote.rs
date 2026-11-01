@@ -104,8 +104,18 @@ pub async fn promote(
     }
     if !force {
         return match db::cluster::promote_manual_family(pool, repository, from, to).await? {
-            FamilyOutcome::Promoted(members) => Ok(members.into_iter().map(|repository| Promotion { repository, from, to, lost_writes: 0 }).collect()),
-            FamilyOutcome::Refused => bail!("the fork family changed during promotion; nothing changed"),
+            FamilyOutcome::Promoted(members) => Ok(members
+                .into_iter()
+                .map(|repository| Promotion {
+                    repository,
+                    from,
+                    to,
+                    lost_writes: 0,
+                })
+                .collect()),
+            FamilyOutcome::Refused => {
+                bail!("the fork family changed during promotion; nothing changed")
+            }
         };
     }
     // Forced promotion explicitly accepts a split family and reports partial progress.
@@ -179,7 +189,10 @@ pub async fn take_over(
     // The families already decided in this pass, so each one is tried once, from its first row.
     let mut decided = HashSet::new();
     let held = db::cluster::list_held_replicas(pool, node).await?;
-    let versions: HashMap<_, _> = held.iter().map(|row| (row.repository_id, row.applied_version)).collect();
+    let versions: HashMap<_, _> = held
+        .iter()
+        .map(|row| (row.repository_id, row.applied_version))
+        .collect();
     for row in held {
         let Some(from) = row.primary_node_id.filter(|from| *from != node) else {
             continue;
@@ -201,9 +214,15 @@ pub async fn take_over(
         let problem = if members.len() < family.len() {
             Some("not every member of it is on the offline primary".to_owned())
         } else {
-            let blocked = members.iter().find_map(|(member, version)| copy_problem(versions.get(member).copied(), *version, false).map(|problem| (*member, problem)));
+            let blocked = members.iter().find_map(|(member, version)| {
+                copy_problem(versions.get(member).copied(), *version, false)
+                    .map(|problem| (*member, problem))
+            });
             match blocked {
-                Some((member, problem)) => Some(format!("{} {problem}", repository_name(pool, member).await?)),
+                Some((member, problem)) => Some(format!(
+                    "{} {problem}",
+                    repository_name(pool, member).await?
+                )),
                 None => None,
             }
         };
@@ -332,5 +351,7 @@ fn is_storage(nodes: &[ClusterNode], id: i64) -> bool {
 /// Whether a promotion may move a repository to `id`: a storage node that is reporting in, by
 /// the database clock. The promotion transaction checks the same thing again.
 fn is_reporting_storage(nodes: &[ClusterNode], id: i64) -> bool {
-    nodes.iter().any(|node| node.id == id && node.is_serving_storage())
+    nodes
+        .iter()
+        .any(|node| node.id == id && node.is_serving_storage())
 }

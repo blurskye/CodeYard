@@ -445,8 +445,7 @@ fn assignees_panel(
     assignable: &[String],
     can_triage: bool,
 ) -> Element {
-    let menu = can_triage
-        .then(|| assignee_options(repo, url, item, kind, assignable));
+    let menu = can_triage.then(|| assignee_options(repo, url, item, kind, assignable));
     rsx! {
         section { class: "collaboration-sidebar-section",
             {picker_heading("Assignees", menu)}
@@ -526,8 +525,7 @@ fn labels_panel(
     available_labels: &[Label],
     can_triage: bool,
 ) -> Element {
-    let menu = can_triage
-        .then(|| label_options(repo, url, item, kind, available_labels));
+    let menu = can_triage.then(|| label_options(repo, url, item, kind, available_labels));
     rsx! {
         section { class: "collaboration-sidebar-section",
             {picker_heading("Labels", menu)}
@@ -583,7 +581,13 @@ fn label_options(
 
 /// The milestone: its title, and for a writer a picker over the repository's milestones. "No
 /// milestone" clears it.
-fn milestone_panel(repo: &Repository, url: &str, item: &Item, milestones: &[Milestone], can_triage: bool) -> Element {
+fn milestone_panel(
+    repo: &Repository,
+    url: &str,
+    item: &Item,
+    milestones: &[Milestone],
+    can_triage: bool,
+) -> Element {
     let menu = (can_triage && !milestones.is_empty())
         .then(|| milestone_options(repo, url, item, milestones));
     rsx! {
@@ -891,7 +895,8 @@ fn merge_box(
             let destination = events
                 .iter()
                 .find(|event| event.kind == "merged")
-                .map(|event| format!(" into {}", event.detail)).unwrap_or_default();
+                .map(|event| format!(" into {}", event.detail))
+                .unwrap_or_default();
             if let Some(sha) = compare.merged_commit.as_deref() {
                 let commit_url = format!("{}/commit/{}", repo.url(), encode_component(sha));
                 let short = short_sha(sha);
@@ -1051,16 +1056,18 @@ pub fn detail(
     // and submits that form through the form attribute, so the two forms never nest.
     let state_form = "item-state-form";
     let may_edit = repo.signed_in && (repo.can_write || repo.viewer == item.author);
-    let state_change = may_edit
-        && !repo.chrome.is_archived
-        && (item.state == "open" || item.state == "closed");
+    let state_change =
+        may_edit && !repo.chrome.is_archived && (item.state == "open" || item.state == "closed");
     let state_label = if item.state == "open" {
         format!("Close {}", kind.singular())
     } else {
         format!("Reopen {}", kind.singular())
     };
     // An open pull request keeps Close in its merge box, so the composer offers only Reopen there.
-    let composer_state = if kind == Kind::Pull && repo.can_write && item.state == "open" && item.comparison.is_some()
+    let composer_state = if kind == Kind::Pull
+        && repo.can_write
+        && item.state == "open"
+        && item.comparison.is_some()
     {
         None
     } else {

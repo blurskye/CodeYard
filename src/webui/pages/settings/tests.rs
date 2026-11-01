@@ -15,8 +15,14 @@ fn rejected_key_drafts_keep_a_malformed_public_key_but_never_a_private_one() {
         preserved_values(&HashMap::from([("public_key".into(), key.into())])).public_key
     };
     assert_eq!(draft("ssh-ed25519 AAAA"), "ssh-ed25519 AAAA");
-    assert_eq!(draft("ecdsa-sha2-nistp256 AAAA"), "ecdsa-sha2-nistp256 AAAA");
-    assert_eq!(draft("sk-ssh-ed25519@openssh.com AAAA"), "sk-ssh-ed25519@openssh.com AAAA");
+    assert_eq!(
+        draft("ecdsa-sha2-nistp256 AAAA"),
+        "ecdsa-sha2-nistp256 AAAA"
+    );
+    assert_eq!(
+        draft("sk-ssh-ed25519@openssh.com AAAA"),
+        "sk-ssh-ed25519@openssh.com AAAA"
+    );
     assert!(draft("b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ").is_empty());
     assert!(draft("command=bad ssh-ed25519 AAAA").is_empty());
     assert!(draft("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA").is_empty());

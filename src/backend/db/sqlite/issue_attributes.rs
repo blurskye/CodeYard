@@ -1,5 +1,6 @@
 use crate::backend::db::issue_attributes::{
-    AssignedType, Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption, ValueInput,
+    AssignedType, Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption,
+    ValueInput,
 };
 use crate::backend::db::{credentials::Actor, users::accounts::AccountRestricted};
 use anyhow::Result;
@@ -123,8 +124,15 @@ pub async fn owner_can_configure(pool: &SqlitePool, repo: i64, actor: i64) -> Re
 }
 async fn require_actor(tx: &mut Transaction<'_, Sqlite>, actor: &Actor) -> Result<()> {
     if let Some(credential) = actor.credential() {
-        super::users::transitions::require_account(tx, actor.user_id, &credential).await
-            .map_err(|error| if error.is::<AccountRestricted>() { Refusal::Denied.into() } else { error })?;
+        super::users::transitions::require_account(tx, actor.user_id, &credential)
+            .await
+            .map_err(|error| {
+                if error.is::<AccountRestricted>() {
+                    Refusal::Denied.into()
+                } else {
+                    error
+                }
+            })?;
     }
     Ok(())
 }
@@ -144,7 +152,10 @@ async fn begin_write<'a>(
     );
     require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
-    anyhow::ensure!(super::credentials::repository(&mut tx, authority, repo, "issues", true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::credentials::repository(&mut tx, authority, repo, "issues", true).await?,
+        Refusal::Denied
+    );
     if owner {
         anyhow::ensure!(
             owner_connection(&mut tx, repo, actor).await?,
@@ -168,11 +179,22 @@ pub(crate) async fn lock_metadata(tx: &mut Transaction<'_, Sqlite>) -> Result<()
         .await?;
     Ok(())
 }
-pub async fn configure(pool: &SqlitePool, repo: i64, actor: impl Into<Actor>, d: &Definition) -> Result<i64> {
+pub async fn configure(
+    pool: &SqlitePool,
+    repo: i64,
+    actor: impl Into<Actor>,
+    d: &Definition,
+) -> Result<i64> {
     configure_checked(pool, repo, actor, d, (None, None)).await
 }
 
-pub async fn configure_checked(pool: &SqlitePool, repo: i64, actor: impl Into<Actor>, d: &Definition, (expected, owner): (Option<&str>, Option<&str>)) -> Result<i64> {
+pub async fn configure_checked(
+    pool: &SqlitePool,
+    repo: i64,
+    actor: impl Into<Actor>,
+    d: &Definition,
+    (expected, owner): (Option<&str>, Option<&str>),
+) -> Result<i64> {
     d.validate()?;
     let authority = actor.into();
     let actor = authority.user_id;
@@ -182,10 +204,22 @@ pub async fn configure_checked(pool: &SqlitePool, repo: i64, actor: impl Into<Ac
             .bind(repo)
             .fetch_one(&mut *tx)
             .await?;
-    if let Some(owner) = owner { anyhow::ensure!(owner == crate::backend::db::issue_attributes::owner_key(user, org), Refusal::Invalid); }
+    if let Some(owner) = owner {
+        anyhow::ensure!(
+            owner == crate::backend::db::issue_attributes::owner_key(user, org),
+            Refusal::Invalid
+        );
+    }
     if let (Some(id), Some(expected)) = (d.id, expected) {
-        let old = catalog_owner(&mut tx, user, org, Some(actor), &d.kind).await?.into_iter().find(|a| a.id == id).ok_or(Refusal::Missing)?;
-        anyhow::ensure!(expected == crate::backend::db::issue_attributes::revision(&old)?, Refusal::Invalid);
+        let old = catalog_owner(&mut tx, user, org, Some(actor), &d.kind)
+            .await?
+            .into_iter()
+            .find(|a| a.id == id)
+            .ok_or(Refusal::Missing)?;
+        anyhow::ensure!(
+            expected == crate::backend::db::issue_attributes::revision(&old)?,
+            Refusal::Invalid
+        );
     }
     configure_owner(tx, actor, (user, org), d)
         .await
@@ -204,7 +238,11 @@ async fn configure_owner(
             .into_iter()
             .find(|a| a.id == id)
             .ok_or(Refusal::Missing)?;
-        anyhow::ensure!(d.expected_updated.is_none_or(|expected| expected == old.updated_at), Refusal::Conflict);
+        anyhow::ensure!(
+            d.expected_updated
+                .is_none_or(|expected| expected == old.updated_at),
+            Refusal::Conflict
+        );
         anyhow::ensure!(old.data_type == d.data_type, Refusal::Invalid);
         Some(old)
     } else {
@@ -284,54 +322,54 @@ async fn configure_owner(
         // Bounded batches keep memory flat however many issues use the field.
         let mut after = 0_i64;
         loop {
-        let rows: Vec<(i64, i64, String)> =
+            let rows: Vec<(i64, i64, String)> =
             sqlx::query_as("SELECT id,issue_id,value_json FROM issue_field_values WHERE attribute_id=?1 AND id>?2 ORDER BY id LIMIT 500")
                 .bind(id)
                 .bind(after)
                 .fetch_all(&mut *tx)
                 .await?;
-        let Some(last) = rows.last().map(|row| row.0) else {
-            break;
-        };
-        after = last;
-        for (value_id, issue, text) in rows {
-            let value: Value = serde_json::from_str(&text)?;
-            let next = if d.data_type.as_deref() == Some("single_select") {
-                value
-                    .as_i64()
-                    .filter(|id| valid.contains(id))
-                    .map(Value::from)
-            } else {
-                let ids = value
-                    .as_array()
-                    .ok_or(Refusal::Invalid)?
-                    .iter()
-                    .filter(|v| v.as_i64().is_some_and(|id| valid.contains(&id)))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                if ids.is_empty() {
-                    None
-                } else {
-                    Some(Value::Array(ids))
-                }
+            let Some(last) = rows.last().map(|row| row.0) else {
+                break;
             };
-            if next.as_ref() == Some(&value) {
-                continue;
+            after = last;
+            for (value_id, issue, text) in rows {
+                let value: Value = serde_json::from_str(&text)?;
+                let next = if d.data_type.as_deref() == Some("single_select") {
+                    value
+                        .as_i64()
+                        .filter(|id| valid.contains(id))
+                        .map(Value::from)
+                } else {
+                    let ids = value
+                        .as_array()
+                        .ok_or(Refusal::Invalid)?
+                        .iter()
+                        .filter(|v| v.as_i64().is_some_and(|id| valid.contains(&id)))
+                        .cloned()
+                        .collect::<Vec<_>>();
+                    if ids.is_empty() {
+                        None
+                    } else {
+                        Some(Value::Array(ids))
+                    }
+                };
+                if next.as_ref() == Some(&value) {
+                    continue;
+                }
+                if let Some(next) = next {
+                    sqlx::query("UPDATE issue_field_values SET value_json=?2 WHERE id=?1")
+                        .bind(value_id)
+                        .bind(serde_json::to_string(&next)?)
+                        .execute(&mut *tx)
+                        .await?;
+                } else {
+                    sqlx::query("DELETE FROM issue_field_values WHERE id=?1")
+                        .bind(value_id)
+                        .execute(&mut *tx)
+                        .await?;
+                }
+                touch(&mut tx, issue).await?;
             }
-            if let Some(next) = next {
-                sqlx::query("UPDATE issue_field_values SET value_json=?2 WHERE id=?1")
-                    .bind(value_id)
-                    .bind(serde_json::to_string(&next)?)
-                    .execute(&mut *tx)
-                    .await?;
-            } else {
-                sqlx::query("DELETE FROM issue_field_values WHERE id=?1")
-                    .bind(value_id)
-                    .execute(&mut *tx)
-                    .await?;
-            }
-            touch(&mut tx, issue).await?;
-        }
         }
     }
     let attribute = catalog_owner(&mut tx, user, org, Some(actor), &d.kind)
@@ -374,7 +412,17 @@ async fn begin_organization_write<'a>(
     }
     require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
-    anyhow::ensure!(super::credentials::organization(&mut tx, authority, org, "organization_administration", true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::credentials::organization(
+            &mut tx,
+            authority,
+            org,
+            "organization_administration",
+            true
+        )
+        .await?,
+        Refusal::Denied
+    );
     Ok(tx)
 }
 pub async fn configure_organization(
@@ -452,7 +500,12 @@ pub async fn delete_organization_definition(
     tx.commit().await?;
     Ok(())
 }
-pub async fn delete_definition(pool: &SqlitePool, repo: i64, actor: impl Into<Actor>, id: i64) -> Result<()> {
+pub async fn delete_definition(
+    pool: &SqlitePool,
+    repo: i64,
+    actor: impl Into<Actor>,
+    id: i64,
+) -> Result<()> {
     let authority = actor.into();
     let mut tx = begin_write(pool, repo, &authority, None, true).await?;
     let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM issue_attributes a JOIN repositories r ON r.id=?2 WHERE a.id=?1 AND (a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id))").bind(id).bind(repo).fetch_one(&mut *tx).await?;

@@ -67,7 +67,10 @@ pub async fn refuse_blocked_secrets(
                 .replace(&finding.detection.secret, "[REDACTED]");
             violations.push(format!("  —— {} ({}) ——\n    locations:\n      - commit: {}\n        path: {}:{}\n    To push, remove secret from commit(s) or follow this URL to allow the secret.\n    {}", finding.detection.secret_type_display_name, finding.detection.rule_id, finding.location.commit_sha, safe_path.escape_debug(), finding.location.start_line, link));
         } else {
-            bypasses.push(ApprovedBypass { hash, commit: finding.location.commit_sha });
+            bypasses.push(ApprovedBypass {
+                hash,
+                commit: finding.location.commit_sha,
+            });
         }
     }
     if !violations.is_empty() {

@@ -1,6 +1,7 @@
 mod exports;
 use crate::backend::db::projects::{
-    validate_project, Field, NewField, NewView, Owner, Project, ProjectContents, Refusal, SelectOption, Settings,
+    validate_project, Field, NewField, NewView, Owner, Project, ProjectContents, Refusal,
+    SelectOption, Settings,
 };
 use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
@@ -32,7 +33,12 @@ async fn owner_authority(tx: &mut Transaction<'_, Sqlite>, actor: i64, owner: Ow
     Ok(())
 }
 
-async fn write_project(tx: &mut Transaction<'_, Sqlite>, actor: i64, credential: &AccountCredential<'_>, id: i64) -> Result<Project> {
+async fn write_project(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    id: i64,
+) -> Result<Project> {
     let project: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
             .bind(id)
@@ -45,7 +51,10 @@ async fn write_project(tx: &mut Transaction<'_, Sqlite>, actor: i64, credential:
         Owner::User(project.owner_id)
     };
     owner_authority(tx, actor, owner).await?;
-    anyhow::ensure!(super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::users::transitions::credential_live(tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     Ok(project)
 }
 
@@ -53,7 +62,12 @@ async fn readable(tx: &mut Transaction<'_, Sqlite>, viewer: Option<i64>, id: i64
     readable_at(tx, viewer, id, false).await
 }
 
-async fn readable_at(tx: &mut Transaction<'_, Sqlite>, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<()> {
+async fn readable_at(
+    tx: &mut Transaction<'_, Sqlite>,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<()> {
     let visible: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS(SELECT 1 FROM projects p WHERE p.id=?1 AND (?3 OR p.deleted_at IS NULL) AND {})",
         crate::backend::db::projects::readable_owner_condition("?2")
@@ -79,7 +93,10 @@ pub async fn create(
     validate_project(title, description)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     owner_authority(&mut tx, actor, owner).await?;
-    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let (kind, id) = owner.parts();
     let now = chrono::Utc::now();
     let project: Project = sqlx::query_as("INSERT INTO projects(owner_user_id,owner_org_id,number,creator_id,title,description,public,created_at,updated_at) SELECT $1,$2,COALESCE(MAX(number),0)+1,$3,$4,$5,$6,$7,$7 FROM projects WHERE owner_kind=$8 AND owner_id=$9 RETURNING *")
@@ -132,17 +149,34 @@ pub async fn create(
     Ok(project)
 }
 
-pub async fn list(pool: &SqlitePool, viewer: Option<i64>, filter: &crate::backend::db::projects::ListFilter, offset: i64, limit: i64) -> Result<(i64, Vec<Project>)> {
+pub async fn list(
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    filter: &crate::backend::db::projects::ListFilter,
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<Project>)> {
     anyhow::ensure!(offset >= 0 && (0..=101).contains(&limit), Refusal::Invalid);
     let statement = filter.statement(false);
     let mut tx = pool.begin().await?;
     let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
     let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
-    for arg in &statement.args { count = count.bind(arg); }
+    for arg in &statement.args {
+        count = count.bind(arg);
+    }
     let count = count.fetch_one(&mut *tx).await?;
-    let query = format!("SELECT {} {} ORDER BY {} LIMIT {} OFFSET {}", crate::backend::db::projects::SUMMARY_COLUMNS, statement.prefix, filter.order(false), statement.placeholder(statement.args.len()+2), statement.placeholder(statement.args.len()+3));
+    let query = format!(
+        "SELECT {} {} ORDER BY {} LIMIT {} OFFSET {}",
+        crate::backend::db::projects::SUMMARY_COLUMNS,
+        statement.prefix,
+        filter.order(false),
+        statement.placeholder(statement.args.len() + 2),
+        statement.placeholder(statement.args.len() + 3)
+    );
     let mut rows = sqlx::query_as(&query).bind(viewer);
-    for arg in &statement.args { rows = rows.bind(arg); }
+    for arg in &statement.args {
+        rows = rows.bind(arg);
+    }
     let rows = rows.bind(limit).bind(offset).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok((count, rows))
@@ -186,7 +220,12 @@ pub async fn save(
     Ok(project)
 }
 
-pub async fn delete(pool: &SqlitePool, actor: i64, credential: &AccountCredential<'_>, project: i64) -> Result<ProjectContents> {
+pub async fn delete(
+    pool: &SqlitePool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+) -> Result<ProjectContents> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     write_project(&mut tx, actor, credential, project).await?;
     // What the actor could see comes back, so the deletion's answer can still describe it.
@@ -197,8 +236,17 @@ pub async fn delete(pool: &SqlitePool, actor: i64, credential: &AccountCredentia
             .await?,
         items: items::readable_items(&mut tx, Some(actor), project).await?,
     };
-    for table in ["project_items", "project_views", "project_fields", "project_repositories", "project_teams"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1")).bind(project).execute(&mut *tx).await?;
+    for table in [
+        "project_items",
+        "project_views",
+        "project_fields",
+        "project_repositories",
+        "project_teams",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1"))
+            .bind(project)
+            .execute(&mut *tx)
+            .await?;
     }
     sqlx::query("UPDATE projects SET title='',description=NULL,readme='',public=FALSE,deleted_at=$2,updated_at=$2 WHERE id=$1")
         .bind(project)
@@ -213,7 +261,12 @@ pub async fn fields(pool: &SqlitePool, viewer: Option<i64>, project: i64) -> Res
     fields_at(pool, viewer, project, false).await
 }
 
-pub async fn fields_at(pool: &SqlitePool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Field>> {
+pub async fn fields_at(
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    project: i64,
+    include_deleted: bool,
+) -> Result<Vec<Field>> {
     let mut tx = pool.begin().await?;
     readable_at(&mut tx, viewer, project, include_deleted).await?;
     let fields = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
@@ -242,9 +295,17 @@ pub async fn add_field(
         count < crate::backend::db::projects::MAX_FIELDS as i64,
         Refusal::Invalid
     );
-    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM project_fields WHERE project_id=$1")
-        .bind(project).fetch_all(&mut *tx).await?;
-    anyhow::ensure!(!names.iter().any(|name| name.eq_ignore_ascii_case(&input.name)), Refusal::Invalid);
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM project_fields WHERE project_id=$1")
+            .bind(project)
+            .fetch_all(&mut *tx)
+            .await?;
+    anyhow::ensure!(
+        !names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&input.name)),
+        Refusal::Invalid
+    );
     let field = sqlx::query_as("INSERT INTO project_fields(project_id,name,data_type,configuration,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5) ON CONFLICT(project_id,name) DO NOTHING RETURNING *")
         .bind(project).bind(&input.name).bind(&input.data_type).bind(config).bind(chrono::Utc::now()).fetch_optional(&mut *tx).await?.ok_or(Refusal::Invalid)?;
     sqlx::query("UPDATE projects SET updated_at=$2 WHERE id=$1")

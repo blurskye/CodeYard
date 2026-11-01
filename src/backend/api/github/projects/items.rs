@@ -35,7 +35,10 @@ async fn readable_items<'a>(
         .collect())
 }
 
-#[expect(clippy::too_many_arguments, reason = "The document needs the project, the item and the viewer's readable repositories, which the caller already holds.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The document needs the project, the item and the viewer's readable repositories, which the caller already holds."
+)]
 async fn item_document(
     state: &AppState,
     headers: &HeaderMap,
@@ -126,8 +129,7 @@ async fn add_item(
     input: std::result::Result<Json<AddItem>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) =
-        input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     if !matches!(input.kind.as_str(), "Issue" | "PullRequest") {
         return Err(Error::validation("ProjectV2Item", "type", "invalid"));
     }
@@ -177,9 +179,15 @@ async fn add_item(
         Content::PullRequest(id)
     };
     let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
-    let item = projects::add_item(&state.pool, actor, &auth.as_ref().ok_or_else(auth::required)?.credential(), project.id, &content)
-        .await
-        .map_err(project_error)?;
+    let item = projects::add_item(
+        &state.pool,
+        actor,
+        &auth.as_ref().ok_or_else(auth::required)?.credential(),
+        project.id,
+        &content,
+    )
+    .await
+    .map_err(project_error)?;
     let fields = projects::fields(&state.pool, Some(actor), project.id)
         .await
         .map_err(project_error)?;
@@ -187,8 +195,10 @@ async fn add_item(
     Ok((
         StatusCode::CREATED,
         Json(
-            item_document(&state, &headers, &project, &name, &item, &fields, None, &readable)
-                .await?,
+            item_document(
+                &state, &headers, &project, &name, &item, &fields, None, &readable,
+            )
+            .await?,
         ),
     )
         .into_response())
@@ -207,8 +217,7 @@ async fn draft(
 ) -> Result<Response> {
     let (project, name, auth) =
         context(&state, &headers, &params, true, !params.contains_key("org")).await?;
-    let Json(input) =
-        input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let auth = auth.ok_or_else(auth::required)?;
     let actor = auth.user.id;
     let item = projects::add_item(
@@ -229,8 +238,17 @@ async fn draft(
     Ok((
         StatusCode::CREATED,
         Json(
-            item_document(&state, &headers, &project, &name, &item, &fields, None, &Default::default())
-                .await?,
+            item_document(
+                &state,
+                &headers,
+                &project,
+                &name,
+                &item,
+                &fields,
+                None,
+                &Default::default(),
+            )
+            .await?,
         ),
     )
         .into_response())
@@ -244,7 +262,8 @@ struct ItemQuery {
 fn selected_fields(uri: &axum::http::Uri) -> Result<Option<String>> {
     let fields: Vec<_> = url::form_urlencoded::parse(uri.query().unwrap_or("").as_bytes())
         .filter(|(key, _)| key == "fields" || key == "fields[]")
-        .map(|(_, value)| value.into_owned()).collect();
+        .map(|(_, value)| value.into_owned())
+        .collect();
     if fields.len() > 100 || fields.iter().map(String::len).sum::<usize>() > 4096 {
         return Err(Error::validation("ProjectV2Item", "fields", "invalid"));
     }
@@ -280,32 +299,84 @@ async fn list_items(
     let selected = selected_fields(&uri)?;
     let query = query.q.as_deref().unwrap_or("");
     let mut window = if view.as_ref().is_some_and(|view| !view.sort_by.is_empty()) {
-        let items = projects::items(&state.pool, viewer, project.id).await.map_err(project_error)?;
-        let items = crate::backend::projects::filter_items(items, &fields, query, view.as_ref()).map_err(project_error)?;
-        let start = if after == 0 { 0 } else { items.iter().position(|item| item.id == after).ok_or_else(|| Error::invalid("Cursor is outside this project view"))? + 1 };
-        let end = if before == i64::MAX { items.len() } else { items.iter().position(|item| item.id == before).ok_or_else(|| Error::invalid("Cursor is outside this project view"))? };
-        let mut window: Vec<_> = items.into_iter().skip(start).take(end.saturating_sub(start)).collect();
-        if page.before.is_some() { window.reverse(); }
+        let items = projects::items(&state.pool, viewer, project.id)
+            .await
+            .map_err(project_error)?;
+        let items = crate::backend::projects::filter_items(items, &fields, query, view.as_ref())
+            .map_err(project_error)?;
+        let start = if after == 0 {
+            0
+        } else {
+            items
+                .iter()
+                .position(|item| item.id == after)
+                .ok_or_else(|| Error::invalid("Cursor is outside this project view"))?
+                + 1
+        };
+        let end = if before == i64::MAX {
+            items.len()
+        } else {
+            items
+                .iter()
+                .position(|item| item.id == before)
+                .ok_or_else(|| Error::invalid("Cursor is outside this project view"))?
+        };
+        let mut window: Vec<_> = items
+            .into_iter()
+            .skip(start)
+            .take(end.saturating_sub(start))
+            .collect();
+        if page.before.is_some() {
+            window.reverse();
+        }
         window.truncate(limit + 1);
         window
     } else {
-        let unfiltered = query.trim().is_empty() && view.as_ref().and_then(|view| view.filter.as_deref()).unwrap_or("").trim().is_empty();
+        let unfiltered = query.trim().is_empty()
+            && view
+                .as_ref()
+                .and_then(|view| view.filter.as_deref())
+                .unwrap_or("")
+                .trim()
+                .is_empty();
         let batch_size = if unfiltered { limit + 1 } else { 101 };
         let mut window = Vec::new();
         loop {
-            let batch = projects::items_page(&state.pool, viewer, project.id, after, before, batch_size as i64).await.map_err(project_error)?;
+            let batch = projects::items_page(
+                &state.pool,
+                viewer,
+                project.id,
+                after,
+                before,
+                batch_size as i64,
+            )
+            .await
+            .map_err(project_error)?;
             let finished = batch.len() < batch_size;
             if let Some(last) = batch.last() {
-                if page.before.is_some() { before = last.id; } else { after = last.id; }
+                if page.before.is_some() {
+                    before = last.id;
+                } else {
+                    after = last.id;
+                }
             }
-            let batch = crate::backend::projects::filter_items(batch, &fields, query, view.as_ref()).map_err(project_error)?;
+            let batch =
+                crate::backend::projects::filter_items(batch, &fields, query, view.as_ref())
+                    .map_err(project_error)?;
             window.extend(batch.into_iter().take(limit + 1 - window.len()));
-            if window.len() > limit || finished { break; }
+            if window.len() > limit || finished {
+                break;
+            }
         }
         window
     };
     let more = page.trim(&mut window)?;
-    let (links, _) = page.links(&uri, window.first().map(|item| item.id), window.last().map(|item| item.id), more)?;
+    let (links, _) = page.links(
+        &uri,
+        window.first().map(|item| item.id),
+        window.last().map(|item| item.id),
+        more,
+    )?;
     let readable = readable_items(&state, auth.as_ref(), window.iter()).await?;
     let mut documents = Vec::new();
     for item in &window {
@@ -337,7 +408,9 @@ async fn get_item(
     let viewer = auth.as_ref().map(|a| a.user.id);
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
     let item = projects::item(&state.pool, viewer, project.id, id)
-        .await.map_err(project_error)?.ok_or_else(Error::missing)?;
+        .await
+        .map_err(project_error)?
+        .ok_or_else(Error::missing)?;
     let fields = projects::fields(&state.pool, viewer, project.id)
         .await
         .map_err(project_error)?;
@@ -371,15 +444,25 @@ async fn update_item(
     let Json(input) = input.map_err(super::super::json_error)?;
     let actor = auth.as_ref().ok_or_else(auth::required)?.user.id;
     let id: i64 = params["item_id"].parse().map_err(|_| Error::missing())?;
-    let item = projects::update_item(&state.pool, actor, &auth.as_ref().ok_or_else(auth::required)?.credential(), project.id, id, &input.fields)
-        .await
-        .map_err(project_error)?;
+    let item = projects::update_item(
+        &state.pool,
+        actor,
+        &auth.as_ref().ok_or_else(auth::required)?.credential(),
+        project.id,
+        id,
+        &input.fields,
+    )
+    .await
+    .map_err(project_error)?;
     let fields = projects::fields(&state.pool, Some(actor), project.id)
         .await
         .map_err(project_error)?;
     let readable = readable_items(&state, auth.as_ref(), [&item]).await?;
     Ok(Json(
-        item_document(&state, &headers, &project, &name, &item, &fields, None, &readable).await?,
+        item_document(
+            &state, &headers, &project, &name, &item, &fields, None, &readable,
+        )
+        .await?,
     ))
 }
 
@@ -409,9 +492,15 @@ async fn create_view(
     let Json(input) = input.map_err(super::super::json_error)?;
     let auth = auth.ok_or_else(auth::required)?;
     let actor = &auth.user;
-    let view = projects::create_view(&state.pool, actor.id, &auth.credential(), project.id, &input)
-        .await
-        .map_err(project_error)?;
+    let view = projects::create_view(
+        &state.pool,
+        actor.id,
+        &auth.credential(),
+        project.id,
+        &input,
+    )
+    .await
+    .map_err(project_error)?;
     let html = format!(
         "{}/{}/{}/projects/{}/views/{}",
         crate::backend::api::http::config::link_origin(),

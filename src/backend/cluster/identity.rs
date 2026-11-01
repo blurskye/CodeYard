@@ -122,13 +122,24 @@ fn load(
 /// replacing a different node identity, and never remove the legacy file during migration.
 pub(crate) fn release_key(state_dir: &Path, repository_root: &Path) -> Result<NodeKey> {
     let lookup = |name: &str| std::env::var(name).ok();
-    if !matches!(source(&lookup)?, Source::Saved) { return load_or_create(state_dir); }
+    if !matches!(source(&lookup)?, Source::Saved) {
+        return load_or_create(state_dir);
+    }
     let destination = state_dir.join("release.key");
-    if let Some(key) = saved_key(&destination, false)? { return Ok(key); }
+    if let Some(key) = saved_key(&destination, false)? {
+        return Ok(key);
+    }
     let legacy = saved_key(&repository_root.join(KEY_FILE), false)?;
-    let key = match legacy { Some(key) => key, None => load_or_create(state_dir)? };
-    let saved = saved_key_with(&destination, true, Some(&key))?.context("Release identity missing")?;
-    ensure!(saved.public_hex() == key.public_hex(), "Conflicting release identity migration");
+    let key = match legacy {
+        Some(key) => key,
+        None => load_or_create(state_dir)?,
+    };
+    let saved =
+        saved_key_with(&destination, true, Some(&key))?.context("Release identity missing")?;
+    ensure!(
+        saved.public_hex() == key.public_hex(),
+        "Conflicting release identity migration"
+    );
     Ok(saved)
 }
 

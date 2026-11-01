@@ -1,10 +1,10 @@
 //! Release content and draft visibility share one SQLite read transaction.
+use super::super::repositories::access::USER_REPO_ACCESS_SQL;
 use super::{ASSET_COLUMNS, ROW_SELECT};
 use crate::backend::db::{
     models::{ReleaseAsset, ReleaseRow, Repository},
     releases::{ReleaseRefusal, ReleaseSelection, ReleaseSnapshot},
 };
-use super::super::repositories::access::USER_REPO_ACCESS_SQL;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -24,7 +24,10 @@ pub async fn read_release_snapshot(
     )).bind(viewer).bind(repo_id).fetch_one(&mut *tx).await?;
     let (id, tag, limit, offset) = match selection {
         ReleaseSelection::Page { limit, offset } => {
-            anyhow::ensure!((1..=100).contains(&limit) && offset>=0, ReleaseRefusal::NotFound);
+            anyhow::ensure!(
+                (1..=100).contains(&limit) && offset >= 0,
+                ReleaseRefusal::NotFound
+            );
             (None, None, limit, offset)
         }
         ReleaseSelection::Id(id) => (Some(id), None, 1, 0),
@@ -34,12 +37,25 @@ pub async fn read_release_snapshot(
         "{ROW_SELECT} WHERE r.repo_id=?1 AND (?2 OR NOT r.is_draft) AND (?3 IS NULL OR r.id=?3) AND (?4 IS NULL OR r.tag_name=?4) ORDER BY r.created_at DESC, r.id DESC LIMIT ?5 OFFSET ?6"
     )).bind(repo_id).bind(drafts).bind(id).bind(tag).bind(limit).bind(offset)
         .fetch_all(&mut *tx).await?;
-    let total = sqlx::query_scalar("SELECT COUNT(*) FROM releases WHERE repo_id=?1 AND (?2 OR NOT is_draft)")
-        .bind(repo_id).bind(drafts).fetch_one(&mut *tx).await?;
-    let ids = releases.iter().map(|row| row.release.id).collect::<Vec<_>>();
+    let total = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM releases WHERE repo_id=?1 AND (?2 OR NOT is_draft)",
+    )
+    .bind(repo_id)
+    .bind(drafts)
+    .fetch_one(&mut *tx)
+    .await?;
+    let ids = releases
+        .iter()
+        .map(|row| row.release.id)
+        .collect::<Vec<_>>();
     let assets = sqlx::query_as::<_, ReleaseAsset>(&format!(
         "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id IN (SELECT value FROM json_each(?1)) ORDER BY id"
     )).bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
     tx.commit().await?;
-    Ok(ReleaseSnapshot { repository, releases, assets, total })
+    Ok(ReleaseSnapshot {
+        repository,
+        releases,
+        assets,
+        total,
+    })
 }

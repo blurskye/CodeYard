@@ -48,7 +48,11 @@ pub async fn update_organization_profile(
         return Ok(Denied);
     }
     // The browser session or token that sent the change must still be live when it commits.
-    if !crate::backend::db::sqlite::users::transitions::credential_live(&mut tx, actor, credential, true).await? {
+    if !crate::backend::db::sqlite::users::transitions::credential_live(
+        &mut tx, actor, credential, true,
+    )
+    .await?
+    {
         return Ok(Denied);
     }
     // This transaction holds the write lock, so an omitted field keeps the value committed

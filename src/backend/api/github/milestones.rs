@@ -1,10 +1,5 @@
 use super::{auth, pagination::Pagination, repository, Error, Result};
-use crate::backend::{
-    app::AppState,
-    db,
-    db::models::MilestoneSummary,
-    webhooks::payloads,
-};
+use crate::backend::{app::AppState, db, db::models::MilestoneSummary, webhooks::payloads};
 use axum::{
     extract::{OriginalUri, Path, Query, State},
     http::{HeaderMap, StatusCode},
@@ -26,7 +21,9 @@ fn write_error(error: anyhow::Error) -> Error {
             Error::new(StatusCode::FORBIDDEN, "Milestone mutation denied")
         }
         Some(MilestoneWriteRefusal::NotFound) => Error::missing(),
-        Some(MilestoneWriteRefusal::Conflict) => Error::new(StatusCode::CONFLICT, "Milestone changed"),
+        Some(MilestoneWriteRefusal::Conflict) => {
+            Error::new(StatusCode::CONFLICT, "Milestone changed")
+        }
         Some(MilestoneWriteRefusal::DuplicateTitle) => {
             Error::invalid("A milestone with this title already exists")
         }
@@ -62,9 +59,24 @@ async fn get_milestone(
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let summary = db::milestones::read_milestones(&state.pool, auth.as_ref().map(|auth| auth.user.id), repo.id,
-        Some(p["milestone_number"].parse().map_err(|_| Error::missing())?), None, "number-asc", 1, 0)
-        .await.map_err(Error::unavailable)?.pop().ok_or_else(Error::missing)?;
+    let summary = db::milestones::read_milestones(
+        &state.pool,
+        auth.as_ref().map(|auth| auth.user.id),
+        repo.id,
+        Some(
+            p["milestone_number"]
+                .parse()
+                .map_err(|_| Error::missing())?,
+        ),
+        None,
+        "number-asc",
+        1,
+        0,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .pop()
+    .ok_or_else(Error::missing)?;
     Ok(Json(
         document(&state.pool, &summary, &p["owner"], &repo.name).await?,
     ))
@@ -89,8 +101,14 @@ async fn save(
     let actor = auth.ok_or_else(auth::required)?;
     let input: Input = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid milestone fields"))?;
-    let number = if creating { None } else {
-        Some(p["milestone_number"].parse::<i32>().map_err(|_| Error::missing())?)
+    let number = if creating {
+        None
+    } else {
+        Some(
+            p["milestone_number"]
+                .parse::<i32>()
+                .map_err(|_| Error::missing())?,
+        )
     };
     if creating && input.title.is_none() {
         return Err(Error::invalid("Title is required"));
@@ -115,7 +133,9 @@ async fn save(
         number,
         db::milestones::MilestoneInput {
             title: input.title.as_deref(),
-            description: value.get("description").map(|_| input.description.as_deref()),
+            description: value
+                .get("description")
+                .map(|_| input.description.as_deref()),
             due_on: value.get("due_on").map(|_| input.due_on),
             state: input.state.as_deref(),
         },
@@ -221,10 +241,29 @@ async fn list(
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
     let rows: Vec<_> = rows.into_iter().take(limit).collect();
-    let ids: Vec<_> = rows.iter().filter_map(|row| row.milestone.creator_id).collect::<std::collections::HashSet<_>>().into_iter().collect();
+    let ids: Vec<_> = rows
+        .iter()
+        .filter_map(|row| row.milestone.creator_id)
+        .collect::<std::collections::HashSet<_>>()
+        .into_iter()
+        .collect();
     let creators: HashMap<_, _> = db::users::accounts::get_users_by_ids(&state.pool, &ids)
-        .await.map_err(Error::unavailable)?.into_iter().map(|user| (user.id, user)).collect();
-    let items = rows.iter().map(|row| payloads::milestone(row, row.milestone.creator_id.and_then(|id| creators.get(&id)), &p["owner"], &repo.name)).collect();
+        .await
+        .map_err(Error::unavailable)?
+        .into_iter()
+        .map(|user| (user.id, user))
+        .collect();
+    let items = rows
+        .iter()
+        .map(|row| {
+            payloads::milestone(
+                row,
+                row.milestone.creator_id.and_then(|id| creators.get(&id)),
+                &p["owner"],
+                &repo.name,
+            )
+        })
+        .collect();
     page.response(&uri, items, next)
 }
 
@@ -236,9 +275,24 @@ async fn labels(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
-    let milestone = db::milestones::read_milestones(&state.pool, auth.as_ref().map(|auth| auth.user.id), repo.id,
-        Some(p["milestone_number"].parse().map_err(|_| Error::missing())?), None, "number-asc", 1, 0)
-        .await.map_err(Error::unavailable)?.pop().ok_or_else(Error::missing)?;
+    let milestone = db::milestones::read_milestones(
+        &state.pool,
+        auth.as_ref().map(|auth| auth.user.id),
+        repo.id,
+        Some(
+            p["milestone_number"]
+                .parse()
+                .map_err(|_| Error::missing())?,
+        ),
+        None,
+        "number-asc",
+        1,
+        0,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .pop()
+    .ok_or_else(Error::missing)?;
     let (offset, limit) = page.window()?;
     let labels = db::labels::list_milestone_labels(
         &state.pool,

@@ -2,8 +2,8 @@ use crate::backend::{
     crypto::{SecretEncryptor, SecretError},
     db::{
         organization_values::{
-            self, Kind, OrganizationValue, Save, Selection, SettingsPage, SettingsValue, StoredValue,
-            ValueError, SETTINGS_PAGE_SIZE,
+            self, Kind, OrganizationValue, Save, Selection, SettingsPage, SettingsValue,
+            StoredValue, ValueError, SETTINGS_PAGE_SIZE,
         },
         organizations::{administers, OrganizationOutcome},
         users::accounts::AccountCredential,
@@ -22,9 +22,19 @@ async fn authorize(connection: &mut Connection, actor: i64, org: i64) -> Result<
     }
 }
 
-async fn authorize_write(tx: &mut Transaction<'_, Postgres>, actor: i64, credential: &AccountCredential<'_>, org: i64) -> Result<(), ValueError> {
+async fn authorize_write(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    org: i64,
+) -> Result<(), ValueError> {
     authorize(tx, actor, org).await?;
-    if !crate::backend::db::postgres::users::transitions::credential_live(tx, actor, credential, true).await.map_err(ValueError::Authority)? {
+    if !crate::backend::db::postgres::users::transitions::credential_live(
+        tx, actor, credential, true,
+    )
+    .await
+    .map_err(ValueError::Authority)?
+    {
         return Err(ValueError::Denied);
     }
     Ok(())
@@ -65,10 +75,19 @@ pub async fn list(
 }
 
 /// The page and selected-ID summaries share retained owner/session authority.
-pub async fn settings_page(pool: &Pool, actor: i64, session: &str, org: i64, page: i64) -> Result<SettingsPage, ValueError> {
+pub async fn settings_page(
+    pool: &Pool,
+    actor: i64,
+    session: &str,
+    org: i64,
+    page: i64,
+) -> Result<SettingsPage, ValueError> {
     let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, org).await?;
-    if !crate::backend::db::postgres::users::transitions::live_session(&mut tx, actor, session).await.map_err(ValueError::Authority)? {
+    if !crate::backend::db::postgres::users::transitions::live_session(&mut tx, actor, session)
+        .await
+        .map_err(ValueError::Authority)?
+    {
         return Err(ValueError::Denied);
     }
     let rows = sqlx::query_as::<_, SettingsValue>(
@@ -130,11 +149,15 @@ async fn delivery_budget(c: &mut Connection, org: i64) -> Result<(), ValueError>
     for private in [false, true] {
         let bytes: i64 = sqlx::query_scalar("SELECT COALESCE(SUM(bytes),0)::BIGINT FROM (SELECT octet_length(name)+octet_length(encrypted_value)-16 AS bytes FROM org_actions_values WHERE org_id=$1 AND kind='secret' AND (visibility='all' OR ($2 AND visibility='private')) ORDER BY name LIMIT 100) v")
             .bind(org).bind(private).fetch_one(&mut *c).await?;
-        if bytes > crate::backend::db::secrets::MAX_REPOSITORY_SECRETS_BYTES as i64 { return Err(ValueError::SecretsSize); }
+        if bytes > crate::backend::db::secrets::MAX_REPOSITORY_SECRETS_BYTES as i64 {
+            return Err(ValueError::SecretsSize);
+        }
     }
     let invalid: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND COALESCE((SELECT SUM(i.bytes) FROM (SELECT v.name,octet_length(v.name)+octet_length(v.encrypted_value)-16 AS bytes FROM org_actions_values v WHERE v.org_id=$1 AND v.kind='secret' AND (v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id))) ORDER BY v.name LIMIT 100) i WHERE NOT EXISTS(SELECT 1 FROM repo_secrets s WHERE s.repo_id=r.id AND upper(s.name)=upper(i.name))),0) + COALESCE((SELECT SUM(octet_length(s.name)+octet_length(s.encrypted_value)-16) FROM repo_secrets s WHERE s.repo_id=r.id),0)>$2)")
         .bind(org).bind(crate::backend::db::secrets::MAX_REPOSITORY_SECRETS_BYTES as i64).fetch_one(c).await?;
-    if invalid { return Err(ValueError::SecretsSize); }
+    if invalid {
+        return Err(ValueError::SecretsSize);
+    }
     Ok(())
 }
 
@@ -224,7 +247,9 @@ pub async fn save(
     } else if let Some(ids) = input.repositories {
         replace_repositories(&mut tx, org, input.kind, input.name, ids).await?;
     }
-    if input.kind == Kind::Secret { delivery_budget(&mut tx, org).await?; }
+    if input.kind == Kind::Secret {
+        delivery_budget(&mut tx, org).await?;
+    }
     tx.commit().await?;
     Ok(old.is_none())
 }
@@ -249,7 +274,9 @@ pub async fn delete(
     if result.rows_affected() == 0 {
         return Err(ValueError::NotFound);
     }
-    if kind == Kind::Secret { delivery_budget(&mut tx, org).await?; }
+    if kind == Kind::Secret {
+        delivery_budget(&mut tx, org).await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -283,13 +310,29 @@ pub async fn repositories(
     name: &str,
     offset: i64,
     limit: i64,
-) -> Result<(i64, Vec<crate::backend::db::repository_stats::RepositorySnapshot>), ValueError> {
-    if offset < 0 || !(1..=10_000).contains(&limit) { return Err(ValueError::Authority(anyhow::anyhow!("Invalid repository page"))); }
+) -> Result<
+    (
+        i64,
+        Vec<crate::backend::db::repository_stats::RepositorySnapshot>,
+    ),
+    ValueError,
+> {
+    if offset < 0 || !(1..=10_000).contains(&limit) {
+        return Err(ValueError::Authority(anyhow::anyhow!(
+            "Invalid repository page"
+        )));
+    }
     crate::backend::db::postgres::retry_on_conflict(|| async {
-        repositories_once(pool, actor, org, kind, name, offset, limit).await.map_err(anyhow::Error::from)
+        repositories_once(pool, actor, org, kind, name, offset, limit)
+            .await
+            .map_err(anyhow::Error::from)
     })
     .await
-    .map_err(|error| error.downcast::<ValueError>().unwrap_or_else(ValueError::Authority))
+    .map_err(|error| {
+        error
+            .downcast::<ValueError>()
+            .unwrap_or_else(ValueError::Authority)
+    })
 }
 
 async fn repositories_once(
@@ -300,15 +343,37 @@ async fn repositories_once(
     name: &str,
     offset: i64,
     limit: i64,
-) -> Result<(i64, Vec<crate::backend::db::repository_stats::RepositorySnapshot>), ValueError> {
+) -> Result<
+    (
+        i64,
+        Vec<crate::backend::db::repository_stats::RepositorySnapshot>,
+    ),
+    ValueError,
+> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *tx)
+        .await?;
     authorize(&mut tx, actor, org).await?;
     selected(&mut tx, org, kind, name).await?;
     let selection = "FROM repositories r JOIN org_actions_value_repositories s ON s.repo_id=r.id AND s.org_id=r.owner_org_id JOIN organizations o ON o.id=r.owner_org_id WHERE s.org_id=$1 AND s.kind=$2 AND s.name=$3 AND r.owner_kind='org'";
-    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) {selection}")).bind(org).bind(kind.as_str()).bind(name).fetch_one(&mut *tx).await?;
-    let rows = sqlx::query_as(&format!("SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT $4 OFFSET $5", crate::backend::db::postgres::repository_stats::DOCUMENT_FACTS))
-        .bind(org).bind(kind.as_str()).bind(name).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    let total = sqlx::query_scalar(&format!("SELECT COUNT(*) {selection}"))
+        .bind(org)
+        .bind(kind.as_str())
+        .bind(name)
+        .fetch_one(&mut *tx)
+        .await?;
+    let rows = sqlx::query_as(&format!(
+        "SELECT r.*,{},o.name AS owner {selection} ORDER BY r.id LIMIT $4 OFFSET $5",
+        crate::backend::db::postgres::repository_stats::DOCUMENT_FACTS
+    ))
+    .bind(org)
+    .bind(kind.as_str())
+    .bind(name)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok((total, rows))
 }
@@ -345,7 +410,9 @@ pub async fn select(
     .bind(chrono::Utc::now())
     .execute(&mut *tx)
     .await?;
-    if kind == Kind::Secret { delivery_budget(&mut tx, org).await?; }
+    if kind == Kind::Secret {
+        delivery_budget(&mut tx, org).await?;
+    }
     tx.commit().await?;
     Ok(())
 }
@@ -357,7 +424,14 @@ pub async fn inherited(
     kind: Kind,
 ) -> Result<Vec<OrganizationValue>, ValueError> {
     let mut tx = pool.begin().await?;
-    let allowed = super::super::discussions::lock_settings_read_authority(&mut tx, actor, repo, kind == Kind::Secret).await.map_err(ValueError::Authority)?;
+    let allowed = super::super::discussions::lock_settings_read_authority(
+        &mut tx,
+        actor,
+        repo,
+        kind == Kind::Secret,
+    )
+    .await
+    .map_err(ValueError::Authority)?;
     if !allowed {
         return Err(ValueError::Denied);
     }

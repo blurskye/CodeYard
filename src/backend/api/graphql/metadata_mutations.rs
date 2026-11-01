@@ -61,12 +61,20 @@ pub(super) async fn prepare(
         selected.sort_unstable();
         selected.dedup();
         if selected.len() > db::assignees::MAX_ASSIGNEES as usize {
-            return Err(async_graphql::Error::new("At most 10 assignees are allowed"));
+            return Err(async_graphql::Error::new(
+                "At most 10 assignees are allowed",
+            ));
         }
         let users = db::users::accounts::get_users_by_ids(&request.state.pool, &selected)
-            .await.map_err(unavailable)?;
-        if users.len() != selected.len() { return Err(missing()); }
-        translated["assignees"] = json!(users.into_iter().map(|user| user.username).collect::<Vec<_>>());
+            .await
+            .map_err(unavailable)?;
+        if users.len() != selected.len() {
+            return Err(missing());
+        }
+        translated["assignees"] = json!(users
+            .into_iter()
+            .map(|user| user.username)
+            .collect::<Vec<_>>());
     }
     if let Some(value) = input.get("milestoneId") {
         translated["milestone"] = if value.is_null() {

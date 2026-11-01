@@ -164,7 +164,10 @@ fn file(owner: &str, repo: &Repository, reference: &str, entry: &TreeEntry) -> F
 }
 
 /// The same pinned community-file search order is used by profiles and catalog search.
-pub(super) async fn directories(store: &RepoStore, reference: &str) -> Result<Vec<(&'static str, Vec<TreeEntry>)>, RepoError> {
+pub(super) async fn directories(
+    store: &RepoStore,
+    reference: &str,
+) -> Result<Vec<(&'static str, Vec<TreeEntry>)>, RepoError> {
     let mut directories: Vec<(&str, Vec<TreeEntry>)> = Vec::new();
     for directory in ["", ".github", "docs"] {
         if !directory.is_empty()
@@ -283,7 +286,8 @@ pub async fn load(
     let mut profile = discover(repo, owner, cluster).await?;
     profile.description = repo.description.clone();
     profile.documentation = repo.website.clone();
-    let needs_defaults = profile.conduct.is_none() || profile.contributing.is_none()
+    let needs_defaults = profile.conduct.is_none()
+        || profile.contributing.is_none()
         || (profile.issue_template.is_none() && profile.issue_templates.is_none())
         || (profile.pull_request_template.is_none() && profile.pull_request_templates.is_none());
     if repo.name != ".github" && needs_defaults {

@@ -195,8 +195,8 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                                 &blob,
                                 db::packages::Charge::Upload,
                             )
-                                .await
-                                .map_err(Error::db)?;
+                            .await
+                            .map_err(Error::db)?;
                             Ok::<_, Error>(blob)
                         }
                         .await;
@@ -492,8 +492,15 @@ async fn append(
     if !final_chunk && !bytes.is_empty() {
         let chunks: Vec<Blob> =
             serde_json::from_str(&upload.chunks).map_err(|_| Error::unavailable())?;
-        if chunks.last().is_some_and(|chunk| chunk.size < MIN_CHUNK_BYTES) {
-            return Err(Error(StatusCode::BAD_REQUEST, "SIZE_INVALID", "Upload chunks must be at least 1 MiB"));
+        if chunks
+            .last()
+            .is_some_and(|chunk| chunk.size < MIN_CHUNK_BYTES)
+        {
+            return Err(Error(
+                StatusCode::BAD_REQUEST,
+                "SIZE_INVALID",
+                "Upload chunks must be at least 1 MiB",
+            ));
         }
     }
     if bytes.is_empty() {
@@ -507,8 +514,8 @@ async fn append(
         bytes.to_vec(),
         db::packages::Charge::Chunk(&upload.id),
     )
-        .await
-        .map_err(Error::db)?;
+    .await
+    .map_err(Error::db)?;
     db::packages::append_upload(
         &state.pool,
         package,
@@ -521,7 +528,10 @@ async fn append(
     .map_err(Error::db)
 }
 
-#[expect(clippy::too_many_arguments, reason = "Finishing an upload needs the package, the upload session and the request it arrived on.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Finishing an upload needs the package, the upload session and the request it arrived on."
+)]
 async fn finish(
     state: &AppState,
     package: &db::packages::Package,
@@ -571,8 +581,8 @@ async fn finish(
             bytes,
             db::packages::Charge::Assembled,
         )
-            .await
-            .map_err(Error::db)?
+        .await
+        .map_err(Error::db)?
     };
     db::packages::finish_upload(&state.pool, package.id, token, &upload.id, upload.offset)
         .await
@@ -644,19 +654,30 @@ async fn manifest_blobs(
             .as_i64()
             .filter(|size| *size >= 0)
             .ok_or_else(Error::invalid)?;
-        let foreign = matches!(descriptor["mediaType"].as_str(),
-            Some("application/vnd.docker.image.rootfs.foreign.diff.tar.gzip"
-                | "application/vnd.oci.image.layer.nondistributable.v1.tar"
-                | "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip"
-                | "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd"));
+        let foreign = matches!(
+            descriptor["mediaType"].as_str(),
+            Some(
+                "application/vnd.docker.image.rootfs.foreign.diff.tar.gzip"
+                    | "application/vnd.oci.image.layer.nondistributable.v1.tar"
+                    | "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip"
+                    | "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd"
+            )
+        );
         if !index && foreign {
-            let urls = descriptor["urls"].as_array().filter(|urls| !urls.is_empty())
+            let urls = descriptor["urls"]
+                .as_array()
+                .filter(|urls| !urls.is_empty())
                 .ok_or_else(Error::invalid)?;
             for url in urls {
-                let url = url.as_str().and_then(|url| url::Url::parse(url).ok())
-                    .filter(|url| matches!(url.scheme(), "http" | "https")
-                        && url.host_str().is_some() && url.username().is_empty()
-                        && url.password().is_none())
+                let url = url
+                    .as_str()
+                    .and_then(|url| url::Url::parse(url).ok())
+                    .filter(|url| {
+                        matches!(url.scheme(), "http" | "https")
+                            && url.host_str().is_some()
+                            && url.username().is_empty()
+                            && url.password().is_none()
+                    })
                     .ok_or_else(Error::invalid)?;
                 let _ = url;
             }
@@ -678,10 +699,23 @@ async fn manifest_blobs(
 }
 
 /// `validator` is the response's strong ETag, if it has one, for `If-Range`.
-pub(super) fn byte_range(headers: &HeaderMap, size: u64, validator: Option<&str>) -> Result<Option<(u64, u64)>> {
-    let invalid = || Error(StatusCode::RANGE_NOT_SATISFIABLE, "RANGE_INVALID", "Invalid blob range");
-    let (range, partial) = crate::backend::api::http::range::requested(headers, validator).map_err(|_| invalid())?;
-    if !partial { return Ok(None); }
+pub(super) fn byte_range(
+    headers: &HeaderMap,
+    size: u64,
+    validator: Option<&str>,
+) -> Result<Option<(u64, u64)>> {
+    let invalid = || {
+        Error(
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "RANGE_INVALID",
+            "Invalid blob range",
+        )
+    };
+    let (range, partial) =
+        crate::backend::api::http::range::requested(headers, validator).map_err(|_| invalid())?;
+    if !partial {
+        return Ok(None);
+    }
     let (start, length) = range.normalize(size).map_err(|_| invalid())?;
     Ok(Some((start, start + length - 1)))
 }

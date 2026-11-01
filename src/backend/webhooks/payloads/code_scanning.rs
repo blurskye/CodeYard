@@ -6,9 +6,17 @@ use crate::backend::{
 use serde_json::{json, Value};
 
 fn html_url(owner: &str, repo: &str, number: i64, instance: Option<&Instance>) -> String {
-    let mut url = format!("{}{}/security/code-scanning/{number}", link_origin(), crate::webui::repository_path(owner, repo));
+    let mut url = format!(
+        "{}{}/security/code-scanning/{number}",
+        link_origin(),
+        crate::webui::repository_path(owner, repo)
+    );
     if let Some(instance) = instance {
-        url.push_str(&format!("?branch={}&category={}", crate::webui::encode_component(&instance.ref_name), crate::webui::encode_component(&instance.category)));
+        url.push_str(&format!(
+            "?branch={}&category={}",
+            crate::webui::encode_component(&instance.ref_name),
+            crate::webui::encode_component(&instance.category)
+        ));
     }
     url
 }

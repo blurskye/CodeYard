@@ -25,7 +25,17 @@ pub(super) async fn organizations(
     )
     .await
     .map_err(unavailable)?;
-    request.charge(rows.iter().map(|org| org.name.len() + org.display_name.as_ref().map_or(0, |text| text.len()) + org.description.as_ref().map_or(0, |text| text.len()) + org.billing_email.as_ref().map_or(0, |text| text.len()) + 128).sum())?;
+    request.charge(
+        rows.iter()
+            .map(|org| {
+                org.name.len()
+                    + org.display_name.as_ref().map_or(0, |text| text.len())
+                    + org.description.as_ref().map_or(0, |text| text.len())
+                    + org.billing_email.as_ref().map_or(0, |text| text.len())
+                    + 128
+            })
+            .sum(),
+    )?;
     if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
         let order = order.object()?;
         match order.try_get("field")?.enum_name()? {
@@ -33,10 +43,17 @@ pub(super) async fn organizations(
             "CREATED_AT" => rows.sort_by_key(|org| (org.created_at, org.id)),
             _ => return Err(async_graphql::Error::new("Unsupported organization order")),
         }
-        if order.try_get("direction")?.enum_name()? == "DESC" { rows.reverse(); }
+        if order.try_get("direction")?.enum_name()? == "DESC" {
+            rows.reverse();
+        }
     }
     let page = connection::Page::new(ctx, rows.len() as i64)?;
-    let nodes = rows.iter().skip(page.offset as usize).take(page.limit as usize).map(user::organization).collect();
+    let nodes = rows
+        .iter()
+        .skip(page.offset as usize)
+        .take(page.limit as usize)
+        .map(user::organization)
+        .collect();
     Ok(page.finish(nodes))
 }
 
@@ -60,7 +77,10 @@ fn query<'a>(
     }
     if let Some(value) = ctx.args.get("ownerAffiliations").filter(|v| !v.is_null()) {
         let values: Value = value.deserialize()?;
-        if super::metadata_mutations::list(&values).iter().any(|v| v.as_str() != Some("OWNER")) {
+        if super::metadata_mutations::list(&values)
+            .iter()
+            .any(|v| v.as_str() != Some("OWNER"))
+        {
             return Err(async_graphql::Error::new(
                 "Codeyard only supports OWNER ownerAffiliations",
             ));

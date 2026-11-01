@@ -102,11 +102,17 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .filter(|claim| claim.id == run.id)
-        .unwrap();
+    let run = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[actor],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .filter(|claim| claim.id == run.id)
+    .unwrap();
     let definitions = BTreeMap::from([(".github/workflows/ci.yml".into(), b"permissions: {contents: write}\njobs:\n  writer: {}\n  reader: {permissions: {contents: read}}\n  triage: {permissions: {issues: write}}\n  merger: {permissions: {pull-requests: write, contents: read}}".to_vec())]);
     let router = f.router(&repos_root).await;
     f.execute("UPDATE ci_runs SET is_fork=true WHERE id=$1", &[run.id])

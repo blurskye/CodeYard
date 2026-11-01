@@ -160,14 +160,27 @@ async fn list_stars(
     .await
     .map_err(Error::unavailable)?;
     let has_next = rows.len() > limit;
-    let readable = auth::readable_repositories(state, auth.as_ref(), &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(), "metadata").await?;
+    let readable = auth::readable_repositories(
+        state,
+        auth.as_ref(),
+        &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(),
+        "metadata",
+    )
+    .await?;
     let mut items = Vec::new();
-    for repo in rows.iter().take(limit).filter(|repo| readable.contains(&repo.id)) {
+    for repo in rows
+        .iter()
+        .take(limit)
+        .filter(|repo| readable.contains(&repo.id))
+    {
         let value = super::repos::document(state, repo, auth.as_ref()).await?;
         items.push(if timestamps(headers) {
             let Some(at) = db::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
                 .await
-                .map_err(Error::unavailable)? else { continue; };
+                .map_err(Error::unavailable)?
+            else {
+                continue;
+            };
             json!({"starred_at": at, "repo": value})
         } else {
             value
@@ -228,7 +241,10 @@ async fn stargazers(
         items.push(if timestamps(&headers) {
             let Some(at) = db::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
                 .await
-                .map_err(Error::unavailable)? else { continue; };
+                .map_err(Error::unavailable)?
+            else {
+                continue;
+            };
             json!({"starred_at": at, "user": value})
         } else {
             value

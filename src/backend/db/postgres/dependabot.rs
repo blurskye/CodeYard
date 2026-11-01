@@ -23,9 +23,20 @@ pub(super) async fn authorized(
         .map_err(SecretsError::authority)?
     {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {
-            if !super::credentials::organization(&mut tx, &actor, org, "organization_administration", write).await.map_err(SecretsError::authority)? { return Err(SecretsError::Denied); }
+            if !super::credentials::organization(
+                &mut tx,
+                &actor,
+                org,
+                "organization_administration",
+                write,
+            )
+            .await
+            .map_err(SecretsError::authority)?
+            {
+                return Err(SecretsError::Denied);
+            }
             Ok(tx)
-        },
+        }
         OrganizationOutcome::Missing => Err(SecretsError::NotFound),
         _ => Err(SecretsError::Denied),
     }
@@ -78,7 +89,9 @@ pub(super) async fn check_repositories(
     ids.dedup();
     let found: Vec<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=ANY($1) AND owner_kind='org' AND owner_org_id=$2 AND owner_user_id IS NULL ORDER BY id FOR SHARE")
         .bind(&ids).bind(org).fetch_all(&mut **tx).await?;
-    if found.len() != ids.len() { return Err(SecretsError::InvalidRepositorySelection); }
+    if found.len() != ids.len() {
+        return Err(SecretsError::InvalidRepositorySelection);
+    }
     Ok(())
 }
 
@@ -250,8 +263,13 @@ pub async fn update_repository_access(
     check_repositories(&mut tx, org, &ids).await?;
     sqlx::query("INSERT INTO org_dependabot_access_repositories(org_id,repo_id) SELECT $1,id FROM UNNEST($2::bigint[]) AS selected(id) ON CONFLICT DO NOTHING")
         .bind(org).bind(add).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM org_dependabot_access_repositories WHERE org_id=$1 AND repo_id=ANY($2)")
-        .bind(org).bind(remove).execute(&mut *tx).await?;
+    sqlx::query(
+        "DELETE FROM org_dependabot_access_repositories WHERE org_id=$1 AND repo_id=ANY($2)",
+    )
+    .bind(org)
+    .bind(remove)
+    .execute(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(())
 }

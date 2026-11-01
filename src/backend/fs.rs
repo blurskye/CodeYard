@@ -36,11 +36,17 @@ fn create_durable(path: &Path, builder: &std::fs::DirBuilder) -> std::io::Result
         }
     }
     builder.create(path).map_err(|error| {
-        std::io::Error::new(error.kind(), format!("cannot create {}: {error}", path.display()))
+        std::io::Error::new(
+            error.kind(),
+            format!("cannot create {}: {error}", path.display()),
+        )
     })?;
     for made in created.into_iter().rev() {
         std::fs::File::open(made)?.sync_all()?;
-        let parent = made.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or(Path::new("."));
+        let parent = made
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+            .unwrap_or(Path::new("."));
         std::fs::File::open(parent)?.sync_all()?;
     }
     Ok(())

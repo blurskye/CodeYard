@@ -83,7 +83,11 @@ async fn contract(pg: bool) {
         f.pool(),
         queued.run_id,
         alice,
-        &db::ci::CiCredential::Token { id: read_pat.id, hash: ci::runtime::token_hash(read_token), permission: "actions" },
+        &db::ci::CiCredential::Token {
+            id: read_pat.id,
+            hash: ci::runtime::token_hash(read_token),
+            permission: "actions",
+        },
     )
     .await
     .unwrap_err();
@@ -134,7 +138,11 @@ async fn contract(pg: bool) {
         f.pool(),
         foreign.run_id,
         alice,
-        &db::ci::CiCredential::Token { id: write_pat.id, hash: ci::runtime::token_hash(write_token), permission: "actions" },
+        &db::ci::CiCredential::Token {
+            id: write_pat.id,
+            hash: ci::runtime::token_hash(write_token),
+            permission: "actions",
+        },
     )
     .await
     .unwrap_err();

@@ -61,8 +61,11 @@ pub(crate) fn client_condition(client_sql: &str) -> String {
 }
 
 pub(crate) fn token_issuer_condition(token_sql: &str, cli_sql: &str) -> String {
-    format!("NOT EXISTS(SELECT 1 FROM oauth_app_tokens issued WHERE issued.token_id={token_sql}.id
-        AND issued.client_id<>{cli_sql} AND NOT ({}))", client_condition("issued.client_id"))
+    format!(
+        "NOT EXISTS(SELECT 1 FROM oauth_app_tokens issued WHERE issued.token_id={token_sql}.id
+        AND issued.client_id<>{cli_sql} AND NOT ({}))",
+        client_condition("issued.client_id")
+    )
 }
 
 pub enum Exchange {

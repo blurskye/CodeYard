@@ -1,4 +1,7 @@
-#![allow(dead_code, reason = "Each test binary uses its own part of the shared support code.")]
+#![allow(
+    dead_code,
+    reason = "Each test binary uses its own part of the shared support code."
+)]
 
 pub mod database;
 pub mod fake_webui_bundle;
@@ -19,7 +22,14 @@ pub static PASSWORD_WORK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new
 pub async fn live_session(pool: &codeyard::backend::db::DbPool, actor: i64) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string().repeat(2);
     codeyard::backend::db::users::sessions::create_session(
-        pool, &id, actor, None, None, chrono::Utc::now() + chrono::Duration::hours(1),
-    ).await.unwrap();
+        pool,
+        &id,
+        actor,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
     id
 }

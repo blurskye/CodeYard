@@ -41,7 +41,10 @@ pub fn may_be_private_key(value: &str) -> bool {
 /// key type. Anything else, such as a private key body pasted without its header, is dropped.
 fn keeps_key_draft(value: &str) -> bool {
     let value = value.trim_start();
-    ["ssh-", "ecdsa-", "sk-"].iter().any(|kind| value.starts_with(kind)) && !may_be_private_key(value)
+    ["ssh-", "ecdsa-", "sk-"]
+        .iter()
+        .any(|kind| value.starts_with(kind))
+        && !may_be_private_key(value)
 }
 
 /// Only explicitly non-secret values may survive a failed submission.

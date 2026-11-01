@@ -877,7 +877,14 @@ async fn deleted_head_takes_the_pull_ref(pg: bool) {
         .unwrap();
     let signature = git2::Signature::now("Alice", "alice@example.invalid").unwrap();
     let published = git
-        .commit(None, &signature, &signature, "Published", &parent.tree().unwrap(), &[&parent])
+        .commit(
+            None,
+            &signature,
+            &signature,
+            "Published",
+            &parent.tree().unwrap(),
+            &[&parent],
+        )
         .unwrap();
     let ci = ci(&w);
     for deleted in [false, true] {
@@ -901,8 +908,16 @@ async fn deleted_head_takes_the_pull_ref(pg: bool) {
         )
         .await
         .unwrap();
-        let expected = if deleted { published.to_string() } else { w.head.clone() };
-        assert_eq!(row(&w, 1).await.head_sha, expected, "deleted head: {deleted}");
+        let expected = if deleted {
+            published.to_string()
+        } else {
+            w.head.clone()
+        };
+        assert_eq!(
+            row(&w, 1).await.head_sha,
+            expected,
+            "deleted head: {deleted}"
+        );
     }
     drop(parent);
     drop(git);

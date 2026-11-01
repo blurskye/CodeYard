@@ -28,10 +28,14 @@ pub(crate) fn page_ids(rows: &[(i64, i64)], limit: usize) -> Result<Vec<i64>, At
     let mut ids = Vec::new();
     for &(id, size) in rows.iter().take(limit) {
         bytes = bytes.saturating_add(usize::try_from(size).map_err(|_| AttestationError::Size)?);
-        if bytes > 8 * 1024 * 1024 { break; }
+        if bytes > 8 * 1024 * 1024 {
+            break;
+        }
         ids.push(id);
     }
-    if !rows.is_empty() && ids.is_empty() { return Err(AttestationError::Size); }
+    if !rows.is_empty() && ids.is_empty() {
+        return Err(AttestationError::Size);
+    }
     Ok(ids)
 }
 
@@ -167,16 +171,23 @@ impl PreparedBundle {
             .ok_or_else(invalid)?;
         let mut digests = std::collections::BTreeSet::new();
         for subject in subjects {
-            let digest = subject.get("digest").and_then(Value::as_object).ok_or_else(invalid)?;
+            let digest = subject
+                .get("digest")
+                .and_then(Value::as_object)
+                .ok_or_else(invalid)?;
             let mut recognized = false;
             for algorithm in ["sha256", "sha512"] {
                 if let Some(hex) = digest.get(algorithm) {
                     let hex = hex.as_str().ok_or_else(invalid)?;
-                    digests.insert(subject_digest(&format!("{algorithm}:{hex}")).map_err(|_| invalid())?);
+                    digests.insert(
+                        subject_digest(&format!("{algorithm}:{hex}")).map_err(|_| invalid())?,
+                    );
                     recognized = true;
                 }
             }
-            if !recognized { return Err(invalid()); }
+            if !recognized {
+                return Err(invalid());
+            }
         }
         Ok(Self {
             bundle: text,

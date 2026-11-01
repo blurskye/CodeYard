@@ -706,7 +706,9 @@ outputs:
     assert!(!jobs[1].continue_on_error);
     assert_eq!(jobs[0].runs_on, ["self-hosted", "linux"]);
     assert_eq!(jobs[0].runs_on_group.as_deref(), Some("larger-runners"));
-    assert!(matches!(&jobs[0].env[1], super::EnvironmentTemplate::Entries(env) if env["OS"] == "${{ matrix.os }}"));
+    assert!(
+        matches!(&jobs[0].env[1], super::EnvironmentTemplate::Entries(env) if env["OS"] == "${{ matrix.os }}")
+    );
     assert_eq!(
         jobs[0].default_shell.as_deref(),
         Some("${{ matrix.os == 'linux' && 'bash' || 'pwsh' }}")
@@ -745,7 +747,11 @@ jobs:
     // The runner resolves the workflow scope, then the job scope over it.
     let mut env = BTreeMap::new();
     for scope in &job.env {
-        env.extend(scope.resolve(&Contexts::default(), Status::default()).unwrap());
+        env.extend(
+            scope
+                .resolve(&Contexts::default(), Status::default())
+                .unwrap(),
+        );
     }
     assert_eq!(
         env,

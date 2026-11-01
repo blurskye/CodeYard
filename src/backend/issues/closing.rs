@@ -16,8 +16,12 @@ fn prose(body: &str) -> String {
         if starts || ends || code_block || matches!(&event, Event::Code(_)) {
             bytes[range].fill(b' ');
         }
-        if starts { code_block = true; }
-        if ends { code_block = false; }
+        if starts {
+            code_block = true;
+        }
+        if ends {
+            code_block = false;
+        }
     }
     String::from_utf8(bytes).expect("Markdown ranges are UTF-8 boundaries")
 }
@@ -49,20 +53,45 @@ pub fn links(
 /// Issue numbers in `body` that a closing keyword names in this repository, without a repeat.
 /// They are the numbers `links` accepts: `#N`, `owner/repo#N` and this forge's issue URLs.
 /// Qualified targets use the same native closing-keyword and forge-URL grammar.
-pub fn referenced_targets(body: &str, owner: &str, repo: &str, base: &str) -> Vec<(String, String, i32)> {
+pub fn referenced_targets(
+    body: &str,
+    owner: &str,
+    repo: &str,
+    base: &str,
+) -> Vec<(String, String, i32)> {
     let prefix = format!("{}/", base.trim_end_matches('/'));
-    let mut targets: Vec<_> = REFERENCE.captures_iter(body).filter_map(|capture| {
-        let (owner, repo, number) = if let Some(url) = capture.get(3) {
-            let parts: Vec<_> = url.as_str().trim_end_matches(['.', ',', ')', ']']).strip_prefix(&prefix)?.split('/').collect();
-            if parts.len() != 4 || parts[2] != "issues" { return None; }
-            (parts[0], parts[1], parts[3].parse::<i32>().ok()?)
-        } else {
-            let (owner, repo) = capture.get(1).and_then(|scope| scope.as_str().split_once('/')).unwrap_or((owner, repo));
-            (owner, repo, capture.get(2)?.as_str().parse::<i32>().ok()?)
-        };
-        (number > 0).then(|| (owner.to_ascii_lowercase(), repo.to_ascii_lowercase(), number))
-    }).collect();
-    targets.sort_unstable(); targets.dedup();
+    let mut targets: Vec<_> = REFERENCE
+        .captures_iter(body)
+        .filter_map(|capture| {
+            let (owner, repo, number) = if let Some(url) = capture.get(3) {
+                let parts: Vec<_> = url
+                    .as_str()
+                    .trim_end_matches(['.', ',', ')', ']'])
+                    .strip_prefix(&prefix)?
+                    .split('/')
+                    .collect();
+                if parts.len() != 4 || parts[2] != "issues" {
+                    return None;
+                }
+                (parts[0], parts[1], parts[3].parse::<i32>().ok()?)
+            } else {
+                let (owner, repo) = capture
+                    .get(1)
+                    .and_then(|scope| scope.as_str().split_once('/'))
+                    .unwrap_or((owner, repo));
+                (owner, repo, capture.get(2)?.as_str().parse::<i32>().ok()?)
+            };
+            (number > 0).then(|| {
+                (
+                    owner.to_ascii_lowercase(),
+                    repo.to_ascii_lowercase(),
+                    number,
+                )
+            })
+        })
+        .collect();
+    targets.sort_unstable();
+    targets.dedup();
     targets
 }
 
@@ -110,29 +139,54 @@ pub async fn references(
         let mut before = 0;
         loop {
             let candidates = db::issues::management::closing_candidates(
-                pool, viewer.map(|user| user.id), issue.repo_id, &scope, issue.number, before,
-            ).await?;
+                pool,
+                viewer.map(|user| user.id),
+                issue.repo_id,
+                &scope,
+                issue.number,
+                before,
+            )
+            .await?;
             let Some(last) = candidates.last() else { break };
             before = last.id;
             let short = candidates.len() < 100;
             for pull in candidates {
-                if !links(&pull.body, pull.repo_id == issue.repo_id, owner, name, issue.number, base) {
+                if !links(
+                    &pull.body,
+                    pull.repo_id == issue.repo_id,
+                    owner,
+                    name,
+                    issue.number,
+                    base,
+                ) {
                     continue;
                 }
-                if let std::collections::hash_map::Entry::Vacant(slot) = visible.entry(pull.repo_id) {
-                    let allowed = match db::repositories::records::get_repository_by_id(pool, pull.repo_id).await? {
-                        Some(repo) => crate::backend::repositories::access::can_read(pool, viewer, &repo).await?,
-                        None => false,
-                    };
+                if let std::collections::hash_map::Entry::Vacant(slot) = visible.entry(pull.repo_id)
+                {
+                    let allowed =
+                        match db::repositories::records::get_repository_by_id(pool, pull.repo_id)
+                            .await?
+                        {
+                            Some(repo) => {
+                                crate::backend::repositories::access::can_read(pool, viewer, &repo)
+                                    .await?
+                            }
+                            None => false,
+                        };
                     slot.insert(allowed);
                 }
                 if visible[&pull.repo_id] {
                     result.push(pull);
-                    if result.len() == 100 { return Ok::<_, anyhow::Error>(result); }
+                    if result.len() == 100 {
+                        return Ok::<_, anyhow::Error>(result);
+                    }
                 }
             }
-            if short { break; }
+            if short {
+                break;
+            }
         }
         Ok(result)
-    }).await?
+    })
+    .await?
 }

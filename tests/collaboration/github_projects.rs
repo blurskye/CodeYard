@@ -128,12 +128,30 @@ async fn fields(pg: bool) {
         (Owner::User(alice), "/api/v3/users/projects-alice", "user"),
         (Owner::Organization(org), "/api/v3/orgs/projects-org", "org"),
     ] {
-        let project = projects::create(f.pool(), alice, &db::users::accounts::AccountCredential::Session(&session.session), owner, "Roadmap", Some("Plans"), false)
-            .await
-            .unwrap();
-        assert!(projects::create(f.pool(), bob, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await), owner, "Denied", None, true)
-            .await
-            .is_err());
+        let project = projects::create(
+            f.pool(),
+            alice,
+            &db::users::accounts::AccountCredential::Session(&session.session),
+            owner,
+            "Roadmap",
+            Some("Plans"),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(projects::create(
+            f.pool(),
+            bob,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(f.pool(), bob).await
+            ),
+            owner,
+            "Denied",
+            None,
+            true
+        )
+        .await
+        .is_err());
         let base = format!("{prefix}/projectsV2/{}", project.number);
         for token in [None, Some(credentials[0].as_str())] {
             let expected = if token.is_some() { 200 } else { 404 };
@@ -285,7 +303,10 @@ async fn fields(pg: bool) {
                 .filter(|item| item["content_type"] != "DraftIssue")
                 .collect();
             assert_eq!(linked.len(), 2, "{listed}");
-            assert!(linked.iter().all(|item| item["content"].is_null()), "{listed}");
+            assert!(
+                linked.iter().all(|item| item["content"].is_null()),
+                "{listed}"
+            );
             request(
                 &router,
                 "POST",
@@ -354,7 +375,14 @@ async fn fields(pg: bool) {
             json!([]),
             "a public project must not disclose private repository items"
         );
-        projects::delete(f.pool(), alice, &db::users::accounts::AccountCredential::Session(&session.session), project.id).await.unwrap();
+        projects::delete(
+            f.pool(),
+            alice,
+            &db::users::accounts::AccountCredential::Session(&session.session),
+            project.id,
+        )
+        .await
+        .unwrap();
         request(
             &router,
             "GET",
@@ -365,15 +393,32 @@ async fn fields(pg: bool) {
             404,
         )
         .await;
-        let next = projects::create(f.pool(), alice, &db::users::accounts::AccountCredential::Session(&session.session), owner, "Next", None, false)
-            .await
-            .unwrap();
+        let next = projects::create(
+            f.pool(),
+            alice,
+            &db::users::accounts::AccountCredential::Session(&session.session),
+            owner,
+            "Next",
+            None,
+            false,
+        )
+        .await
+        .unwrap();
         assert_eq!(next.number, project.number + 1);
     }
     native_pages(&f, &router, &session, alice, bob).await;
-    db::projects::list(f.pool(), None, &projects::ListFilter { owner: Some(Owner::User(alice)), ..Default::default() }, 0, 50)
-        .await
-        .unwrap();
+    db::projects::list(
+        f.pool(),
+        None,
+        &projects::ListFilter {
+            owner: Some(Owner::User(alice)),
+            ..Default::default()
+        },
+        0,
+        50,
+    )
+    .await
+    .unwrap();
     f.finish().await;
 }
 
@@ -466,11 +511,21 @@ async fn native_pages(f: &Database, router: &Router, alice: &Client, actor: i64,
             &[actor],
         )
         .await;
-    assert!(projects::list(f.pool(), Some(actor), &projects::ListFilter { repo: Some(repo), ..Default::default() }, 0, 100)
-        .await
-        .unwrap()
-        .1.iter()
-        .any(|p| p.id == project.id));
+    assert!(projects::list(
+        f.pool(),
+        Some(actor),
+        &projects::ListFilter {
+            repo: Some(repo),
+            ..Default::default()
+        },
+        0,
+        100
+    )
+    .await
+    .unwrap()
+    .1
+    .iter()
+    .any(|p| p.id == project.id));
     let issue_page = "/projects-alice/work/issues/1";
     let html = alice.page_ok(issue_page).await;
     assert!(html.contains("Projects") && html.contains("Native planning"));
@@ -544,7 +599,10 @@ async fn native_pages(f: &Database, router: &Router, alice: &Client, actor: i64,
     assert_eq!(alice.page(&path).await.0, StatusCode::NOT_FOUND);
 }
 
-#[expect(clippy::too_many_arguments, reason = "The helper walks one project's items with the fixture IDs the test created.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The helper walks one project's items with the fixture IDs the test created."
+)]
 async fn items(
     router: &Router,
     base: &str,

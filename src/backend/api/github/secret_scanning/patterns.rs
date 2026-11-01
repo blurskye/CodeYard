@@ -162,9 +162,15 @@ async fn create(
     Json(input): Json<CreateMany>,
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
-    let patterns = records::create_patterns(&state.pool, actor.user.id, &actor.credential(), owner, &input.patterns)
-        .await
-        .map_err(error)?;
+    let patterns = records::create_patterns(
+        &state.pool,
+        actor.user.id,
+        &actor.credential(),
+        owner,
+        &input.patterns,
+    )
+    .await
+    .map_err(error)?;
     Ok((
         StatusCode::CREATED,
         Json(json!({"created_patterns":patterns})),
@@ -179,9 +185,16 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
     let id = params["pattern_id"].parse().map_err(|_| Error::missing())?;
-    let pattern = records::update_pattern(&state.pool, actor.user.id, &actor.credential(), owner, id, &input)
-        .await
-        .map_err(error)?;
+    let pattern = records::update_pattern(
+        &state.pool,
+        actor.user.id,
+        &actor.credential(),
+        owner,
+        id,
+        &input,
+    )
+    .await
+    .map_err(error)?;
     Ok(Json(
         serde_json::to_value(pattern).map_err(Error::unavailable)?,
     ))
@@ -240,8 +253,9 @@ async fn configure(
     let (Owner::Organization(org), actor) = scope(&state, &headers, &params, true).await? else {
         return Err(Error::missing());
     };
-    let version = records::configure_patterns(&state.pool, actor.user.id, &actor.credential(), org, &input)
-        .await
-        .map_err(error)?;
+    let version =
+        records::configure_patterns(&state.pool, actor.user.id, &actor.credential(), org, &input)
+            .await
+            .map_err(error)?;
     Ok(Json(json!({"pattern_config_version":version})))
 }

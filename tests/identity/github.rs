@@ -1189,9 +1189,14 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(public["public_repos"], 0);
     assert!(public.get("total_private_repos").is_none());
-    let credentials = db::users::tokens::list_tokens(f.pool(), alice, &crate::support::live_session(f.pool(), alice).await, 0)
-        .await
-        .unwrap();
+    let credentials = db::users::tokens::list_tokens(
+        f.pool(),
+        alice,
+        &crate::support::live_session(f.pool(), alice).await,
+        0,
+    )
+    .await
+    .unwrap();
     let read_token = credentials
         .iter()
         .find(|token| token.scope == "read")
@@ -1256,7 +1261,10 @@ async fn contract(pg: bool) {
             .as_deref(),
         Some("Native Company")
     );
-    for (token, hash) in [(read_token.id, read_hash.as_str()), (write_token.id, write_hash.as_str())] {
+    for (token, hash) in [
+        (read_token.id, read_hash.as_str()),
+        (write_token.id, write_hash.as_str()),
+    ] {
         let error = db::users::ssh_keys::add_ssh_key_for_token(
             f.pool(),
             alice,
@@ -1288,10 +1296,15 @@ async fn contract(pg: bool) {
     let key = db::users::ssh_keys::add_ssh_key(f.pool(), alice, "Kept", public_key)
         .await
         .unwrap();
-    let error =
-        db::users::ssh_keys::delete_user_ssh_key_for_token(f.pool(), alice, write_token.id, write_hash, key.id)
-            .await
-            .unwrap_err();
+    let error = db::users::ssh_keys::delete_user_ssh_key_for_token(
+        f.pool(),
+        alice,
+        write_token.id,
+        write_hash,
+        key.id,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(
         error.downcast_ref::<db::users::ssh_keys::SshKeyWriteRefusal>(),
         Some(&db::users::ssh_keys::SshKeyWriteRefusal::AccountRestricted)

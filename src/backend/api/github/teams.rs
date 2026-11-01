@@ -37,7 +37,9 @@ fn batch(after: i64) -> Result<orgs::OrganizationPage> {
 fn outcome<T>(value: orgs::OrganizationOutcome<T>) -> Result<T> {
     match value {
         orgs::OrganizationOutcome::Denied => Err(denied()),
-        orgs::OrganizationOutcome::Conflict => Err(Error::validation("Team", "name", "already_exists")),
+        orgs::OrganizationOutcome::Conflict => {
+            Err(Error::validation("Team", "name", "already_exists"))
+        }
         other => super::orgs::outcome(other),
     }
 }
@@ -204,7 +206,8 @@ async fn input(request: Request) -> Result<Map<String, Value>> {
     }
     serde_json::from_slice::<Value>(&bytes)
         .map_err(super::json_parse_error)?
-        .as_object().cloned()
+        .as_object()
+        .cloned()
         .ok_or_else(|| Error::invalid("Expected an object"))
 }
 
@@ -471,13 +474,14 @@ async fn list(
     let (state, actor, org_id) = (&*state, auth.user.id, org.id);
     let (rows, more) = page
         .collect(move |after| async move {
-            let rows = match orgs::list_organization_teams(&state.pool, actor, org_id, batch(after)?)
-                .await
-                .map_err(Error::unavailable)?
-            {
-                orgs::OrganizationOutcome::Applied(rows) => rows,
-                _ => return Err(Error::missing()),
-            };
+            let rows =
+                match orgs::list_organization_teams(&state.pool, actor, org_id, batch(after)?)
+                    .await
+                    .map_err(Error::unavailable)?
+                {
+                    orgs::OrganizationOutcome::Applied(rows) => rows,
+                    _ => return Err(Error::missing()),
+                };
             let next = next_after(&rows, BATCH, |row| row.team.id);
             Ok::<_, Error>((rows, next))
         })
@@ -546,7 +550,10 @@ async fn user_teams(
         }
         let Some(org) = orgs::get_public_organization_by_id(&state.pool, team.org_id)
             .await
-            .map_err(Error::unavailable)? else { continue; };
+            .map_err(Error::unavailable)?
+        else {
+            continue;
+        };
         // A team hidden or deleted since the list was read is left out.
         let Some(public) = orgs::get_public_team_by_id(&state.pool, auth.user.id, team.id)
             .await

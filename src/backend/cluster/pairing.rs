@@ -143,15 +143,25 @@ impl JoinTicket {
     pub fn new(node: PublicKey, address: NodeAddress) -> Result<Self> {
         let mut secret = [0u8; 32];
         rand::rngs::OsRng.fill_bytes(&mut secret);
-        let ticket = Self { node, address, secret };
+        let ticket = Self {
+            node,
+            address,
+            secret,
+        };
         ticket.validate()?;
         Ok(ticket)
     }
 
     fn validate(&self) -> Result<()> {
-        ensure!(!self.address.is_empty(), "that join ticket has no address to connect to");
+        ensure!(
+            !self.address.is_empty(),
+            "that join ticket has no address to connect to"
+        );
         self.address.endpoint_addr(self.node)?;
-        ensure!(self.encode().len() <= MAX_TICKET_LEN, "too many advertised addresses for a join ticket (maximum {MAX_TICKET_LEN} bytes)");
+        ensure!(
+            self.encode().len() <= MAX_TICKET_LEN,
+            "too many advertised addresses for a join ticket (maximum {MAX_TICKET_LEN} bytes)"
+        );
         Ok(())
     }
 
@@ -190,7 +200,11 @@ impl JoinTicket {
             relays: body.relays,
             tcp: body.tcp,
         };
-        let ticket = Self { node, address, secret };
+        let ticket = Self {
+            node,
+            address,
+            secret,
+        };
         ticket.validate()?;
         Ok(ticket)
     }

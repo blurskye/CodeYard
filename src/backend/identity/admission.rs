@@ -46,12 +46,24 @@ pub async fn admit_operation(
     purpose: &str,
     identity: &str,
 ) -> Result<(), AdmissionError> {
-    let account = format!("{purpose}:{}", hex::encode(Sha256::digest(identity.as_bytes())));
-    admit(pool, client.map(|client| format!("{purpose}-ip:{client}")), account).await.map(drop)
+    let account = format!(
+        "{purpose}:{}",
+        hex::encode(Sha256::digest(identity.as_bytes()))
+    );
+    admit(
+        pool,
+        client.map(|client| format!("{purpose}-ip:{client}")),
+        account,
+    )
+    .await
+    .map(drop)
 }
 
 /// Sign-in pages mint a session row for a cookieless visitor; this bounds those per client.
-pub async fn admit_anonymous_session(pool: &DbPool, client: Option<&str>) -> Result<(), AdmissionError> {
+pub async fn admit_anonymous_session(
+    pool: &DbPool,
+    client: Option<&str>,
+) -> Result<(), AdmissionError> {
     // A budget key holds at most 80 bytes: the purpose, a colon and 64 hex digits.
     admit_operation(pool, None, "anon-session", client.unwrap_or_default()).await
 }

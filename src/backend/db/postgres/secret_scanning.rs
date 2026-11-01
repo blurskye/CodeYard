@@ -18,7 +18,13 @@ pub async fn protection(
         Refusal::Denied
     );
     // Serialize placeholder lookup and insertion for concurrent retries of a protected push.
-    let protected: bool = sqlx::query_scalar("SELECT push_protection FROM secret_scanning_settings WHERE repo_id=$1 FOR UPDATE").bind(repo).fetch_optional(&mut *tx).await?.unwrap_or(false);
+    let protected: bool = sqlx::query_scalar(
+        "SELECT push_protection FROM secret_scanning_settings WHERE repo_id=$1 FOR UPDATE",
+    )
+    .bind(repo)
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or(false);
     if !protected {
         return Ok(None);
     }
@@ -137,7 +143,9 @@ pub async fn use_bypass(
 }
 pub async fn alert_bypasses(pool: &PgPool, keys: &[(i64, String)]) -> Result<Vec<Bypass>> {
     ensure!(keys.len() <= 100, "Too many alert enrichments");
-    if keys.is_empty() { return Ok(Vec::new()); }
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
     Ok(sqlx::query_as("SELECT ranked.* FROM (SELECT b.*,row_number() OVER (PARTITION BY repo_id,secret_hash ORDER BY used_at DESC,id DESC) AS position FROM secret_scanning_bypasses b WHERE used_at IS NOT NULL AND (repo_id,secret_hash) IN (SELECT (value->>0)::BIGINT,value->>1 FROM jsonb_array_elements($1::jsonb))) ranked WHERE position=1")
         .bind(serde_json::to_string(keys)?).fetch_all(pool).await?)
 }
@@ -466,7 +474,12 @@ pub async fn claim(pool: &PgPool) -> Result<Option<ScanJob>> {
     Ok(Some(job))
 }
 
-pub async fn finish(pool: &PgPool, id: i64, attempt: i64, completion: ScanCompletion) -> Result<()> {
+pub async fn finish(
+    pool: &PgPool,
+    id: i64,
+    attempt: i64,
+    completion: ScanCompletion,
+) -> Result<()> {
     let retry = matches!(completion, ScanCompletion::Retry);
     let now = chrono::Utc::now();
     sqlx::query("UPDATE secret_scanning_jobs SET status=$2,completed_at=$3,heartbeat_at=$5 WHERE id=$1 AND attempt=$4 AND status='running'")

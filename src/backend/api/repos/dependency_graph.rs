@@ -57,27 +57,44 @@ async fn respond(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    let reader = crate::backend::db::dependency_graph::Reader::Viewer(ctx.user.as_ref().map(|user| ctx.database_actor(user.id)));
+    let reader = crate::backend::db::dependency_graph::Reader::Viewer(
+        ctx.user.as_ref().map(|user| ctx.database_actor(user.id)),
+    );
     let reference = format!("refs/heads/{}", loaded.default_branch);
     if download {
         // The same typed document as the REST export, so submitted relationships survive.
-        let snapshots = match graph::pinned_snapshots(&ctx.state, &reader, &loaded.repository, &reference).await {
+        let snapshots = match graph::pinned_snapshots(
+            &ctx.state,
+            &reader,
+            &loaded.repository,
+            &reference,
+        )
+        .await
+        {
             Ok(snapshots) => snapshots,
             Err(error) => return inventory_failure(&ctx, &loaded, error),
         };
-        if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
+        if let Err((status, _)) =
+            super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
+                .await
+        {
             return ctx.error(status, "Repository not found.");
         }
-        let mut document = crate::backend::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
+        let mut document =
+            crate::backend::dependency_graph::sbom(&format!("{owner}/{name}"), &snapshots);
         return Json(document["sbom"].take()).into_response();
     }
-    let (sha, packages) = match graph::inventory(&ctx.state, &reader, &loaded.repository, &reference).await {
-        Ok(inventory) => inventory,
-        // A repository without commits has no dependencies yet.
-        Err(error) if error.kind == ErrorKind::NotFound => (String::new(), Vec::new()),
-        Err(error) => return inventory_failure(&ctx, &loaded, error),
-    };
-    if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
+    let (sha, packages) =
+        match graph::inventory(&ctx.state, &reader, &loaded.repository, &reference).await {
+            Ok(inventory) => inventory,
+            // A repository without commits has no dependencies yet.
+            Err(error) if error.kind == ErrorKind::NotFound => (String::new(), Vec::new()),
+            Err(error) => return inventory_failure(&ctx, &loaded, error),
+        };
+    if let Err((status, _)) =
+        super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
+            .await
+    {
         return ctx.error(status, "Repository not found.");
     }
     let number = match super::paging::number(&ctx, "page", 1, 1..=super::paging::MAX_PAGE) {
@@ -105,7 +122,12 @@ async fn respond(
         "Dependency graph",
         Page::Repositories(RepoPage::DependencyGraph {
             repo: loaded.chrome,
-            page: GraphPage { sha, packages, previous, next },
+            page: GraphPage {
+                sha,
+                packages,
+                previous,
+                next,
+            },
         }),
     )
 }

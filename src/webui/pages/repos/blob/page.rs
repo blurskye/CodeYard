@@ -96,7 +96,11 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     let base = repo.base();
     let raw = file_url(&base, "raw", &page.reference, &page.path);
     let url = file_url(&base, "blob", &page.reference, &page.path);
-    let preview_url = if page.permalink.is_empty() { &url } else { &page.permalink };
+    let preview_url = if page.permalink.is_empty() {
+        &url
+    } else {
+        &page.permalink
+    };
     let blame = file_url(&base, "blame", &page.reference, &page.path);
     let edit = file_url(&base, "edit", &page.reference, &page.path);
     let delete = file_url(&base, "delete", &page.reference, &page.path);
@@ -105,8 +109,14 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     let language = language_of_path(&page.path);
     let display = display_text(&page.content);
     let line_count = display.lines().count();
-    let downloadable = page.download_limit.as_ref().is_none_or(|(limit, _)| page.size <= *limit);
-    let limit_label = page.download_limit.as_ref().map_or("server", |(_, label)| label.as_str());
+    let downloadable = page
+        .download_limit
+        .as_ref()
+        .is_none_or(|(limit, _)| page.size <= *limit);
+    let limit_label = page
+        .download_limit
+        .as_ref()
+        .map_or("server", |(_, label)| label.as_str());
     let markdown = page.renders_markdown();
     let markdown_html = markdown.then(|| {
         document_html(
@@ -299,8 +309,16 @@ pub fn FilesPanel(
     can_write: bool,
     default_branch: String,
 ) -> Element {
-    let linked: std::collections::HashSet<_> = folders.iter().flat_map(|folder| &folder.entries).filter(|entry| entry.kind == "tree").map(|entry| entry.path.as_str()).collect();
-    let roots: Vec<_> = folders.iter().filter(|folder| folder.path.is_empty() || !linked.contains(folder.path.as_str())).collect();
+    let linked: std::collections::HashSet<_> = folders
+        .iter()
+        .flat_map(|folder| &folder.entries)
+        .filter(|entry| entry.kind == "tree")
+        .map(|entry| entry.path.as_str())
+        .collect();
+    let roots: Vec<_> = folders
+        .iter()
+        .filter(|folder| folder.path.is_empty() || !linked.contains(folder.path.as_str()))
+        .collect();
     rsx! {
         aside { class: "repo-files-panel", "aria-label": "Files",
             div { class: "repo-files-head",

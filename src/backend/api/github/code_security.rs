@@ -110,9 +110,16 @@ async fn list(
 ) -> Result<Response> {
     let (actor, id) = scope(&state, &headers, &org, false).await?;
     let (after, before, limit) = query.window()?;
-    let rows = records::list_window(&state.pool, actor.user.id, id, after, before, limit as i64 + 1)
-        .await
-        .map_err(failure)?;
+    let rows = records::list_window(
+        &state.pool,
+        actor.user.id,
+        id,
+        after,
+        before,
+        limit as i64 + 1,
+    )
+    .await
+    .map_err(failure)?;
     page(&query, &uri, rows, |row| row.id, |row| document(row, &org))
 }
 async fn get_configuration(
@@ -233,9 +240,15 @@ async fn set_default(
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration default"))?;
-    let row = records::set_default(&state.pool, actor.database_actor(), owner, id, &input.default_for_new_repos)
-        .await
-        .map_err(failure)?;
+    let row = records::set_default(
+        &state.pool,
+        actor.database_actor(),
+        owner,
+        id,
+        &input.default_for_new_repos,
+    )
+    .await
+    .map_err(failure)?;
     Ok(Json(
         json!({"default_for_new_repos":row.default_for_new_repos,"configuration":document(&row,&org)?}),
     ))
@@ -261,9 +274,17 @@ async fn repositories(
 ) -> Result<Response> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
     let (after, before, limit) = query.window()?;
-    let rows = records::repositories(&state.pool, actor.user.id, owner, id, after, before, limit as i64 + 1)
-        .await
-        .map_err(failure)?;
+    let rows = records::repositories(
+        &state.pool,
+        actor.user.id,
+        owner,
+        id,
+        after,
+        before,
+        limit as i64 + 1,
+    )
+    .await
+    .map_err(failure)?;
     page(
         &query,
         &uri,

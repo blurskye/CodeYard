@@ -157,7 +157,9 @@ fn page_router() -> Router<Arc<AppState>> {
         .merge(advisories::page_router())
         .merge(disclosure::page_router())
         .merge(checks::router())
-        .layer(axum::extract::DefaultBodyLimit::max(code::contents::EDITOR_FORM_BODY_LIMIT))
+        .layer(axum::extract::DefaultBodyLimit::max(
+            code::contents::EDITOR_FORM_BODY_LIMIT,
+        ))
         .merge(code::upload_router())
         .merge(code::download_router())
         .merge(refs::commits::router())
@@ -166,5 +168,7 @@ fn page_router() -> Router<Arc<AppState>> {
         .merge(milestones::page_router())
         .merge(labels::page_router())
         .merge(releases::upload_router())
-        .layer(axum::middleware::from_fn(super::http::interaction_proofs::prepare))
+        .layer(axum::middleware::from_fn(
+            super::http::interaction_proofs::prepare,
+        ))
 }

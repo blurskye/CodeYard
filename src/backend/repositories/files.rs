@@ -9,8 +9,8 @@ use crate::backend::{
         protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
         pull_requests,
         store::{
-            repo_store, CommitIdentities, CommitInfo, ErrorKind, FileWrite, PreparedFile, RepoError, RepoStore,
-            UploadWrite, MAX_EDITOR_BYTES,
+            repo_store, CommitIdentities, CommitInfo, ErrorKind, FileWrite, PreparedFile,
+            RepoError, RepoStore, UploadWrite, MAX_EDITOR_BYTES,
         },
     },
 };
@@ -38,7 +38,10 @@ pub fn decode_base64(content: &str, limit: usize) -> Result<Vec<u8>, WriteFailur
     use base64::Engine;
     let encoded_limit = limit.div_ceil(3).saturating_mul(4);
     let mut normalized = Vec::with_capacity(content.len().min(encoded_limit));
-    for character in content.chars().filter(|character| !character.is_whitespace()) {
+    for character in content
+        .chars()
+        .filter(|character| !character.is_whitespace())
+    {
         if normalized.len() >= encoded_limit {
             return Err(WriteFailure::TooLarge);
         }
@@ -47,7 +50,9 @@ pub fn decode_base64(content: &str, limit: usize) -> Result<Vec<u8>, WriteFailur
         }
         normalized.push(character as u8);
     }
-    let bytes = base64::engine::general_purpose::STANDARD.decode(&normalized).map_err(|_| WriteFailure::Encoding)?;
+    let bytes = base64::engine::general_purpose::STANDARD
+        .decode(&normalized)
+        .map_err(|_| WriteFailure::Encoding)?;
     if bytes.len() > limit {
         return Err(WriteFailure::TooLarge);
     }
@@ -252,7 +257,8 @@ pub fn free_branch_name(username: &str, refs: &HashMap<String, String>) -> Strin
     let username = &username[..end];
     // Usernames have no path separators. Each occupied branch (or directory of branches)
     // therefore excludes at most one candidate, and all candidates share this one index.
-    let occupied: std::collections::HashSet<&str> = refs.keys()
+    let occupied: std::collections::HashSet<&str> = refs
+        .keys()
         .filter_map(|reference| reference.strip_prefix("refs/heads/"))
         .map(|branch| branch.split('/').next().unwrap_or(branch))
         .collect();
@@ -524,7 +530,9 @@ async fn save_file(
         guard_revision,
         || {
             input.validate().map_err(write_error)?;
-            if let CommitOrigin::Api(identities) = &origin { identities.validate().map_err(write_error)?; }
+            if let CommitOrigin::Api(identities) = &origin {
+                identities.validate().map_err(write_error)?;
+            }
             if let Some(name) = new_branch {
                 check_new_branch_name(name)?;
             }
@@ -581,7 +589,10 @@ async fn save_file(
     }
     let email = user.commit_email();
     let defaults = CommitIdentities::default();
-    let identities = match &origin { CommitOrigin::Web => &defaults, CommitOrigin::Api(identities) => identities };
+    let identities = match &origin {
+        CommitOrigin::Web => &defaults,
+        CommitOrigin::Api(identities) => identities,
+    };
     let mut prepared = store
         .prepare_file_with_identities(&input, &content, &user.username, &email, identities)
         .await
@@ -594,16 +605,7 @@ async fn save_file(
         })?;
     prepared.web_commit = matches!(origin, CommitOrigin::Web);
     prepared.authority = Some(authority);
-    publish_commit(
-        pool,
-        &store,
-        ci,
-        &repository,
-        user,
-        &prepared,
-        new_branch,
-    )
-    .await
+    publish_commit(pool, &store, ci, &repository, user, &prepared, new_branch).await
 }
 
 /// Moves the branch to a prepared commit, or with `new_branch` creates that branch at it. Pull
@@ -619,8 +621,12 @@ async fn publish_commit(
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
     let (pool, store, ci, repository, prepared, new_branch) = (
-        pool.clone(), store.clone(), ci.clone(), repository.clone(),
-        prepared.clone(), new_branch.map(str::to_owned),
+        pool.clone(),
+        store.clone(),
+        ci.clone(),
+        repository.clone(),
+        prepared.clone(),
+        new_branch.map(str::to_owned),
     );
     // Once publication starts, client cancellation must not abandon accepted-write follow-ups.
     tokio::spawn(async move {
@@ -762,16 +768,7 @@ pub async fn upload_files(
         })?;
     prepared.web_commit = true;
     prepared.authority = Some(authority);
-    publish_commit(
-        pool,
-        &store,
-        ci,
-        &repository,
-        user,
-        &prepared,
-        new_branch,
-    )
-    .await
+    publish_commit(pool, &store, ci, &repository, user, &prepared, new_branch).await
 }
 
 #[cfg(test)]

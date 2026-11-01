@@ -78,7 +78,9 @@ pub(crate) struct RunnerProjection {
 impl RunnerProjection {
     pub fn into_runner(mut self) -> Runner {
         self.runner.online = super::models::cluster::heartbeat_online(
-            self.node_status.as_deref().unwrap_or(""), self.node_last_seen, self.observed_at,
+            self.node_status.as_deref().unwrap_or(""),
+            self.node_last_seen,
+            self.observed_at,
         );
         self.runner
     }
@@ -99,14 +101,26 @@ impl GroupInput {
     /// Whether the edit can take access away from runs already on the group's runners. A
     /// rename alone cannot; runners joining or leaving are handled one by one.
     pub fn changes_access(&self, existing: &Group) -> bool {
-        self.visibility.as_ref().is_some_and(|value| value != &existing.visibility)
-            || self.allows_public_repositories.is_some_and(|value| value != existing.allows_public_repositories)
-            || self.restricted_to_workflows.is_some_and(|value| value != existing.restricted_to_workflows)
+        self.visibility
+            .as_ref()
+            .is_some_and(|value| value != &existing.visibility)
+            || self
+                .allows_public_repositories
+                .is_some_and(|value| value != existing.allows_public_repositories)
+            || self
+                .restricted_to_workflows
+                .is_some_and(|value| value != existing.restricted_to_workflows)
             || self.selected_workflows.as_ref().is_some_and(|values| {
                 let previous = serde_json::from_str::<Vec<String>>(&existing.selected_workflows);
-                previous.map_or(true, |previous| values.iter().collect::<std::collections::BTreeSet<_>>() != previous.iter().collect())
+                previous.map_or(true, |previous| {
+                    values.iter().collect::<std::collections::BTreeSet<_>>()
+                        != previous.iter().collect()
+                })
             })
-            || self.selected_repository_ids.as_ref().is_some_and(|values| values.iter().collect::<std::collections::BTreeSet<_>>() != existing.repositories.iter().collect())
+            || self.selected_repository_ids.as_ref().is_some_and(|values| {
+                values.iter().collect::<std::collections::BTreeSet<_>>()
+                    != existing.repositories.iter().collect()
+            })
     }
     pub fn validate(&self) -> Result<()> {
         anyhow::ensure!(
@@ -199,8 +213,11 @@ pub fn valid_group_name(name: &str) -> bool {
     !name.trim().is_empty() && name.len() <= 100 && !name.chars().any(char::is_control)
 }
 pub fn valid_label(label: &str) -> bool {
-    !label.is_empty() && label.len() <= 128
-        && label.bytes().all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
+    !label.is_empty()
+        && label.len() <= 128
+        && label
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte))
 }
 pub fn normalize_labels(labels: &[String]) -> Result<Vec<String>> {
     anyhow::ensure!(labels.len() <= 100, Refusal::Invalid("labels"));
@@ -243,54 +260,103 @@ pub(crate) struct Eligibility {
     pub source_names: std::collections::BTreeMap<i64, String>,
 }
 impl Eligibility {
-    pub fn allows(&self, run: &super::models::CiRun, mode: &str, platforms: &[String]) -> Result<bool> {
+    pub fn allows(
+        &self,
+        run: &super::models::CiRun,
+        mode: &str,
+        platforms: &[String],
+    ) -> Result<bool> {
         let wanted: Vec<String> = serde_json::from_str(&run.runner_labels)?;
         if !self.managed {
             return Ok(run.runner_group.is_none()
-                && wanted.iter().all(|label| label != "self-hosted" && platforms.contains(label)));
+                && wanted
+                    .iter()
+                    .all(|label| label != "self-hosted" && platforms.contains(label)));
         }
-        let Some(runner) = &self.runner else { return Ok(false) };
-        if runner.used { return Ok(false); }
+        let Some(runner) = &self.runner else {
+            return Ok(false);
+        };
+        if runner.used {
+            return Ok(false);
+        }
         if let Some(policy) = &self.policy {
             let policy = serde_json::from_str(policy)?;
-            if !super::action_settings::organization_allows(&policy, super::action_settings::Setting::Runners, run.repo_id) {
+            if !super::action_settings::organization_allows(
+                &policy,
+                super::action_settings::Setting::Runners,
+                run.repo_id,
+            ) {
                 return Ok(false);
             }
         }
         let labels: Vec<String> = serde_json::from_str(&runner.labels)?;
-        if !wanted.iter().all(|label| (label == "self-hosted" || labels.contains(label))
-            && (mode == "local" || platforms.contains(label))) {
+        if !wanted.iter().all(|label| {
+            (label == "self-hosted" || labels.contains(label))
+                && (mode == "local" || platforms.contains(label))
+        }) {
             return Ok(false);
         }
-        if runner.repo_id == Some(run.repo_id) { return Ok(run.runner_group.is_none()); }
-        let Some((kind, owner, private, full_name)) = &self.owner else { return Ok(false) };
-        let Some(group) = &self.group else { return Ok(false) };
-        if kind != "org" || runner.org_id.is_none() || *owner != runner.org_id
-            || run.runner_group.as_ref().is_some_and(|name| !group.name.eq_ignore_ascii_case(name))
-            || !group.allows_repository(run.repo_id, *private) {
+        if runner.repo_id == Some(run.repo_id) {
+            return Ok(run.runner_group.is_none());
+        }
+        let Some((kind, owner, private, full_name)) = &self.owner else {
+            return Ok(false);
+        };
+        let Some(group) = &self.group else {
+            return Ok(false);
+        };
+        if kind != "org"
+            || runner.org_id.is_none()
+            || *owner != runner.org_id
+            || run
+                .runner_group
+                .as_ref()
+                .is_some_and(|name| !group.name.eq_ignore_ascii_case(name))
+            || !group.allows_repository(run.repo_id, *private)
+        {
             return Ok(false);
         }
-        if !group.restricted_to_workflows { return Ok(true); }
+        if !group.restricted_to_workflows {
+            return Ok(true);
+        }
         let allowed: Vec<String> = serde_json::from_str(&group.selected_workflows)?;
-        let Some(blobs) = run.workflow_blobs.as_object().filter(|blobs| !blobs.is_empty()) else { return Ok(false) };
+        let Some(blobs) = run
+            .workflow_blobs
+            .as_object()
+            .filter(|blobs| !blobs.is_empty())
+        else {
+            return Ok(false);
+        };
         let reference = if run.event == "pull_request" {
-            let Some(number) = self.pull_number else { return Ok(false) };
+            let Some(number) = self.pull_number else {
+                return Ok(false);
+            };
             format!("refs/pull/{number}/merge")
-        } else if run.branch.starts_with("refs/") { run.branch.clone() }
-        else { format!("refs/heads/{}", run.branch) };
+        } else if run.branch.starts_with("refs/") {
+            run.branch.clone()
+        } else {
+            format!("refs/heads/{}", run.branch)
+        };
         Ok(blobs.iter().all(|(path, blob)| {
             let (name, path) = match blob.get("source_path").and_then(|v| v.as_str()) {
                 Some(source) => {
                     let repo = blob["repository_id"].as_i64().unwrap_or(run.repo_id);
-                    let name = if repo == run.repo_id { Some(full_name) } else { self.source_names.get(&repo) };
+                    let name = if repo == run.repo_id {
+                        Some(full_name)
+                    } else {
+                        self.source_names.get(&repo)
+                    };
                     let Some(name) = name else { return false };
                     (name, source)
                 }
                 None => (full_name, path.as_str()),
             };
-            workflow_allowed(&allowed, &format!("{name}/{path}"),
+            workflow_allowed(
+                &allowed,
+                &format!("{name}/{path}"),
                 blob["ref"].as_str().unwrap_or(&reference),
-                blob["sha"].as_str().or(run.head_sha.as_deref()))
+                blob["sha"].as_str().or(run.head_sha.as_deref()),
+            )
         }))
     }
 }
@@ -301,7 +367,8 @@ pub struct Scheduling {
     pub group: Option<String>,
     pub concurrency: Option<super::action_concurrency::Configuration>,
     /// Expression and non-run contexts retained until the enqueue transaction assigns identity.
-    pub concurrency_expression: Option<(serde_yaml::Value, codeyard_actions::expressions::Contexts)>,
+    pub concurrency_expression:
+        Option<(serde_yaml::Value, codeyard_actions::expressions::Contexts)>,
 }
 
 #[derive(Clone, Debug)]
@@ -338,19 +405,44 @@ pub(crate) fn workflow_allowed(
 }
 
 #[derive(Clone, Copy)]
-pub struct Window { pub offset: i64, pub limit: i64 }
-impl Default for Window { fn default() -> Self { Self { offset: 0, limit: 30 } } }
+pub struct Window {
+    pub offset: i64,
+    pub limit: i64,
+}
+impl Default for Window {
+    fn default() -> Self {
+        Self {
+            offset: 0,
+            limit: 30,
+        }
+    }
+}
 impl Window {
     pub(crate) fn validate(self) -> Result<()> {
-        anyhow::ensure!(self.offset >= 0 && (1..=100).contains(&self.limit), Refusal::Invalid("page"));
+        anyhow::ensure!(
+            self.offset >= 0 && (1..=100).contains(&self.limit),
+            Refusal::Invalid("page")
+        );
         Ok(())
     }
 }
 #[derive(Default)]
-pub struct GroupQuery { pub page: Window, pub id: Option<i64>, pub repository: Option<i64> }
+pub struct GroupQuery {
+    pub page: Window,
+    pub id: Option<i64>,
+    pub repository: Option<i64>,
+}
 #[derive(Default)]
-pub struct RunnerQuery { pub page: Window, pub id: Option<i64>, pub group: Option<i64>, pub name: Option<String> }
-pub struct Listing<T> { pub total: i64, pub rows: Vec<T> }
+pub struct RunnerQuery {
+    pub page: Window,
+    pub id: Option<i64>,
+    pub group: Option<i64>,
+    pub name: Option<String>,
+}
+pub struct Listing<T> {
+    pub total: i64,
+    pub rows: Vec<T>,
+}
 
 native_operation!(crate::backend::db::postgres::runners::authorize_scope, crate::backend::db::sqlite::runners::authorize_scope,
     fn authorize_scope(pool:&DbPool,actor:i64,scope:Scope)->Result<()>);

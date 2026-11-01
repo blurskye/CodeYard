@@ -113,9 +113,16 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::projects::link_repository(f.pool(), alice, &db::users::accounts::AccountCredential::Session(&session.session), project.id, repo.id, true)
-        .await
-        .unwrap();
+    db::projects::link_repository(
+        f.pool(),
+        alice,
+        &db::users::accounts::AccountCredential::Session(&session.session),
+        project.id,
+        repo.id,
+        true,
+    )
+    .await
+    .unwrap();
     db::repositories::engagement::star_repo(f.pool(), alice, repo.id)
         .await
         .unwrap();

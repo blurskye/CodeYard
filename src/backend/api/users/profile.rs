@@ -120,7 +120,12 @@ pub(crate) async fn profile_response(
         .is_some_and(|viewer| viewer.id == target.id);
     let repositories = match profile_repositories(&ctx.state.pool, repositories).await {
         Ok(repositories) => repositories,
-        Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Repository counts are temporarily unavailable."),
+        Err(_) => {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Repository counts are temporarily unavailable.",
+            )
+        }
     };
     let following = if let Some(viewer) = ctx.user.as_ref().filter(|viewer| viewer.id != target.id)
     {
@@ -159,7 +164,13 @@ pub(crate) async fn profile_response(
     } else {
         match crate::backend::identity::activity::profile_activity(
             &ctx.state.pool,
-            ctx.user.as_ref().zip(ctx.session_id.as_deref()).map(|(user, session)| db::activity::ActivityViewer { user: user.id, session }),
+            ctx.user
+                .as_ref()
+                .zip(ctx.session_id.as_deref())
+                .map(|(user, session)| db::activity::ActivityViewer {
+                    user: user.id,
+                    session,
+                }),
             target.id,
             page,
         )
@@ -229,10 +240,13 @@ pub(crate) async fn profile_repositories(
 ) -> anyhow::Result<Vec<users::Repository>> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let mut counts = db::repositories::discovery::public_fork_counts(pool, &ids).await?;
-    Ok(repos.into_iter().map(|repo| {
-        let forks = counts.remove(&repo.id).unwrap_or_default();
-        profile_repository(repo, forks)
-    }).collect())
+    Ok(repos
+        .into_iter()
+        .map(|repo| {
+            let forks = counts.remove(&repo.id).unwrap_or_default();
+            profile_repository(repo, forks)
+        })
+        .collect())
 }
 
 /// One repository row on a public page. Users and organizations list the same fields.

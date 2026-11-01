@@ -1,12 +1,12 @@
 mod notes;
 mod read;
-pub use read::read_release_snapshot;
 use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
 use crate::backend::db::releases::{
     NewReleaseAsset, ReleaseChanges, ReleaseFields, ReleaseRefusal,
 };
 use anyhow::Result;
 pub use notes::release_note_rows;
+pub use read::read_release_snapshot;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use uuid::Uuid;
 
@@ -54,17 +54,28 @@ async fn set_latest_flag(
     release_id: i64,
     fields: &ReleaseFields,
 ) -> Result<()> {
-    if matches!(fields.make_latest, crate::backend::db::releases::LatestSelection::Legacy) {
+    if matches!(
+        fields.make_latest,
+        crate::backend::db::releases::LatestSelection::Legacy
+    ) {
         let rows = sqlx::query_as("SELECT id,tag_name,created_at FROM releases WHERE repo_id=?1 AND NOT is_draft AND NOT is_prerelease")
             .bind(repo_id).fetch_all(&mut **tx).await?;
         let candidate = crate::backend::db::releases::legacy_latest(&rows);
         sqlx::query("UPDATE releases SET is_latest=0 WHERE repo_id=?1 AND is_latest")
-            .bind(repo_id).execute(&mut **tx).await?;
+            .bind(repo_id)
+            .execute(&mut **tx)
+            .await?;
         sqlx::query("UPDATE releases SET is_latest=1 WHERE id=?1")
-            .bind(candidate).execute(&mut **tx).await?;
+            .bind(candidate)
+            .execute(&mut **tx)
+            .await?;
         return Ok(());
     }
-    let wants = matches!(fields.make_latest, crate::backend::db::releases::LatestSelection::Promote) && !fields.is_draft && !fields.is_prerelease;
+    let wants = matches!(
+        fields.make_latest,
+        crate::backend::db::releases::LatestSelection::Promote
+    ) && !fields.is_draft
+        && !fields.is_prerelease;
     if wants {
         sqlx::query(
             "UPDATE releases SET is_latest = 0 WHERE repo_id = ?1 AND is_latest = 1 AND id <> ?2",
@@ -182,7 +193,9 @@ pub async fn update_release_with_publication(
         );
     }
     anyhow::ensure!(
-        fields.expected_draft.is_none_or(|draft| draft == current.is_draft),
+        fields
+            .expected_draft
+            .is_none_or(|draft| draft == current.is_draft),
         ReleaseRefusal::Conflict
     );
     anyhow::ensure!(
@@ -190,16 +203,32 @@ pub async fn update_release_with_publication(
         ReleaseRefusal::Immutable
     );
     if let Some(tag) = &fields.tag {
-        anyhow::ensure!(!current.is_immutable || tag == &current.tag_name, ReleaseRefusal::Immutable);
-        let taken: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM releases WHERE repo_id=?1 AND tag_name=?2 AND id<>?3)")
-            .bind(repo_id).bind(tag).bind(release_id).fetch_one(&mut *tx).await?;
+        anyhow::ensure!(
+            !current.is_immutable || tag == &current.tag_name,
+            ReleaseRefusal::Immutable
+        );
+        let taken: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM releases WHERE repo_id=?1 AND tag_name=?2 AND id<>?3)",
+        )
+        .bind(repo_id)
+        .bind(tag)
+        .bind(release_id)
+        .fetch_one(&mut *tx)
+        .await?;
         anyhow::ensure!(!taken, ReleaseRefusal::TagTaken);
         if tag != &current.tag_name {
-            super::repositories::immutable_releases::assert_available(&mut tx, repo_id, tag).await?;
+            super::repositories::immutable_releases::assert_available(&mut tx, repo_id, tag)
+                .await?;
         }
     }
-    let tag = fields.tag.clone().unwrap_or_else(|| current.tag_name.clone());
-    let target = fields.target.clone().unwrap_or_else(|| current.target_commitish.clone());
+    let tag = fields
+        .tag
+        .clone()
+        .unwrap_or_else(|| current.tag_name.clone());
+    let target = fields
+        .target
+        .clone()
+        .unwrap_or_else(|| current.target_commitish.clone());
     let fields = fields.apply_to(&current);
     // A release first published keeps its date. A draft gets one when it is published.
     sqlx::query(
@@ -276,9 +305,18 @@ pub async fn add_release_asset(
     token: Option<i64>,
 ) -> Result<ReleaseAsset> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?, ReleaseRefusal::Denied);
+    anyhow::ensure!(
+        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
+        ReleaseRefusal::Denied
+    );
     if let Some(token) = token {
-        anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor_id, repo_id, "contents").await?, ReleaseRefusal::Denied);
+        anyhow::ensure!(
+            super::users::tokens::repository_write_on(
+                &mut tx, token, actor_id, repo_id, "contents"
+            )
+            .await?,
+            ReleaseRefusal::Denied
+        );
     }
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
     anyhow::ensure!(!release.is_immutable, ReleaseRefusal::Immutable);
@@ -498,7 +536,10 @@ pub async fn latest_release(pool: &SqlitePool, repo_id: i64) -> Result<Option<Re
     .await?)
 }
 
-pub async fn list_asset_files(pool: &SqlitePool, release_id: i64) -> Result<Vec<crate::backend::db::releases::ReleaseAssetFile>> {
+pub async fn list_asset_files(
+    pool: &SqlitePool,
+    release_id: i64,
+) -> Result<Vec<crate::backend::db::releases::ReleaseAssetFile>> {
     Ok(sqlx::query_as("SELECT a.*,f.sha256_hex,u.id AS uploader_id,u.username AS uploader_name,u.is_admin AS uploader_is_admin FROM release_assets a JOIN files f ON f.id=a.file_id LEFT JOIN users u ON u.id=f.user_id WHERE a.release_id=?1 ORDER BY a.name,a.id")
         .bind(release_id).fetch_all(pool).await?)
 }

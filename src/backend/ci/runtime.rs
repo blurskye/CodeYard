@@ -1,10 +1,10 @@
 //! Credentials shared by today's act worker and future runners.
 use crate::backend::db::{self, DbPool};
+pub use crate::backend::identity::tokens::token_hash;
 use anyhow::Result;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-pub use crate::backend::identity::tokens::token_hash;
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeCredentials {
@@ -48,7 +48,14 @@ pub async fn issue(
         "jti": secret()
     }))?);
     let token = format!("{header}.{payload}.{}", secret());
-    db::action_objects::issue_token(pool, run.id, run.worker.as_deref().unwrap_or(""), &token_hash(&token), &backend).await?;
+    db::action_objects::issue_token(
+        pool,
+        run.id,
+        run.worker.as_deref().unwrap_or(""),
+        &token_hash(&token),
+        &backend,
+    )
+    .await?;
     Ok(RuntimeCredentials {
         token,
         results_url: results_url(settings),

@@ -43,20 +43,39 @@ pub async fn analysis_sarif(pool: &PgPool, repo: i64, id: i64) -> Result<Option<
     )
 }
 
-pub async fn alert_page(pool: &PgPool, scope: AlertScope, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<Alert>> {
+pub async fn alert_page(
+    pool: &PgPool,
+    scope: AlertScope,
+    filters: &AlertFilters<'_>,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Alert>> {
     let mut connection = pool.acquire().await?;
     alert_page_on(&mut connection, scope, filters, offset, limit).await
 }
 
-pub(super) async fn alert_page_on(connection: &mut sqlx::PgConnection, scope: AlertScope, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<Alert>> {
+pub(super) async fn alert_page_on(
+    connection: &mut sqlx::PgConnection,
+    scope: AlertScope,
+    filters: &AlertFilters<'_>,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Alert>> {
     ensure!(
         offset >= 0 && (1..=101).contains(&limit),
         "Invalid alert page"
     );
-    ensure!(filters.pull_request.is_none_or(|number| number > 0), "Invalid pull request");
+    ensure!(
+        filters.pull_request.is_none_or(|number| number > 0),
+        "Invalid pull request"
+    );
     let (repo, org) = scope.ids();
     let (sort, direction) = filters.sort.sql();
-    let reference = crate::backend::db::code_scanning::instance_condition("$3", "$10", "'refs/heads/' || r.default_branch");
+    let reference = crate::backend::db::code_scanning::instance_condition(
+        "$3",
+        "$10",
+        "'refs/heads/' || r.default_branch",
+    );
     let rows:Vec<BranchAlert>=sqlx::query_as(&format!(
         "SELECT a.*,page.ref_state FROM code_scanning_alerts a JOIN (
             SELECT id,ref_state FROM (

@@ -264,21 +264,19 @@ pub async fn check_branch_write_with(
         } else {
             false
         };
-        let app_allowed = if rule.restrict_pushes
-            && !rule.push_allowances.contains(&actor.id)
-            && !team_allowed
-        {
-            app_allows_actor(
-                pool,
-                repository.id,
-                actor.id,
-                &rule.github_settings.push_apps,
-            )
-            .await
-            .map_err(|_| Refusal::Unavailable)?
-        } else {
-            false
-        };
+        let app_allowed =
+            if rule.restrict_pushes && !rule.push_allowances.contains(&actor.id) && !team_allowed {
+                app_allows_actor(
+                    pool,
+                    repository.id,
+                    actor.id,
+                    &rule.github_settings.push_apps,
+                )
+                .await
+                .map_err(|_| Refusal::Unavailable)?
+            } else {
+                false
+            };
         let bypass_allowed = write.new.is_some()
             && write.via.is_direct()
             && needs_pull_request(rule)

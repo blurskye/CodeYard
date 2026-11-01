@@ -123,7 +123,10 @@ async fn update_member_role(
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let actor_role = require_org!(tx, actor, org);
-    if !credential(&mut tx, &grant, org, "members").await? || !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
+    if !credential(&mut tx, &grant, org, "members").await?
+        || !administers(actor_role)
+        || (owner_only && actor_role != OrgRole::Owner)
+    {
         return Ok(Denied);
     }
     let target_active = active(&mut tx, target).await?;
@@ -216,7 +219,9 @@ async fn remove_member(
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let actor_role = require_org!(tx, actor, org);
-    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
+    if !credential(&mut tx, &grant, org, "members").await? {
+        return Ok(Denied);
+    }
     // Any member may leave on their own; the last-owner check below still applies.
     let leaving = actor == target && mode == Removal::Remove && !owner_only;
     if !leaving && (!administers(actor_role) || (owner_only && actor_role != OrgRole::Owner)) {
@@ -265,8 +270,13 @@ async fn remove_member(
     sqlx::query("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=$1 AND state='pending' AND repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$2)")
         .bind(target).bind(org).execute(&mut *tx).await?;
     let recipient = super::invitations::RECIPIENT;
-    sqlx::query(&format!("DELETE FROM organization_invitations AS i WHERE {recipient} AND i.org_id=$2"))
-        .bind(target).bind(org).execute(&mut *tx).await?;
+    sqlx::query(&format!(
+        "DELETE FROM organization_invitations AS i WHERE {recipient} AND i.org_id=$2"
+    ))
+    .bind(target)
+    .bind(org)
+    .execute(&mut *tx)
+    .await?;
     cancel_actor(&mut tx, org, target).await?;
     sqlx::query("DELETE FROM org_memberships WHERE org_id=$1 AND user_id=$2")
         .bind(org)

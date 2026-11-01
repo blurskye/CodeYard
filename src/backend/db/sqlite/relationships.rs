@@ -7,7 +7,10 @@ use crate::backend::db::{
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {
-    anyhow::ensure!(page.offset >= 0 && (1..=101).contains(&page.limit), Refusal::Invalid);
+    anyhow::ensure!(
+        page.offset >= 0 && (1..=101).contains(&page.limit),
+        Refusal::Invalid
+    );
     let readable = super::repositories::access::readable_condition();
     let sql = window_sql(
         page,
@@ -92,7 +95,18 @@ async fn change_once(
     token: Option<i64>,
 ) -> Result<()> {
     let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let triage = matches!(mutation, Mutation::Move { .. } | Mutation::Add { kind: Kind::Children | Kind::Parent, .. } | Mutation::Remove { kind: Kind::Children | Kind::Parent, .. });
+    let triage = matches!(
+        mutation,
+        Mutation::Move { .. }
+            | Mutation::Add {
+                kind: Kind::Children | Kind::Parent,
+                ..
+            }
+            | Mutation::Remove {
+                kind: Kind::Children | Kind::Parent,
+                ..
+            }
+    );
     let tx = change_in_transaction(tx, actor, repo, root, mutation, triage, token).await?;
     tx.commit().await?;
     Ok(())
@@ -142,7 +156,13 @@ pub(crate) async fn change_in_transaction<'a>(
     anyhow::ensure!(!restricted || target_repo == repo, Refusal::Missing);
     if let Some(token) = token {
         for affected in [repo, target_repo] {
-            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, affected, "issues").await?, Refusal::Denied);
+            anyhow::ensure!(
+                super::users::tokens::repository_write_on(
+                    &mut tx, token, actor, affected, "issues"
+                )
+                .await?,
+                Refusal::Denied
+            );
         }
     }
     let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",super::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
@@ -208,7 +228,13 @@ pub(crate) async fn change_in_transaction<'a>(
                         anyhow::ensure!(!restricted || old_repo == repo, Refusal::Missing);
                         anyhow::ensure!(replace, Refusal::HasParent);
                         if let Some(token) = token {
-                            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, old_repo, "issues").await?, Refusal::Denied);
+                            anyhow::ensure!(
+                                super::users::tokens::repository_write_on(
+                                    &mut tx, token, actor, old_repo, "issues"
+                                )
+                                .await?,
+                                Refusal::Denied
+                            );
                         }
                         anyhow::ensure!(
                             authority(&mut tx, actor, old_repo, triage).await?,

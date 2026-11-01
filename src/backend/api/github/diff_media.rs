@@ -34,9 +34,15 @@ pub(super) fn requested(headers: &HeaderMap) -> Option<Media> {
 fn diff(files: &[DiffFileInfo]) -> Vec<u8> {
     let mut bytes = Vec::new();
     for file in files {
-        let patch = if file.patch_bytes.is_empty() { file.patch.as_bytes() } else { &file.patch_bytes };
+        let patch = if file.patch_bytes.is_empty() {
+            file.patch.as_bytes()
+        } else {
+            &file.patch_bytes
+        };
         bytes.extend_from_slice(patch);
-        if !patch.is_empty() && !patch.ends_with(b"\n") { bytes.push(b'\n'); }
+        if !patch.is_empty() && !patch.ends_with(b"\n") {
+            bytes.push(b'\n');
+        }
     }
     bytes
 }

@@ -168,7 +168,10 @@ pub(super) fn fragment_slug(text: &str) -> String {
     for c in text.chars() {
         if c == ' ' {
             slug.push('-');
-        } else if c.is_alphanumeric() || matches!(c, '-' | '_') || unicode_normalization::char::is_combining_mark(c) {
+        } else if c.is_alphanumeric()
+            || matches!(c, '-' | '_')
+            || unicode_normalization::char::is_combining_mark(c)
+        {
             slug.extend(c.to_lowercase());
         }
     }
@@ -183,22 +186,44 @@ fn next_bare_url(text: &str, from: usize) -> Option<std::ops::Range<usize>> {
         let start = at;
         let rest = &text[start..];
         let character = rest.chars().next()?;
-        if !local(character) { at += character.len_utf8(); continue; }
-        let scheme = if rest.starts_with("https://") { 8 } else if rest.starts_with("http://") { 7 }
-            else if rest.starts_with("www.") { 4 } else { 0 };
+        if !local(character) {
+            at += character.len_utf8();
+            continue;
+        }
+        let scheme = if rest.starts_with("https://") {
+            8
+        } else if rest.starts_with("http://") {
+            7
+        } else if rest.starts_with("www.") {
+            4
+        } else {
+            0
+        };
         if scheme == 0 {
             let local_end = rest.find(|c: char| !local(c)).unwrap_or(rest.len());
             at = start + local_end;
-            if local_end == 0 || !text[at..].starts_with('@') { continue; }
+            if local_end == 0 || !text[at..].starts_with('@') {
+                continue;
+            }
             let domain_start = at + 1;
-            at = domain_start + text[domain_start..].find(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '.')).unwrap_or(text.len() - domain_start);
+            at = domain_start
+                + text[domain_start..]
+                    .find(|c: char| !c.is_ascii_alphanumeric() && !matches!(c, '-' | '.'))
+                    .unwrap_or(text.len() - domain_start);
             let domain = text[domain_start..at].trim_end_matches('.');
-            if domain.contains('.') && domain.split('.').all(|label| !label.is_empty() && !label.starts_with('-') && !label.ends_with('-')) {
+            if domain.contains('.')
+                && domain.split('.').all(|label| {
+                    !label.is_empty() && !label.starts_with('-') && !label.ends_with('-')
+                })
+            {
                 return Some(start..domain_start + domain.len());
             }
             continue;
         }
-        let mut end = start + rest.find(|c: char| c.is_whitespace() || c == '<').unwrap_or(rest.len());
+        let mut end = start
+            + rest
+                .find(|c: char| c.is_whitespace() || c == '<')
+                .unwrap_or(rest.len());
         at = end;
         let url = &text[start..end];
         let open = url.matches('(').count();
@@ -211,15 +236,21 @@ fn next_bare_url(text: &str, from: usize) -> Option<std::ops::Range<usize>> {
             }
             end -= c.len_utf8();
         }
-        if end - start > scheme { return Some(start..end); }
+        if end - start > scheme {
+            return Some(start..end);
+        }
     }
     None
 }
 
 fn autolink_href(text: &str) -> String {
-    if text.starts_with("www.") { format!("https://{text}") }
-    else if text.starts_with("http://") || text.starts_with("https://") { text.to_owned() }
-    else { format!("mailto:{text}") }
+    if text.starts_with("www.") {
+        format!("https://{text}")
+    } else if text.starts_with("http://") || text.starts_with("https://") {
+        text.to_owned()
+    } else {
+        format!("mailto:{text}")
+    }
 }
 
 /// GitHub's most used emoji shortcodes, sorted by name for binary search.
@@ -610,7 +641,7 @@ impl<'r> Emitter<'r> {
                     let text = decode_references(text).0;
                     self.visible(&text);
                     self.write(&escape_html(&text))?;
-                },
+                }
                 Piece::Literal(text) => self.literal(text)?,
                 Piece::Comment => {}
                 Piece::Open { name, attrs, raw } => self.open_user(name, &attrs, raw)?,
@@ -651,9 +682,13 @@ impl<'r> Emitter<'r> {
             "thead" | "tbody" | "tfoot" => (&["thead", "tbody", "tfoot"], &["table"]),
             _ => (&[], &[]),
         };
-        let implied = self.open.iter().rev()
+        let implied = self
+            .open
+            .iter()
+            .rev()
             .take_while(|open| matches!(open, Open::User(_)) && !containers.contains(&open.name()))
-            .find(|open| siblings.contains(&open.name())).map(Open::name);
+            .find(|open| siblings.contains(&open.name()))
+            .map(Open::name);
         if let Some(previous) = implied {
             self.close_user(previous, "")?;
         }
@@ -674,15 +709,23 @@ impl<'r> Emitter<'r> {
         };
         let values = attributes(name, attrs, ids);
         let level = match name {
-            "h1" => Some(HeadingLevel::H1), "h2" => Some(HeadingLevel::H2),
-            "h3" => Some(HeadingLevel::H3), "h4" => Some(HeadingLevel::H4),
-            "h5" => Some(HeadingLevel::H5), "h6" => Some(HeadingLevel::H6),
+            "h1" => Some(HeadingLevel::H1),
+            "h2" => Some(HeadingLevel::H2),
+            "h3" => Some(HeadingLevel::H3),
+            "h4" => Some(HeadingLevel::H4),
+            "h5" => Some(HeadingLevel::H5),
+            "h6" => Some(HeadingLevel::H6),
             _ => None,
         };
         if let Some(level) = level {
-            if self.heading.is_some() { return self.literal(raw); }
+            if self.heading.is_some() {
+                return self.literal(raw);
+            }
             self.heading_text.clear();
-            self.heading = Some(Heading { level, start: self.out.len() });
+            self.heading = Some(Heading {
+                level,
+                start: self.out.len(),
+            });
             self.heading_attributes = Some(values);
             self.open.push(Open::User(name));
             return Some(());
@@ -713,7 +756,9 @@ impl<'r> Emitter<'r> {
                 image_tag(src, alt, &pairs(&values, &["src", "alt"]))
             }
             "source" => {
-                if attrs.iter().any(|(name, _)| name == "media") && value(&values, "media").is_none() {
+                if attrs.iter().any(|(name, _)| name == "media")
+                    && value(&values, "media").is_none()
+                {
                     release_id(&values, &mut self.heading_ids);
                     return Some(());
                 }
@@ -788,7 +833,9 @@ impl<'r> Emitter<'r> {
     }
 
     fn end_user_tag(&mut self, name: &str) -> Option<()> {
-        if self.heading_attributes.is_some() && matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6") {
+        if self.heading_attributes.is_some()
+            && matches!(name, "h1" | "h2" | "h3" | "h4" | "h5" | "h6")
+        {
             self.heading_end()
         } else {
             self.write(&format!("</{name}>"))
@@ -1229,12 +1276,24 @@ impl<'r> Emitter<'r> {
             return Some(());
         }
         let attributes = self.heading_attributes.take().unwrap_or_default();
-        let id = value(&attributes, "id").map(str::to_owned)
+        let id = value(&attributes, "id")
+            .map(str::to_owned)
             .or_else(|| heading_id(&text, &mut self.heading_ids, &mut self.next_repeat));
-        self.write_heading(heading.level, id.as_deref(), &inner, &pairs(&attributes, &["id"]))
+        self.write_heading(
+            heading.level,
+            id.as_deref(),
+            &inner,
+            &pairs(&attributes, &["id"]),
+        )
     }
 
-    fn write_heading(&mut self, level: HeadingLevel, id: Option<&str>, inner: &str, attributes: &str) -> Option<()> {
+    fn write_heading(
+        &mut self,
+        level: HeadingLevel,
+        id: Option<&str>,
+        inner: &str,
+        attributes: &str,
+    ) -> Option<()> {
         let (tag, class) = heading_tag(level);
         // A whole document's ids are unique on the page, so its headings get a permalink.
         // Comments share a page and repeat ids, so they get none. The link is empty: CSS draws
@@ -1368,28 +1427,56 @@ fn blockquote_open(kind: Option<BlockQuoteKind>) -> String {
 pub fn markdown_text(text: &str) -> String {
     if text.len() > MAX_SOURCE_BYTES {
         let mut end = MAX_PLAIN_TEXT_BYTES.min(text.len());
-        while !text.is_char_boundary(end) { end -= 1; }
+        while !text.is_char_boundary(end) {
+            end -= 1;
+        }
         return text[..end].to_owned();
     }
     let mut out = String::new();
     for event in Parser::new_ext(text, markdown_options(false)) {
         match event {
-            Event::Text(text) | Event::Code(text) | Event::InlineMath(text) | Event::DisplayMath(text) => out.push_str(&text),
+            Event::Text(text)
+            | Event::Code(text)
+            | Event::InlineMath(text)
+            | Event::DisplayMath(text) => out.push_str(&text),
             Event::Html(html) | Event::InlineHtml(html) => {
                 for piece in pieces(&html) {
                     match piece {
                         Piece::Text(text) => out.push_str(&decode_references(text).0),
                         Piece::Literal(text) => out.push_str(text),
-                        Piece::Open { name: "br" | "hr", .. } | Piece::Close { name: "p" | "div" | "li" | "tr" | "pre" | "blockquote", .. } => out.push('\n'),
-                        Piece::Open { name: "img", attrs, .. } => {
-                            if let Some((_, alt)) = attrs.iter().find(|(name, _)| name == "alt") { out.push_str(&decode_references(alt).0); }
+                        Piece::Open {
+                            name: "br" | "hr", ..
+                        }
+                        | Piece::Close {
+                            name: "p" | "div" | "li" | "tr" | "pre" | "blockquote",
+                            ..
+                        } => out.push('\n'),
+                        Piece::Open {
+                            name: "img", attrs, ..
+                        } => {
+                            if let Some((_, alt)) = attrs.iter().find(|(name, _)| name == "alt") {
+                                out.push_str(&decode_references(alt).0);
+                            }
                         }
                         _ => {}
                     }
                 }
             }
-            Event::SoftBreak | Event::HardBreak | Event::Rule | Event::End(TagEnd::Item | TagEnd::TableHead | TagEnd::TableRow) => { if !out.ends_with('\n') { out.push('\n'); } }
-            Event::End(TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::BlockQuote(_) | TagEnd::CodeBlock) => { if !out.ends_with("\n\n") { out.push_str("\n\n"); } }
+            Event::SoftBreak
+            | Event::HardBreak
+            | Event::Rule
+            | Event::End(TagEnd::Item | TagEnd::TableHead | TagEnd::TableRow) => {
+                if !out.ends_with('\n') {
+                    out.push('\n');
+                }
+            }
+            Event::End(
+                TagEnd::Paragraph | TagEnd::Heading(_) | TagEnd::BlockQuote(_) | TagEnd::CodeBlock,
+            ) => {
+                if !out.ends_with("\n\n") {
+                    out.push_str("\n\n");
+                }
+            }
             Event::End(TagEnd::TableCell) => out.push('\t'),
             Event::TaskListMarker(checked) => out.push_str(if checked { "[x] " } else { "[ ] " }),
             _ => {}
@@ -1446,7 +1533,9 @@ fn render_markdown(
     let mut emitter = Emitter::new(document, references, task_form);
     if document && text.contains("[^") {
         for event in Parser::new_ext(text, markdown_options(document)) {
-            if let Event::FootnoteReference(label) = event { emitter.footnote_number(&label); }
+            if let Event::FootnoteReference(label) = event {
+                emitter.footnote_number(&label);
+            }
         }
     }
     let events = Parser::new_ext(text, markdown_options(document)).into_offset_iter();
@@ -1618,7 +1707,9 @@ impl LinkBase {
         if path.is_empty() {
             // Parsing keeps a discussion's `#comment-N` as the page anchor. A repository file
             // has no such anchor, so there the same link names the heading with that id.
-            return suffix.split_once('#').filter(|_| !image)
+            return suffix
+                .split_once('#')
+                .filter(|_| !image)
                 .map(|(query, fragment)| format!("{query}#{}", heading_target(fragment)));
         }
         // Without a base a relative address has nothing to resolve against.
@@ -1654,15 +1745,19 @@ impl LinkBase {
         };
         let joined = parts.join("/");
         // Headings in a Markdown file carry the `user-content-` prefix, so its fragments do too.
-        let markdown_file = crate::webui::pages::repos::ref_path::is_markdown_path(&crate::webui::decode_component(path))
-            || path.ends_with('/') || parts.is_empty();
+        let markdown_file = crate::webui::pages::repos::ref_path::is_markdown_path(
+            &crate::webui::decode_component(path),
+        ) || path.ends_with('/')
+            || parts.is_empty();
         let suffix = match suffix.split_once('#') {
             // The code view keeps the file's line anchors as they are.
             Some((query, fragment))
                 if markdown_file
                     && !fragment.is_empty()
                     && url::form_urlencoded::parse(query.trim_start_matches('?').as_bytes())
-                        .filter(|(key, _)| key == "view").last().is_none_or(|(_, value)| value != "code") =>
+                        .filter(|(key, _)| key == "view")
+                        .last()
+                        .is_none_or(|(_, value)| value != "code") =>
             {
                 format!("{query}#{}", heading_target(fragment))
             }
@@ -1807,7 +1902,9 @@ pub fn outline_of_html(html: &str) -> Vec<OutlineEntry> {
     let mut entries = Vec::new();
     let mut rest = html;
     while entries.len() < 100 {
-        let Some(start) = rest.find("<h") else { break; };
+        let Some(start) = rest.find("<h") else {
+            break;
+        };
         let after = &rest[start + 2..];
         let Some(level) = after
             .chars()
@@ -1848,7 +1945,9 @@ fn heading_text(html: &str) -> String {
     for piece in pieces(html) {
         match piece {
             Piece::Text(part) | Piece::Literal(part) => text.push_str(&decode_references(part).0),
-            Piece::Open { name: "img", attrs, .. } => {
+            Piece::Open {
+                name: "img", attrs, ..
+            } => {
                 if let Some((_, alt)) = attrs.iter().find(|(name, _)| name == "alt") {
                     text.push_str(&decode_references(alt).0);
                 }

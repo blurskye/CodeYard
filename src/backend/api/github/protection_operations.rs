@@ -148,7 +148,9 @@ pub(super) async fn app_documents(state: &AppState, ids: &[i64]) -> Result<Vec<V
 }
 
 async fn actor_document(state: &AppState, repo: i64, actors: Actors) -> Result<Value> {
-    if actors.users.len() + actors.teams.len() + actors.apps.len() > protection::MAX_ALLOWANCE_ACTORS {
+    if actors.users.len() + actors.teams.len() + actors.apps.len()
+        > protection::MAX_ALLOWANCE_ACTORS
+    {
         return Err(Error::invalid("Supply at most 100 actors"));
     }
     let ids = user_ids(state, &actors.users).await?;
@@ -548,7 +550,8 @@ pub(super) async fn check_bindings(
             bindings.push(json!({"context": context, "app_id": app}));
         }
     }
-    protection::normalize_check_bindings(&mut bindings).map_err(|refusal| write_error(refusal.into()))?;
+    protection::normalize_check_bindings(&mut bindings)
+        .map_err(|refusal| write_error(refusal.into()))?;
     Ok(bindings)
 }
 

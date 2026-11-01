@@ -108,7 +108,9 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         lifecycle::validate_name(name).map_err(provision)?;
     }
     let saved = if matches!(field, "createRepository" | "cloneTemplateRepository") {
-        if request.auth.is_job() { return Err(token_denied()); }
+        if request.auth.is_job() {
+            return Err(token_denied());
+        }
         // Checked before provisioning, which commits the repository.
         request.require_oauth_scope("repo")?;
         let private = match text(input, "visibility")? {
@@ -131,11 +133,19 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 RepositoryTarget::Personal(id) => fine_grained::Owner::User(id),
                 RepositoryTarget::Organization(id) => fine_grained::Owner::Organization(id),
             };
-            let grant = fine_grained::grant(pool, request.auth.token.id).await.map_err(unavailable)?.ok_or_else(token_denied)?;
-            if !grant.creates_repository(owner) { return Err(token_denied()); }
+            let grant = fine_grained::grant(pool, request.auth.token.id)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(token_denied)?;
+            if !grant.creates_repository(owner) {
+                return Err(token_denied());
+            }
         }
         if let RepositoryTarget::Organization(org) = owner {
-            if db::fine_grained_tokens::classic_refused(pool, request.auth.token.id, org).await.map_err(unavailable)? {
+            if db::fine_grained_tokens::classic_refused(pool, request.auth.token.id, org)
+                .await
+                .map_err(unavailable)?
+            {
                 return Err(token_denied());
             }
         }
@@ -192,9 +202,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 (pool, request.state.cluster.as_ref()),
                 &request.state.repos_path,
                 lifecycle::CreationInput {
-                    owner: creation, properties: &[],
+                    owner: creation,
+                    properties: &[],
                     admission: db::repositories::creation::CreationAdmission {
-                        authority: Some(&authority), advisory: None,
+                        authority: Some(&authority),
+                        advisory: None,
                     },
                 },
                 text(input, "name")?,
@@ -205,13 +217,20 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             .await
         }
         .map_err(provision)?;
-        records::patch_repository(pool, actor, row.id, &records::RepositoryChanges {
-            token: Some(request.auth.token.id),
-            wiki: Some(input["hasWikiEnabled"].as_bool().unwrap_or(false)),
-            is_template: input["template"].as_bool(),
-            website: website.as_ref().map(|value| value.as_deref()),
-            ..Default::default()
-        }).await.map_err(|_| partial("Repository created; settings were not confirmed"))?;
+        records::patch_repository(
+            pool,
+            actor,
+            row.id,
+            &records::RepositoryChanges {
+                token: Some(request.auth.token.id),
+                wiki: Some(input["hasWikiEnabled"].as_bool().unwrap_or(false)),
+                is_template: input["template"].as_bool(),
+                website: website.as_ref().map(|value| value.as_deref()),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(|_| partial("Repository created; settings were not confirmed"))?;
         if let Some(team) = team {
             use db::organizations::OrganizationOutcome;
             let granted = db::organizations::teams::grant_organization_team_repository(
@@ -232,16 +251,23 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     } else {
         let row = repository::by_id(target(input, "repositoryId", "R")?, request).await?;
         request.authorize(row.id, "administration", true).await?;
-        records::patch_repository(pool, actor, row.id, &records::RepositoryChanges {
-            token: Some(request.auth.token.id),
-            name: input["name"].as_str(),
-            description: description.map(Some),
-            website: website.as_ref().map(|value| value.as_deref()),
-            wiki: input["hasWikiEnabled"].as_bool(),
-            discussions: input["hasDiscussionsEnabled"].as_bool(),
-            is_template: input["template"].as_bool(),
-            ..Default::default()
-        }).await.map_err(settings)?
+        records::patch_repository(
+            pool,
+            actor,
+            row.id,
+            &records::RepositoryChanges {
+                token: Some(request.auth.token.id),
+                name: input["name"].as_str(),
+                description: description.map(Some),
+                website: website.as_ref().map(|value| value.as_deref()),
+                wiki: input["hasWikiEnabled"].as_bool(),
+                discussions: input["hasDiscussionsEnabled"].as_bool(),
+                is_template: input["template"].as_bool(),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(settings)?
     };
     Ok(
         json!({"clientMutationId":input["clientMutationId"],"repository":repository::object(&saved)}),

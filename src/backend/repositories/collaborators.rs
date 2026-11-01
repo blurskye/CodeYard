@@ -117,9 +117,15 @@ pub async fn invitations(
         .map_err(database_error)
 }
 pub async fn recipient_invitations(
-    pool: &db::DbPool, actor: i64, session: &str, offset: i64, limit: i64,
+    pool: &db::DbPool,
+    actor: i64,
+    session: &str,
+    offset: i64,
+    limit: i64,
 ) -> Result<Vec<InvitationSummary>, Error> {
-    records::recipient_invitations(pool, actor, session, offset, limit).await.map_err(database_error)
+    records::recipient_invitations(pool, actor, session, offset, limit)
+        .await
+        .map_err(database_error)
 }
 
 pub async fn update_invitation(
@@ -133,7 +139,12 @@ pub async fn update_invitation(
         .await
         .map_err(database_error)
 }
-pub async fn respond(pool: &db::DbPool, actor: impl Into<db::credentials::Actor>, id: i64, accept: bool) -> Result<(), Error> {
+pub async fn respond(
+    pool: &db::DbPool,
+    actor: impl Into<db::credentials::Actor>,
+    id: i64,
+    accept: bool,
+) -> Result<(), Error> {
     records::respond(pool, actor, id, accept)
         .await
         .map_err(database_error)

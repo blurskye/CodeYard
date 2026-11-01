@@ -17,7 +17,10 @@ async fn begin_label_write<'a>(
         super::discussions::lock_exclusive_write_authority(&mut tx, actor.user_id, repo_id).await?,
         LabelWriteRefusal::Denied
     );
-    anyhow::ensure!(writes_labels(&mut tx, actor, repo_id).await?, LabelWriteRefusal::Denied);
+    anyhow::ensure!(
+        writes_labels(&mut tx, actor, repo_id).await?,
+        LabelWriteRefusal::Denied
+    );
     Ok(tx)
 }
 
@@ -52,7 +55,10 @@ async fn begin_item_label_write<'a>(
         super::discussions::lock_triage_authority(&mut tx, actor.user_id, repo_id).await?,
         LabelWriteRefusal::Denied
     );
-    anyhow::ensure!(writes_labels(&mut tx, actor, repo_id).await?, LabelWriteRefusal::Denied);
+    anyhow::ensure!(
+        writes_labels(&mut tx, actor, repo_id).await?,
+        LabelWriteRefusal::Denied
+    );
     Ok(tx)
 }
 
@@ -63,8 +69,10 @@ async fn writes_labels(
     actor: &crate::backend::db::credentials::Actor,
     repo_id: i64,
 ) -> Result<bool> {
-    Ok(super::credentials::repository(tx, actor, repo_id, "issues", true).await?
-        || super::credentials::repository(tx, actor, repo_id, "pull_requests", true).await?)
+    Ok(
+        super::credentials::repository(tx, actor, repo_id, "issues", true).await?
+            || super::credentials::repository(tx, actor, repo_id, "pull_requests", true).await?,
+    )
 }
 
 pub(crate) async fn lock_item_labels(
@@ -136,8 +144,18 @@ pub async fn list_repo_labels(pool: &PgPool, repo_id: i64) -> Result<Vec<Label>>
     Ok(labels)
 }
 
-pub async fn get_repo_label_by_name(pool: &PgPool, repo_id: i64, name: &str) -> Result<Option<Label>> {
-    Ok(sqlx::query_as("SELECT * FROM labels WHERE repo_id=$1 AND LOWER(name)=LOWER($2)").bind(repo_id).bind(name).fetch_optional(pool).await?)
+pub async fn get_repo_label_by_name(
+    pool: &PgPool,
+    repo_id: i64,
+    name: &str,
+) -> Result<Option<Label>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM labels WHERE repo_id=$1 AND LOWER(name)=LOWER($2)")
+            .bind(repo_id)
+            .bind(name)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
 
 pub async fn get_label_by_id(pool: &PgPool, id: i64) -> Result<Option<Label>> {
@@ -190,7 +208,11 @@ pub async fn list_milestone_labels(
         .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
 }
 
-pub async fn list_label_usage(pool: &PgPool, repo_id: i64, label_ids: &[i64]) -> Result<Vec<(i64, i64)>> {
+pub async fn list_label_usage(
+    pool: &PgPool,
+    repo_id: i64,
+    label_ids: &[i64],
+) -> Result<Vec<(i64, i64)>> {
     if label_ids.is_empty() {
         return Ok(Vec::new());
     }
@@ -219,16 +241,45 @@ pub async fn update_label(
     color: Option<&str>,
     description: Option<Option<&str>>,
 ) -> Result<Label> {
-    update_label_checked(pool, actor, repo_id, label_id, (name, color, description), None).await
+    update_label_checked(
+        pool,
+        actor,
+        repo_id,
+        label_id,
+        (name, color, description),
+        None,
+    )
+    .await
 }
 
-pub async fn update_label_checked(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, label_id: i64, (name, color, description): (Option<&str>, Option<&str>, Option<Option<&str>>), expected: Option<&str>) -> Result<Label> {
+pub async fn update_label_checked(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+    label_id: i64,
+    (name, color, description): (Option<&str>, Option<&str>, Option<Option<&str>>),
+    expected: Option<&str>,
+) -> Result<Label> {
     let actor = actor.into();
     let mut tx = begin_label_write(pool, &actor, repo_id).await?;
     if let Some(expected) = expected {
-        let current: Label = sqlx::query_as("SELECT * FROM labels WHERE repo_id=$1 AND id=$2 FOR UPDATE").bind(repo_id).bind(label_id).fetch_optional(&mut *tx).await?.ok_or(LabelWriteRefusal::InvalidLabels)?;
-        let shown: String = current.description.unwrap_or_default().chars().take(PAGE_DESCRIPTION_CHARS).collect();
-        anyhow::ensure!(serde_json::to_string(&(current.name, current.color, shown))? == expected, LabelWriteRefusal::Conflict);
+        let current: Label =
+            sqlx::query_as("SELECT * FROM labels WHERE repo_id=$1 AND id=$2 FOR UPDATE")
+                .bind(repo_id)
+                .bind(label_id)
+                .fetch_optional(&mut *tx)
+                .await?
+                .ok_or(LabelWriteRefusal::InvalidLabels)?;
+        let shown: String = current
+            .description
+            .unwrap_or_default()
+            .chars()
+            .take(PAGE_DESCRIPTION_CHARS)
+            .collect();
+        anyhow::ensure!(
+            serde_json::to_string(&(current.name, current.color, shown))? == expected,
+            LabelWriteRefusal::Conflict
+        );
     }
     if let Some(name) = name {
         ensure_name_free(&mut tx, repo_id, name, label_id).await?;
@@ -266,7 +317,10 @@ pub async fn delete_label(
     let actor = actor.into();
     let mut tx = begin_label_write(pool, &actor, repo_id).await?;
     // Deleting a label removes it from its issues and pull requests, so they get a new revision.
-    for (table, links, column) in [("issues", "issue_labels", "issue_id"), ("pull_requests", "pr_labels", "pull_request_id")] {
+    for (table, links, column) in [
+        ("issues", "issue_labels", "issue_id"),
+        ("pull_requests", "pr_labels", "pull_request_id"),
+    ] {
         sqlx::query(&format!("UPDATE {table} SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id IN (SELECT x.{column} FROM {links} x JOIN labels l ON l.id=x.label_id WHERE l.id=$1 AND l.repo_id=$2)"))
             .bind(label_id)
             .bind(repo_id)
@@ -342,15 +396,7 @@ pub async fn remove_issue_label(
     issue_id: i64,
     label_id: i64,
 ) -> Result<bool> {
-    remove_item_label(
-        pool,
-        actor,
-        repo_id,
-        LabelTarget::Issue,
-        issue_id,
-        label_id,
-    )
-    .await
+    remove_item_label(pool, actor, repo_id, LabelTarget::Issue, issue_id, label_id).await
 }
 
 pub async fn remove_pull_request_label(
@@ -393,8 +439,21 @@ async fn remove_item_label(
     .await?;
     if result.rows_affected() > 0 {
         touch_subject(&mut tx, subject, item_id).await?;
-        let after: Vec<_> = before.iter().filter(|label| label.id != label_id).cloned().collect();
-        record_label_changes(&mut tx, repo_id, target, item_id, actor.user_id, &before, &after).await?;
+        let after: Vec<_> = before
+            .iter()
+            .filter(|label| label.id != label_id)
+            .cloned()
+            .collect();
+        record_label_changes(
+            &mut tx,
+            repo_id,
+            target,
+            item_id,
+            actor.user_id,
+            &before,
+            &after,
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
@@ -418,11 +477,20 @@ pub async fn get_issue_labels(pool: &PgPool, repo_id: i64, issue_id: i64) -> Res
     get_item_labels(pool, LabelTarget::Issue, repo_id, issue_id).await
 }
 
-pub async fn get_pull_request_labels(pool: &PgPool, repo_id: i64, pull_request_id: i64) -> Result<Vec<Label>> {
+pub async fn get_pull_request_labels(
+    pool: &PgPool,
+    repo_id: i64,
+    pull_request_id: i64,
+) -> Result<Vec<Label>> {
     get_item_labels(pool, LabelTarget::PullRequest, repo_id, pull_request_id).await
 }
 
-async fn get_item_labels(pool: &PgPool, target: LabelTarget, repo_id: i64, item_id: i64) -> Result<Vec<Label>> {
+async fn get_item_labels(
+    pool: &PgPool,
+    target: LabelTarget,
+    repo_id: i64,
+    item_id: i64,
+) -> Result<Vec<Label>> {
     let (_, link, column) = target.tables();
     let labels = sqlx::query_as::<_, Label>(&format!(
         "SELECT l.* FROM labels l INNER JOIN {link} il ON l.id = il.label_id WHERE il.{column} = $1 AND l.repo_id = $2 ORDER BY l.name"
@@ -486,9 +554,16 @@ async fn write_item_labels(
 ) -> Result<Vec<Label>> {
     let actor = actor.into();
     let mut tx = begin_item_label_write(pool, &actor, repo_id).await?;
-    let labels =
-        write_item_labels_transaction(&mut tx, Some(actor.user_id), repo_id, target, item_id, label_ids, replace)
-            .await?;
+    let labels = write_item_labels_transaction(
+        &mut tx,
+        Some(actor.user_id),
+        repo_id,
+        target,
+        item_id,
+        label_ids,
+        replace,
+    )
+    .await?;
     tx.commit().await?;
     Ok(labels)
 }
@@ -546,17 +621,45 @@ pub(crate) async fn write_item_labels_transaction(
     Ok(labels)
 }
 
-async fn item_labels_snapshot(tx: &mut Transaction<'_, Postgres>, target: LabelTarget, item: i64) -> Result<Vec<Label>> {
+async fn item_labels_snapshot(
+    tx: &mut Transaction<'_, Postgres>,
+    target: LabelTarget,
+    item: i64,
+) -> Result<Vec<Label>> {
     let (_, link, column) = target.tables();
     Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l JOIN {link} il ON il.label_id=l.id WHERE il.{column}=$1 ORDER BY l.id"))
         .bind(item).fetch_all(&mut **tx).await?)
 }
 
-async fn record_label_changes(tx: &mut Transaction<'_, Postgres>, repo: i64, target: LabelTarget, item: i64, actor: i64, before: &[Label], after: &[Label]) -> Result<()> {
-    let subject = match target { LabelTarget::Issue => "issue", LabelTarget::PullRequest => "pull_request" };
+async fn record_label_changes(
+    tx: &mut Transaction<'_, Postgres>,
+    repo: i64,
+    target: LabelTarget,
+    item: i64,
+    actor: i64,
+    before: &[Label],
+    after: &[Label],
+) -> Result<()> {
+    let subject = match target {
+        LabelTarget::Issue => "issue",
+        LabelTarget::PullRequest => "pull_request",
+    };
     for (kind, old, new) in [("unlabeled", before, after), ("labeled", after, before)] {
-        for label in old.iter().filter(|label| !new.iter().any(|other| other.id == label.id)) {
-            super::timeline::append(tx, repo, subject, item, actor, kind, &label.name, &label.color).await?;
+        for label in old
+            .iter()
+            .filter(|label| !new.iter().any(|other| other.id == label.id))
+        {
+            super::timeline::append(
+                tx,
+                repo,
+                subject,
+                item,
+                actor,
+                kind,
+                &label.name,
+                &label.color,
+            )
+            .await?;
         }
     }
     Ok(())

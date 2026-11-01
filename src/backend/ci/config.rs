@@ -96,7 +96,10 @@ impl Default for CiConfig {
 impl CiConfig {
     pub fn platform_labels(&self) -> Vec<String> {
         match self.mode {
-            CiExecutionMode::Local => UBUNTU_LABELS.iter().map(|label| (*label).to_owned()).collect(),
+            CiExecutionMode::Local => UBUNTU_LABELS
+                .iter()
+                .map(|label| (*label).to_owned())
+                .collect(),
             CiExecutionMode::Podman => self.act_platform_map.keys().cloned().collect(),
         }
     }
@@ -177,7 +180,9 @@ fn default_podman_socket() -> String {
             .to_string_lossy()
             .into_owned(),
         // SAFETY: geteuid has no pointer arguments or preconditions.
-        _ => format!("/run/user/{}/podman/podman.sock", unsafe { libc::geteuid() }),
+        _ => format!("/run/user/{}/podman/podman.sock", unsafe {
+            libc::geteuid()
+        }),
     }
 }
 

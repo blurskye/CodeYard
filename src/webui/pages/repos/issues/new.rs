@@ -102,9 +102,18 @@ pub struct TemplateCard {
 }
 
 /// The template chooser a new issue opens on when the repository has issue templates.
-pub fn chooser(repo: &Repository, templates: &[TemplateCard], blank_allowed: bool, draft: &NewDraft) -> Element {
+pub fn chooser(
+    repo: &Repository,
+    templates: &[TemplateCard],
+    blank_allowed: bool,
+    draft: &NewDraft,
+) -> Element {
     let url = format!("{}/new", repo.family_url(Kind::Issue));
-    let prefill = format!("&title={}&body={}", encode_component(&draft.title), encode_component(&draft.body));
+    let prefill = format!(
+        "&title={}&body={}",
+        encode_component(&draft.title),
+        encode_component(&draft.body)
+    );
     repos::chrome::chrome(
         &repo.chrome,
         rsx! {
@@ -334,24 +343,41 @@ fn IssuePickers(
     }
 }
 
-fn adopt_native_picks(mut assignees: Signal<Vec<String>>, mut labels: Signal<Vec<String>>, mut milestone: Signal<String>) {
+fn adopt_native_picks(
+    mut assignees: Signal<Vec<String>>,
+    mut labels: Signal<Vec<String>>,
+    mut milestone: Signal<String>,
+) {
     #[cfg(target_arch = "wasm32")]
     {
         use wasm_bindgen::JsCast;
-        let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
-        let Ok(inputs) = document.query_selector_all("input[form=\"new-entry-form\"]") else { return; };
+        let Some(document) = web_sys::window().and_then(|window| window.document()) else {
+            return;
+        };
+        let Ok(inputs) = document.query_selector_all("input[form=\"new-entry-form\"]") else {
+            return;
+        };
         let (mut people, mut tags, mut selected) = (Vec::new(), Vec::new(), String::new());
         for index in 0..inputs.length() {
-            let Some(input) = inputs.item(index).and_then(|node| node.dyn_into::<web_sys::HtmlInputElement>().ok()) else { continue; };
-            if !input.checked() { continue; }
+            let Some(input) = inputs
+                .item(index)
+                .and_then(|node| node.dyn_into::<web_sys::HtmlInputElement>().ok())
+            else {
+                continue;
+            };
+            if !input.checked() {
+                continue;
+            }
             match input.name().as_str() {
                 "assignees" => people.push(input.value()),
                 "labels" => tags.push(input.value()),
                 "milestone" => selected = input.value(),
-                _ => {},
+                _ => {}
             }
         }
-        assignees.set(people); labels.set(tags); milestone.set(selected);
+        assignees.set(people);
+        labels.set(tags);
+        milestone.set(selected);
     }
     #[cfg(not(target_arch = "wasm32"))]
     let _ = (&mut assignees, &mut labels, &mut milestone);

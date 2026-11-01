@@ -129,7 +129,8 @@ impl Extension for OrphanQuery {
             if let Some(Value::List(mut values)) = result {
                 for name in crate::schema::ORPHAN_UNIONS {
                     values.push(
-                        projector.project(Subject::Type((*name).into()), &field.selection_set.node)?,
+                        projector
+                            .project(Subject::Type((*name).into()), &field.selection_set.node)?,
                     );
                 }
                 return Ok(Some(Value::List(values)));
@@ -220,7 +221,10 @@ impl<'a> Projector<'a> {
                 self.query.projected_bytes.set(bytes);
                 Ok(())
             }
-            _ => Err(async_graphql::ServerError::new("Introspection resource limit exceeded", None)),
+            _ => Err(async_graphql::ServerError::new(
+                "Introspection resource limit exceeded",
+                None,
+            )),
         }
     }
 
@@ -248,7 +252,16 @@ impl<'a> Projector<'a> {
                     } else {
                         self.field(subject, &field.node)
                     };
-                    self.charge(1, field.node.response_key().node.as_str().len().saturating_add(64))?;
+                    self.charge(
+                        1,
+                        field
+                            .node
+                            .response_key()
+                            .node
+                            .as_str()
+                            .len()
+                            .saturating_add(64),
+                    )?;
                     let value = match value {
                         Datum::Leaf(value) => {
                             if let Value::String(text) = &value {
@@ -259,10 +272,18 @@ impl<'a> Projector<'a> {
                         Datum::One(value) => self.project(value, &field.node.selection_set.node)?,
                         Datum::Many(values) => {
                             // Admit the whole list before allocating any projected entries.
-                            self.charge(values.len(), values.len().saturating_mul(std::mem::size_of::<Value>()))?;
-                            Value::List(values.into_iter()
-                                .map(|value| self.project(value, &field.node.selection_set.node))
-                                .collect::<ServerResult<Vec<_>>>()?)
+                            self.charge(
+                                values.len(),
+                                values.len().saturating_mul(std::mem::size_of::<Value>()),
+                            )?;
+                            Value::List(
+                                values
+                                    .into_iter()
+                                    .map(|value| {
+                                        self.project(value, &field.node.selection_set.node)
+                                    })
+                                    .collect::<ServerResult<Vec<_>>>()?,
+                            )
                         }
                     };
                     // Repeated selections merge just as normal GraphQL selections do.

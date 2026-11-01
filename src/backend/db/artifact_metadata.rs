@@ -196,7 +196,10 @@ impl StorageInput {
             self.artifact.digest,
             self.registry_url,
             self.repository.as_deref().unwrap_or(""),
-            self.path.as_deref().or(self.artifact_url.as_deref()).unwrap_or("")
+            self.path
+                .as_deref()
+                .or(self.artifact_url.as_deref())
+                .unwrap_or("")
         ]);
         hex::encode(Sha256::digest(value.to_string().as_bytes()))
     }
@@ -266,7 +269,11 @@ pub(crate) struct Admission {
 }
 impl Admission {
     pub fn new(actor: Actor) -> Self {
-        Self { actor, repositories: BTreeMap::new(), targets: BTreeMap::new() }
+        Self {
+            actor,
+            repositories: BTreeMap::new(),
+            targets: BTreeMap::new(),
+        }
     }
 }
 
@@ -280,7 +287,11 @@ pub(crate) fn cacheable<T: Clone>(result: &Result<T>) -> Option<std::result::Res
 
 pub(crate) fn target_candidates_sql(pg: bool, access: &str) -> String {
     let sql = format!("SELECT a.repo_id,MAX(a.id) FROM artifact_attestations a JOIN attestation_subjects s ON s.attestation_id=a.id JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$3 WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND s.digest=$2 AND a.predicate_type IN ('https://slsa.dev/provenance/v1','https://slsa.dev/provenance/v0.2') AND (CAST($4 AS BIGINT) IS NULL OR r.id=$4) AND NOT r.is_archived AND ({access})>=3 GROUP BY a.repo_id ORDER BY MAX(a.id) DESC,a.repo_id LIMIT $5");
-    if pg { sql } else { sql.replace('$', "?") }
+    if pg {
+        sql
+    } else {
+        sql.replace('$', "?")
+    }
 }
 
 #[derive(sqlx::FromRow)]

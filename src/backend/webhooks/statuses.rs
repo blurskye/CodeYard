@@ -46,35 +46,44 @@ pub async fn emit_status(
         std::slice::from_ref(&commit.sha),
     )
     .await
-    .inspect_err(|error| tracing::warn!(repo_id = repo.id, %error, "could not count status commit comments"))
+    .inspect_err(
+        |error| tracing::warn!(repo_id = repo.id, %error, "could not count status commit comments"),
+    )
     .unwrap_or_default()
     .into_iter()
     .find_map(|(sha, count)| (sha == commit.sha).then_some(count))
     .unwrap_or(0);
     let (status, commit, repo_for_hook) = (status.clone(), commit.clone(), repo.clone());
-    emit(pool, repo, events::STATUS, vec![actor], move |owner, people| {
-        let sender = people.get(actor);
-        let detail = payloads::git_commit(&commit, owner, &repo_for_hook.name, repo_for_hook.id);
-        let commit = payloads::commit(
-            &commit,
-            detail,
-            owner,
-            &repo_for_hook.name,
-            repo_for_hook.id,
-            comments,
-            author.as_ref(),
-            committer.as_ref(),
-        );
-        payloads::status(
-            &status,
-            commit,
-            &branches,
-            Scope {
-                repo: &repo_for_hook,
+    emit(
+        pool,
+        repo,
+        events::STATUS,
+        vec![actor],
+        move |owner, people| {
+            let sender = people.get(actor);
+            let detail =
+                payloads::git_commit(&commit, owner, &repo_for_hook.name, repo_for_hook.id);
+            let commit = payloads::commit(
+                &commit,
+                detail,
                 owner,
-                sender: &sender,
-            },
-        )
-    })
+                &repo_for_hook.name,
+                repo_for_hook.id,
+                comments,
+                author.as_ref(),
+                committer.as_ref(),
+            );
+            payloads::status(
+                &status,
+                commit,
+                &branches,
+                Scope {
+                    repo: &repo_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+            )
+        },
+    )
     .await;
 }

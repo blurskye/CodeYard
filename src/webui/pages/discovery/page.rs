@@ -852,14 +852,18 @@ fn issue_results(model: &SearchModel, kind: Kind, issues: &[IssueCard], none: &s
 
 /// Match the searcher's Unicode lowercase projection while retaining original byte ranges.
 fn highlight_parts(line: &str, needle: &str) -> Vec<(String, bool)> {
-    if needle.is_empty() { return vec![(line.to_owned(), false)]; }
+    if needle.is_empty() {
+        return vec![(line.to_owned(), false)];
+    }
     let needle = needle.to_lowercase();
     let mut folded = String::new();
     let mut ranges = Vec::new();
     for (start, character) in line.char_indices() {
         for lower in character.to_lowercase() {
             folded.push(lower);
-            for _ in 0..lower.len_utf8() { ranges.push((start, start + character.len_utf8())); }
+            for _ in 0..lower.len_utf8() {
+                ranges.push((start, start + character.len_utf8()));
+            }
         }
     }
     let mut parts = Vec::new();
@@ -867,12 +871,18 @@ fn highlight_parts(line: &str, needle: &str) -> Vec<(String, bool)> {
     for (at, _) in folded.match_indices(&needle) {
         let start = ranges[at].0;
         let end = ranges[at + needle.len() - 1].1;
-        if start < plain { continue; }
-        if plain < start { parts.push((line[plain..start].to_owned(), false)); }
+        if start < plain {
+            continue;
+        }
+        if plain < start {
+            parts.push((line[plain..start].to_owned(), false));
+        }
         parts.push((line[start..end].to_owned(), true));
         plain = end;
     }
-    if plain < line.len() { parts.push((line[plain..].to_owned(), false)); }
+    if plain < line.len() {
+        parts.push((line[plain..].to_owned(), false));
+    }
     parts
 }
 

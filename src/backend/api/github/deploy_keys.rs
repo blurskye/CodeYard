@@ -53,9 +53,14 @@ async fn list(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let keys = keys::list_keys(&state.pool, &auth.user, &repo, db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()))
-        .await
-        .map_err(key_error)?;
+    let keys = keys::list_keys(
+        &state.pool,
+        &auth.user,
+        &repo,
+        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
+    )
+    .await
+    .map_err(key_error)?;
     let (offset, limit) = page.window()?;
     let next = keys.len() > offset + limit;
     let mut values = Vec::new();
@@ -72,9 +77,14 @@ async fn read(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let keys = keys::list_keys(&state.pool, &auth.user, &repo, db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()))
-        .await
-        .map_err(key_error)?;
+    let keys = keys::list_keys(
+        &state.pool,
+        &auth.user,
+        &repo,
+        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
+    )
+    .await
+    .map_err(key_error)?;
     let key = keys
         .iter()
         .find(|key| key.id == id)

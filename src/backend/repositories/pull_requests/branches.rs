@@ -50,7 +50,11 @@ pub async fn head_repository(
 
 /// A namespaced branch can live in a renamed fork. An unrelated same-named repository
 /// must not shadow that fork.
-pub async fn owner_head_repository(pool: &DbPool, base: &Repository, owner: &str) -> anyhow::Result<Option<Repository>> {
+pub async fn owner_head_repository(
+    pool: &DbPool,
+    base: &Repository,
+    owner: &str,
+) -> anyhow::Result<Option<Repository>> {
     if let Some(head) = db::repositories::records::get_repository(pool, owner, &base.name).await? {
         if head.id == base.id || head.forked_from_id == Some(base.id) {
             return Ok(Some(head));
@@ -157,8 +161,8 @@ async fn move_head(
         head_branch,
         pusher,
     )
-        .await
-        .map_err(|_| RefreshError::Database)?;
+    .await
+    .map_err(|_| RefreshError::Database)?;
     if !moved {
         return Ok(false);
     }
@@ -322,9 +326,25 @@ async fn refresh_one(
             // the head repository deleted there is no branch left to observe, so the pull ref
             // the server last published from it is the head, as on GitHub. The row takes it
             // when the update after that publication was lost.
-            match base_store.commit_from_primary(&format!("refs/pull/{}/head", pull.number)).await {
+            match base_store
+                .commit_from_primary(&format!("refs/pull/{}/head", pull.number))
+                .await
+            {
                 Ok(commit) if commit.sha != pull.head_sha => {
-                    if move_head(pool, ci, &base, pull.id, &pull.head_sha, &commit.sha, pull.head_repo_id, &pull.head_branch, actor_id, ci_access).await? {
+                    if move_head(
+                        pool,
+                        ci,
+                        &base,
+                        pull.id,
+                        &pull.head_sha,
+                        &commit.sha,
+                        pull.head_repo_id,
+                        &pull.head_branch,
+                        actor_id,
+                        ci_access,
+                    )
+                    .await?
+                    {
                         changed = true;
                         retry = true;
                     }
@@ -495,7 +515,17 @@ pub async fn refresh_open_pull_request(
         return Err(RefreshError::MissingBase);
     }
     let mut listed = ListedRefs::new();
-    refresh_one(pool, repository, ci, actor_id, &mut listed, pull, ci_access, None).await
+    refresh_one(
+        pool,
+        repository,
+        ci,
+        actor_id,
+        &mut listed,
+        pull,
+        ci_access,
+        None,
+    )
+    .await
 }
 
 /// Refreshes a pull request after `actor_id` updated its head branch. When the actor can write the
@@ -574,7 +604,18 @@ pub async fn refresh_open_pull_requests(
     let mut first_error = None;
     for pull in open {
         let pull_id = pull.id;
-        match refresh_one(pool, repo, ci, actor_id, &mut listed, pull, (ci_access != db::models::AccessLevel::None).then_some(ci_access), None).await {
+        match refresh_one(
+            pool,
+            repo,
+            ci,
+            actor_id,
+            &mut listed,
+            pull,
+            (ci_access != db::models::AccessLevel::None).then_some(ci_access),
+            None,
+        )
+        .await
+        {
             Ok(true) => changed += 1,
             Ok(false) => {}
             Err(error) => {

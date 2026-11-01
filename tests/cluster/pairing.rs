@@ -1048,7 +1048,11 @@ async fn membership_contract(pool: &DbPool) {
     let hash = |byte: u8| cluster::hash_secret(&[byte; 32]);
     let key = |_: u8| NodeKey::generate().public_hex();
     let storage = ["storage".to_owned()];
-    let token = |hash: &str, roles: &[String], reusable: bool, approval: bool, expires_at: chrono::DateTime<Utc>| {
+    let token = |hash: &str,
+                 roles: &[String],
+                 reusable: bool,
+                 approval: bool,
+                 expires_at: chrono::DateTime<Utc>| {
         let hash = hash.to_owned();
         let roles = roles.to_vec();
         async move {

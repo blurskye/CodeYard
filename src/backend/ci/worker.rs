@@ -108,7 +108,12 @@ pub(super) async fn run(
             }
             service
                 .queue
-                .claim_with_stop(&worker, service.config.mode, &service.config.platform_labels(), Some(&mut claim_stop))
+                .claim_with_stop(
+                    &worker,
+                    service.config.mode,
+                    &service.config.platform_labels(),
+                    Some(&mut claim_stop),
+                )
                 .await
         };
         tokio::pin!(claim);
@@ -193,7 +198,9 @@ async fn execute(
         let prepared = (|| -> Result<_> {
             let root = match &service.config.process_cgroup_root {
                 Some(root) => Some(std::fs::canonicalize(root)?),
-                None if service.config.mode == CiExecutionMode::Local => Some(codeyard_actions::process::Cgroup::current_root()?),
+                None if service.config.mode == CiExecutionMode::Local => {
+                    Some(codeyard_actions::process::Cgroup::current_root()?)
+                }
                 None => None,
             };
             ContainerOwnership::create(&service.cleanup_dir, socket, run.run_id, root.as_deref())
@@ -276,7 +283,10 @@ async fn execute(
                     last_ack = request_started;
                     let _ = cancel_tx.send(true);
                 }
-                Ok(None) => { let _ = force_tx.send(true); let _ = cancel_tx.send(true); }
+                Ok(None) => {
+                    let _ = force_tx.send(true);
+                    let _ = cancel_tx.send(true);
+                }
                 Err(error) => {
                     if error.to_string().contains("not an active runner") {
                         let _ = force_tx.send(true);
@@ -308,8 +318,19 @@ async fn execute(
                 _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
                 _ = ready.wait_for(|ready| *ready) => {}
             }
-            run_workflows(service, worker, &claim, cancel, force, cleaned, &mut workspace, ownership.group.as_ref()).await
-        }.await;
+            run_workflows(
+                service,
+                worker,
+                &claim,
+                cancel,
+                force,
+                cleaned,
+                &mut workspace,
+                ownership.group.as_ref(),
+            )
+            .await
+        }
+        .await;
         let shutting_down = *stop.borrow();
         let (status, message) = match &result {
             Ok(true) => ("success", None),
@@ -353,7 +374,9 @@ async fn execute(
         loop {
             match tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, ownership.remove_containers()).await {
                 Ok(Ok(())) => break,
-                _ => warn!(run = %run.run_id, "CI container removal pending; retaining the run lease"),
+                _ => {
+                    warn!(run = %run.run_id, "CI container removal pending; retaining the run lease")
+                }
             }
             tokio::select! {
                 _ = tokio::time::sleep(delay) => {}
@@ -362,7 +385,9 @@ async fn execute(
             delay = (delay * 2).min(FINISH_RETRY_MAX);
         }
         // No process or container can still access this checkout when removal starts.
-        if let Some(workspace) = &mut workspace { workspace.removable = true; }
+        if let Some(workspace) = &mut workspace {
+            workspace.removable = true;
+        }
         drop(workspace);
         record_result(
             &service.queue,
@@ -443,7 +468,10 @@ where
 
 /// Clones the repository at the run's commit and runs each workflow in turn.
 /// Returns whether every workflow succeeded.
-#[expect(clippy::too_many_arguments, reason = "The run owns its claim, cancel and force signals, cleanup sender, workspace and cgroup.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The run owns its claim, cancel and force signals, cleanup sender, workspace and cgroup."
+)]
 async fn run_workflows(
     service: &CiWorkers,
     worker: &str,
@@ -521,7 +549,8 @@ async fn run_workflows(
         };
         all_labels.extend(labels);
     }
-    let runtime_file = workspace.write_values("runtime.env", &runtime_values(claim, native), !native)?;
+    let runtime_file =
+        workspace.write_values("runtime.env", &runtime_values(claim, native), !native)?;
     for workflow in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
         workspace.restore_called_workflows(run)?;
         let definition = workspace.definition(workflow);
@@ -570,7 +599,9 @@ async fn run_workflows(
         }
         if let Some(scope) = scope {
             scope.attach(&mut command)?;
-            if native { command.arg("--process-root").arg(scope.path()); }
+            if native {
+                command.arg("--process-root").arg(scope.path());
+            }
         }
         let completion_prefix = format!(
             "::codeyard-job-completed::{}:",
@@ -608,87 +639,116 @@ async fn run_workflows(
                 }
             };
             let grace = if native {
-                process::Grace { interrupt: Duration::ZERO, terminate: codeyard_actions::runner::SHUTDOWN_GRACE }
+                process::Grace {
+                    interrupt: Duration::ZERO,
+                    terminate: codeyard_actions::runner::SHUTDOWN_GRACE,
+                }
             } else {
                 // act cancels its job on SIGINT and runs the steps that clean up after it, as the
                 // native runner does on SIGTERM. SIGTERM makes act stop at once.
-                process::Grace { interrupt: codeyard_actions::runner::CLEANUP_GRACE, terminate: Duration::from_secs(3) }
+                process::Grace {
+                    interrupt: codeyard_actions::runner::CLEANUP_GRACE,
+                    terminate: Duration::from_secs(3),
+                }
             };
-            let output = process::run_with_grace(command, remaining, grace, scope, force.clone(), cancel.clone(), |line, stderr| {
-                let completed = if native && !claim.github_tokens.completion_secret.is_empty() {
-                    line.strip_prefix(&completion_prefix)
-                        .map(|job| format!("{workflow}:{job}"))
-                } else {
-                    None
-                };
-                let progress = if native && !claim.github_tokens.completion_secret.is_empty() {
-                    line.strip_prefix(&progress_prefix)
-                        .map(serde_json::from_str::<codeyard_actions::progress::Event>)
-                } else {
-                    None
-                };
-                let level = if stderr { log_level(&line) } else { "info" };
-                let mut line = LogLine {
-                    stage: stage.clone(),
-                    line: if progress.is_none() && completed.is_none() { masker.mask(&line) } else { String::new() },
-                    level: level.to_owned(),
-                    ..Default::default()
-                };
-                let lines_tx = lines_tx.clone();
-                let stalled = stalled.clone();
-                let records = records.clone();
-                let admissions = admissions.clone();
-                let generation = generation.clone();
-                let stage = stage.clone();
-                let masker = masker.clone();
-                async move {
-                    if let Some(job) = completed {
-                        return deliver(|| service.queue.finish_job(worker, run.id, &job)).await;
-                    }
-                    if let Some(event) = progress {
-                        let event = event.context("invalid authenticated runner progress")?;
-                        let key = (event.job.clone(), event.variant);
-                        if let codeyard_actions::progress::Update::Log { step, text } =
-                            &event.update
-                        {
-                            let id = records
-                                .lock()
-                                .unwrap_or_else(|error| error.into_inner())
-                                .get(&key)
-                                .copied()
-                                .context("output precedes its job observation")?;
-                            line.line = masker.mask(text);
-                            line.job_id = Some(id);
-                            line.step_number = step.map(i32::try_from).transpose()?;
+            let output = process::run_with_grace(
+                command,
+                remaining,
+                grace,
+                scope,
+                force.clone(),
+                cancel.clone(),
+                |line, stderr| {
+                    let completed = if native && !claim.github_tokens.completion_secret.is_empty() {
+                        line.strip_prefix(&completion_prefix)
+                            .map(|job| format!("{workflow}:{job}"))
+                    } else {
+                        None
+                    };
+                    let progress = if native && !claim.github_tokens.completion_secret.is_empty() {
+                        line.strip_prefix(&progress_prefix)
+                            .map(serde_json::from_str::<codeyard_actions::progress::Event>)
+                    } else {
+                        None
+                    };
+                    let level = if stderr { log_level(&line) } else { "info" };
+                    let mut line = LogLine {
+                        stage: stage.clone(),
+                        line: if progress.is_none() && completed.is_none() {
+                            masker.mask(&line)
                         } else {
-                            let id = deliver(|| {
-                                service
-                                    .queue
-                                    .progress(worker, run.id, &generation, &stage, &event)
-                            })
-                            .await?;
-                            if matches!(
-                                event.update,
-                                codeyard_actions::progress::Update::Concurrency { .. }
-                            ) {
-                                admissions
+                            String::new()
+                        },
+                        level: level.to_owned(),
+                        ..Default::default()
+                    };
+                    let lines_tx = lines_tx.clone();
+                    let stalled = stalled.clone();
+                    let records = records.clone();
+                    let admissions = admissions.clone();
+                    let generation = generation.clone();
+                    let stage = stage.clone();
+                    let masker = masker.clone();
+                    async move {
+                        if let Some(job) = completed {
+                            return deliver(|| service.queue.finish_job(worker, run.id, &job))
+                                .await;
+                        }
+                        if let Some(event) = progress {
+                            let event = event.context("invalid authenticated runner progress")?;
+                            let key = (event.job.clone(), event.variant);
+                            if let codeyard_actions::progress::Update::Log { step, text } =
+                                &event.update
+                            {
+                                let id = records
                                     .lock()
                                     .unwrap_or_else(|error| error.into_inner())
-                                    .insert(key.clone(), id);
+                                    .get(&key)
+                                    .copied()
+                                    .context("output precedes its job observation")?;
+                                line.line = masker.mask(text);
+                                line.job_id = Some(id);
+                                line.step_number = step.map(i32::try_from).transpose()?;
+                            } else {
+                                let id = deliver(|| {
+                                    service.queue.progress(
+                                        worker,
+                                        run.id,
+                                        &generation,
+                                        &stage,
+                                        &event,
+                                    )
+                                })
+                                .await?;
+                                if matches!(
+                                    event.update,
+                                    codeyard_actions::progress::Update::Concurrency { .. }
+                                ) {
+                                    admissions
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .insert(key.clone(), id);
+                                }
+                                if matches!(
+                                    event.update,
+                                    codeyard_actions::progress::Update::Finished { .. }
+                                ) {
+                                    admissions
+                                        .lock()
+                                        .unwrap_or_else(|error| error.into_inner())
+                                        .remove(&key);
+                                }
+                                records
+                                    .lock()
+                                    .unwrap_or_else(|error| error.into_inner())
+                                    .insert(key, id);
+                                return Ok(());
                             }
-                            if matches!(event.update, codeyard_actions::progress::Update::Finished { .. }) {
-                                admissions.lock().unwrap_or_else(|error| error.into_inner()).remove(&key);
-                            }
-                            records
-                                .lock()
-                                .unwrap_or_else(|error| error.into_inner())
-                                .insert(key, id);
-                            return Ok(());
                         }
+                        enqueue_log_line(&lines_tx, line, remote, &stalled).await
                     }
-                    enqueue_log_line(&lines_tx, line, remote, &stalled).await
-                }
-            });
+                },
+            );
             let status = tokio::select! {
                 status = output => status,
                 never = admitting => match never {},
@@ -701,9 +761,7 @@ async fn run_workflows(
                             .values_mut()
                             .flat_map(|variants| variants.values_mut()),
                     ) {
-                        result
-                            .outputs
-                            .retain(|_, value| !masker.contains(value));
+                        result.outputs.retain(|_, value| !masker.contains(value));
                     }
                     tokio::select! {
                         result = deliver(|| service.queue.job_state(worker, run.id, &generation, workflow, &state)) => result?,
@@ -805,15 +863,30 @@ fn runtime_values(claim: &ClaimedRun, native: bool) -> Vec<(String, String)> {
     let mut values = Vec::new();
     if !native && claim.github_tokens.oidc_jobs.contains("act") {
         values.extend([
-            ("ACTIONS_ID_TOKEN_REQUEST_URL".to_owned(), claim.github_tokens.oidc_url.clone()),
-            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN".to_owned(), claim.github_tokens.act.clone()),
+            (
+                "ACTIONS_ID_TOKEN_REQUEST_URL".to_owned(),
+                claim.github_tokens.oidc_url.clone(),
+            ),
+            (
+                "ACTIONS_ID_TOKEN_REQUEST_TOKEN".to_owned(),
+                claim.github_tokens.act.clone(),
+            ),
         ]);
     }
     if !claim.runtime.token.is_empty() {
         values.extend([
-            ("ACTIONS_RUNTIME_TOKEN".to_owned(), claim.runtime.token.clone()),
-            ("ACTIONS_RESULTS_URL".to_owned(), claim.runtime.results_url.clone()),
-            ("ACTIONS_CACHE_URL".to_owned(), claim.runtime.results_url.clone()),
+            (
+                "ACTIONS_RUNTIME_TOKEN".to_owned(),
+                claim.runtime.token.clone(),
+            ),
+            (
+                "ACTIONS_RESULTS_URL".to_owned(),
+                claim.runtime.results_url.clone(),
+            ),
+            (
+                "ACTIONS_CACHE_URL".to_owned(),
+                claim.runtime.results_url.clone(),
+            ),
             ("ACTIONS_CACHE_SERVICE_V2".to_owned(), "True".to_owned()),
         ]);
     }
@@ -923,10 +996,26 @@ fn act_command(
         ("GITHUB_GRAPHQL_URL", format!("{origin}/api/graphql")),
         ("GITHUB_SHA", run.head_sha.clone().unwrap_or_default()),
         ("SHA_REF", run.head_sha.clone().unwrap_or_default()),
-        ("GITHUB_WORKFLOW_SHA", run.workflow_sha.as_ref().or(run.head_sha.as_ref()).cloned().unwrap_or_default()),
+        (
+            "GITHUB_WORKFLOW_SHA",
+            run.workflow_sha
+                .as_ref()
+                .or(run.head_sha.as_ref())
+                .cloned()
+                .unwrap_or_default(),
+        ),
         ("GITHUB_WORKFLOW_REF", {
-            let workflow = run.workflow_path.split(',').find(|path| workspace.definition(path) == definition).unwrap_or(&run.workflow_path);
-            format!("{}/{}/{workflow}@{}", claim.owner, claim.repository_name, github_ref(claim).unwrap_or_default())
+            let workflow = run
+                .workflow_path
+                .split(',')
+                .find(|path| workspace.definition(path) == definition)
+                .unwrap_or(&run.workflow_path);
+            format!(
+                "{}/{}/{workflow}@{}",
+                claim.owner,
+                claim.repository_name,
+                github_ref(claim).unwrap_or_default()
+            )
         }),
         (
             "GITHUB_RUN_ID",
@@ -951,9 +1040,13 @@ fn act_command(
         "GITHUB_REPOSITORY={}/{}",
         claim.owner, claim.repository_name
     ));
-    command.arg("--env").arg(format!("GITHUB_REPOSITORY_ID={}", run.repo_id));
+    command
+        .arg("--env")
+        .arg(format!("GITHUB_REPOSITORY_ID={}", run.repo_id));
     if claim.owner_id > 0 {
-        command.arg("--env").arg(format!("GITHUB_REPOSITORY_OWNER_ID={}", claim.owner_id));
+        command
+            .arg("--env")
+            .arg(format!("GITHUB_REPOSITORY_OWNER_ID={}", claim.owner_id));
     }
     let actor = claim
         .original_actor
@@ -992,11 +1085,15 @@ fn act_command(
     if let Some(reference) = github_ref(claim) {
         command.arg("--env").arg(format!("GITHUB_REF={reference}"));
     }
-    if native && config.github_action_fallback { command.arg("--github-action-fallback"); }
+    if native && config.github_action_fallback {
+        command.arg("--github-action-fallback");
+    }
     match config.mode {
         CiExecutionMode::Local => {
             command.env("CODEYARD_DENY_DOCKER", "1");
-            if native { command.arg("--deny-docker"); }
+            if native {
+                command.arg("--deny-docker");
+            }
             for label in labels {
                 command.arg("-P").arg(format!("{label}=-self-hosted"));
             }
@@ -1072,12 +1169,29 @@ fn prepare_workflow_for_engine(
     limits: &str,
 ) -> Result<BTreeSet<String>> {
     let mut value = super::workflows::parse_yaml(&std::fs::read(path)?)?;
-    ensure!(native || !codeyard_actions::workflow::has_job_concurrency(&value), "Job concurrency requires the codeyard-actions engine");
+    ensure!(
+        native || !codeyard_actions::workflow::has_job_concurrency(&value),
+        "Job concurrency requires the codeyard-actions engine"
+    );
     if config.mode != CiExecutionMode::Local {
-        for job in value.get_mut("jobs").and_then(Value::as_mapping_mut).into_iter().flat_map(|jobs| jobs.values_mut()) {
+        for job in value
+            .get_mut("jobs")
+            .and_then(Value::as_mapping_mut)
+            .into_iter()
+            .flat_map(|jobs| jobs.values_mut())
+        {
             if let Some(selector) = job.get_mut("runs-on").and_then(Value::as_mapping_mut) {
-                if selector.contains_key("group") && selector.get("labels").is_none_or(|labels| labels.as_sequence().is_some_and(Vec::is_empty)) {
-                    let label = config.act_platform_map.keys().find(|label| label.as_str() == "ubuntu-latest").or_else(|| config.act_platform_map.keys().next()).context("Group-only jobs need a configured default platform")?;
+                if selector.contains_key("group")
+                    && selector
+                        .get("labels")
+                        .is_none_or(|labels| labels.as_sequence().is_some_and(Vec::is_empty))
+                {
+                    let label = config
+                        .act_platform_map
+                        .keys()
+                        .find(|label| label.as_str() == "ubuntu-latest")
+                        .or_else(|| config.act_platform_map.keys().next())
+                        .context("Group-only jobs need a configured default platform")?;
                     selector.insert("labels".into(), label.clone().into());
                 }
             }
@@ -1087,8 +1201,15 @@ fn prepare_workflow_for_engine(
     if config.mode == CiExecutionMode::Local {
         return Ok(labels);
     }
-    for job in value.get("jobs").and_then(Value::as_mapping).into_iter().flat_map(|jobs| jobs.values()) {
-        if job.get("uses").is_some() { continue; }
+    for job in value
+        .get("jobs")
+        .and_then(Value::as_mapping)
+        .into_iter()
+        .flat_map(|jobs| jobs.values())
+    {
+        if job.get("uses").is_some() {
+            continue;
+        }
         let selector = job.get("runs-on").context("Job needs runs-on")?;
         let selector = selector.get("labels").unwrap_or(selector);
         let selected: Vec<_> = match selector {
@@ -1096,9 +1217,21 @@ fn prepare_workflow_for_engine(
             Value::Sequence(labels) => labels.iter().filter_map(Value::as_str).collect(),
             _ => Vec::new(),
         };
-        ensure!(selected.iter().any(|label| config.act_platform_map.keys().any(|key| key.eq_ignore_ascii_case(label))), "no runner image matches this job's runs-on selectors; add one to CI_ACT_PLATFORM_MAP");
+        ensure!(
+            selected.iter().any(|label| config
+                .act_platform_map
+                .keys()
+                .any(|key| key.eq_ignore_ascii_case(label))),
+            "no runner image matches this job's runs-on selectors; add one to CI_ACT_PLATFORM_MAP"
+        );
     }
-    add_container_options(&mut value, &format!("{} {limits}", run_container_options(&run_container_label(run_id))))?;
+    add_container_options(
+        &mut value,
+        &format!(
+            "{} {limits}",
+            run_container_options(&run_container_label(run_id))
+        ),
+    )?;
     std::fs::write(path, serde_yaml::to_string(&value)?)?;
     Ok(labels)
 }
@@ -1187,7 +1320,12 @@ impl Drop for ContainerOwnership {
 }
 
 impl ContainerOwnership {
-    fn create(directory: &Path, socket: &str, run_id: uuid::Uuid, cgroup_root: Option<&Path>) -> Result<Self> {
+    fn create(
+        directory: &Path,
+        socket: &str,
+        run_id: uuid::Uuid,
+        cgroup_root: Option<&Path>,
+    ) -> Result<Self> {
         let record = ContainerRecord {
             socket: socket.to_owned(),
             run_id,
@@ -1204,7 +1342,11 @@ impl ContainerOwnership {
         let file = pending.persist_noclobber(&path)?;
         std::fs::File::open(directory)?.sync_all()?;
         // Persist recovery identity before creating anything in the delegated hierarchy.
-        let group = cgroup_root.map(|root| codeyard_actions::process::Cgroup::create(root, &format!("codeyard-{run_id}"))).transpose()?;
+        let group = cgroup_root
+            .map(|root| {
+                codeyard_actions::process::Cgroup::create(root, &format!("codeyard-{run_id}"))
+            })
+            .transpose()?;
         Ok(Self {
             _lock: file,
             path,
@@ -1220,12 +1362,16 @@ impl ContainerOwnership {
 
     async fn remove_containers(&self) -> Result<()> {
         self.fence().await?;
-        if let Some(group) = &self.group { group.cleanup(Duration::from_secs(30)).await?; }
+        if let Some(group) = &self.group {
+            group.cleanup(Duration::from_secs(30)).await?;
+        }
         Ok(())
     }
 
     async fn fence(&self) -> Result<()> {
-        if let Some(group) = &self.group { group.kill()?; }
+        if let Some(group) = &self.group {
+            group.kill()?;
+        }
         if !self.record.socket.is_empty() {
             remove_run_containers(
                 &self.record.socket,
@@ -1240,11 +1386,15 @@ impl ContainerOwnership {
         let directory = self.path.with_extension("workspace");
         let mut locks = Vec::new();
         match tokio::fs::read_dir(&directory).await {
-            Ok(mut entries) => while let Some(entry) = entries.next_entry().await? {
-                if entry.file_type().await?.is_dir() {
-                    locks.push(crate::backend::git::locks::lock(&entry.path().join("repo")).await);
+            Ok(mut entries) => {
+                while let Some(entry) = entries.next_entry().await? {
+                    if entry.file_type().await?.is_dir() {
+                        locks.push(
+                            crate::backend::git::locks::lock(&entry.path().join("repo")).await,
+                        );
+                    }
                 }
-            },
+            }
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
         }
@@ -1379,7 +1529,9 @@ fn act_owned_names(detail: &ContainerDetail) -> Option<(String, Vec<String>)> {
     let valid = |name: &str| {
         !name.is_empty()
             && name.len() <= 255
-            && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+            && name
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
     };
     if !container.starts_with("act-") || !valid(container) {
         return None;
@@ -1417,7 +1569,10 @@ async fn remove_run_containers(socket: &str, label: &str) -> Result<()> {
     for container in containers {
         // Read the names first: they are gone with the container.
         let response = client
-            .get(format!("http://localhost/v1.40/containers/{}/json", container.id))
+            .get(format!(
+                "http://localhost/v1.40/containers/{}/json",
+                container.id
+            ))
             .send()
             .await?;
         let owned = if response.status() == reqwest::StatusCode::NOT_FOUND {
@@ -1646,7 +1801,9 @@ struct Workspace {
 impl Drop for Workspace {
     fn drop(&mut self) {
         if !self.removable {
-            if let Some(temp) = self.temp.take() { let _ = temp.keep(); }
+            if let Some(temp) = self.temp.take() {
+                let _ = temp.keep();
+            }
             return;
         }
         let checkout = self.checkout();
@@ -1674,32 +1831,58 @@ impl Workspace {
     fn restore_called_workflows(&self, run: &CiRun) -> Result<()> {
         use std::io::Write;
         use std::os::unix::fs::OpenOptionsExt;
-        let blobs = run.workflow_blobs.as_object().context("run has no workflow files")?;
-        let called: Vec<_> = blobs.keys().filter(|path| !run.workflow_path.split(',').any(|root| root == path.as_str())).collect();
-        if called.is_empty() { return Ok(()); }
+        let blobs = run
+            .workflow_blobs
+            .as_object()
+            .context("run has no workflow files")?;
+        let called: Vec<_> = blobs
+            .keys()
+            .filter(|path| {
+                !run.workflow_path
+                    .split(',')
+                    .any(|root| root == path.as_str())
+            })
+            .collect();
+        if called.is_empty() {
+            return Ok(());
+        }
         let checkout = self.checkout();
         for path in [".github", ".github/workflows", ".git", ".git/info"] {
             let directory = checkout.join(path);
             match std::fs::create_dir(&directory) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    ensure!(std::fs::symlink_metadata(&directory)?.is_dir(), "Unsafe workflow directory");
+                    ensure!(
+                        std::fs::symlink_metadata(&directory)?.is_dir(),
+                        "Unsafe workflow directory"
+                    );
                 }
                 Err(error) => return Err(error.into()),
             }
         }
-        let mut exclude = std::fs::OpenOptions::new().append(true).create(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(checkout.join(".git/info/exclude"))?;
+        let mut exclude = std::fs::OpenOptions::new()
+            .append(true)
+            .create(true)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+            .open(checkout.join(".git/info/exclude"))?;
         ensure!(exclude.metadata()?.is_file(), "Unsafe Git exclude file");
         for workflow in called {
-            ensure!(workflow.starts_with(".github/workflows/codeyard-call-") && super::admission::is_safe_workflow_path(workflow), "Invalid called workflow path");
+            ensure!(
+                workflow.starts_with(".github/workflows/codeyard-call-")
+                    && super::admission::is_safe_workflow_path(workflow),
+                "Invalid called workflow path"
+            );
             let target = checkout.join(workflow);
             match std::fs::remove_file(&target) {
                 Ok(()) => {}
                 Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
                 Err(error) => return Err(error.into()),
             }
-            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(target)?;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .mode(0o600)
+                .open(target)?;
             file.write_all(&std::fs::read(self.definition(workflow))?)?;
             writeln!(exclude, "\n/{workflow}")?;
         }
@@ -1715,7 +1898,10 @@ impl Workspace {
     ) -> Result<Self> {
         tokio::fs::create_dir_all(directory).await?;
         let workspace = Self {
-            temp: Some(codeyard_actions::fs::private_tempdir("workspace-", Some(directory)).context("could not create a CI workspace")?),
+            temp: Some(
+                codeyard_actions::fs::private_tempdir("workspace-", Some(directory))
+                    .context("could not create a CI workspace")?,
+            ),
             cleanups,
             cleaned: Some(cleaned),
             removable: false,
@@ -2146,10 +2332,16 @@ mod tests {
         )
         .await
         .unwrap();
-        db::ci::claim_ci_run(&pool, "worker", "local", &[owner.id], &crate::backend::ci::CiConfig::default().platform_labels())
-            .await
-            .unwrap()
-            .unwrap();
+        db::ci::claim_ci_run(
+            &pool,
+            "worker",
+            "local",
+            &[owner.id],
+            &crate::backend::ci::CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let config = Arc::new(super::super::config::CiConfig::default());
         let service = CiWorkers::new(
             RunQueue::Database {
@@ -2756,7 +2948,10 @@ mod tests {
         }
         let repository_id = format!("GITHUB_REPOSITORY_ID={}", claim.run.repo_id);
         for value in [repository_id.as_str(), "GITHUB_REPOSITORY_OWNER_ID=1"] {
-            assert!(args.windows(2).any(|pair| pair == ["--env", value]), "{value}");
+            assert!(
+                args.windows(2).any(|pair| pair == ["--env", value]),
+                "{value}"
+            );
         }
         let env = command
             .as_std()
@@ -2773,7 +2968,10 @@ mod tests {
         assert_eq!(env["ACTIONS_RUNTIME_TOKEN"], "runtime-test-token");
         assert_eq!(env["ACTIONS_RUNTIME_URL"], "https://results.example");
         // act adds the run's ID to the names of its containers, networks and volumes.
-        assert_eq!(env["CODEYARD_ACT_INSTANCE"], claim.run.run_id.simple().to_string());
+        assert_eq!(
+            env["CODEYARD_ACT_INSTANCE"],
+            claim.run.run_id.simple().to_string()
+        );
         claim.github_tokens.oidc_jobs.clear();
         assert!(!runtime_values(&claim, false)
             .iter()
@@ -3023,7 +3221,10 @@ jobs:
             Some(container_filters(label).as_str())
         );
         let (method, target) = requests.recv().await.unwrap();
-        assert_eq!((method.as_str(), target.as_str()), ("GET", format!("/v1.40/containers/{first}/json").as_str()));
+        assert_eq!(
+            (method.as_str(), target.as_str()),
+            ("GET", format!("/v1.40/containers/{first}/json").as_str())
+        );
         let (method, target) = requests.recv().await.unwrap();
         assert_eq!(method, "DELETE");
         assert!(target.starts_with(&format!("/v1.40/containers/{first}?")));
@@ -3036,12 +3237,18 @@ jobs:
             assert!(target.starts_with(&format!("/v1.40/volumes/{volume}")));
         }
         let (method, target) = requests.recv().await.unwrap();
-        assert_eq!((method.as_str(), target.as_str()), ("GET", format!("/v1.40/containers/{second}/json").as_str()));
+        assert_eq!(
+            (method.as_str(), target.as_str()),
+            ("GET", format!("/v1.40/containers/{second}/json").as_str())
+        );
         let (method, target) = requests.recv().await.unwrap();
         assert_eq!(method, "DELETE");
         assert!(target.starts_with(&format!("/v1.40/containers/{second}?")));
         let (method, target) = requests.recv().await.unwrap();
-        assert_eq!((method.as_str(), target.as_str()), ("GET", "/v1.40/networks"));
+        assert_eq!(
+            (method.as_str(), target.as_str()),
+            ("GET", "/v1.40/networks")
+        );
         let (method, target) = requests.recv().await.unwrap();
         assert_eq!(method, "DELETE");
         assert!(target.starts_with(&format!("/v1.40/networks/{act_network}")));

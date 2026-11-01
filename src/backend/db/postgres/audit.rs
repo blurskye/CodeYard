@@ -19,7 +19,12 @@ pub async fn page(
     let limit = limit.clamp(1, 100);
     let page = page.clamp(1, ((total + limit - 1) / limit).max(1));
     let entries = sqlx::query_as(AUDIT_ROWS)
-        .bind(action.trim().to_lowercase()).bind(actor.trim().to_lowercase()).bind(limit).bind((page - 1) * limit).fetch_all(&mut *tx).await?;
+        .bind(action.trim().to_lowercase())
+        .bind(actor.trim().to_lowercase())
+        .bind(limit)
+        .bind((page - 1) * limit)
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Some((total, entries)))
 }

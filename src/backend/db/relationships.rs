@@ -184,7 +184,13 @@ pub async fn list(
     )
     .await
 }
-pub async fn change(pool: &DbPool, actor: i64, repo: i64, root: i64, mutation: Mutation) -> Result<()> {
+pub async fn change(
+    pool: &DbPool,
+    actor: i64,
+    repo: i64,
+    root: i64,
+    mutation: Mutation,
+) -> Result<()> {
     change_with_token(pool, actor, repo, root, mutation, None).await
 }
 native_operation!(crate::backend::db::postgres::relationships::change,crate::backend::db::sqlite::relationships::change,

@@ -133,15 +133,7 @@ async fn get_hook(
     Path(params): Path<Params>,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], false).await?;
-    let snapshot = snapshot(
-        &state,
-        org.id,
-        &actor,
-        id(&params, "hook_id")?,
-        None,
-        None,
-    )
-    .await?;
+    let snapshot = snapshot(&state, org.id, &actor, id(&params, "hook_id")?, None, None).await?;
     Ok(Json(document(&org.name, snapshot.hook.as_ref().unwrap())))
 }
 async fn get_config(
@@ -150,15 +142,7 @@ async fn get_config(
     Path(params): Path<Params>,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], false).await?;
-    let snapshot = snapshot(
-        &state,
-        org.id,
-        &actor,
-        id(&params, "hook_id")?,
-        None,
-        None,
-    )
-    .await?;
+    let snapshot = snapshot(&state, org.id, &actor, id(&params, "hook_id")?, None, None).await?;
     Ok(Json(payloads::webhook_config(
         snapshot.hook.as_ref().unwrap(),
     )))

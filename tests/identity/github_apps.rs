@@ -736,7 +736,11 @@ async fn contract(pg: bool) {
         .unwrap()
         .is_none());
     // Expired App tokens are swept, and their bounds go with them.
-    assert!(f.scalar("SELECT COUNT(*) FROM github_app_tokens", &[]).await > 0);
+    assert!(
+        f.scalar("SELECT COUNT(*) FROM github_app_tokens", &[])
+            .await
+            > 0
+    );
     f.execute(
         "UPDATE personal_access_tokens SET expires_at='2000-01-01T00:00:00.000000Z' WHERE id IN (SELECT token_id FROM github_app_tokens)",
         &[],
@@ -746,7 +750,8 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert_eq!(
-        f.scalar("SELECT COUNT(*) FROM github_app_tokens", &[]).await,
+        f.scalar("SELECT COUNT(*) FROM github_app_tokens", &[])
+            .await,
         0
     );
 }

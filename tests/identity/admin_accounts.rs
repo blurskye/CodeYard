@@ -122,7 +122,11 @@ async fn contract(pg: bool) {
     // The settings are read first, then the administrator and their address at send time.
     let test = admin.form_reply("/admin/email/test", &[]).await;
     assert_eq!(test.status, StatusCode::BAD_GATEWAY, "{}", test.text());
-    assert!(test.text().contains("Email is not set up"), "{}", test.text());
+    assert!(
+        test.text().contains("Email is not set up"),
+        "{}",
+        test.text()
+    );
     let saved = admin
         .form_reply(
             "/admin/email",
@@ -132,10 +136,19 @@ async fn contract(pg: bool) {
             ],
         )
         .await;
-    assert_eq!(saved.location.as_deref(), Some("/admin/email?saved=1"), "{}", saved.text());
+    assert_eq!(
+        saved.location.as_deref(),
+        Some("/admin/email?saved=1"),
+        "{}",
+        saved.text()
+    );
     let test = admin.form_reply("/admin/email/test", &[]).await;
     assert_eq!(test.status, StatusCode::BAD_REQUEST, "{}", test.text());
-    assert!(test.text().contains("Your account has no email address"), "{}", test.text());
+    assert!(
+        test.text().contains("Your account has no email address"),
+        "{}",
+        test.text()
+    );
     let member = Client::login(&router, f.pool(), owner_id).await;
     for path in ["/admin/email", "/admin/email/test"] {
         let reply = member.form_reply(path, &[]).await;

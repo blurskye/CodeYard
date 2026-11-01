@@ -98,22 +98,45 @@ struct Documents {
 impl Documents {
     async fn load(state: &AppState, repo: i64, runs: &[db::models::CiRun]) -> Result<Self> {
         let ids: Vec<_> = runs.iter().map(|run| run.id).collect();
-        let metadata = action_runs::metadata(&state.pool, repo, &ids).await.map_err(Error::unavailable)?;
-        let mut actors: Vec<_> = metadata.iter().filter_map(|row| row.actor_id)
-            .chain(runs.iter().filter_map(|run| run.triggered_by_id)).collect();
+        let metadata = action_runs::metadata(&state.pool, repo, &ids)
+            .await
+            .map_err(Error::unavailable)?;
+        let mut actors: Vec<_> = metadata
+            .iter()
+            .filter_map(|row| row.actor_id)
+            .chain(runs.iter().filter_map(|run| run.triggered_by_id))
+            .collect();
         actors.sort_unstable();
         actors.dedup();
-        let actors = db::users::accounts::get_users_by_ids(&state.pool, &actors).await.map_err(Error::unavailable)?
-            .into_iter().map(|user| (user.id, payloads::user(&user))).collect();
-        Ok(Self { metadata: metadata.into_iter().map(|row| (row.run_id, row)).collect(), actors, commits: HashMap::new(), workflows: HashMap::new() })
+        let actors = db::users::accounts::get_users_by_ids(&state.pool, &actors)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|user| (user.id, payloads::user(&user)))
+            .collect();
+        Ok(Self {
+            metadata: metadata.into_iter().map(|row| (row.run_id, row)).collect(),
+            actors,
+            commits: HashMap::new(),
+            workflows: HashMap::new(),
+        })
     }
 }
 
-async fn referenced_document(state: &AppState, auth: Option<&auth::Authentication>, id: i64) -> Result<Value> {
-    let Some(head) = auth::referenced_repository(state, auth, id).await? else { return Ok(Value::Null) };
+async fn referenced_document(
+    state: &AppState,
+    auth: Option<&auth::Authentication>,
+    id: i64,
+) -> Result<Value> {
+    let Some(head) = auth::referenced_repository(state, auth, id).await? else {
+        return Ok(Value::Null);
+    };
     let owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
-        .await.map_err(Error::unavailable)?;
-    Ok(owner.map(|owner| payloads::repository(&head, &owner)).unwrap_or(Value::Null))
+        .await
+        .map_err(Error::unavailable)?;
+    Ok(owner
+        .map(|owner| payloads::repository(&head, &owner))
+        .unwrap_or(Value::Null))
 }
 
 async fn document(
@@ -125,7 +148,9 @@ async fn document(
     exclude: bool,
     documents: &mut Documents,
 ) -> Result<Value> {
-    let metadata = documents.metadata.get(&run.id)
+    let metadata = documents
+        .metadata
+        .get(&run.id)
         .ok_or_else(|| Error::new(StatusCode::GONE, "Workflow run metadata is unavailable"))?;
     if !run.workflow_run_number.is_some_and(|number| number > 0) {
         return Err(Error::new(
@@ -159,44 +184,59 @@ async fn document(
         if let Some(commit) = documents.commits.get(sha) {
             head_commit = commit.clone();
         } else {
-        match repo_store(repo, state.cluster.as_ref()).commit(sha).await {
-            Ok(commit) => {
-                let git = payloads::git_commit(&commit, owner, &repo.name, repo.id);
-                let signature = |name: &str| {
-                    if git[name]["email"]
-                        .as_str()
-                        .is_some_and(|email| !email.is_empty())
-                    {
-                        git[name].clone()
-                    } else {
-                        Value::Null
-                    }
-                };
-                head_commit = json!({"id":git["sha"],"tree_id":git["tree"]["sha"],"message":git["message"],"timestamp":git["committer"]["date"],"author":signature("author"),"committer":signature("committer")});
+            match repo_store(repo, state.cluster.as_ref()).commit(sha).await {
+                Ok(commit) => {
+                    let git = payloads::git_commit(&commit, owner, &repo.name, repo.id);
+                    let signature = |name: &str| {
+                        if git[name]["email"]
+                            .as_str()
+                            .is_some_and(|email| !email.is_empty())
+                        {
+                            git[name].clone()
+                        } else {
+                            Value::Null
+                        }
+                    };
+                    head_commit = json!({"id":git["sha"],"tree_id":git["tree"]["sha"],"message":git["message"],"timestamp":git["committer"]["date"],"author":signature("author"),"committer":signature("committer")});
+                }
+                Err(error)
+                    if matches!(
+                        error.kind,
+                        crate::backend::repositories::store::ErrorKind::NotFound
+                            | crate::backend::repositories::store::ErrorKind::MissingPath
+                            | crate::backend::repositories::store::ErrorKind::Unavailable
+                    ) => {}
+                Err(error) => {
+                    return Err(crate::backend::api::github::contents::store_error(error))
+                }
             }
-            Err(error)
-                if matches!(
-                    error.kind,
-                    crate::backend::repositories::store::ErrorKind::NotFound
-                        | crate::backend::repositories::store::ErrorKind::MissingPath
-                        | crate::backend::repositories::store::ErrorKind::Unavailable
-                ) => {}
-            Err(error) => return Err(crate::backend::api::github::contents::store_error(error)),
-        }
-        documents.commits.insert(sha.to_owned(), head_commit.clone());
+            documents
+                .commits
+                .insert(sha.to_owned(), head_commit.clone());
         }
     }
     // A pull_request_target run checks out the base; its pull request still names the head repository.
     let pr_head_repository = match pr.as_ref() {
         Some(pr) if !exclude && run.event == "pull_request_target" => {
-            match run.pull_request_event.as_ref().and_then(|event| event["head_repo_id"].as_i64()).or(pr.head_repo_id) {
+            match run
+                .pull_request_event
+                .as_ref()
+                .and_then(|event| event["head_repo_id"].as_i64())
+                .or(pr.head_repo_id)
+            {
                 Some(id) => referenced_document(state, auth, id).await?,
                 None => Value::Null,
             }
         }
         _ => head_repository.clone(),
     };
-    let pull_requests = payloads::action_run_pull_requests(run, pr.as_ref(), &repository, &pr_head_repository, exclude);
+    let pull_requests = payloads::action_run_pull_requests(
+        run,
+        pr.as_ref(),
+        &repository,
+        &pr_head_repository,
+        exclude,
+    );
     let mut result = payloads::action_run(
         run,
         owner,
@@ -211,8 +251,19 @@ async fn document(
         if !documents.workflows.contains_key(sha) {
             // Discovery owns bounded background parsing and its immutable cross-request cache.
             // Git enrichment is optional; durable execution history remains readable offline.
-            let definitions = crate::backend::ci::list_workflows_for_ref(&repo_store(repo, state.cluster.as_ref()), sha).await.unwrap_or_default();
-            documents.workflows.insert(sha.clone(), definitions.into_iter().map(|definition| (definition.path, definition.name)).collect());
+            let definitions = crate::backend::ci::list_workflows_for_ref(
+                &repo_store(repo, state.cluster.as_ref()),
+                sha,
+            )
+            .await
+            .unwrap_or_default();
+            documents.workflows.insert(
+                sha.clone(),
+                definitions
+                    .into_iter()
+                    .map(|definition| (definition.path, definition.name))
+                    .collect(),
+            );
         }
         if let Some(name) = documents.workflows[sha].get(&run.workflow_path) {
             workflow_name = name.clone();
@@ -322,9 +373,7 @@ pub(super) async fn list(
         }
         q.check_suite = Some(check);
     }
-    if !q.sha.is_empty()
-        && !crate::git_ids::is_full_commit_id(&q.sha)
-    {
+    if !q.sha.is_empty() && !crate::git_ids::is_full_commit_id(&q.sha) {
         return Err(Error::invalid("Invalid head SHA"));
     }
     q.sha.make_ascii_lowercase();

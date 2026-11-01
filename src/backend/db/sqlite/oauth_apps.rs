@@ -1,4 +1,10 @@
-use crate::backend::db::{credentials::Actor, oauth_apps::{self, Application, ApplicationSummary, Exchange, Grant, Token, APPLICATION_PAGE_SIZE, APPLICATIONS_SQL}};
+use crate::backend::db::{
+    credentials::Actor,
+    oauth_apps::{
+        self, Application, ApplicationSummary, Exchange, Grant, Token, APPLICATIONS_SQL,
+        APPLICATION_PAGE_SIZE,
+    },
+};
 use crate::backend::identity::{oauth_apps as oauth, tokens::token_hash};
 use anyhow::Result;
 use chrono::Utc;
@@ -27,22 +33,34 @@ pub async fn register(
 }
 
 pub async fn application(pool: &SqlitePool, client_id: &str) -> Result<Option<Application>> {
-    Ok(
-        sqlx::query_as(&format!("SELECT * FROM oauth_applications WHERE client_id=$1 AND {}", oauth_apps::client_condition("$1")))
-            .bind(client_id)
-            .fetch_optional(pool)
-            .await?,
-    )
+    Ok(sqlx::query_as(&format!(
+        "SELECT * FROM oauth_applications WHERE client_id=$1 AND {}",
+        oauth_apps::client_condition("$1")
+    ))
+    .bind(client_id)
+    .fetch_optional(pool)
+    .await?)
 }
 
-pub async fn applications(pool: &SqlitePool, actor: impl Into<Actor>, offset: i64, limit: i64) -> Result<Option<Vec<ApplicationSummary>>> {
+pub async fn applications(
+    pool: &SqlitePool,
+    actor: impl Into<Actor>,
+    offset: i64,
+    limit: i64,
+) -> Result<Option<Vec<ApplicationSummary>>> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)")
         .bind(actor.user_id).fetch_one(&mut *tx).await?;
-    if !active || !super::credentials::live(&mut tx, &actor, false).await? { return Ok(None); }
-    let rows = sqlx::query_as(APPLICATIONS_SQL).bind(actor.user_id)
-        .bind(limit.clamp(0, APPLICATION_PAGE_SIZE + 1)).bind(offset.max(0)).fetch_all(&mut *tx).await?;
+    if !active || !super::credentials::live(&mut tx, &actor, false).await? {
+        return Ok(None);
+    }
+    let rows = sqlx::query_as(APPLICATIONS_SQL)
+        .bind(actor.user_id)
+        .bind(limit.clamp(0, APPLICATION_PAGE_SIZE + 1))
+        .bind(offset.max(0))
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Some(rows))
 }
@@ -97,8 +115,14 @@ pub async fn exchange(
         .bind(hash)
         .execute(&mut *tx)
         .await?;
-    let active: bool = sqlx::query_scalar(&format!("SELECT $1=$2 OR {}", oauth_apps::client_condition("$1")))
-        .bind(client_id).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_one(&mut *tx).await?;
+    let active: bool = sqlx::query_scalar(&format!(
+        "SELECT $1=$2 OR {}",
+        oauth_apps::client_condition("$1")
+    ))
+    .bind(client_id)
+    .bind(crate::backend::identity::oauth_apps::CLI_CLIENT)
+    .fetch_one(&mut *tx)
+    .await?;
     if !active {
         return Ok(Exchange::Denied);
     }
@@ -200,14 +224,19 @@ pub async fn reset_token(
     let issuer = oauth_apps::token_issuer_condition("t", "$3");
     let old: Option<crate::backend::db::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer}"))
         .bind(client).bind(hash).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
-    let Some(old) = old else { return Ok(None); };
+    let Some(old) = old else {
+        return Ok(None);
+    };
     let replacement: crate::backend::db::models::PersonalAccessToken = sqlx::query_as("INSERT INTO personal_access_tokens(user_id,name,scope,expires_at,token_hash) VALUES($1,$2,$3,$4,$5) RETURNING id,user_id,name,scope,expires_at,created_at")
         .bind(old.user_id).bind(&old.name).bind(&old.scope).bind(old.expires_at).bind(new_hash).fetch_one(&mut *tx).await?;
     sqlx::query("INSERT INTO oauth_app_tokens(token_id,client_id,scopes) SELECT $2,client_id,scopes FROM oauth_app_tokens WHERE token_id=$1")
         .bind(old.id).bind(replacement.id).execute(&mut *tx).await?;
     sqlx::query("INSERT INTO github_app_tokens(token_id,installation_id,permissions,repositories,user_token) SELECT $2,installation_id,permissions,repositories,user_token FROM github_app_tokens WHERE token_id=$1")
         .bind(old.id).bind(replacement.id).execute(&mut *tx).await?;
-    sqlx::query("DELETE FROM personal_access_tokens WHERE id=$1").bind(old.id).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM personal_access_tokens WHERE id=$1")
+        .bind(old.id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Some(replacement))
 }
@@ -224,8 +253,14 @@ pub async fn revoke(
         .bind(hash)
         .execute(&mut *tx)
         .await?;
-    let active: bool = sqlx::query_scalar(&format!("SELECT $1=$2 OR {}", oauth_apps::client_condition("$1")))
-        .bind(client).bind(crate::backend::identity::oauth_apps::CLI_CLIENT).fetch_one(&mut *tx).await?;
+    let active: bool = sqlx::query_scalar(&format!(
+        "SELECT $1=$2 OR {}",
+        oauth_apps::client_condition("$1")
+    ))
+    .bind(client)
+    .bind(crate::backend::identity::oauth_apps::CLI_CLIENT)
+    .fetch_one(&mut *tx)
+    .await?;
     if !active {
         return Ok(());
     }

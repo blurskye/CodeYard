@@ -34,9 +34,15 @@ pub(super) async fn resolve(
             } else {
                 Some(id(&input, "issueTypeId", "IT")?)
             };
-            db::issue_attributes::set_type(pool, repo.id, request.auth.database_actor(), target, kind)
-                .await
-                .map_err(|e| Error::new(e.to_string()))?;
+            db::issue_attributes::set_type(
+                pool,
+                repo.id,
+                request.auth.database_actor(),
+                target,
+                kind,
+            )
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
         }
         "addSubIssue" | "removeSubIssue" | "addBlockedBy" | "removeBlockedBy" => {
             let child = field.ends_with("SubIssue");
@@ -49,7 +55,10 @@ pub(super) async fn resolve(
                 },
                 "I",
             )?;
-            let related = db::issues::get_issue_by_id(pool, other).await.map_err(unavailable)?.ok_or_else(missing)?;
+            let related = db::issues::get_issue_by_id(pool, other)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
             request.authorize(related.repo_id, "issues", true).await?;
             let kind = if child {
                 Kind::Children
@@ -65,10 +74,20 @@ pub(super) async fn resolve(
             } else {
                 Mutation::Remove { kind, other }
             };
-            db::relationships::change_with_token(pool, actor, repo.id, target, mutation, Some(request.auth.token.id))
+            db::relationships::change_with_token(
+                pool,
+                actor,
+                repo.id,
+                target,
+                mutation,
+                Some(request.auth.token.id),
+            )
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
+            let related = db::issues::get_issue_by_id(pool, other)
                 .await
-                .map_err(|e| Error::new(e.to_string()))?;
-            let related = db::issues::get_issue_by_id(pool, other).await.map_err(unavailable)?.ok_or_else(missing)?;
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
             request.authorize(related.repo_id, "issues", false).await?;
             payload[if child { "subIssue" } else { "blockingIssue" }] = object(&related);
         }
@@ -78,7 +97,10 @@ pub(super) async fn resolve(
             )))
         }
     }
-    let updated = db::issues::get_issue_by_id(pool, target).await.map_err(unavailable)?.ok_or_else(missing)?;
+    let updated = db::issues::get_issue_by_id(pool, target)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
     request.authorize(updated.repo_id, "issues", false).await?;
     payload["issue"] = object(&updated);
     Ok(payload)

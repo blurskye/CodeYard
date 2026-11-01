@@ -87,7 +87,10 @@ pub(crate) async fn native_react(
     db::reactions::toggle_reaction(
         pool,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
         repo.record.id,
         item_id,
         subject,

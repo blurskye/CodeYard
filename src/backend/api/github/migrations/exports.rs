@@ -405,7 +405,18 @@ pub(in crate::backend::api::github) async fn archive(
     }
     let filename = format!("migration-{}.tar.gz", row.id);
     if method == axum::http::Method::HEAD {
-        return Ok(([(header::CONTENT_TYPE, "application/gzip".to_owned()), (header::CONTENT_DISPOSITION, crate::backend::storage::attachment_disposition(&filename)), (header::CACHE_CONTROL, "private, no-store".to_owned())], axum::body::Body::empty()).into_response());
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "application/gzip".to_owned()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    crate::backend::storage::attachment_disposition(&filename),
+                ),
+                (header::CACHE_CONTROL, "private, no-store".to_owned()),
+            ],
+            axum::body::Body::empty(),
+        )
+            .into_response());
     }
     let permit = state
         .storage

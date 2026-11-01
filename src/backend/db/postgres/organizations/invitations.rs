@@ -88,7 +88,9 @@ pub(super) async fn save_in_transaction(
     let actor = grant.user_id;
     let replace = matches!(policy, InvitationOffer::Replace);
     let actor_role = require_org!(tx, actor, org);
-    if !credential(tx, &grant, org, "members").await? { return Ok(Denied); }
+    if !credential(tx, &grant, org, "members").await? {
+        return Ok(Denied);
+    }
     if !administers(actor_role)
         || (owner_only && actor_role != OrgRole::Owner)
         || (!input.reinstate && !can_change_member(actor_role, None, Some(input.role)))
@@ -365,7 +367,10 @@ async fn cancel(
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let actor_role = require_org!(tx, actor, org);
-    if !credential(&mut tx, &grant, org, "members").await? || !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
+    if !credential(&mut tx, &grant, org, "members").await?
+        || !administers(actor_role)
+        || (owner_only && actor_role != OrgRole::Owner)
+    {
         return Ok(Denied);
     }
     let outcome = cancel_offers(&mut tx, actor_role, org, target, by_id).await?;
@@ -477,7 +482,9 @@ pub async fn accept_organization_invitation(
     let Ok(role) = invitation.role.parse::<OrgRole>() else {
         return Ok(Denied);
     };
-    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
+    if !credential(&mut tx, &grant, org, "members").await? {
+        return Ok(Denied);
+    }
     if membership_role(&mut tx, org, actor).await?.is_some() {
         return Ok(Conflict);
     }

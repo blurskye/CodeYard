@@ -115,7 +115,10 @@ impl Queue {
                 manual: Vec::new(),
             });
         if queue.pending >= OWNER_QUEUE_LIMIT
-            || queue.hooks.get(&hook).is_some_and(|hook| hook.pending >= HOOK_QUEUE_LIMIT)
+            || queue
+                .hooks
+                .get(&hook)
+                .is_some_and(|hook| hook.pending >= HOOK_QUEUE_LIMIT)
             || (manual && queue.manual.len() >= MANUAL_PER_MINUTE)
         {
             return None;
@@ -223,7 +226,13 @@ fn enqueue_delivery(pool: &DbPool, hook: Webhook, outgoing: Outgoing) -> bool {
     let Some(owner) = hook_owner(&hook) else {
         return false;
     };
-    let Some(ticket) = Ticket::take(pool, owner, Some(hook.id), !outgoing.automatic, outgoing.body.len()) else {
+    let Some(ticket) = Ticket::take(
+        pool,
+        owner,
+        Some(hook.id),
+        !outgoing.automatic,
+        outgoing.body.len(),
+    ) else {
         return false;
     };
     let pool = pool.clone();
@@ -282,21 +291,40 @@ where
 }
 
 pub(crate) async fn emit_repository_dispatch(
-    pool: &DbPool, repo: &Repository, actor: i64, sender: i64, event_type: String, client_payload: Value,
+    pool: &DbPool,
+    repo: &Repository,
+    actor: i64,
+    sender: i64,
+    event_type: String,
+    client_payload: Value,
     credential: db::ci::CiCredential,
 ) -> Value {
     let snapshot = repo.clone();
-    emit_checked(pool, repo, "repository_dispatch", vec![sender], Some((actor, credential)), move |owner, people| {
-        serde_json::json!({"action":event_type, "branch":snapshot.default_branch,
+    emit_checked(
+        pool,
+        repo,
+        "repository_dispatch",
+        vec![sender],
+        Some((actor, credential)),
+        move |owner, people| {
+            serde_json::json!({"action":event_type, "branch":snapshot.default_branch,
             "client_payload":client_payload, "repository":payloads::repository(&snapshot, owner),
             "sender":payloads::person(&people.get(sender))})
-    }).await
+        },
+    )
+    .await
 }
 
 async fn emit_checked<F>(
-    pool: &DbPool, repo: &Repository, event: &'static str, user_ids: Vec<i64>, dispatch_actor: Option<(i64, db::ci::CiCredential)>, build: F,
+    pool: &DbPool,
+    repo: &Repository,
+    event: &'static str,
+    user_ids: Vec<i64>,
+    dispatch_actor: Option<(i64, db::ci::CiCredential)>,
+    build: F,
 ) -> Value
-where F: FnOnce(&str, &People) -> Value + Send + 'static,
+where
+    F: FnOnce(&str, &People) -> Value + Send + 'static,
 {
     let Ok(Some(current)) = db::repositories::records::get_repository_by_id(pool, repo.id).await
     else {
@@ -316,9 +344,12 @@ where F: FnOnce(&str, &People) -> Value + Send + 'static,
                 return Value::Null;
             }
         };
-        if !hooks.iter().any(|hook| hook.active && events::subscribes(&hook.events, event)) {
+        if !hooks
+            .iter()
+            .any(|hook| hook.active && events::subscribes(&hook.events, event))
+        {
             match github_apps::has_subscription(pool, repo.id, event).await {
-                Ok(true) => {},
+                Ok(true) => {}
                 Ok(false) => return Value::Null,
                 Err(error) => {
                     tracing::warn!(repo_id=repo.id, %error, "could not load App job webhook subscriptions");
@@ -327,7 +358,9 @@ where F: FnOnce(&str, &People) -> Value + Send + 'static,
             }
         }
         Some(hooks)
-    } else { None };
+    } else {
+        None
+    };
     let Ok(build_slot) = BUILD_SLOTS.clone().acquire_owned().await else {
         return Value::Null;
     };
@@ -341,7 +374,9 @@ where F: FnOnce(&str, &People) -> Value + Send + 'static,
     let people = people(pool, user_ids).await;
     let builder_owner = owner.clone();
     let (mut payload, _build_slot) =
-        match tokio::task::spawn_blocking(move || (build(&builder_owner, &people), build_slot)).await {
+        match tokio::task::spawn_blocking(move || (build(&builder_owner, &people), build_slot))
+            .await
+        {
             Ok(value) => value,
             Err(error) => {
                 tracing::warn!(repo_id=repo.id,%error,"could not build activity payload");
@@ -355,7 +390,9 @@ where F: FnOnce(&str, &People) -> Value + Send + 'static,
         match db::organizations::profiles::get_public_organization_by_id(pool, org).await {
             Ok(Some(org)) => payload["organization"] = payloads::organization(&org),
             Ok(None) => {}
-            Err(error) => tracing::warn!(repo_id=repo.id, %error, "could not load webhook organization"),
+            Err(error) => {
+                tracing::warn!(repo_id=repo.id, %error, "could not load webhook organization")
+            }
         }
     }
     set_open_issues(pool, repo.id, &mut payload).await;
@@ -371,7 +408,10 @@ where F: FnOnce(&str, &People) -> Value + Send + 'static,
     // Dispatch is a requested write, not notification of a previously committed write.
     // Accept it only after all bounded preparation, under the mutation authority lock.
     if let Some((actor, credential)) = dispatch_actor {
-        if !matches!(db::ci::accept_repository_dispatch(pool, actor, repo.id, &credential).await, Ok(true)) {
+        if !matches!(
+            db::ci::accept_repository_dispatch(pool, actor, repo.id, &credential).await,
+            Ok(true)
+        ) {
             return Value::Null;
         }
     }
@@ -461,7 +501,11 @@ async fn record_event(
         events::DELETE => "DeleteEvent",
         events::FORK => "ForkEvent",
         events::STAR if payload["action"] == "created" => "WatchEvent",
-        events::RELEASE if payload["release"]["draft"] == false && payload["action"] == "published" => "ReleaseEvent",
+        events::RELEASE
+            if payload["release"]["draft"] == false && payload["action"] == "published" =>
+        {
+            "ReleaseEvent"
+        }
         events::COMMIT_COMMENT => "CommitCommentEvent",
         events::ISSUES => "IssuesEvent",
         events::ISSUE_COMMENT => "IssueCommentEvent",
@@ -577,10 +621,12 @@ mod tests {
         let other = HookOwner::Repository(2);
         let slot = queue.take(&pool, other, Some(3), false, 0).unwrap();
         assert_eq!(slot.available_permits(), 1);
-        assert!(queue.owners[&(pool_id(&pool), owner.into())]
-            .hooks[&Some(1)].slot
-            .try_acquire()
-            .is_ok());
+        assert!(
+            queue.owners[&(pool_id(&pool), owner.into())].hooks[&Some(1)]
+                .slot
+                .try_acquire()
+                .is_ok()
+        );
         assert!(slot.try_acquire().is_ok());
         queue.release((pool_id(&pool), other), Some(3), 0);
         for _ in 0..MANUAL_PER_MINUTE {
@@ -617,11 +663,19 @@ mod tests {
         let pool = DbPool::Sqlite(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
         let mut queue = Queue::default();
         let half = QUEUE_BYTES / 2;
-        assert!(queue.take(&pool, HookOwner::Repository(1), Some(1), false, half).is_some());
-        assert!(queue.take(&pool, HookOwner::Repository(2), Some(2), false, half).is_some());
-        assert!(queue.take(&pool, HookOwner::Repository(3), Some(3), false, 1).is_none());
+        assert!(queue
+            .take(&pool, HookOwner::Repository(1), Some(1), false, half)
+            .is_some());
+        assert!(queue
+            .take(&pool, HookOwner::Repository(2), Some(2), false, half)
+            .is_some());
+        assert!(queue
+            .take(&pool, HookOwner::Repository(3), Some(3), false, 1)
+            .is_none());
         queue.release((pool_id(&pool), HookOwner::Repository(1)), Some(1), half);
-        assert!(queue.take(&pool, HookOwner::Repository(3), Some(3), false, half).is_some());
+        assert!(queue
+            .take(&pool, HookOwner::Repository(3), Some(3), false, half)
+            .is_some());
         assert_eq!(queue.bytes, QUEUE_BYTES);
     }
 }

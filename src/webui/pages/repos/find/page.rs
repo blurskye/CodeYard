@@ -22,8 +22,8 @@ pub struct FindPage {
     pub query: String,
 }
 
-pub use crate::file_search::query_terms;
 use crate::file_search::matches_terms;
+pub use crate::file_search::query_terms;
 
 pub fn find(repo: &RepoChrome, page: &FindPage) -> Element {
     let base = repo.base();

@@ -35,7 +35,13 @@ fn tree_document(tree: TreeObject, owner: &str, name: &str, repo: i64) -> Value 
     })
 }
 
-async fn tag_document(state: &AppState, tag: TagObject, owner: &str, name: &str, repo: i64) -> Result<Value> {
+async fn tag_document(
+    state: &AppState,
+    tag: TagObject,
+    owner: &str,
+    name: &str,
+    repo: i64,
+) -> Result<Value> {
     let url = repo_url(owner, name);
     let verification = crate::backend::identity::signatures::verification(
         &state.pool,
@@ -81,7 +87,9 @@ async fn tag(
         .git_tag(&sha)
         .await
         .map_err(store_error)?;
-    Ok(Json(tag_document(&state, tag, &owner, &name, repo.id).await?))
+    Ok(Json(
+        tag_document(&state, tag, &owner, &name, repo.id).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -121,10 +129,15 @@ async fn create_blob(
     .map_err(|error| Error::new(error.status(), "Invalid blob request"))?;
     let bytes = match input.encoding.as_deref().unwrap_or("utf-8") {
         "utf-8" => input.content.into_bytes(),
-        "base64" => crate::backend::repositories::files::decode_base64(&input.content, MAX_BLOB_WRITE_BYTES).map_err(|error| match error {
-            crate::backend::repositories::files::WriteFailure::TooLarge => Error::invalid("Blobs must not exceed 100 MiB"),
-            _ => Error::invalid("Invalid base64 content"),
-        })?,
+        "base64" => {
+            crate::backend::repositories::files::decode_base64(&input.content, MAX_BLOB_WRITE_BYTES)
+                .map_err(|error| match error {
+                    crate::backend::repositories::files::WriteFailure::TooLarge => {
+                        Error::invalid("Blobs must not exceed 100 MiB")
+                    }
+                    _ => Error::invalid("Invalid base64 content"),
+                })?
+        }
         _ => return Err(Error::invalid("encoding must be utf-8 or base64")),
     };
     if bytes.len() > MAX_BLOB_WRITE_BYTES {
@@ -132,7 +145,14 @@ async fn create_blob(
     }
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
-        .write_git_object_as(&state.pool, repo.id, actor, Some(auth.token.id), ObjectWrite::Blob, &bytes)
+        .write_git_object_as(
+            &state.pool,
+            repo.id,
+            actor,
+            Some(auth.token.id),
+            ObjectWrite::Blob,
+            &bytes,
+        )
         .await
         .map_err(write_error)?;
     Ok((
@@ -221,17 +241,23 @@ async fn create_commit(
     let auth = auth.ok_or_else(super::auth::required)?;
     let actor = auth.user;
     let author = input.author.unwrap_or(Signature {
-        name: actor.display_name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| actor.username.clone()),
+        name: actor
+            .display_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| actor.username.clone()),
         email: actor
             .email
             .unwrap_or_else(|| format!("{}@users.noreply", actor.username)),
         date: None,
     });
-    let committer = input.committer.map(|committer| Signature {
-        name: committer.name.unwrap_or_else(|| author.name.clone()),
-        email: committer.email.unwrap_or_else(|| author.email.clone()),
-        date: committer.date.or(author.date),
-    }).unwrap_or_else(|| author.clone());
+    let committer = input
+        .committer
+        .map(|committer| Signature {
+            name: committer.name.unwrap_or_else(|| author.name.clone()),
+            email: committer.email.unwrap_or_else(|| author.email.clone()),
+            date: committer.date.or(author.date),
+        })
+        .unwrap_or_else(|| author.clone());
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
         .write_git_object_as(
@@ -254,7 +280,17 @@ async fn create_commit(
     let commit = store.commit(&sha).await.map_err(store_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(super::commits::git_document(&state, &mut Default::default(), &commit, &owner, &name, repo.id).await?),
+        Json(
+            super::commits::git_document(
+                &state,
+                &mut Default::default(),
+                &commit,
+                &owner,
+                &name,
+                repo.id,
+            )
+            .await?,
+        ),
     )
         .into_response())
 }
@@ -279,7 +315,10 @@ async fn create_tag(
     let auth = auth.ok_or_else(super::auth::required)?;
     let actor = auth.user;
     let tagger = input.tagger.unwrap_or(Signature {
-        name: actor.display_name.filter(|name| !name.trim().is_empty()).unwrap_or_else(|| actor.username.clone()),
+        name: actor
+            .display_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| actor.username.clone()),
         email: actor
             .email
             .unwrap_or_else(|| format!("{}@users.noreply", actor.username)),

@@ -13,7 +13,8 @@ pub async fn commit_authors(
     emails: &[String],
 ) -> anyhow::Result<HashMap<String, db::models::User>> {
     anyhow::ensure!(emails.len() <= 512, "Too many commit email addresses");
-    Ok(db::users::accounts::commit_authors(pool, emails).await?
+    Ok(db::users::accounts::commit_authors(pool, emails)
+        .await?
         .into_iter()
         .map(|author| (author.address, author.user))
         .collect())

@@ -34,8 +34,14 @@ pub fn router() -> Router<Arc<AppState>> {
             axum::routing::post(uninstall),
         )
         .route("/settings/apps/new", get(new).post(register))
-        .route("/settings/apps/:id/delete", axum::routing::post(delete_registration))
-        .route("/settings/apps/:slug/regenerate", axum::routing::post(regenerate))
+        .route(
+            "/settings/apps/:id/delete",
+            axum::routing::post(delete_registration),
+        )
+        .route(
+            "/settings/apps/:slug/regenerate",
+            axum::routing::post(regenerate),
+        )
         .route("/apps/:slug", get(install_get))
         .route(
             "/apps/:slug/installations/new",
@@ -85,23 +91,52 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
     let mut model = model("list");
     let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
     match db::github_apps::apps(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session).await {
-        Ok(apps) => model.registered = apps.into_iter().map(|app| (app.id, app.name, app.slug)).collect(),
+        Ok(apps) => {
+            model.registered = apps
+                .into_iter()
+                .map(|app| (app.id, app.name, app.slug))
+                .collect()
+        }
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
     }
     page(&ctx, model)
 }
 async fn delete_registration(
-    State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri,
-    Path(id): Path<i64>, Form(form): Form<Fields>,
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Path(id): Path<i64>,
+    Form(form): Form<Fields>,
 ) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await { Ok(ctx) => ctx, Err(response) => return response };
-    if let Some(response) = login(&ctx) { return response; }
-    if let Err(response) = ctx.check_csrf(&form) { return response; }
-    if field(&form, "confirm") != "yes" { return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Confirm app deletion."); }
-    let Some(session) = session::extract_session_id(&ctx.headers) else { return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again"); };
-    match db::github_apps::delete_registration(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session, id).await {
+    let ctx = match PageContext::load(state, headers, &uri).await {
+        Ok(ctx) => ctx,
+        Err(response) => return response,
+    };
+    if let Some(response) = login(&ctx) {
+        return response;
+    }
+    if let Err(response) = ctx.check_csrf(&form) {
+        return response;
+    }
+    if field(&form, "confirm") != "yes" {
+        return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Confirm app deletion.");
+    }
+    let Some(session) = session::extract_session_id(&ctx.headers) else {
+        return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
+    };
+    match db::github_apps::delete_registration(
+        &ctx.state.pool,
+        ctx.user.as_ref().unwrap().id,
+        &session,
+        id,
+    )
+    .await
+    {
         Ok(true) => Redirect::to("/settings/apps").into_response(),
-        Ok(false) => ctx.error(StatusCode::FORBIDDEN, "Only the app owner may delete this app"),
+        Ok(false) => ctx.error(
+            StatusCode::FORBIDDEN,
+            "Only the app owner may delete this app",
+        ),
         Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "App deletion unavailable"),
     }
 }
@@ -120,8 +155,12 @@ async fn managed_installations(
     }
     let mut model = model("installations");
     let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match db::github_apps::managed_installations(&ctx.state.pool, ctx.user.as_ref().unwrap().id, &session)
-        .await
+    match db::github_apps::managed_installations(
+        &ctx.state.pool,
+        ctx.user.as_ref().unwrap().id,
+        &session,
+    )
+    .await
     {
         Ok(rows) => {
             model.applications = rows
@@ -186,23 +225,36 @@ fn key_failure(ctx: &PageContext, error: apps::RegistrationKeyError) -> Response
         apps::RegistrationKeyError::Limited => StatusCode::TOO_MANY_REQUESTS,
         apps::RegistrationKeyError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
     };
-    ctx.error(status, "App credential generation is temporarily unavailable")
+    ctx.error(
+        status,
+        "App credential generation is temporarily unavailable",
+    )
 }
 
-async fn regenerate(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri, Path(slug): Path<String>, Form(form): Form<Fields>) -> Response {
+async fn regenerate(
+    State(state): State<Arc<AppState>>,
+    headers: HeaderMap,
+    uri: Uri,
+    Path(slug): Path<String>,
+    Form(form): Form<Fields>,
+) -> Response {
     let mut ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
     ctx.return_to = Some("/settings/apps".into());
-    if let Some(response) = login(&ctx) { return response; }
-    if let Err(response) = ctx.check_csrf(&form) { return response; }
+    if let Some(response) = login(&ctx) {
+        return response;
+    }
+    if let Err(response) = ctx.check_csrf(&form) {
+        return response;
+    }
     let actor = ctx.user.as_ref().unwrap().id;
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
     match db::github_apps::app(&ctx.state.pool, &slug).await {
-        Ok(Some(app)) if app.owner_id == actor && app.slug == slug => {},
+        Ok(Some(app)) if app.owner_id == actor && app.slug == slug => {}
         Ok(_) => return ctx.error(StatusCode::NOT_FOUND, "App not found"),
         Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Apps unavailable"),
     }
@@ -211,15 +263,29 @@ async fn regenerate(State(state): State<Arc<AppState>>, headers: HeaderMap, uri:
         Err(error) => return key_failure(&ctx, error),
     };
     let secret = crate::backend::crypto::random_hex();
-    match db::github_apps::rotate_credentials(&ctx.state.pool, actor, &session, &slug, &public, &token_hash(&secret)).await {
+    match db::github_apps::rotate_credentials(
+        &ctx.state.pool,
+        actor,
+        &session,
+        &slug,
+        &public,
+        &token_hash(&secret),
+    )
+    .await
+    {
         Ok(Some(client)) => {
             let mut model = model("new");
             model.credentials = Some((client, secret, private));
             page(&ctx, model)
         }
         Ok(None) => ctx.error(StatusCode::NOT_FOUND, "App not found"),
-        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => ctx.error(StatusCode::FORBIDDEN, "Account unavailable"),
-        Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "App credential replacement unavailable"),
+        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => {
+            ctx.error(StatusCode::FORBIDDEN, "Account unavailable")
+        }
+        Err(_) => ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "App credential replacement unavailable",
+        ),
     }
 }
 
@@ -308,10 +374,11 @@ async fn register(
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let (private, public) = match apps::registration_key(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
-        Ok(keys) => keys,
-        Err(error) => return key_failure(&ctx, error),
-    };
+    let (private, public) =
+        match apps::registration_key(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
+            Ok(keys) => keys,
+            Err(error) => return key_failure(&ctx, error),
+        };
     let permissions = permissions.unwrap();
     let client = format!("Iv1.{}", &crate::backend::crypto::random_hex()[..16]);
     let secret = crate::backend::crypto::random_hex();

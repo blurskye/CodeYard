@@ -13,7 +13,11 @@ pub(crate) fn protection_write_error(
     error: anyhow::Error,
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
     if error.is::<db::users::accounts::AccountRestricted>() {
-        return ApiError::failure(StatusCode::FORBIDDEN, "forbidden", "A live unrestricted account credential is required");
+        return ApiError::failure(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "A live unrestricted account credential is required",
+        );
     }
     use crate::backend::db::repositories::ProtectionWriteRefusal as Refusal;
     use axum::{http::StatusCode, Json};
@@ -62,7 +66,11 @@ pub(crate) fn repository_settings_error(
     use crate::backend::db::repositories::RepositorySettingsRefusal as Refusal;
     use axum::{http::StatusCode, Json};
     if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
-        return ApiError::failure(StatusCode::FORBIDDEN, "forbidden", "A live unrestricted credential is required.");
+        return ApiError::failure(
+            StatusCode::FORBIDDEN,
+            "forbidden",
+            "A live unrestricted credential is required.",
+        );
     }
     let (status, code, message) = match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => (

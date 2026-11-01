@@ -8,27 +8,56 @@ use crate::backend::repositories::store::{repo_store, CommitInfo};
 use serde_json::json;
 
 pub(super) fn charge_commit(row: &CommitInfo, request: &RequestContext) -> Result<()> {
-    request.charge(row.message.len().saturating_mul(4)
-        .saturating_add(row.author_name.len()).saturating_add(row.author_email.len())
-        .saturating_add(row.committer_name.len()).saturating_add(row.committer_email.len())
-        .saturating_add(row.parents.len().saturating_mul(64)))
+    request.charge(
+        row.message
+            .len()
+            .saturating_mul(4)
+            .saturating_add(row.author_name.len())
+            .saturating_add(row.author_email.len())
+            .saturating_add(row.committer_name.len())
+            .saturating_add(row.committer_email.len())
+            .saturating_add(row.parents.len().saturating_mul(64)),
+    )
 }
 
-pub(super) fn commit(repo: i64, row: &CommitInfo, scope: &str, request: &RequestContext) -> Result<Value> {
+pub(super) fn commit(
+    repo: i64,
+    row: &CommitInfo,
+    scope: &str,
+    request: &RequestContext,
+) -> Result<Value> {
     charge_commit(row, request)?;
     let date = |time| chrono::DateTime::from_timestamp(time, 0).ok_or_else(|| unavailable(()));
     let authored = date(row.timestamp)?;
     let committed = date(row.committer_timestamp)?;
-    let zone = |minutes: i32| minutes.checked_mul(60).and_then(chrono::FixedOffset::east_opt).ok_or_else(|| unavailable(()));
+    let zone = |minutes: i32| {
+        minutes
+            .checked_mul(60)
+            .and_then(chrono::FixedOffset::east_opt)
+            .ok_or_else(|| unavailable(()))
+    };
     let author_date = authored.with_timezone(&zone(row.author_offset_minutes)?);
     let committer_date = committed.with_timezone(&zone(row.committer_offset_minutes)?);
     let actor = |name: &str, email: &str, date: chrono::DateTime<chrono::FixedOffset>| json!({"__typename":"GitActor","_repo":repo,"_scope":scope,"_email":email,"name":name,"email":email,"date":date});
     let author = actor(&row.author_name, &row.author_email, author_date);
     let mut authors = vec![author.clone()];
     if let Ok(trailers) = git2::message_trailers_strs(&row.message) {
-        for (_, value) in trailers.iter().filter(|(key, _)| key.eq_ignore_ascii_case("Co-authored-by")) {
-            if let Some((name, email)) = value.rsplit_once('<').and_then(|(name, rest)| rest.strip_suffix('>').map(|email| (name.trim(), email.trim()))) {
-                if !name.is_empty() && !email.is_empty() && !authors.iter().any(|actor| actor["email"].as_str().is_some_and(|existing| existing.eq_ignore_ascii_case(email))) {
+        for (_, value) in trailers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("Co-authored-by"))
+        {
+            if let Some((name, email)) = value.rsplit_once('<').and_then(|(name, rest)| {
+                rest.strip_suffix('>')
+                    .map(|email| (name.trim(), email.trim()))
+            }) {
+                if !name.is_empty()
+                    && !email.is_empty()
+                    && !authors.iter().any(|actor| {
+                        actor["email"]
+                            .as_str()
+                            .is_some_and(|existing| existing.eq_ignore_ascii_case(email))
+                    })
+                {
                     authors.push(actor(name, email, author_date));
                 }
             }
@@ -91,7 +120,13 @@ pub(super) async fn resolve(
                 )
                 .await?
             };
-            connection::slice(args, value["_authors"].as_array().cloned().unwrap_or_else(|| vec![value["author"].clone()]))
+            connection::slice(
+                args,
+                value["_authors"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_else(|| vec![value["author"].clone()]),
+            )
         }
         ("Commit", "parents") => {
             let value = if parent["_parents"].is_array() {
@@ -156,8 +191,17 @@ pub(super) async fn resolve(
         ("StatusCheckRollup", "contexts") => super::checks::contexts(args, request, parent).await,
         ("Status", "contexts") => {
             request.authorize(repo.id, "statuses", false).await?;
-            let rows = db::repositories::protection::list_commit_statuses(&request.state.pool, repo.id, oid).await.map_err(unavailable)?;
-            Ok(json!(rows.iter().map(|row| status(repo.id, row)).collect::<Vec<_>>()))
+            let rows = db::repositories::protection::list_commit_statuses(
+                &request.state.pool,
+                repo.id,
+                oid,
+            )
+            .await
+            .map_err(unavailable)?;
+            Ok(json!(rows
+                .iter()
+                .map(|row| status(repo.id, row))
+                .collect::<Vec<_>>()))
         }
         ("StatusContext" | "CheckRun", "isRequired") => {
             let pull = if let Some(id) = args.args.get("pullRequestId").filter(|id| !id.is_null()) {
@@ -198,12 +242,15 @@ pub(super) async fn resolve(
             .await
             .map_err(unavailable)?;
             Ok(json!(rules.iter().any(|rule| rule.require_status_checks
-                && rule
-                    .required_status_checks
-                    .iter()
-                    .any(
-                        |name| Some(name.as_str()) == parent[if ty == "CheckRun" { "name" } else { "context" }].as_str()
-                    ))))
+                && rule.required_status_checks.iter().any(|name| Some(
+                    name.as_str()
+                )
+                    == parent[if ty == "CheckRun" {
+                        "name"
+                    } else {
+                        "context"
+                    }]
+                    .as_str()))))
         }
         ("StatusContext", "creator") => match parent["_creator"].as_i64() {
             Some(id) => user::actor_by_id(id, request).await,

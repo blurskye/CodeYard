@@ -2,13 +2,28 @@ use crate::backend::db::{code_scanning::Refusal, codeql::*, credentials::Actor};
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
 
-async fn authorized(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, actor: &Actor, repo: i64, write: bool) -> Result<()> {
+async fn authorized(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    actor: &Actor,
+    repo: i64,
+    write: bool,
+) -> Result<()> {
     let allowed = if write {
         super::discussions::lock_write_authority(tx, actor.user_id, repo).await?
     } else {
-        super::repositories::access::lock_readable_repository_in_transaction(tx, actor.user_id, repo, super::repositories::access::RepositoryRowLock::Shared).await?
+        super::repositories::access::lock_readable_repository_in_transaction(
+            tx,
+            actor.user_id,
+            repo,
+            super::repositories::access::RepositoryRowLock::Shared,
+        )
+        .await?
     };
-    ensure!(allowed && super::credentials::repository(tx, actor, repo, "security_events", write).await?, Refusal::Denied);
+    ensure!(
+        allowed
+            && super::credentials::repository(tx, actor, repo, "security_events", write).await?,
+        Refusal::Denied
+    );
     Ok(())
 }
 
@@ -17,17 +32,27 @@ pub async fn list(pool: &PgPool, actor: impl Into<Actor>, repo: i64) -> Result<V
     let mut tx = pool.begin().await?;
     authorized(&mut tx, &actor, repo, false).await?;
     let rows = sqlx::query_as("SELECT * FROM codeql_databases WHERE repo_id=$1 ORDER BY language")
-        .bind(repo).fetch_all(&mut *tx).await?;
+        .bind(repo)
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(rows)
 }
 
-pub async fn get(pool: &PgPool, actor: impl Into<Actor>, repo: i64, language: &str) -> Result<Option<Database>> {
+pub async fn get(
+    pool: &PgPool,
+    actor: impl Into<Actor>,
+    repo: i64,
+    language: &str,
+) -> Result<Option<Database>> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     authorized(&mut tx, &actor, repo, false).await?;
     let row = sqlx::query_as("SELECT * FROM codeql_databases WHERE repo_id=$1 AND language=$2")
-        .bind(repo).bind(language).fetch_optional(&mut *tx).await?;
+        .bind(repo)
+        .bind(language)
+        .fetch_optional(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(row)
 }
@@ -65,7 +90,12 @@ pub async fn publish(pool: &PgPool, input: &NewDatabase<'_>) -> Result<Database>
     Ok(row)
 }
 
-pub async fn delete(pool: &PgPool, actor: impl Into<Actor>, repo: i64, language: &str) -> Result<()> {
+pub async fn delete(
+    pool: &PgPool,
+    actor: impl Into<Actor>,
+    repo: i64,
+    language: &str,
+) -> Result<()> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     authorized(&mut tx, &actor, repo, true).await?;

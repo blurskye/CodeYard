@@ -1,18 +1,32 @@
 //! Filesystem ownership and evicting keyed process locks.
 use anyhow::{ensure, Context, Result};
-use std::{collections::HashMap, fs::File, hash::Hash, os::fd::AsRawFd, path::Path, sync::{Arc, Mutex}};
+use std::{
+    collections::HashMap,
+    fs::File,
+    hash::Hash,
+    os::fd::AsRawFd,
+    path::Path,
+    sync::{Arc, Mutex},
+};
 
 pub(crate) fn exclusive_file(path: &Path) -> Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
-    let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true)
-        .custom_flags(libc::O_NOFOLLOW).open(path)
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
         .with_context(|| format!("open ownership lock {}", path.display()))?;
     // SAFETY: the descriptor is owned by the returned file and flock retains no pointers.
     let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     if result != 0 {
         let error = std::io::Error::last_os_error();
-        ensure!(error.kind() != std::io::ErrorKind::WouldBlock,
-            "another codeyard process owns {}", path.display());
+        ensure!(
+            error.kind() != std::io::ErrorKind::WouldBlock,
+            "another codeyard process owns {}",
+            path.display()
+        );
         return Err(error.into());
     }
     Ok(file)
@@ -25,7 +39,9 @@ pub(crate) type KeyedMutex<K> = Keyed<K, tokio::sync::Mutex<()>>;
 pub(crate) type KeyedRwLock<K> = Keyed<K, tokio::sync::RwLock<()>>;
 
 impl<K, L> Default for Keyed<K, L> {
-    fn default() -> Self { Self(Mutex::new(HashMap::new())) }
+    fn default() -> Self {
+        Self(Mutex::new(HashMap::new()))
+    }
 }
 
 impl<K: Eq + Hash, L: Default> Keyed<K, L> {

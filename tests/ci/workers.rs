@@ -542,7 +542,9 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         "TOKEN",
         "private-value",
         Some(owner.id),
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, owner.id).await,
+        ),
     )
     .await
     .unwrap();
@@ -550,7 +552,9 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     db::variables::save(
         pool,
         owner.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, owner.id).await,
+        ),
         repo.id,
         None,
         "REGION",
@@ -631,7 +635,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         ],
     };
     assert!(fallback
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels()
+        )
         .await
         .unwrap()
         .is_none());
@@ -666,7 +674,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     )
     .await;
     let claimed = remote
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -978,7 +990,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     // from a different run or worker slot.
     let same_node_run = enqueue(pool, repo.id, owner.id, &revision.sha, &blob).await;
     let same_node_claim = remote
-        .claim("slot-2", CiExecutionMode::Podman, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-2",
+            CiExecutionMode::Podman,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1004,7 +1020,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
 
     let other_run = enqueue(pool, repo.id, owner.id, &revision.sha, &blob).await;
     let other_claim = foreign
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1054,7 +1074,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
             .unwrap();
     }
     let claimed = remote
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1146,7 +1170,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     // revoked destination node serving private repository data.
     let storage_run = enqueue(pool, repo.id, owner.id, &revision.sha, &blob).await;
     let storage_claim = remote
-        .claim("storage-revoke", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "storage-revoke",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1180,7 +1208,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         "revoked peer on reused connection: {reply}"
     );
     assert!(remote
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels()
+        )
         .await
         .is_err());
     connection.close(0u32.into(), b"test complete");
@@ -1191,7 +1223,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         peers: vec![peer.clone()],
     };
     assert!(unknown_queue
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels()
+        )
         .await
         .is_err());
     let nonworker = RunQueue::Remote {
@@ -1200,7 +1236,11 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         peers: vec![peer],
     };
     assert!(nonworker
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels()
+        )
         .await
         .is_err());
     worker_connection.close(0u32.into(), b"test complete");
@@ -1244,10 +1284,16 @@ async fn ci_repository_claim_checks_match_on_postgres_and_sqlite() {
 
         for worker in [key.clone(), format!("{key}x/slot")] {
             let run = enqueue(pool, repo.id, owner.id, &"1".repeat(40), &"2".repeat(40)).await;
-            db::ci::claim_ci_run(pool, &worker, "local", &[owner.id], &CiConfig::default().platform_labels())
-                .await
-                .unwrap()
-                .unwrap();
+            db::ci::claim_ci_run(
+                pool,
+                &worker,
+                "local",
+                &[owner.id],
+                &CiConfig::default().platform_labels(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
             assert!(
                 !db::ci::ci_run_allows_repository_read(pool, run.id, repo.id, &worker, &key)
                     .await
@@ -1266,10 +1312,16 @@ async fn ci_repository_claim_checks_match_on_postgres_and_sqlite() {
                 .await
                 .unwrap()
         );
-        db::ci::claim_ci_run(pool, &worker, "local", &[owner.id], &CiConfig::default().platform_labels())
-            .await
-            .unwrap()
-            .unwrap();
+        db::ci::claim_ci_run(
+            pool,
+            &worker,
+            "local",
+            &[owner.id],
+            &CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         assert!(
             db::ci::ci_run_allows_repository_read(pool, run.id, repo.id, &worker, &key)
                 .await
@@ -1317,10 +1369,16 @@ async fn ci_repository_claim_checks_match_on_postgres_and_sqlite() {
 
         for status in ["success", "failed"] {
             let run = enqueue(pool, repo.id, owner.id, &"5".repeat(40), &"6".repeat(40)).await;
-            db::ci::claim_ci_run(pool, &worker, "local", &[owner.id], &CiConfig::default().platform_labels())
-                .await
-                .unwrap()
-                .unwrap();
+            db::ci::claim_ci_run(
+                pool,
+                &worker,
+                "local",
+                &[owner.id],
+                &CiConfig::default().platform_labels(),
+            )
+            .await
+            .unwrap()
+            .unwrap();
             assert!(
                 db::ci::ci_run_allows_repository_read(pool, run.id, repo.id, &worker, &key)
                     .await
@@ -1364,10 +1422,16 @@ async fn sqlite_log_batches_check_ownership_and_bounds() {
         &"2".repeat(40),
     )
     .await;
-    db::ci::claim_ci_run(&database.pool, "worker", "local", &[owner.id], &CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    db::ci::claim_ci_run(
+        &database.pool,
+        "worker",
+        "local",
+        &[owner.id],
+        &CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert!(
         db::ci::append_ci_logs(&database.pool, run.id, "other", &[line("not mine")])
             .await
@@ -3181,7 +3245,11 @@ async fn discovery_allows_stalled_tcp_to_fall_back_to_iroh() {
     fixture.queue_run().await;
     let queue = fixture.remote();
     let claim = queue
-        .claim("discovery", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "discovery",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -3330,10 +3398,16 @@ async fn binary_logs_are_printable_and_counted_before_limits_on_both_engines() {
         .await
         .unwrap();
         let run = enqueue(pool, repo.id, owner.id, &"1".repeat(40), &"2".repeat(40)).await;
-        db::ci::claim_ci_run(pool, "worker", "local", &[owner.id], &CiConfig::default().platform_labels())
-            .await
-            .unwrap()
-            .unwrap();
+        db::ci::claim_ci_run(
+            pool,
+            "worker",
+            "local",
+            &[owner.id],
+            &CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         db::ci::append_ci_logs(
             pool,
             run.id,
@@ -3455,10 +3529,16 @@ async fn control_byte_batches_are_accepted_whole_on_both_engines() {
         .await
         .unwrap();
         let run = enqueue(pool, repo.id, owner.id, &"1".repeat(40), &"2".repeat(40)).await;
-        db::ci::claim_ci_run(pool, "worker", "local", &[owner.id], &CiConfig::default().platform_labels())
-            .await
-            .unwrap()
-            .unwrap();
+        db::ci::claim_ci_run(
+            pool,
+            "worker",
+            "local",
+            &[owner.id],
+            &CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let queue = RunQueue::Database {
             pool: pool.clone(),
             config: Arc::new(CiConfig::default()),
@@ -3515,10 +3595,16 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
         .await
         .unwrap();
         let run = enqueue(pool, repo.id, owner.id, &"1".repeat(40), &"2".repeat(40)).await;
-        db::ci::claim_ci_run(pool, "worker", "local", &[owner.id], &CiConfig::default().platform_labels())
-            .await
-            .unwrap()
-            .unwrap();
+        db::ci::claim_ci_run(
+            pool,
+            "worker",
+            "local",
+            &[owner.id],
+            &CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         set_log_totals(
             pool,
             run.id,
@@ -3636,7 +3722,9 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
                 pool,
                 Some(&encryptor),
                 owner.id,
-                &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(pool, owner.id).await,
+                ),
                 org.id,
                 &db::organization_values::Save {
                     kind,
@@ -3657,14 +3745,18 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
             "TOKEN",
             "private",
             Some(owner.id),
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(pool, owner.id).await,
+            ),
         )
         .await
         .unwrap();
         db::variables::save(
             pool,
             owner.id,
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(pool, owner.id).await,
+            ),
             repo.id,
             None,
             "REGION",
@@ -3710,7 +3802,11 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
             }
         };
         let claim = queue
-            .claim("worker", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+            .claim(
+                "worker",
+                CiExecutionMode::Local,
+                &CiConfig::default().platform_labels(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -3728,9 +3824,17 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
             .await
             .unwrap();
         // With repository secrets removed, an inherited secret alone still requires the key.
-        assert!(db::secrets::delete_secret(pool, owner.id, repo.id, "TOKEN", &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await))
-            .await
-            .unwrap());
+        assert!(db::secrets::delete_secret(
+            pool,
+            owner.id,
+            repo.id,
+            "TOKEN",
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(pool, owner.id).await
+            )
+        )
+        .await
+        .unwrap());
         let without_key = RunQueue::Database {
             pool: pool.clone(),
             config: Arc::new(CiConfig {
@@ -3743,7 +3847,11 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
         };
         let refused = enqueue(pool, repo.id, owner.id, &"3".repeat(40), &"4".repeat(40)).await;
         let error = without_key
-            .claim("worker", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+            .claim(
+                "worker",
+                CiExecutionMode::Local,
+                &CiConfig::default().platform_labels(),
+            )
             .await
             .err()
             .expect("inherited secrets require a master key");
@@ -3782,7 +3890,11 @@ async fn claims_without_a_master_key_refuse_configured_secrets() {
         };
         let empty = enqueue(pool, repo.id, owner.id, &sha, &blob).await;
         let claim = queue
-            .claim("worker", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+            .claim(
+                "worker",
+                CiExecutionMode::Local,
+                &CiConfig::default().platform_labels(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -3798,13 +3910,19 @@ async fn claims_without_a_master_key_refuse_configured_secrets() {
             "TOKEN",
             "private",
             Some(owner.id),
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(pool, owner.id).await,
+            ),
         )
         .await
         .unwrap();
         let refused = enqueue(pool, repo.id, owner.id, &"3".repeat(40), &"4".repeat(40)).await;
         let error = queue
-            .claim("worker", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+            .claim(
+                "worker",
+                CiExecutionMode::Local,
+                &CiConfig::default().platform_labels(),
+            )
             .await
             .err()
             .expect("missing key must refuse the claim");
@@ -3852,14 +3970,20 @@ async fn claims_refuse_secret_sets_too_large_for_one_claim() {
                 &format!("SECRET_{index:02}"),
                 &value,
                 Some(owner.id),
-                &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(pool, owner.id).await,
+                ),
             )
             .await
             .unwrap();
         }
         let accepted = enqueue(pool, repo.id, owner.id, &sha, &blob).await;
         let claim = queue
-            .claim("worker-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+            .claim(
+                "worker-1",
+                CiExecutionMode::Local,
+                &CiConfig::default().platform_labels(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -3874,7 +3998,9 @@ async fn claims_refuse_secret_sets_too_large_for_one_claim() {
             "SECRET_21",
             &value,
             Some(owner.id),
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(pool, owner.id).await,
+            ),
         )
         .await;
         assert!(
@@ -3916,7 +4042,11 @@ async fn claims_refuse_secret_sets_too_large_for_one_claim() {
         }
         let refused = enqueue(pool, repo.id, owner.id, &"3".repeat(40), &"4".repeat(40)).await;
         assert!(queue
-            .claim("worker-2", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+            .claim(
+                "worker-2",
+                CiExecutionMode::Local,
+                &CiConfig::default().platform_labels()
+            )
             .await
             .is_err());
         let finished = db::ci::get_ci_run_by_run_id(pool, refused.run_id)
@@ -4204,7 +4334,11 @@ async fn a_claim_frame_that_arrives_after_its_worker_is_revoked_is_refused() {
         .unwrap();
     let claimed = fixture
         .remote()
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -4223,7 +4357,11 @@ async fn a_core_that_is_not_active_refuses_ci_requests() {
             .unwrap();
         let Err(error) = fixture
             .remote()
-            .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+            .claim(
+                "slot-1",
+                CiExecutionMode::Local,
+                &CiConfig::default().platform_labels(),
+            )
             .await
         else {
             panic!("a {status} core answered a claim");
@@ -4243,7 +4381,11 @@ async fn a_core_that_is_not_active_refuses_ci_requests() {
         .unwrap();
     let claimed = fixture
         .remote()
-        .claim("slot-1", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -4392,7 +4534,11 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
     let queued = fixture.queue_run().await;
     let result = tokio::time::timeout(
         Duration::from_secs(5),
-        fixture.remote().claim("slot-2", CiExecutionMode::Local, &CiConfig::default().platform_labels()),
+        fixture.remote().claim(
+            "slot-2",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        ),
     )
     .await
     .unwrap();
@@ -4416,7 +4562,11 @@ async fn stalled_ci_replies_keep_their_admission_slots() {
     }
     let claim = fixture
         .remote()
-        .claim("slot-2", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot-2",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -4682,7 +4832,11 @@ async fn successful_core_is_tried_first_for_subsequent_log_batches() {
     };
     let run = fixture.queue_run().await;
     queue
-        .claim("slot", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -4784,7 +4938,11 @@ async fn a_lost_log_reply_does_not_replay_a_committed_batch_on_the_next_core() {
     let run = fixture.queue_run().await;
     fixture
         .remote()
-        .claim("slot", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+        .claim(
+            "slot",
+            CiExecutionMode::Local,
+            &CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();

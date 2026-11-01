@@ -95,13 +95,13 @@ pub async fn set_restriction(
     .await?;
     if input.is_some() {
         match scope {
-        InteractionScope::User(user) => {
-            sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=$1 AND NOT is_private)").bind(user).execute(&mut *tx).await?;
-        }
-        InteractionScope::Organization(org) => {
-            sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND NOT is_private)").bind(org).execute(&mut *tx).await?;
-        }
-        InteractionScope::Repository(_) => (),
+            InteractionScope::User(user) => {
+                sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=$1 AND NOT is_private)").bind(user).execute(&mut *tx).await?;
+            }
+            InteractionScope::Organization(org) => {
+                sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND NOT is_private)").bind(org).execute(&mut *tx).await?;
+            }
+            InteractionScope::Repository(_) => (),
         }
     }
     if let Some(input) = input {
@@ -164,7 +164,12 @@ pub async fn save_proof(
     Ok(changed)
 }
 
-async fn contribution_exempt(connection: &mut PgConnection, actor: i64, repo: i64, restriction: &Restriction) -> Result<bool> {
+async fn contribution_exempt(
+    connection: &mut PgConnection,
+    actor: i64,
+    repo: i64,
+    restriction: &Restriction,
+) -> Result<bool> {
     if restriction.origin == "organization" {
         let member: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=m.org_id WHERE r.id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin','member'))").bind(repo).bind(actor).fetch_one(&mut *connection).await?;
         if member {
@@ -182,7 +187,8 @@ pub async fn proof_required(pool: &PgPool, actor: i64, repo: i64) -> Result<bool
     let Some(restriction) = effective(&mut connection, repo).await? else {
         return Ok(false);
     };
-    Ok(restriction.limit != "collaborators_only" && !contribution_exempt(&mut connection, actor, repo, &restriction).await?)
+    Ok(restriction.limit != "collaborators_only"
+        && !contribution_exempt(&mut connection, actor, repo, &restriction).await?)
 }
 
 /// Called only after the normal actor, owner and repository locks have been retained.

@@ -66,7 +66,10 @@ async fn start(
     } else {
         match serde_json::from_slice(&body) {
             Ok(input) => input,
-            Err(error) => { let error = super::super::json_parse_error(error); return Ok(failed(error.0, error.1)); },
+            Err(error) => {
+                let error = super::super::json_parse_error(error);
+                return Ok(failed(error.0, error.1));
+            }
         }
     };
     let input = input.unwrap_or_default();

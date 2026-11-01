@@ -133,7 +133,8 @@ pub(crate) async fn validate_batch(input: &[Create]) -> Result<()> {
             item.validate()?;
         }
         Ok(())
-    }).await?
+    })
+    .await?
 }
 
 impl Create {
@@ -212,21 +213,44 @@ impl Pattern {
     }
 }
 
-pub fn scan(patterns: &[Pattern], text: &str, push: bool, deadline: std::time::Instant) -> Result<Vec<Detection>> {
+pub fn scan(
+    patterns: &[Pattern],
+    text: &str,
+    push: bool,
+    deadline: std::time::Instant,
+) -> Result<Vec<Detection>> {
     let mut detections = Vec::new();
     let mut matched_bytes = 0usize;
     for pattern in patterns.iter().filter(|pattern| {
         pattern.state == "published" && (!push || pattern.push_protection_enabled)
     }) {
-        ensure!(std::time::Instant::now() < deadline, "Secret scanning exceeded its time budget");
-        let compiled = pattern.compiled.get_or_init(|| compile(
-            &pattern.pattern, &pattern.start_delimiter, &pattern.end_delimiter,
-            &pattern.must_match, &pattern.must_not_match,
-        ).map_err(|error| error.to_string())).as_ref().map_err(|error| anyhow::anyhow!("{error}"))?;
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "Secret scanning exceeded its time budget"
+        );
+        let compiled = pattern
+            .compiled
+            .get_or_init(|| {
+                compile(
+                    &pattern.pattern,
+                    &pattern.start_delimiter,
+                    &pattern.end_delimiter,
+                    &pattern.must_match,
+                    &pattern.must_not_match,
+                )
+                .map_err(|error| error.to_string())
+            })
+            .as_ref()
+            .map_err(|error| anyhow::anyhow!("{error}"))?;
         let mut from = 0;
         while from <= text.len() {
-            ensure!(std::time::Instant::now() < deadline, "Secret scanning exceeded its time budget");
-            let Some(captures) = compiled.regex.captures_at(text, from) else { break };
+            ensure!(
+                std::time::Instant::now() < deadline,
+                "Secret scanning exceeded its time budget"
+            );
+            let Some(captures) = compiled.regex.captures_at(text, from) else {
+                break;
+            };
             let secret = captures
                 .name("codeyard_secret")
                 .ok_or_else(|| anyhow::anyhow!("Custom pattern matched without a secret"))?;
@@ -254,7 +278,11 @@ pub fn scan(patterns: &[Pattern], text: &str, push: bool, deadline: std::time::I
             let last = secret.end() - 1;
             let (end_line, end_column) = super::scanner::position(text, last);
             matched_bytes = matched_bytes.saturating_add(secret.len());
-            ensure!(matched_bytes <= super::scanner::MAX_MATCHED_BYTES && detections.len() < super::scanner::MAX_DETECTIONS, "Blob exceeds secret scanning detection budget");
+            ensure!(
+                matched_bytes <= super::scanner::MAX_MATCHED_BYTES
+                    && detections.len() < super::scanner::MAX_DETECTIONS,
+                "Blob exceeds secret scanning detection budget"
+            );
             detections.push(Detection {
                 rule_id: format!("cp_{}", pattern.id),
                 secret_type: pattern.slug.clone(),

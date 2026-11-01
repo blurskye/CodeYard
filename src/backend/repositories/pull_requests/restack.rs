@@ -217,7 +217,10 @@ pub async fn publish_rebase(
     };
     // Finish admission after recording the heads; an unchanged refresh cannot retry it.
     branches_moved(pool, &repository, ci, actor_id).await;
-    let rebased = moves.iter().filter(|restack| restack.old != restack.new).count();
+    let rebased = moves
+        .iter()
+        .filter(|restack| restack.old != restack.new)
+        .count();
     for restack in moves.iter().filter(|restack| restack.old != restack.new) {
         ci.queue_push_runs(
             &repository,
@@ -241,9 +244,7 @@ pub async fn publish_rebase(
             ),
         });
     }
-    Ok(RestackResponse {
-        rebased,
-    })
+    Ok(RestackResponse { rebased })
 }
 
 /// The open line from `bottom` up: `bottom` and the open layers stacked above it, bottom first. A

@@ -33,10 +33,14 @@ impl OwnedAccountCredential {
     }
 }
 impl From<&str> for OwnedAccountCredential {
-    fn from(session: &str) -> Self { Self::Session(session.to_owned()) }
+    fn from(session: &str) -> Self {
+        Self::Session(session.to_owned())
+    }
 }
 impl From<&String> for OwnedAccountCredential {
-    fn from(session: &String) -> Self { Self::Session(session.clone()) }
+    fn from(session: &String) -> Self {
+        Self::Session(session.clone())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]

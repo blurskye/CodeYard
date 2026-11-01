@@ -82,8 +82,7 @@ async fn convert(
     let input: Conversion = if body.is_empty() {
         Default::default()
     } else {
-        serde_json::from_slice(&body)
-            .map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
     };
     let org = target(&state, &name).await?;
     let user = db::users::accounts::get_user_by_username(&state.pool, &username)
@@ -91,8 +90,13 @@ async fn convert(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let result = crate::backend::organizations::convert_to_outside(
-        &state.pool, actor.database_actor(), org.id, user.id,
-    ).await.map_err(Error::unavailable)?;
+        &state.pool,
+        actor.database_actor(),
+        org.id,
+        user.id,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     if matches!(result, OrganizationOutcome::Conflict) {
         return Err(Error::new(
             StatusCode::FORBIDDEN,
@@ -120,9 +124,10 @@ async fn remove(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let result = organizations::outside::remove(&state.pool, actor.database_actor(), org.id, user.id)
-        .await
-        .map_err(Error::unavailable)?;
+    let result =
+        organizations::outside::remove(&state.pool, actor.database_actor(), org.id, user.id)
+            .await
+            .map_err(Error::unavailable)?;
     if matches!(result, OrganizationOutcome::Conflict) {
         return Err(Error::new(
             StatusCode::UNPROCESSABLE_ENTITY,

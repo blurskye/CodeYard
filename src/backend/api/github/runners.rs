@@ -266,18 +266,38 @@ fn document(row: &Runner) -> Result<Value> {
     Ok(value)
 }
 async fn selected_group(state: &AppState, actor: i64, scope: Scope, p: &Params) -> Result<Group> {
-    native::list_groups(&state.pool, actor, org(scope)?, &native::GroupQuery { id: Some(id(p, "runner_group_id")?), ..Default::default() })
-        .await
-        .map_err(error)?
-        .rows.into_iter().next()
-        .ok_or_else(Error::missing)
+    native::list_groups(
+        &state.pool,
+        actor,
+        org(scope)?,
+        &native::GroupQuery {
+            id: Some(id(p, "runner_group_id")?),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(error)?
+    .rows
+    .into_iter()
+    .next()
+    .ok_or_else(Error::missing)
 }
 async fn selected_runner(state: &AppState, actor: i64, scope: Scope, p: &Params) -> Result<Runner> {
-    native::list_runners(&state.pool, actor, scope, &native::RunnerQuery { id: Some(id(p, "runner_id")?), ..Default::default() })
-        .await
-        .map_err(error)?
-        .rows.into_iter().next()
-        .ok_or_else(Error::missing)
+    native::list_runners(
+        &state.pool,
+        actor,
+        scope,
+        &native::RunnerQuery {
+            id: Some(id(p, "runner_id")?),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(error)?
+    .rows
+    .into_iter()
+    .next()
+    .ok_or_else(Error::missing)
 }
 #[derive(Deserialize)]
 struct Listing {
@@ -318,13 +338,30 @@ async fn groups(
             })
             .ok_or_else(Error::missing)?;
         Some(repo.id)
-    } else { None };
+    } else {
+        None
+    };
     let (offset, limit) = page.window()?;
-    let listing = native::list_groups(&s.pool, actor, org_id, &native::GroupQuery {
-        page: native::Window { offset: offset as i64, limit: limit as i64 }, repository, ..Default::default()
-    }).await.map_err(error)?;
+    let listing = native::list_groups(
+        &s.pool,
+        actor,
+        org_id,
+        &native::GroupQuery {
+            page: native::Window {
+                offset: offset as i64,
+                limit: limit as i64,
+            },
+            repository,
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(error)?;
     let total = listing.total as usize;
-    let rows = listing.rows.iter().map(|g| group_document(&p["org"], g))
+    let rows = listing
+        .rows
+        .iter()
+        .map(|g| group_document(&p["org"], g))
         .collect::<Result<Vec<_>>>()?;
     Ok((
         page.headers(&uri, (offset.saturating_add(limit) as u128) < total as u128)?,
@@ -415,15 +452,31 @@ async fn repositories(
     }
     let total = group.repositories.len();
     let (offset, limit) = page.window()?;
-    let ids: Vec<_> = group.repositories.into_iter().skip(offset).take(limit).collect();
-    let rows = db::repositories::records::get_repositories_by_ids(&s.pool, &ids).await.map_err(Error::unavailable)?;
+    let ids: Vec<_> = group
+        .repositories
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect();
+    let rows = db::repositories::records::get_repositories_by_ids(&s.pool, &ids)
+        .await
+        .map_err(Error::unavailable)?;
     let organization = org(scope)?;
-    if rows.iter().any(|repo| repo.owner_org_id != Some(organization) || repo.owner_kind != "org") { return Err(Error::missing()); }
-    let credential = auth::authenticate(&s, &headers, true).await?.ok_or_else(auth::required)?;
+    if rows
+        .iter()
+        .any(|repo| repo.owner_org_id != Some(organization) || repo.owner_kind != "org")
+    {
+        return Err(Error::missing());
+    }
+    let credential = auth::authenticate(&s, &headers, true)
+        .await?
+        .ok_or_else(auth::required)?;
     let repos = super::repos::documents(&s, &rows, Some(&credential)).await?;
     // No document loaded after the first group snapshot escapes a later loss of group authority.
     let current = selected_group(&s, actor, scope, &p).await?;
-    if current.visibility != "selected" || ids.iter().any(|id| !current.repositories.contains(id)) { return Err(Error::missing()); }
+    if current.visibility != "selected" || ids.iter().any(|id| !current.repositories.contains(id)) {
+        return Err(Error::missing());
+    }
     Ok((
         page.headers(&uri, offset.saturating_add(limit) < total)?,
         Json(json!({"total_count":total,"repositories":repos})),
@@ -467,7 +520,11 @@ async fn set_repositories(
         &s,
         &headers,
         &p,
-        || Ok(Selection::Replace(input.map_err(super::json_error)?.0.selected_repository_ids)),
+        || {
+            Ok(Selection::Replace(
+                input.map_err(super::json_error)?.0.selected_repository_ids,
+            ))
+        },
         true,
     )
     .await
@@ -510,7 +567,11 @@ async fn set_runners(
         &s,
         &headers,
         &p,
-        || Ok(Selection::Replace(input.map_err(super::json_error)?.0.runners)),
+        || {
+            Ok(Selection::Replace(
+                input.map_err(super::json_error)?.0.runners,
+            ))
+        },
         false,
     )
     .await
@@ -559,11 +620,27 @@ async fn list(
         None
     };
     let (offset, limit) = page.window()?;
-    let listing = native::list_runners(&s.pool, actor, scope, &native::RunnerQuery {
-        page: native::Window { offset: offset as i64, limit: limit as i64 }, group, name, ..Default::default()
-    }).await.map_err(error)?;
+    let listing = native::list_runners(
+        &s.pool,
+        actor,
+        scope,
+        &native::RunnerQuery {
+            page: native::Window {
+                offset: offset as i64,
+                limit: limit as i64,
+            },
+            group,
+            name,
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(error)?;
     let total = listing.total as usize;
-    let rows = listing.rows.iter().map(document)
+    let rows = listing
+        .rows
+        .iter()
+        .map(document)
         .collect::<Result<Vec<_>>>()?;
     Ok((
         page.headers(&uri, offset.saturating_add(limit) < total)?,
@@ -610,7 +687,10 @@ struct LabelInput {
 }
 /// GitHub documents these label operations with string-array validation errors.
 fn label_input(input: std::result::Result<Json<LabelInput>, JsonRejection>) -> Result<Vec<String>> {
-    Ok(input.map_err(|error| super::json_error(error).simple())?.0.labels)
+    Ok(input
+        .map_err(|error| super::json_error(error).simple())?
+        .0
+        .labels)
 }
 async fn change_labels(
     s: &AppState,
@@ -640,7 +720,10 @@ async fn set_labels(
     Path(p): Path<Params>,
     input: std::result::Result<Json<LabelInput>, JsonRejection>,
 ) -> Result<Json<Value>> {
-    change_labels(&s, &headers, &p, || Ok(Labels::Replace(label_input(input)?))).await
+    change_labels(&s, &headers, &p, || {
+        Ok(Labels::Replace(label_input(input)?))
+    })
+    .await
 }
 async fn clear_labels(
     State(s): State<Arc<AppState>>,
@@ -654,12 +737,11 @@ async fn remove_label(
     headers: HeaderMap,
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
-    change_labels(
-        &s,
-        &headers,
-        &p,
-        || Ok(Labels::Remove(p.get("name").cloned().ok_or_else(Error::missing)?)),
-    )
+    change_labels(&s, &headers, &p, || {
+        Ok(Labels::Remove(
+            p.get("name").cloned().ok_or_else(Error::missing)?,
+        ))
+    })
     .await
 }
 async fn deprecation(

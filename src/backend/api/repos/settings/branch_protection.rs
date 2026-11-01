@@ -134,7 +134,10 @@ pub(in crate::backend::api::repos) async fn rule_responses(
             .map_err(|_| storage_unavailable())?
         {
             if db::organizations::teams::get_team_by_id(pool, actor, team.team.id)
-                .await.map_err(|_| storage_unavailable())?.is_some() {
+                .await
+                .map_err(|_| storage_unavailable())?
+                .is_some()
+            {
                 teams.insert((rule.repo_id, team.team.id), team.team.slug);
             }
         }
@@ -191,13 +194,17 @@ pub(in crate::backend::api::repos) async fn authorized_rule_responses(
     let actor = actor.into();
     let viewer = actor.user_id;
     let snapshot = db::repositories::protection::read_protection_snapshot(pool, actor, repository)
-        .await.map_err(protection_write_error)?;
+        .await
+        .map_err(protection_write_error)?;
     let repository = snapshot.repository_id;
     // Secret team names stay with the people who may see the team, as in `rule_responses`.
     let mut teams = std::collections::HashMap::new();
     for (id, name) in snapshot.teams {
         if db::organizations::teams::get_team_by_id(pool, viewer, id)
-            .await.map_err(|_| storage_unavailable())?.is_some() {
+            .await
+            .map_err(|_| storage_unavailable())?
+            .is_some()
+        {
             teams.insert((repository, id), name);
         }
     }
@@ -213,8 +220,11 @@ pub async fn list_branch_protection_rules(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
 
-    let session = crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
-    Ok(Json(authorized_rule_responses(&state.pool, (user.id, session), repository.id).await?))
+    let session =
+        crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
+    Ok(Json(
+        authorized_rule_responses(&state.pool, (user.id, session), repository.id).await?,
+    ))
 }
 
 pub async fn upsert_branch_protection_rule(
@@ -227,7 +237,8 @@ pub async fn upsert_branch_protection_rule(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    let session = crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
     let rule = save_rule(&state.pool, (actor.id, session), &repository, req).await?;
     Ok(Json(rule_response(&state.pool, rule, actor.id).await?))
 }
@@ -375,7 +386,10 @@ async fn write_user_ids(
                 StatusCode::BAD_REQUEST,
                 Json(ApiError::new(
                     "validation_error",
-                    &format!("{field} can list at most {} entries", db::repositories::protection::MAX_ALLOWANCE_ACTORS),
+                    &format!(
+                        "{field} can list at most {} entries",
+                        db::repositories::protection::MAX_ALLOWANCE_ACTORS
+                    ),
                 )),
             ));
         }
@@ -427,7 +441,16 @@ pub async fn delete_branch_protection_rule(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    delete_rule(&state.pool, crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())), repository.id, &pattern).await?;
+    delete_rule(
+        &state.pool,
+        crate::backend::db::credentials::Actor::from((
+            actor.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
+        repository.id,
+        &pattern,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 

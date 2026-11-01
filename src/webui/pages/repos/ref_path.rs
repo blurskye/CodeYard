@@ -96,9 +96,7 @@ pub fn branch_url(base: &str, kind: &str, branch: &str, path: &str) -> String {
 }
 
 fn qualified_ref(reference: &str) -> String {
-    if reference.starts_with("refs/")
-        || crate::git_ids::is_full_commit_id(reference)
-    {
+    if reference.starts_with("refs/") || crate::git_ids::is_full_commit_id(reference) {
         reference.to_owned()
     } else {
         format!("refs/heads/{reference}")

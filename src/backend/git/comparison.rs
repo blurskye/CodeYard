@@ -26,9 +26,17 @@ pub(crate) async fn compare_commits(
     limit: usize,
 ) -> Result<CommitComparison> {
     let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
-    let (base_path, head_path, base_ref, head_ref) = (base_path.to_owned(), head_path.to_owned(), base_ref.to_owned(), head_ref.to_owned());
+    let (base_path, head_path, base_ref, head_ref) = (
+        base_path.to_owned(),
+        head_path.to_owned(),
+        base_ref.to_owned(),
+        head_ref.to_owned(),
+    );
     let (prepare_base, prepare_head) = (base_path.clone(), head_path.clone());
-    let (temporary, base, head) = process::blocking_until(deadline, move || comparison_repository(&prepare_base, &prepare_head, &base_ref, &head_ref)).await?;
+    let (temporary, base, head) = process::blocking_until(deadline, move || {
+        comparison_repository(&prepare_base, &prepare_head, &base_ref, &head_ref)
+    })
+    .await?;
     let path = temporary.path();
     let mut command = process::git_command()?;
     command
@@ -101,38 +109,39 @@ pub(crate) async fn compare_commits(
         }
     }
     process::blocking_until(deadline, move || {
-    let repo = git2::Repository::open_bare(temporary.path())?;
-    let odb = repo.odb()?;
-    // Git accepts quoted alternates in its file, but libgit2 does not unquote them.
-    // Install the paths explicitly on this handle before reading metadata.
-    for source in [base_path, head_path] {
-        let source = git2::Repository::open_bare(source)?;
-        let objects = source.path().join("objects").canonicalize()?;
-        odb.add_disk_alternate(
-            objects
-                .to_str()
-                .ok_or_else(|| anyhow::anyhow!("Invalid object storage path"))?,
-        )?;
-    }
-    let metadata =
-        |id| super::repository::commit_info(&repo, &super::find_commit_checked(&repo, id)?);
-    let mut bytes = 0usize;
-    let mut commits = Vec::new();
-    for id in ids {
-        ensure!(Instant::now() < deadline, "Git comparison timed out");
-        bytes = bytes
-            .checked_add(odb.read_header(id)?.0)
-            .filter(|bytes| *bytes <= MAX_COMMIT_PAGE_BYTES)
-            .ok_or(ObjectTooLarge)?;
-        commits.push(metadata(id)?);
-    }
-    Ok(CommitComparison {
-        base_commit: metadata(base)?,
-        merge_base_commit: metadata(merge_base)?,
-        head_sha: head.to_string(),
-        ahead_by,
-        behind_by,
-        commits,
+        let repo = git2::Repository::open_bare(temporary.path())?;
+        let odb = repo.odb()?;
+        // Git accepts quoted alternates in its file, but libgit2 does not unquote them.
+        // Install the paths explicitly on this handle before reading metadata.
+        for source in [base_path, head_path] {
+            let source = git2::Repository::open_bare(source)?;
+            let objects = source.path().join("objects").canonicalize()?;
+            odb.add_disk_alternate(
+                objects
+                    .to_str()
+                    .ok_or_else(|| anyhow::anyhow!("Invalid object storage path"))?,
+            )?;
+        }
+        let metadata =
+            |id| super::repository::commit_info(&repo, &super::find_commit_checked(&repo, id)?);
+        let mut bytes = 0usize;
+        let mut commits = Vec::new();
+        for id in ids {
+            ensure!(Instant::now() < deadline, "Git comparison timed out");
+            bytes = bytes
+                .checked_add(odb.read_header(id)?.0)
+                .filter(|bytes| *bytes <= MAX_COMMIT_PAGE_BYTES)
+                .ok_or(ObjectTooLarge)?;
+            commits.push(metadata(id)?);
+        }
+        Ok(CommitComparison {
+            base_commit: metadata(base)?,
+            merge_base_commit: metadata(merge_base)?,
+            head_sha: head.to_string(),
+            ahead_by,
+            behind_by,
+            commits,
+        })
     })
-    }).await
+    .await
 }

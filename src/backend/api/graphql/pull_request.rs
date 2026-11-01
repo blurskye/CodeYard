@@ -15,10 +15,17 @@ use super::{
 use crate::backend::repositories::{access, pull_requests::merge, store::repo_store};
 use serde_json::json;
 
-async fn mergeable(repo: &db::models::Repository, pull: &db::models::PullRequest, request: &RequestContext) -> Result<Option<(bool, String)>> {
+async fn mergeable(
+    repo: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    request: &RequestContext,
+) -> Result<Option<(bool, String)>> {
     use crate::backend::repositories::store::{ErrorKind, MergeMethod, MergeRequest};
     let store = repo_store(repo, request.state.cluster.as_ref());
-    let base = match store.commit_from_primary(&format!("refs/heads/{}", pull.base_branch)).await {
+    let base = match store
+        .commit_from_primary(&format!("refs/heads/{}", pull.base_branch))
+        .await
+    {
         Ok(base) => base,
         Err(error) if error.kind == ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(unavailable(error)),
@@ -26,12 +33,25 @@ async fn mergeable(repo: &db::models::Repository, pull: &db::models::PullRequest
     git::charge_commit(&base, request)?;
     let key = (repo.id, base.sha.clone(), pull.head_sha.clone());
     let mut cache = request.mergeability.lock().await;
-    if let Some(value) = cache.get(&key) { return Ok(Some((*value, base.sha))); }
-    let value = match store.prepare_merge(&MergeRequest {
-        head_branch: pull.head_branch.clone(), base_branch: pull.base_branch.clone(), head: pull.head_sha.clone(), base: base.sha.clone(),
-        message: "Check pull request mergeability".into(), squash_body: None, name: "Codeyard".into(), email: "noreply@localhost".into(),
-        method: MergeMethod::Merge, author_name: None, author_email: None,
-    }).await {
+    if let Some(value) = cache.get(&key) {
+        return Ok(Some((*value, base.sha)));
+    }
+    let value = match store
+        .prepare_merge(&MergeRequest {
+            head_branch: pull.head_branch.clone(),
+            base_branch: pull.base_branch.clone(),
+            head: pull.head_sha.clone(),
+            base: base.sha.clone(),
+            message: "Check pull request mergeability".into(),
+            squash_body: None,
+            name: "Codeyard".into(),
+            email: "noreply@localhost".into(),
+            method: MergeMethod::Merge,
+            author_name: None,
+            author_email: None,
+        })
+        .await
+    {
         Ok(_) => true,
         Err(error) if error.is_response_too_large() => return Err(unavailable(error)),
         Err(error) if matches!(error.kind, ErrorKind::Conflict | ErrorKind::Invalid) => false,
@@ -57,7 +77,10 @@ pub(super) async fn resolve(
     .map_err(unavailable)?
     .ok_or_else(missing)?;
     let store = repo_store(repo, request.state.cluster.as_ref());
-    if matches!(field, "mergeable" | "mergeStateStatus") && pull.state == "open" && (field == "mergeable" || !pull.is_draft) {
+    if matches!(field, "mergeable" | "mergeStateStatus")
+        && pull.state == "open"
+        && (field == "mergeable" || !pull.is_draft)
+    {
         if let Some((value, base)) = mergeable(repo, &pull, request).await? {
             pull.mergeable = Some(value);
             pull.base_sha = base;
@@ -87,8 +110,16 @@ pub(super) async fn resolve(
             let mut diffs = request.diffs.lock().await;
             let key = (repo.id, pull.diff_base().to_owned(), pull.head_sha.clone());
             if !diffs.contains_key(&key) {
-                let diff = store.diff_stats(&key.1, &key.2).await.map_err(unavailable)?;
-                request.charge(diff.files.iter().map(|file| file.filename.len() + 128).sum())?;
+                let diff = store
+                    .diff_stats(&key.1, &key.2)
+                    .await
+                    .map_err(unavailable)?;
+                request.charge(
+                    diff.files
+                        .iter()
+                        .map(|file| file.filename.len() + 128)
+                        .sum(),
+                )?;
                 diffs.insert(key.clone(), std::sync::Arc::new(diff));
             }
             let diff = diffs[&key].clone();
@@ -108,21 +139,32 @@ pub(super) async fn resolve(
             // The store pages within the oldest 250 commits. A page past them, such as
             // `last: 1` for the head commit, reads from the newest end instead.
             let window: Vec<_> = if offset.saturating_add(limit) <= 250 {
-                let rows = store.pull_request_commits(pull.diff_base(), &pull.head_sha, offset, limit).await.map_err(unavailable)?.1;
-                for row in &rows { git::charge_commit(row, request)?; }
+                let rows = store
+                    .pull_request_commits(pull.diff_base(), &pull.head_sha, offset, limit)
+                    .await
+                    .map_err(unavailable)?
+                    .1;
+                for row in &rows {
+                    git::charge_commit(row, request)?;
+                }
                 rows
             } else {
                 let newest_offset = (count as usize).saturating_sub(offset.saturating_add(limit));
-                let mut rows = store.commits_between_page(pull.diff_base(), &pull.head_sha, newest_offset, limit)
-                    .await.map_err(unavailable)?;
-                for row in &rows { git::charge_commit(row, request)?; }
+                let mut rows = store
+                    .commits_between_page(pull.diff_base(), &pull.head_sha, newest_offset, limit)
+                    .await
+                    .map_err(unavailable)?;
+                for row in &rows {
+                    git::charge_commit(row, request)?;
+                }
                 rows.reverse();
                 rows
             };
             let nodes = window
                 .iter()
                 .map(|c| {
-                    git::commit(repo.id, c, "pull-requests", request).map(|commit| json!({"commit":commit}))
+                    git::commit(repo.id, c, "pull-requests", request)
+                        .map(|commit| json!({"commit":commit}))
                 })
                 .collect::<Result<Vec<_>>>()?;
             Ok(page.finish(nodes))

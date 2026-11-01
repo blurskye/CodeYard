@@ -255,7 +255,14 @@ async fn labels(pg: bool) {
         (json!({"description":null}), Value::Null),
     ] {
         let changed = document(
-            request(&router, "PATCH", &format!("{labels}/bug%20fix"), Some(write), body).await,
+            request(
+                &router,
+                "PATCH",
+                &format!("{labels}/bug%20fix"),
+                Some(write),
+                body,
+            )
+            .await,
             "issues/update-label",
             200,
         )

@@ -1,10 +1,10 @@
+use crate::backend::db::assignees::AssignmentRefusal;
 use crate::backend::db::{
+    credentials::Actor,
     issues::management::{LinkedBranch, Refusal},
     models::Issue,
-    credentials::Actor,
     users::accounts::AccountRestricted,
 };
-use crate::backend::db::assignees::AssignmentRefusal;
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -45,8 +45,15 @@ pub async fn pinned(pool: &PgPool, repo: i64) -> Result<Vec<Issue>> {
 }
 
 async fn require_actor(tx: &mut Transaction<'_, Postgres>, actor: &Actor) -> Result<()> {
-    super::super::credentials::require_account(tx, actor).await
-        .map_err(|error| if error.is::<AccountRestricted>() { Refusal::Denied.into() } else { error })
+    super::super::credentials::require_account(tx, actor)
+        .await
+        .map_err(|error| {
+            if error.is::<AccountRestricted>() {
+                Refusal::Denied.into()
+            } else {
+                error
+            }
+        })
 }
 
 async fn issue(tx: &mut Transaction<'_, Postgres>, repo: i64, id: i64) -> Result<Issue> {
@@ -58,7 +65,13 @@ async fn issue(tx: &mut Transaction<'_, Postgres>, repo: i64, id: i64) -> Result
         .ok_or_else(|| Refusal::Missing.into())
 }
 
-pub async fn pin(pool: &PgPool, actor: impl Into<Actor>, repo: i64, id: i64, pinned: bool) -> Result<()> {
+pub async fn pin(
+    pool: &PgPool,
+    actor: impl Into<Actor>,
+    repo: i64,
+    id: i64,
+    pinned: bool,
+) -> Result<()> {
     let authority = actor.into();
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
@@ -203,10 +216,11 @@ pub async fn transfer(
         .execute(&mut *tx)
         .await?;
     // Assignees who cannot be assigned in the destination would be left on a task they cannot see.
-    let assignees: Vec<i64> = sqlx::query_scalar("SELECT user_id FROM issue_assignees WHERE issue_id=$1")
-        .bind(id)
-        .fetch_all(&mut *tx)
-        .await?;
+    let assignees: Vec<i64> =
+        sqlx::query_scalar("SELECT user_id FROM issue_assignees WHERE issue_id=$1")
+            .bind(id)
+            .fetch_all(&mut *tx)
+            .await?;
     for user in assignees {
         match super::super::assignees::candidate(&mut tx, destination, user).await {
             Ok(()) => {}
@@ -285,8 +299,14 @@ pub async fn close_duplicate_with_previous(
     issue(&mut tx, target_repo, duplicate).await?;
     sqlx::query("INSERT INTO issue_duplicates(issue_id,duplicate_id) VALUES($1,$2) ON CONFLICT(issue_id) DO UPDATE SET duplicate_id=excluded.duplicate_id").bind(id).bind(duplicate).execute(&mut *tx).await?;
     let result: Issue = sqlx::query_as("UPDATE issues SET state='closed',state_reason='duplicate',closed_by_id=CASE WHEN state='open' THEN $1 ELSE closed_by_id END,closed_at=COALESCE(closed_at,clock_timestamp()),updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$2 RETURNING *").bind(actor).bind(id).fetch_one(&mut *tx).await?;
-    for (kind, detail, old) in crate::backend::db::timeline::edit_events(&previous.title, &previous.state, &result.title, &result.state) {
-        super::super::timeline::append(&mut tx, repo, "issue", id, actor, kind, detail, old).await?;
+    for (kind, detail, old) in crate::backend::db::timeline::edit_events(
+        &previous.title,
+        &previous.state,
+        &result.title,
+        &result.state,
+    ) {
+        super::super::timeline::append(&mut tx, repo, "issue", id, actor, kind, detail, old)
+            .await?;
     }
     tx.commit().await?;
     Ok((previous, result))

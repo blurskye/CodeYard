@@ -195,8 +195,12 @@ pub async fn approve_pull_request_workflows(
     {
         return Ok(false);
     }
-    let fork: bool = sqlx::query_scalar("SELECT head_repo_id IS NULL OR head_repo_id<>repo_id FROM pull_requests WHERE id=$1")
-        .bind(pr_id).fetch_one(&mut *tx).await?;
+    let fork: bool = sqlx::query_scalar(
+        "SELECT head_repo_id IS NULL OR head_repo_id<>repo_id FROM pull_requests WHERE id=$1",
+    )
+    .bind(pr_id)
+    .fetch_one(&mut *tx)
+    .await?;
     if fork && !super::super::action_settings::fork_runs_allowed(&mut tx, repo).await? {
         return Ok(false);
     }
@@ -721,14 +725,32 @@ pub async fn update_pull_request(
         .as_ref()
         .is_some_and(|head| head.is_personal_owner(edit.actor_id));
     let automatic_reopen = if let Some(base) = base.as_ref().filter(|base| base.automatic_reopen) {
-        if !reopening { return Ok(None); }
-        let current: PullRequest = sqlx::query_as("SELECT * FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR UPDATE")
-            .bind(pr_id).bind(repo).fetch_one(&mut *tx).await?;
-        let members: Vec<PullRequest> = sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=$1 AND stack_id=$2 ORDER BY id")
-            .bind(repo).bind(current.stack_id).fetch_all(&mut *tx).await?;
-        if crate::backend::db::pull_requests::records::reopened_stack_base(&current, &members).as_deref() != Some(base.branch) { return Ok(None); }
+        if !reopening {
+            return Ok(None);
+        }
+        let current: PullRequest =
+            sqlx::query_as("SELECT * FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR UPDATE")
+                .bind(pr_id)
+                .bind(repo)
+                .fetch_one(&mut *tx)
+                .await?;
+        let members: Vec<PullRequest> = sqlx::query_as(
+            "SELECT * FROM pull_requests WHERE repo_id=$1 AND stack_id=$2 ORDER BY id",
+        )
+        .bind(repo)
+        .bind(current.stack_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if crate::backend::db::pull_requests::records::reopened_stack_base(&current, &members)
+            .as_deref()
+            != Some(base.branch)
+        {
+            return Ok(None);
+        }
         true
-    } else { false };
+    } else {
+        false
+    };
     let explicit_base = base.is_some() && !automatic_reopen;
     let ordinary = edit.title.is_some() || edit.body.is_some() || edit.state.is_some();
     // Without write access the author keeps ordinary edits, close and reopen, and the
@@ -802,13 +824,28 @@ pub async fn update_pull_request(
         .bind(maintainer_can_modify).bind(edit.actor_id)
         .fetch_optional(&mut *tx).await?;
     if let Some(pr) = pr.as_ref() {
-        for (kind, detail, previous) in crate::backend::db::timeline::edit_events(&old_title, &state, &pr.title, &pr.state) {
-            super::super::timeline::append(&mut tx, repo, "pull_request", pr_id, edit.actor_id, kind, detail, previous).await?;
+        for (kind, detail, previous) in
+            crate::backend::db::timeline::edit_events(&old_title, &state, &pr.title, &pr.state)
+        {
+            super::super::timeline::append(
+                &mut tx,
+                repo,
+                "pull_request",
+                pr_id,
+                edit.actor_id,
+                kind,
+                detail,
+                previous,
+            )
+            .await?;
         }
     }
     if let (Some(pr), Some(base)) = (&pr, base.as_ref().filter(|base| base.branch != old_branch)) {
         let patterns: Vec<String> = sqlx::query_scalar("SELECT pattern FROM branch_protection_rules WHERE repo_id=$1 AND dismiss_stale_reviews FOR SHARE").bind(repo).fetch_all(&mut *tx).await?;
-        if crate::backend::db::pull_requests::records::retarget_dismisses_reviews(&patterns, base.branch)? {
+        if crate::backend::db::pull_requests::records::retarget_dismisses_reviews(
+            &patterns,
+            base.branch,
+        )? {
             sqlx::query("UPDATE pr_reviews SET state='dismissed',dismissed_by_id=$2,dismissed_reason='Base branch changed',dismissed_at=clock_timestamp() WHERE pull_request_id=$1 AND state='approved'").bind(pr.id).bind(edit.actor_id).execute(&mut *tx).await?;
         }
     }
@@ -858,7 +895,17 @@ pub async fn mark_pull_requests_merged(
         if changed != 1 {
             return Ok(false);
         }
-        super::super::timeline::append(&mut tx, pull.repo_id, "pull_request", pull.id, actor_id, "merged", &pull.base_branch, "").await?;
+        super::super::timeline::append(
+            &mut tx,
+            pull.repo_id,
+            "pull_request",
+            pull.id,
+            actor_id,
+            "merged",
+            &pull.base_branch,
+            "",
+        )
+        .await?;
         sqlx::query("UPDATE repository_ref_activities SET activity_type='pr_merge' WHERE id=(SELECT id FROM repository_ref_activities WHERE repo_id=$1 AND reference='refs/heads/'||$2 AND after_sha=$3 ORDER BY id DESC LIMIT 1) AND activity_type IN ('push','force_push')")
             .bind(pull.repo_id).bind(&pull.base_branch).bind(merge_sha).execute(&mut *tx).await?;
     }

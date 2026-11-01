@@ -53,7 +53,8 @@ fn draft(data: &Data) -> Draft {
         vector: data.cvss_vector_string.clone().unwrap_or_default(),
         cve: data.cve_id.clone().unwrap_or_default(),
         ecosystem: "npm".into(),
-        vulnerabilities_json: serde_json::to_string_pretty(&data.vulnerabilities).unwrap_or_else(|_| "[]".into()),
+        vulnerabilities_json: serde_json::to_string_pretty(&data.vulnerabilities)
+            .unwrap_or_else(|_| "[]".into()),
         ..Default::default()
     }
 }
@@ -80,7 +81,8 @@ async fn render(
     let actor = ctx.user.as_ref().map(|u| u.id);
     let data = async {
         if let Some(actor) = actor {
-            page.can_administer = advisories::can_administer(&ctx.state.pool, actor, loaded.repository.id).await?;
+            page.can_administer =
+                advisories::can_administer(&ctx.state.pool, actor, loaded.repository.id).await?;
         }
         if let Some(ghsa) = ghsa {
             let advisory = advisories::get(&ctx.state.pool, actor, loaded.repository.id, ghsa)
@@ -235,10 +237,11 @@ async fn submit(
         Err(response) => return response,
     };
     let actor = ctx.user.as_ref().unwrap().id;
-    let can_administer = match advisories::can_administer(&ctx.state.pool, actor, loaded.repository.id).await {
-        Ok(allowed) => allowed,
-        Err(_) => return chrome::unavailable(&ctx),
-    };
+    let can_administer =
+        match advisories::can_administer(&ctx.state.pool, actor, loaded.repository.id).await {
+            Ok(allowed) => allowed,
+            Err(_) => return chrome::unavailable(&ctx),
+        };
     if !can_administer
         || forms::field(&form, "repository_id").parse::<i64>().ok() != Some(loaded.repository.id)
     {
@@ -288,12 +291,14 @@ async fn submit(
         Err(error) => {
             let status = if error.is::<db::users::accounts::AccountRestricted>() {
                 StatusCode::FORBIDDEN
-            } else { match error.downcast_ref::<advisories::Refusal>() {
-                Some(advisories::Refusal::Denied) => StatusCode::FORBIDDEN,
-                Some(advisories::Refusal::Missing) => StatusCode::NOT_FOUND,
-                Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                None => StatusCode::SERVICE_UNAVAILABLE,
-            } };
+            } else {
+                match error.downcast_ref::<advisories::Refusal>() {
+                    Some(advisories::Refusal::Denied) => StatusCode::FORBIDDEN,
+                    Some(advisories::Refusal::Missing) => StatusCode::NOT_FOUND,
+                    Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
+                    None => StatusCode::SERVICE_UNAVAILABLE,
+                }
+            };
             render(
                 &ctx,
                 loaded,

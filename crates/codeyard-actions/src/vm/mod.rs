@@ -267,7 +267,11 @@ impl JobVm {
             ])
             .arg(format!(
                 "UserKnownHostsFile=\"{}\"",
-                self.files.path("known_hosts").to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
+                self.files
+                    .path("known_hosts")
+                    .to_string_lossy()
+                    .replace('\\', "\\\\")
+                    .replace('"', "\\\"")
             ))
             .args([
                 "-o",
@@ -359,7 +363,10 @@ impl JobVm {
             .context("Opening workspace to copy into VM")?;
         ensure!(local.is_dir(), "Workspace is not a directory");
         let guest = guest_path(guest_directory)?;
-        let snapshot = tokio::task::spawn_blocking(move || crate::fs::snapshot_tree(&local, crate::fs::SnapshotLinks::Reject)).await??;
+        let snapshot = tokio::task::spawn_blocking(move || {
+            crate::fs::snapshot_tree(&local, crate::fs::SnapshotLinks::Reject)
+        })
+        .await??;
         let mut command = self.transport("scp", "-P");
         checked(
             command
@@ -490,7 +497,9 @@ fn ps_literal(value: &str) -> String {
     let mut literal = String::from("'");
     for ch in value.chars() {
         literal.push(ch);
-        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}') { literal.push(ch); }
+        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}') {
+            literal.push(ch);
+        }
     }
     literal.push('\'');
     literal

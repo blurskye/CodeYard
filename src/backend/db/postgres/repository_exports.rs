@@ -53,10 +53,26 @@ async fn scoped(
 }
 
 /// Export enumeration is pinned by a descending ID cursor, never a shifting offset.
-pub async fn discussion_ids(pool: &PgPool, repo: i64, pulls: bool, before: i64, limit: i64) -> Result<Vec<i64>> {
-    anyhow::ensure!(before > 0 && (1..=100).contains(&limit), ExportRefusal::Invalid);
+pub async fn discussion_ids(
+    pool: &PgPool,
+    repo: i64,
+    pulls: bool,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<i64>> {
+    anyhow::ensure!(
+        before > 0 && (1..=100).contains(&limit),
+        ExportRefusal::Invalid
+    );
     let table = if pulls { "pull_requests" } else { "issues" };
-    Ok(sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE repo_id=$1 AND id<$2 ORDER BY id DESC LIMIT $3")).bind(repo).bind(before).bind(limit).fetch_all(pool).await?)
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT id FROM {table} WHERE repo_id=$1 AND id<$2 ORDER BY id DESC LIMIT $3"
+    ))
+    .bind(repo)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn create(
@@ -120,7 +136,15 @@ pub async fn by_guid(pool: &PgPool, actor: i64, guid: &str) -> Result<Option<Rep
         None
     };
     if let Some(row) = &row {
-        if !selected(&mut tx, actor, row.owner_org_id, &row.repository_ids()?, row.state == "exported").await? {
+        if !selected(
+            &mut tx,
+            actor,
+            row.owner_org_id,
+            &row.repository_ids()?,
+            row.state == "exported",
+        )
+        .await?
+        {
             return Ok(None);
         }
     }
@@ -229,8 +253,7 @@ pub async fn unlock_repository(
     };
     let ids = row.repository_ids()?;
     let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=ANY($4) AND LOWER(name)=LOWER($1) AND (($3::bigint IS NULL AND owner_user_id=$2) OR owner_org_id=$3) ORDER BY (name=$1) DESC,id LIMIT 1").bind(name).bind(actor).bind(org).bind(&ids).fetch_optional(&mut *tx).await?;
-    let Some(repo) = repo
-    else {
+    let Some(repo) = repo else {
         return Ok(false);
     };
     sqlx::query("DELETE FROM repository_migration_locks WHERE repo_id=$1 AND migration_id=$2")

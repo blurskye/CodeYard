@@ -49,7 +49,10 @@ pub async fn copy_database_cmd(from: &str, to: &str) -> Result<()> {
 pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>) -> Result<()> {
     validate_cli_username(username)?;
     let email = email.map(str::trim).filter(|value| !value.is_empty());
-    if let Some(email) = email { crate::backend::identity::credentials::validate_email(email).map_err(|_| anyhow::anyhow!("Invalid email address"))?; }
+    if let Some(email) = email {
+        crate::backend::identity::credentials::validate_email(email)
+            .map_err(|_| anyhow::anyhow!("Invalid email address"))?;
+    }
     let user = match db::users::transitions::create_cli_user(pool, username, email).await? {
         db::users::transitions::AccountAdmission::User(user) => user,
         db::users::transitions::AccountAdmission::SetupRequired => anyhow::bail!(
@@ -157,8 +160,15 @@ pub async fn add_key_from_file_cmd(
     use tokio::io::AsyncReadExt;
     let limit = db::users::ssh_keys::MAX_PUBLIC_KEY_BYTES + 1;
     let mut public_key = String::new();
-    tokio::fs::File::open(key_path).await?.take(limit as u64 + 1).read_to_string(&mut public_key).await?;
-    anyhow::ensure!(public_key.len() <= limit, "SSH public key file is too large");
+    tokio::fs::File::open(key_path)
+        .await?
+        .take(limit as u64 + 1)
+        .read_to_string(&mut public_key)
+        .await?;
+    anyhow::ensure!(
+        public_key.len() <= limit,
+        "SSH public key file is too large"
+    );
     add_key_cmd(pool, username, key_name, &public_key).await
 }
 
@@ -343,6 +353,8 @@ pub async fn repo_info_cmd(
     if let Some(context) = &context {
         context.iroh.close().await;
     }
-    if let Some(error) = storage_failure { anyhow::bail!("{}", terminal_text(&error)); }
+    if let Some(error) = storage_failure {
+        anyhow::bail!("{}", terminal_text(&error));
+    }
     Ok(())
 }

@@ -22,10 +22,16 @@ pub(super) fn files(root: &Yaml, directory: &Path) -> Result<BTreeMap<String, Ya
             let Some(reference) = job.get("uses").and_then(Yaml::as_str) else {
                 continue;
             };
-            ensure!(depth + 1 < crate::workflow::MAX_REUSABLE_LEVELS, "Reusable workflows exceed four levels");
+            ensure!(
+                depth + 1 < crate::workflow::MAX_REUSABLE_LEVELS,
+                "Reusable workflows exceed four levels"
+            );
             ensure!(active.insert(reference.into()), "Reusable workflow cycle");
             if !result.contains_key(reference) {
-                ensure!(result.len() < crate::workflow::MAX_CALLED_WORKFLOWS, "More than twenty called workflows");
+                ensure!(
+                    result.len() < crate::workflow::MAX_CALLED_WORKFLOWS,
+                    "More than twenty called workflows"
+                );
                 let path = reference
                     .strip_prefix("./.github/workflows/")
                     .context("Remote reusable workflows must be resolved by the Codeyard server")?;
@@ -115,7 +121,10 @@ pub(super) fn contexts(
     let mut defaults = Vec::new();
     for (key, spec) in declared.into_iter().flatten() {
         let name = key.as_str().context("Invalid input name")?;
-        let kind = spec.get("type").and_then(Yaml::as_str).context("Missing input type")?;
+        let kind = spec
+            .get("type")
+            .and_then(Yaml::as_str)
+            .context("Missing input type")?;
         let value = if let Some(value) = supplied.and_then(|values| values.get(key)) {
             // Arguments belong to the caller; defaults belong to the callee.
             evaluate(value, caller)?
@@ -123,8 +132,10 @@ pub(super) fn contexts(
             if let Some(value) = spec.get("default") {
                 defaults.push((name.to_owned(), value));
             } else {
-                ensure!(spec.get("required").and_then(Yaml::as_bool) != Some(true),
-                    "Missing required workflow_call input: {name}");
+                ensure!(
+                    spec.get("required").and_then(Yaml::as_bool) != Some(true),
+                    "Missing required workflow_call input: {name}"
+                );
             }
             match kind {
                 "boolean" => Value::Bool(false),
@@ -139,17 +150,25 @@ pub(super) fn contexts(
     let mut settled = defaults.is_empty();
     for _ in 0..=defaults.len() {
         let mut context = caller.clone();
-        context.values.insert("inputs".into(), Value::Object(inputs.clone()));
+        context
+            .values
+            .insert("inputs".into(), Value::Object(inputs.clone()));
         let mut next = inputs.clone();
         let mut error = None;
         for (name, value) in &defaults {
             match evaluate(value, &context) {
-                Ok(value) => { next.insert(name.clone(), value); }
-                Err(cause) => { error = Some(cause); }
+                Ok(value) => {
+                    next.insert(name.clone(), value);
+                }
+                Err(cause) => {
+                    error = Some(cause);
+                }
             }
         }
         if next == inputs {
-            if let Some(error) = error { return Err(error); }
+            if let Some(error) = error {
+                return Err(error);
+            }
             settled = true;
             break;
         }
@@ -158,10 +177,19 @@ pub(super) fn contexts(
     ensure!(settled, "Workflow_call input defaults do not converge");
     for (key, spec) in declared.into_iter().flatten() {
         let name = key.as_str().context("Invalid input name")?;
-        let kind = spec.get("type").and_then(Yaml::as_str).context("Missing input type")?;
-        ensure!(matches!((kind, &inputs[name]),
-            ("string", Value::String(_)) | ("boolean", Value::Bool(_)) | ("number", Value::Number(_))),
-            "Wrong workflow_call input type: {name}");
+        let kind = spec
+            .get("type")
+            .and_then(Yaml::as_str)
+            .context("Missing input type")?;
+        ensure!(
+            matches!(
+                (kind, &inputs[name]),
+                ("string", Value::String(_))
+                    | ("boolean", Value::Bool(_))
+                    | ("number", Value::Number(_))
+            ),
+            "Wrong workflow_call input type: {name}"
+        );
     }
     let inherited = call.get("secrets").and_then(Yaml::as_str) == Some("inherit");
     let mut secrets = if inherited {
@@ -178,7 +206,10 @@ pub(super) fn contexts(
     if let Some(supplied) = call.get("secrets").and_then(Yaml::as_mapping) {
         for (key, value) in supplied {
             ensure!(
-                declared.is_some_and(|values| values.keys().any(|name| name.as_str().zip(key.as_str()).is_some_and(|(a, b)| a.eq_ignore_ascii_case(b)))),
+                declared.is_some_and(|values| values.keys().any(|name| name
+                    .as_str()
+                    .zip(key.as_str())
+                    .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b)))),
                 "Unknown workflow_call secret"
             );
             let value = evaluate(value, caller)?;
@@ -193,7 +224,10 @@ pub(super) fn contexts(
         let name = key.as_str().context("Invalid secret name")?;
         ensure!(
             spec.get("required").and_then(Yaml::as_bool) != Some(true)
-                || secrets.iter().any(|(key, value)| key.eq_ignore_ascii_case(name) && !value.to_text().is_empty()),
+                || secrets
+                    .iter()
+                    .any(|(key, value)| key.eq_ignore_ascii_case(name)
+                        && !value.to_text().is_empty()),
             "Missing required workflow_call secret: {name}"
         );
     }
@@ -231,7 +265,10 @@ pub(super) fn outputs(
         .and_then(|call| call.get("outputs"))
         .and_then(Yaml::as_mapping);
     for (key, spec) in outputs.into_iter().flatten() {
-        let value = crate::workflow::scalar_text(spec.get("value").context("Missing workflow output value")?, "workflow output")?;
+        let value = crate::workflow::scalar_text(
+            spec.get("value").context("Missing workflow output value")?,
+            "workflow output",
+        )?;
         let value = text(&value, contexts, Status::default())?;
         if !masker.contains(&value) {
             result.insert(key.as_str().context("Invalid output name")?.into(), value);

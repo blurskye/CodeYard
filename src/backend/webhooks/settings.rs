@@ -178,11 +178,19 @@ pub async fn save(
     save_with_revision(pool, encryptor, owner, actor, credential, id, form, None).await
 }
 
-#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn save_with_revision(
-    pool: &DbPool, encryptor: Option<&SecretEncryptor>, owner: HookOwner, actor: &User,
+    pool: &DbPool,
+    encryptor: Option<&SecretEncryptor>,
+    owner: HookOwner,
+    actor: &User,
     credential: &db::users::accounts::AccountCredential<'_>,
-    id: Option<i64>, form: &HookForm, expected_updated: Option<chrono::DateTime<chrono::Utc>>,
+    id: Option<i64>,
+    form: &HookForm,
+    expected_updated: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<i64, HookError> {
     authorize(pool, actor, owner).await?;
     let mut fields = validated(form)?;
@@ -202,10 +210,11 @@ pub async fn save_with_revision(
     let secret = seal(encryptor, &form.secret)?;
     match id {
         None => {
-            let id = hooks::insert_webhook(pool, owner, actor.id, credential, &fields, secret.as_ref())
-                .await
-                .map_err(|error| write_error(owner, error))?
-                .ok_or(HookError::Denied)?;
+            let id =
+                hooks::insert_webhook(pool, owner, actor.id, credential, &fields, secret.as_ref())
+                    .await
+                    .map_err(|error| write_error(owner, error))?
+                    .ok_or(HookError::Denied)?;
             // A hook that was saved stays saved when its ping cannot be queued.
             if ping(pool, owner, actor, credential, id).await.is_err() {
                 tracing::warn!(webhook_id = id, "could not queue the webhook ping");
@@ -222,12 +231,24 @@ pub async fn save_with_revision(
             patch.expected_updated = expected_updated;
             patch.clear_secret = form.clear_secret;
             patch.clear_password = form.clear_password;
-            let updated = hooks::patch_webhook(pool, owner, actor.id, credential, id, &patch, secret.as_ref())
-                .await
-                .map_err(|error| write_error(owner, error))?
-                .ok_or(HookError::Denied)?;
+            let updated = hooks::patch_webhook(
+                pool,
+                owner,
+                actor.id,
+                credential,
+                id,
+                &patch,
+                secret.as_ref(),
+            )
+            .await
+            .map_err(|error| write_error(owner, error))?
+            .ok_or(HookError::Denied)?;
             if !updated {
-                return Err(if expected_updated.is_some() { HookError::Invalid("The webhook changed. Reload before saving; your submitted settings are preserved.") } else { HookError::NotFound });
+                return Err(if expected_updated.is_some() {
+                    HookError::Invalid("The webhook changed. Reload before saving; your submitted settings are preserved.")
+                } else {
+                    HookError::NotFound
+                });
             }
             Ok(id)
         }
@@ -280,9 +301,17 @@ pub async fn update(
         .map(|secret| seal(encryptor, secret))
         .transpose()?
         .flatten();
-    match hooks::patch_webhook(pool, owner, actor.id, credential, id, &fields, secret.as_ref())
-        .await
-        .map_err(|error| write_error(owner, error))?
+    match hooks::patch_webhook(
+        pool,
+        owner,
+        actor.id,
+        credential,
+        id,
+        &fields,
+        secret.as_ref(),
+    )
+    .await
+    .map_err(|error| write_error(owner, error))?
     {
         None => Err(HookError::Denied),
         Some(false) => Err(HookError::NotFound),
@@ -310,9 +339,26 @@ pub async fn delete(
 }
 
 /// Queues a ping to one hook, as the Test button does.
-pub async fn ping(pool: &DbPool, owner: HookOwner, actor: &User, credential: &db::users::accounts::AccountCredential<'_>, id: i64) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, Default::default())
-        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
+pub async fn ping(
+    pool: &DbPool,
+    owner: HookOwner,
+    actor: &User,
+    credential: &db::users::accounts::AccountCredential<'_>,
+    id: i64,
+) -> Result<(), HookError> {
+    let snapshot = hooks::read_settings(
+        pool,
+        owner,
+        actor.id,
+        credential,
+        Some(id),
+        None,
+        0,
+        Default::default(),
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let payload = ping_payload(pool, owner, actor, &hook).await?;
     let json = payload.to_string();
@@ -334,8 +380,19 @@ pub async fn redeliver(
     hook_id: i64,
     delivery_id: i64,
 ) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(hook_id), Some(delivery_id), 0, Default::default())
-        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
+    let snapshot = hooks::read_settings(
+        pool,
+        owner,
+        actor.id,
+        credential,
+        Some(hook_id),
+        Some(delivery_id),
+        0,
+        Default::default(),
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
     let recorded = snapshot.delivery.ok_or(HookError::NotFound)?;
     let mut outgoing = super::delivery::redelivery(&recorded);
@@ -355,22 +412,57 @@ pub async fn test_push(
     credential: &db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, Default::default())
-        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
+    let snapshot = hooks::read_settings(
+        pool,
+        owner,
+        actor.id,
+        credential,
+        Some(id),
+        None,
+        0,
+        Default::default(),
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or(HookError::Denied)?;
     let hook = snapshot.hook.ok_or(HookError::NotFound)?;
-    if !events::subscribes(&hook.events, events::PUSH) { return Ok(()); }
+    if !events::subscribes(&hook.events, events::PUSH) {
+        return Ok(());
+    }
     let HookOwner::Repository(repo) = owner else {
         return Err(HookError::Invalid("A repository webhook is required"));
     };
-    let body = hooks::latest_push_for_hook(pool, actor.id, credential, repo, id, super::MAX_PAYLOAD_BYTES as i64)
-        .await.map_err(|error| if error.is::<hooks::HookAuthorityDenied>() { HookError::Denied } else { unavailable(error) })?;
-    let Some(body) = body else { return Ok(()); };
+    let body = hooks::latest_push_for_hook(
+        pool,
+        actor.id,
+        credential,
+        repo,
+        id,
+        super::MAX_PAYLOAD_BYTES as i64,
+    )
+    .await
+    .map_err(|error| {
+        if error.is::<hooks::HookAuthorityDenied>() {
+            HookError::Denied
+        } else {
+            unavailable(error)
+        }
+    })?;
+    let Some(body) = body else {
+        return Ok(());
+    };
     let payload: Value = serde_json::from_str(&body).map_err(unavailable)?;
-    if payload["repository"]["id"].as_i64() != Some(repo) { return Err(HookError::Unavailable); }
+    if payload["repository"]["id"].as_i64() != Some(repo) {
+        return Err(HookError::Unavailable);
+    }
     let mut send = outgoing(events::PUSH, None, &hook, &body);
     send.automatic = false;
     send.manual_actor = Some(actor.id);
-    if enqueue(pool, hook, send) { Ok(()) } else { Err(HookError::Unavailable) }
+    if enqueue(pool, hook, send) {
+        Ok(())
+    } else {
+        Err(HookError::Unavailable)
+    }
 }
 
 async fn ping_payload(

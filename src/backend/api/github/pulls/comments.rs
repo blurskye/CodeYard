@@ -101,7 +101,11 @@ async fn document_cached(
             .map_err(Error::unavailable)?;
     value["reactions"] = reactions;
     let (base, head) = payloads::review_comment_revisions(comment, pull);
-    let key = (base.to_owned(), head.to_owned(), comment.path.clone().unwrap_or_default());
+    let key = (
+        base.to_owned(),
+        head.to_owned(),
+        comment.path.clone().unwrap_or_default(),
+    );
     if !diffs.contains_key(&key) {
         if diffs.len() >= MAX_CACHED_DIFFS {
             diffs.clear();
@@ -190,9 +194,15 @@ pub(super) async fn prepare_with_diff(
         }
         if let Some(position) = input.position.filter(|_| line.is_none()) {
             let loaded;
-            let diff = if let Some(diff) = cached { diff } else {
+            let diff = if let Some(diff) = cached {
+                diff
+            } else {
                 loaded = repo_store(repo, state.cluster.as_ref())
-                    .diff_file(pull.diff_base(), input.commit_id.as_deref().unwrap_or(&pull.head_sha), path)
+                    .diff_file(
+                        pull.diff_base(),
+                        input.commit_id.as_deref().unwrap_or(&pull.head_sha),
+                        path,
+                    )
                     .await
                     .map_err(super::store_error)?;
                 &loaded
@@ -281,8 +291,7 @@ async fn reply(
     Path((owner, name, number, id)): Path<(String, String, i32, i64)>,
     body: Bytes,
 ) -> Result<Response> {
-    let input: Body =
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
+    let input: Body = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     create(
         State(state),
         headers,
@@ -312,8 +321,7 @@ async fn update(
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
-    let input: Body =
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
+    let input: Body = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let comment = domain::edit_pull_request_comment(
         &state.pool,
         &state.notification_broadcaster,

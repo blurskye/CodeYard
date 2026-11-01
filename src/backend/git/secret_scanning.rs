@@ -1,5 +1,7 @@
 //! Push protection reads the receive quarantine without publishing its objects.
-use super::repository::{open_quarantined, peel_revision, process, quarantined_command, walk_commits};
+use super::repository::{
+    open_quarantined, peel_revision, process, quarantined_command, walk_commits,
+};
 use crate::backend::{
     db::secret_scanning::Location,
     repositories::secret_scanning::{
@@ -43,14 +45,23 @@ async fn new_commits(
             }
         }
         Ok(tips)
-    }).await??;
+    })
+    .await??;
     if tips.is_empty() {
         return Ok(Vec::new());
     }
     // Pull heads and retention refs have not passed push protection. Only published
     // branches, tags and notes can establish the boundary of previously accepted history.
-    walk_commits(&path, quarantine.as_deref(), &tips, &[], true, 10_000,
-        deadline.saturating_duration_since(Instant::now())).await
+    walk_commits(
+        &path,
+        quarantine.as_deref(),
+        &tips,
+        &[],
+        true,
+        10_000,
+        deadline.saturating_duration_since(Instant::now()),
+    )
+    .await
 }
 
 /// The secrets that the commits `heads` bring add, each compared with the file it replaces.
@@ -115,9 +126,7 @@ fn scan(
     let repo = open_quarantined(path, quarantine)?;
     // Object headers give blob sizes without reading a large blob into memory.
     let odb = repo.odb()?;
-    let small = |id: Oid| {
-        odb.read_header(id).map(|(size, _)| size <= MAX_BLOB_BYTES)
-    };
+    let small = |id: Oid| odb.read_header(id).map(|(size, _)| size <= MAX_BLOB_BYTES);
     let mut found = Vec::new();
     let mut bytes = 0usize;
     let mut commit = String::new();
@@ -160,22 +169,33 @@ fn scan(
         let path = String::from_utf8_lossy(file).into_owned();
         // Only a secret the same rules found in the replaced file already existed; bytes the
         // scanner skipped, such as a binary file's, were never checked.
-        let replacement = scan_with_patterns_until(&path, &commit, blob.content(), patterns, true, deadline)?;
-        let replacement: Vec<_> = replacement.into_iter().filter(|detection| !disabled.contains(&detection.secret_type)).collect();
+        let replacement =
+            scan_with_patterns_until(&path, &commit, blob.content(), patterns, true, deadline)?;
+        let replacement: Vec<_> = replacement
+            .into_iter()
+            .filter(|detection| !disabled.contains(&detection.secret_type))
+            .collect();
         if replacement.is_empty() {
             continue;
         }
         let existing: Vec<(String, String)> = match previous {
-            Some(old) => scan_with_patterns_until(&path, &commit, old.content(), patterns, true, deadline)?
-                .into_iter()
-                .filter(|detection| !disabled.contains(&detection.secret_type))
-                .map(|detection| (detection.secret_type, detection.secret))
-                .collect(),
+            Some(old) => {
+                scan_with_patterns_until(&path, &commit, old.content(), patterns, true, deadline)?
+                    .into_iter()
+                    .filter(|detection| !disabled.contains(&detection.secret_type))
+                    .map(|detection| (detection.secret_type, detection.secret))
+                    .collect()
+            }
             None => Vec::new(),
         };
         for detection in replacement {
-            if existing.iter().any(|(kind, value)| kind == &detection.secret_type && value == &detection.secret)
-                || found.iter().any(|finding: &Finding| finding.detection.secret_type == detection.secret_type && finding.detection.secret == detection.secret)
+            if existing
+                .iter()
+                .any(|(kind, value)| kind == &detection.secret_type && value == &detection.secret)
+                || found.iter().any(|finding: &Finding| {
+                    finding.detection.secret_type == detection.secret_type
+                        && finding.detection.secret == detection.secret
+                })
             {
                 continue;
             }

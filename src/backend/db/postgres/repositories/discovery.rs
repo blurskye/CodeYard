@@ -92,7 +92,9 @@ pub async fn visible_fork_counts(
     ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, i32>> {
     anyhow::ensure!(ids.len() <= 100, "Too many repository counts");
-    if ids.is_empty() { return Ok(std::collections::HashMap::new()); }
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
     let rows = sqlx::query_as::<_, (i64, i32)>(&format!(
         "SELECT r.forked_from_id, COUNT(*)::integer FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id=ANY($3) AND {} GROUP BY r.forked_from_id",
         readable_condition(),

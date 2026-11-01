@@ -23,9 +23,20 @@ pub(super) async fn authorized(
         .map_err(SecretsError::authority)?
     {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {
-            if !super::credentials::organization(&mut tx, &actor, org, "organization_administration", write).await.map_err(SecretsError::authority)? { return Err(SecretsError::Denied); }
+            if !super::credentials::organization(
+                &mut tx,
+                &actor,
+                org,
+                "organization_administration",
+                write,
+            )
+            .await
+            .map_err(SecretsError::authority)?
+            {
+                return Err(SecretsError::Denied);
+            }
             Ok(tx)
-        },
+        }
         OrganizationOutcome::Missing => Err(SecretsError::NotFound),
         _ => Err(SecretsError::Denied),
     }
@@ -75,7 +86,9 @@ pub(super) async fn check_repositories(
     let ids: std::collections::BTreeSet<_> = repositories.iter().copied().collect();
     let found: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE id IN (SELECT value FROM json_each(?1)) AND owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL")
         .bind(serde_json::to_string(&ids).map_err(|error| SecretsError::authority(error.into()))?).bind(org).fetch_one(&mut **tx).await?;
-    if found != ids.len() as i64 { return Err(SecretsError::InvalidRepositorySelection); }
+    if found != ids.len() as i64 {
+        return Err(SecretsError::InvalidRepositorySelection);
+    }
     Ok(())
 }
 

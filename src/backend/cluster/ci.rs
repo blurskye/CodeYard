@@ -16,13 +16,32 @@ use std::sync::{
 use tokio::sync::Semaphore;
 
 fn transient_database_error(error: &anyhow::Error) -> bool {
-    error.chain().any(|cause| match cause.downcast_ref::<sqlx::Error>() {
-        Some(sqlx::Error::PoolTimedOut | sqlx::Error::Io(_) | sqlx::Error::Tls(_) | sqlx::Error::WorkerCrashed) => true,
-        Some(sqlx::Error::Database(error)) => error.code().is_some_and(|code| {
-            matches!(code.as_ref(), "40001" | "40P01" | "55P03" | "57014" | "57P01" | "57P02" | "57P03" | "53300" | "5" | "6")
-        }),
-        _ => false,
-    })
+    error
+        .chain()
+        .any(|cause| match cause.downcast_ref::<sqlx::Error>() {
+            Some(
+                sqlx::Error::PoolTimedOut
+                | sqlx::Error::Io(_)
+                | sqlx::Error::Tls(_)
+                | sqlx::Error::WorkerCrashed,
+            ) => true,
+            Some(sqlx::Error::Database(error)) => error.code().is_some_and(|code| {
+                matches!(
+                    code.as_ref(),
+                    "40001"
+                        | "40P01"
+                        | "55P03"
+                        | "57014"
+                        | "57P01"
+                        | "57P02"
+                        | "57P03"
+                        | "53300"
+                        | "5"
+                        | "6"
+                )
+            }),
+            _ => false,
+        })
 }
 
 #[cfg(test)]
@@ -176,7 +195,16 @@ mod tests {
                 Some(owner.id),
                 &db::users::accounts::AccountCredential::Session(&{
                     let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
-                    db::users::sessions::create_session(&pool, &session, owner.id, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
+                    db::users::sessions::create_session(
+                        &pool,
+                        &session,
+                        owner.id,
+                        None,
+                        None,
+                        chrono::Utc::now() + chrono::Duration::hours(1),
+                    )
+                    .await
+                    .unwrap();
                     session
                 }),
             )
@@ -252,7 +280,11 @@ mod tests {
         assert_eq!(current.error_message.as_deref(), Some(CLAIM_TOO_LARGE));
         assert!(handler
             .queue
-            .claim("another-worker", CiExecutionMode::Local, &CiConfig::default().platform_labels())
+            .claim(
+                "another-worker",
+                CiExecutionMode::Local,
+                &CiConfig::default().platform_labels()
+            )
             .await
             .unwrap()
             .is_none());
@@ -331,7 +363,13 @@ impl CiHandler {
         let worker = format!("{peer}/{}", request.worker);
         let value = match request.operation {
             Operation::Claim { mode, platforms } => {
-                ensure!(platforms.len() <= 1000 && platforms.iter().all(|label| !label.is_empty() && label.len() <= 128), "invalid runner platforms");
+                ensure!(
+                    platforms.len() <= 1000
+                        && platforms
+                            .iter()
+                            .all(|label| !label.is_empty() && label.len() <= 128),
+                    "invalid runner platforms"
+                );
                 ensure!(
                     self.accepting_claims.load(Ordering::Acquire),
                     CORE_UNAVAILABLE
@@ -342,7 +380,14 @@ impl CiHandler {
                 let mut claim = self.queue.claim(&worker, mode, &platforms).await?;
                 if let Some(refusal) = self.refusal(peer).await {
                     if let Some(claim) = &claim {
-                        self.queue.finish(&worker, claim.run.id, "failed", Some("Runner authority lost during preparation")).await?;
+                        self.queue
+                            .finish(
+                                &worker,
+                                claim.run.id,
+                                "failed",
+                                Some("Runner authority lost during preparation"),
+                            )
+                            .await?;
                     }
                     anyhow::bail!(refusal);
                 }
@@ -473,7 +518,11 @@ impl CiHandler {
 
     /// The reply to the request on `link`. An error means the frame is broken, and it ends
     /// the connection instead.
-    async fn answer(&self, link: &mut Link, slot: Arc<tokio::sync::OwnedSemaphorePermit>) -> Result<Result<serde_json::Value, String>> {
+    async fn answer(
+        &self,
+        link: &mut Link,
+        slot: Arc<tokio::sync::OwnedSemaphorePermit>,
+    ) -> Result<Result<serde_json::Value, String>> {
         let peer = link.peer;
         if let Some(refusal) = self.refusal(peer).await {
             return Ok(Err(refusal.to_owned()));
@@ -498,20 +547,25 @@ impl CiHandler {
             }
         }
         let handler = self.clone();
-        let result = self.sessions.spawn_admitted(async move {
-            let _slot = slot;
-            handler.execute(peer, request).await
-        }).await?;
+        let result = self
+            .sessions
+            .spawn_admitted(async move {
+                let _slot = slot;
+                handler.execute(peer, request).await
+            })
+            .await?;
         Ok(match result {
             Ok(value) => Ok(value),
             Err(error) => {
                 // Never return database errors or decrypted secret contents to the peer.
                 tracing::warn!(%error, "CI queue request failed");
-                Err(if error.to_string() == CORE_UNAVAILABLE || transient_database_error(&error) {
-                    CORE_UNAVAILABLE.to_owned()
-                } else {
-                    REFUSED.to_owned()
-                })
+                Err(
+                    if error.to_string() == CORE_UNAVAILABLE || transient_database_error(&error) {
+                        CORE_UNAVAILABLE.to_owned()
+                    } else {
+                        REFUSED.to_owned()
+                    },
+                )
             }
         })
     }
@@ -547,7 +601,9 @@ impl CiHandler {
 
 impl ProtocolHandler for CiHandler {
     async fn accept(&self, connection: Connection) -> Result<(), AcceptError> {
-        let Ok(_connection) = transport::connection_slot(&connection) else { return Ok(()); };
+        let Ok(_connection) = transport::connection_slot(&connection) else {
+            return Ok(());
+        };
         while let Some(link) = transport::accept_stream(&connection).await {
             if let Err(error) = self.serve_link(link).await {
                 tracing::warn!(%error, "CI queue RPC failed");

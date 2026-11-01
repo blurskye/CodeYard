@@ -76,8 +76,13 @@ pub fn can_grant_maintainer_edit(
 pub(crate) fn retarget_dismisses_reviews(patterns: &[String], branch: &str) -> Result<bool> {
     let mut budget = crate::backend::ci::workflows::WorkflowMatchBudget::new();
     for pattern in patterns {
-        if crate::backend::db::repositories::protection::branch_pattern_matches(pattern, branch, &mut budget)
-            .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))? {
+        if crate::backend::db::repositories::protection::branch_pattern_matches(
+            pattern,
+            branch,
+            &mut budget,
+        )
+        .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))?
+        {
             return Ok(true);
         }
     }
@@ -299,9 +304,13 @@ pub fn reopened_stack_base(pull: &PullRequest, members: &[PullRequest]) -> Optio
     let mut branch = pull.base_branch.clone();
     let mut seen = std::collections::HashSet::new();
     while seen.insert(branch.clone()) {
-        let Some(parent) = members.iter().find(|member| member.repo_id == pull.repo_id
-            && member.stack_id == Some(stack) && member.state == "merged"
-            && member.head_repo_id == Some(pull.repo_id) && member.head_branch == branch) else {
+        let Some(parent) = members.iter().find(|member| {
+            member.repo_id == pull.repo_id
+                && member.stack_id == Some(stack)
+                && member.state == "merged"
+                && member.head_repo_id == Some(pull.repo_id)
+                && member.head_branch == branch
+        }) else {
             return (branch != pull.base_branch).then_some(branch);
         };
         branch = parent.base_branch.clone();

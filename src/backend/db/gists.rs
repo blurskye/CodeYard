@@ -1,9 +1,5 @@
 //! Gist metadata, live account authority and durable Git-publication admission.
-use super::{
-    models::Repository,
-    users::accounts::AccountCredential,
-    DbPool,
-};
+use super::{models::Repository, users::accounts::AccountCredential, DbPool};
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 

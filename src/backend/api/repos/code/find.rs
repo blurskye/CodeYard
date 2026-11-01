@@ -41,13 +41,18 @@ async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     } else {
         resolved.reference
     };
-    let query: String = ctx.query.get("q").map(|query| query.chars().take(256).collect()).unwrap_or_default();
+    let query: String = ctx
+        .query
+        .get("q")
+        .map(|query| query.chars().take(256).collect())
+        .unwrap_or_default();
     let files = store
         .file_paths_matching(&reference, &query, view::find::MAX_LISTED_FILES)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
     super::super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-        .await.map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
+        .await
+        .map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
     let page = view::find::FindPage {
         reference,
         paths: files.paths,

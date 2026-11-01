@@ -34,11 +34,22 @@ pub struct SettingsPage {
     pub next_before: Option<i64>,
 }
 impl SettingsPage {
-    pub(crate) fn from_rows(organization_name: String, writable: bool, mut configurations: Vec<Configuration>) -> Self {
+    pub(crate) fn from_rows(
+        organization_name: String,
+        writable: bool,
+        mut configurations: Vec<Configuration>,
+    ) -> Self {
         let more = configurations.len() > SETTINGS_PAGE_SIZE;
         configurations.truncate(SETTINGS_PAGE_SIZE);
-        let next_before = more.then(|| configurations.last().map(|row| row.id)).flatten();
-        Self { organization_name, writable, configurations, next_before }
+        let next_before = more
+            .then(|| configurations.last().map(|row| row.id))
+            .flatten();
+        Self {
+            organization_name,
+            writable,
+            configurations,
+            next_before,
+        }
     }
 }
 
@@ -117,7 +128,11 @@ pub fn merge(current: Option<&str>, patch: &Value) -> Result<Value> {
             && settings["dependabot_security_updates"] != "enabled",
         Refusal::Invalid
     );
-    ensure!(settings["secret_scanning"] != "disabled" || settings["secret_scanning_push_protection"] != "enabled", Refusal::Invalid);
+    ensure!(
+        settings["secret_scanning"] != "disabled"
+            || settings["secret_scanning_push_protection"] != "enabled",
+        Refusal::Invalid
+    );
     // Nor that reviewers approve push protection bypasses: every writer may still bypass.
     ensure!(
         settings["secret_scanning_delegated_bypass"] != "enabled"
@@ -178,9 +193,15 @@ pub fn merge(current: Option<&str>, patch: &Value) -> Result<Value> {
 
 /// Whether a configuration turns `feature` on or off; `None` leaves it. With `enforced_only`,
 /// only an enforced configuration fixes a value.
-fn configured_toggle(configuration: &str, feature: &str, enforced_only: bool) -> Result<Option<bool>> {
+fn configured_toggle(
+    configuration: &str,
+    feature: &str,
+    enforced_only: bool,
+) -> Result<Option<bool>> {
     let value: Value = serde_json::from_str(configuration)?;
-    if enforced_only && value["enforcement"] != "enforced" { return Ok(None); }
+    if enforced_only && value["enforcement"] != "enforced" {
+        return Ok(None);
+    }
     Ok(match value[feature].as_str() {
         Some("enabled") => Some(true),
         Some("disabled") => Some(false),
@@ -193,8 +214,15 @@ pub(crate) fn permits_toggle(configuration: &str, feature: &str, enabled: bool) 
     Ok(configured_toggle(configuration, feature, true)?.is_none_or(|fixed| fixed == enabled))
 }
 
-pub(crate) fn with_toggle_status(current: Option<&str>, feature: &str, enabled: bool) -> Result<String> {
-    let mut value: Value = current.map(serde_json::from_str).transpose()?.unwrap_or_else(|| json!({}));
+pub(crate) fn with_toggle_status(
+    current: Option<&str>,
+    feature: &str,
+    enabled: bool,
+) -> Result<String> {
+    let mut value: Value = current
+        .map(serde_json::from_str)
+        .transpose()?
+        .unwrap_or_else(|| json!({}));
     value[feature] = json!({"status": if enabled { "enabled" } else { "disabled" }});
     Ok(value.to_string())
 }
@@ -207,7 +235,13 @@ pub(crate) fn apply(current: Option<&str>, settings: &str) -> Result<String> {
     let settings: Value = serde_json::from_str(settings)?;
     for key in TOGGLES.iter().copied().chain(["advanced_security"]) {
         if let Some(status) = settings[key].as_str().filter(|s| *s != "not_set") {
-            let status = if key == "advanced_security" && matches!(status, "code_security" | "secret_protection") { "enabled" } else { status };
+            let status = if key == "advanced_security"
+                && matches!(status, "code_security" | "secret_protection")
+            {
+                "enabled"
+            } else {
+                status
+            };
             value[key] = json!({"status":status});
         }
     }
@@ -216,7 +250,11 @@ pub(crate) fn apply(current: Option<&str>, settings: &str) -> Result<String> {
 
 /// Whether a configuration turns private vulnerability reporting on or off; `None` leaves it.
 pub(crate) fn private_reporting(configuration: &str, enforced_only: bool) -> Result<Option<bool>> {
-    configured_toggle(configuration, "private_vulnerability_reporting", enforced_only)
+    configured_toggle(
+        configuration,
+        "private_vulnerability_reporting",
+        enforced_only,
+    )
 }
 
 /// The secret scanning settings that an enforced configuration fixes for its repository, or

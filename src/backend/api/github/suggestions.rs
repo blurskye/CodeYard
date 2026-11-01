@@ -50,23 +50,55 @@ async fn list(
     let (mut scanned, mut accepted) = (0_i64, 0_usize);
     let mut rows = Vec::new();
     while rows.len() <= limit {
-        let batch = db::suggestions::list(&state.pool, repo.id, auth.user.id, issue, &ListFilter {
-            state: &filter.state, action: filter.action.as_deref(), own: false, descending: false,
-            offset: scanned, limit: 101,
-        }).await.map_err(error)?;
+        let batch = db::suggestions::list(
+            &state.pool,
+            repo.id,
+            auth.user.id,
+            issue,
+            &ListFilter {
+                state: &filter.state,
+                action: filter.action.as_deref(),
+                own: false,
+                descending: false,
+                offset: scanned,
+                limit: 101,
+            },
+        )
+        .await
+        .map_err(error)?;
         let done = batch.len() < 101;
         scanned += batch.len() as i64;
-        let targets: Vec<_> = batch.iter().filter(|row| row.action == "close_issue").filter_map(|row| row.target_id).collect();
-        let targets: HashMap<_, _> = db::issues::issue_repositories(&state.pool, &targets).await.map_err(Error::unavailable)?.into_iter().collect();
+        let targets: Vec<_> = batch
+            .iter()
+            .filter(|row| row.action == "close_issue")
+            .filter_map(|row| row.target_id)
+            .collect();
+        let targets: HashMap<_, _> = db::issues::issue_repositories(&state.pool, &targets)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .collect();
         let repos: Vec<_> = targets.values().copied().collect();
         let readable = auth::readable_repositories(&state, Some(&auth), &repos, "issues").await?;
         for row in batch {
-            if row.action == "close_issue" && row.target_id.is_some_and(|id| targets.get(&id).is_none_or(|repo| !readable.contains(repo))) { continue; }
-            if accepted >= offset { rows.push(row); }
+            if row.action == "close_issue"
+                && row
+                    .target_id
+                    .is_some_and(|id| targets.get(&id).is_none_or(|repo| !readable.contains(repo)))
+            {
+                continue;
+            }
+            if accepted >= offset {
+                rows.push(row);
+            }
             accepted += 1;
-            if rows.len() > limit { break; }
+            if rows.len() > limit {
+                break;
+            }
         }
-        if done { break; }
+        if done {
+            break;
+        }
     }
     let next = rows.len() > limit;
     let values = rows

@@ -43,11 +43,18 @@ pub fn page_router() -> Router<Arc<AppState>> {
         .layer(DefaultBodyLimit::max(256 * 1024))
 }
 fn failure(error: &anyhow::Error) -> (StatusCode, String) {
-    if let Some(graph @ (db::dependency_graph::GraphError::Limit | db::dependency_graph::GraphError::Disabled)) = error.downcast_ref::<db::dependency_graph::GraphError>() {
+    if let Some(
+        graph @ (db::dependency_graph::GraphError::Limit
+        | db::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+    {
         return (StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
     if error.is::<db::users::accounts::AccountRestricted>() {
-        return (StatusCode::FORBIDDEN, "A live unrestricted credential is required".into());
+        return (
+            StatusCode::FORBIDDEN,
+            "A live unrestricted credential is required".into(),
+        );
     }
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied | Refusal::Missing) => (
@@ -193,11 +200,18 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
         .skip((page - 1) * 20)
         .take(21)
     {
-        let proposal = alert.update.as_ref().and_then(|update| update.pull_request_id)
+        let proposal = alert
+            .update
+            .as_ref()
+            .and_then(|update| update.pull_request_id)
             .and_then(|id| data.proposals.get(&id))
             .map(|(number, state, merged)| Proposal {
                 number: *number,
-                state: if *merged { "merged".into() } else { state.clone() },
+                state: if *merged {
+                    "merged".into()
+                } else {
+                    state.clone()
+                },
             });
         let pending = alert.update.is_some() && proposal.is_none();
         let review_state = state_name(&alert.state).into();
@@ -321,7 +335,8 @@ async fn configure(
             ctx.state.cluster.as_ref(),
             ctx.user.as_ref().unwrap().id,
             db::users::accounts::OwnedAccountCredential::Session(
-                crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+                crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                    .unwrap_or_default(),
             ),
             loaded.repository.id,
             kind,

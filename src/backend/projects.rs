@@ -12,7 +12,9 @@ pub fn query_terms(query: &str) -> Result<Vec<String>> {
     let mut escaped = false;
     for c in query.chars() {
         if escaped {
-            if !matches!(c, '"' | '\\') { term.push('\\'); }
+            if !matches!(c, '"' | '\\') {
+                term.push('\\');
+            }
             term.push(c);
             escaped = false;
             continue;
@@ -28,7 +30,9 @@ pub fn query_terms(query: &str) -> Result<Vec<String>> {
             _ => term.push(c),
         }
     }
-    if escaped { term.push('\\'); }
+    if escaped {
+        term.push('\\');
+    }
     anyhow::ensure!(!quoted, Refusal::Invalid);
     if !term.is_empty() {
         terms.push(term);
@@ -39,7 +43,9 @@ pub fn query_terms(query: &str) -> Result<Vec<String>> {
 /// Drop the terms that name `field`, so a saved view still matches items once that field is
 /// deleted. Terms with spaces are quoted again so they parse back the same way.
 pub fn without_field_terms(filter: &str, field: &str) -> Result<String> {
-    if field.eq_ignore_ascii_case("is") { return Ok(filter.to_owned()); }
+    if field.eq_ignore_ascii_case("is") {
+        return Ok(filter.to_owned());
+    }
     let kept: Vec<String> = query_terms(filter)?
         .into_iter()
         .filter(|term| {
@@ -48,7 +54,10 @@ pub fn without_field_terms(filter: &str, field: &str) -> Result<String> {
                 .is_none_or(|(name, _)| !name.eq_ignore_ascii_case(field))
         })
         .map(|term| {
-            if term.chars().any(|character| character.is_whitespace() || matches!(character, '"' | '\\')) {
+            if term
+                .chars()
+                .any(|character| character.is_whitespace() || matches!(character, '"' | '\\'))
+            {
                 format!("\"{}\"", term.replace('\\', "\\\\").replace('"', "\\\""))
             } else {
                 term
@@ -144,10 +153,23 @@ pub fn filter_items(
 
 fn compare_numbers(a: &serde_json::Number, b: &serde_json::Number) -> std::cmp::Ordering {
     use std::cmp::Ordering;
-    let integer = |number: &serde_json::Number| number.as_i64().map(i128::from).or_else(|| number.as_u64().map(i128::from));
-    let integer_float = |integer: i128, float: f64| integer.cmp(&(float as i128)).then_with(|| {
-        if float.fract() > 0.0 { Ordering::Less } else if float.fract() < 0.0 { Ordering::Greater } else { Ordering::Equal }
-    });
+    let integer = |number: &serde_json::Number| {
+        number
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| number.as_u64().map(i128::from))
+    };
+    let integer_float = |integer: i128, float: f64| {
+        integer.cmp(&(float as i128)).then_with(|| {
+            if float.fract() > 0.0 {
+                Ordering::Less
+            } else if float.fract() < 0.0 {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        })
+    };
     match (integer(a), integer(b)) {
         (Some(a), Some(b)) => a.cmp(&b),
         (Some(a), None) => integer_float(a, b.as_f64().unwrap()),

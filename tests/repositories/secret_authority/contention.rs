@@ -13,9 +13,15 @@ async fn attempt(
     match operation {
         0 => put(pool, repo, Some(actor)).await,
         1 => secrets::list_secrets(pool, actor, repo).await.map(|_| ()),
-        _ => secrets::delete_secret(pool, actor, repo, NAME, &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}")))
-            .await
-            .map(|_| ()),
+        _ => secrets::delete_secret(
+            pool,
+            actor,
+            repo,
+            NAME,
+            &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}")),
+        )
+        .await
+        .map(|_| ()),
     }
 }
 

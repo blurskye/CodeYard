@@ -53,7 +53,10 @@ pub fn text_preview(bytes: &[u8], limit: usize) -> Option<&str> {
 
 /// Database-only operations need a published gist, not an available Git storage node.
 pub async fn metadata(pool: &db::DbPool, id: &str) -> Result<db::gists::Gist> {
-    db::gists::get(pool, id).await?.filter(|gist| gist.ready).ok_or_else(|| GistRefusal::Missing.into())
+    db::gists::get(pool, id)
+        .await?
+        .filter(|gist| gist.ready)
+        .ok_or_else(|| GistRefusal::Missing.into())
 }
 
 pub async fn load(state: &AppState, id: &str, revision: Option<&str>) -> Result<LoadedGist> {
@@ -293,7 +296,8 @@ pub async fn delete(
         let repository =
             db::gists::delete(&work.pool, actor, &credential.borrowed(), gist.repo_id).await?;
         lifecycle::remove_deleted_repository(work.cluster.as_ref(), &repository)
-            .await.map_err(|_| GistDeleted)?;
+            .await
+            .map_err(|_| GistDeleted)?;
         Ok(())
     })
     .await

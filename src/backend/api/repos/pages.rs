@@ -33,7 +33,9 @@ async fn render(
     let session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
     let reader = crate::backend::db::repositories::credentials::Reader {
         user: ctx.user.as_ref().map(|user| user.id),
-        credential: session.as_deref().map(crate::backend::db::users::accounts::AccountCredential::Session),
+        credential: session
+            .as_deref()
+            .map(crate::backend::db::users::accounts::AccountCredential::Session),
     };
     let site = match pages::site(&ctx.state.pool, &reader, loaded.repository.id).await {
         Ok(site) => site,
@@ -129,7 +131,8 @@ async fn submit(
         return ctx.error(StatusCode::FORBIDDEN, "Pages administration denied.");
     }
     let actor = ctx.user.as_ref().unwrap().id;
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential = crate::backend::db::users::accounts::AccountCredential::Session(&session);
     let reader = crate::backend::db::repositories::credentials::Reader {
         user: Some(actor),
@@ -174,7 +177,9 @@ async fn submit(
                 Some(pages::Refusal::Denied) => StatusCode::FORBIDDEN,
                 Some(pages::Refusal::Missing) => StatusCode::NOT_FOUND,
                 Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                None if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => StatusCode::FORBIDDEN,
+                None if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => {
+                    StatusCode::FORBIDDEN
+                }
                 None => {
                     match error.downcast_ref::<crate::backend::repositories::store::RepoError>() {
                         Some(error)

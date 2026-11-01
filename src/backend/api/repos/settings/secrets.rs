@@ -111,7 +111,9 @@ pub async fn create_or_update_secret(
         &name,
         &body.value,
         Some(user.id),
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default()),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        ),
     )
     .await
     .map_err(secret_error)?;
@@ -151,9 +153,17 @@ pub async fn delete_secret(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let deleted = db::secrets::delete_secret(&state.pool, user.id, repository.id, &name, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default()))
-        .await
-        .map_err(secret_error)?;
+    let deleted = db::secrets::delete_secret(
+        &state.pool,
+        user.id,
+        repository.id,
+        &name,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        ),
+    )
+    .await
+    .map_err(secret_error)?;
 
     if deleted {
         Ok((StatusCode::NO_CONTENT, ()))
@@ -183,7 +193,8 @@ pub(crate) async fn form(
     // Saving stores the name uppercase. Deleting uses the exact stored name the form lists, so
     // an older lowercase secret never deletes its uppercase neighbour.
     let name = field(form, "name");
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let credential = db::users::accounts::AccountCredential::Session(&session);
     let result = if action == "secret-save" {
         match ctx.state.secret_encryptor.as_deref() {
@@ -202,16 +213,23 @@ pub(crate) async fn form(
             None => Err(secrets_unavailable()),
         }
     } else {
-        db::secrets::delete_secret_for(&ctx.state.pool, kind, actor.id, loaded.repository.id, &name, &credential)
-            .await
-            .map_err(secret_error)
-            .and_then(|deleted| {
-                if deleted {
-                    Ok(())
-                } else {
-                    Err(secret_error(db::secrets::SecretsError::NotFound))
-                }
-            })
+        db::secrets::delete_secret_for(
+            &ctx.state.pool,
+            kind,
+            actor.id,
+            loaded.repository.id,
+            &name,
+            &credential,
+        )
+        .await
+        .map_err(secret_error)
+        .and_then(|deleted| {
+            if deleted {
+                Ok(())
+            } else {
+                Err(secret_error(db::secrets::SecretsError::NotFound))
+            }
+        })
     };
     match result {
         Ok(()) => ctx.redirect(&format!("{}/settings?tab={tab}", loaded.chrome.base())),

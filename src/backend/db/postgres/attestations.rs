@@ -38,7 +38,8 @@ pub async fn create(
     let mut tx = begin(pool).await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &credential, repo, "attestations", true).await?,
+            && super::credentials::repository(&mut tx, &credential, repo, "attestations", true)
+                .await?,
         Refusal::Denied
     );
     sqlx::query(
@@ -51,8 +52,12 @@ pub async fn create(
     let id = sqlx::query_scalar("INSERT INTO artifact_attestations(repo_id,bundle_hash,predicate_type,initiator,created_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(repo_id,bundle_hash) DO UPDATE SET bundle_hash=excluded.bundle_hash RETURNING id")
         .bind(repo).bind(&bundle.hash).bind(&bundle.predicate).bind(initiator).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
     if !bundle.subjects.is_empty() {
-        let mut insert = sqlx::QueryBuilder::<Postgres>::new("INSERT INTO attestation_subjects(attestation_id,digest) ");
-        insert.push_values(&bundle.subjects, |mut row, digest| { row.push_bind(id).push_bind(digest); });
+        let mut insert = sqlx::QueryBuilder::<Postgres>::new(
+            "INSERT INTO attestation_subjects(attestation_id,digest) ",
+        );
+        insert.push_values(&bundle.subjects, |mut row, digest| {
+            row.push_bind(id).push_bind(digest);
+        });
         insert.push(" ON CONFLICT DO NOTHING");
         insert.build().execute(&mut *tx).await?;
     }
@@ -68,11 +73,23 @@ pub async fn list(pool: &PgPool, filter: &Filter<'_>) -> Result<Vec<Attestation>
     use futures_util::TryStreamExt;
     let sql = format!("SELECT a.id,a.repo_id,(SELECT b.bundle FROM attestation_bundles b WHERE b.hash=a.bundle_hash) AS bundle,a.predicate_type,a.initiator {} AND a.id>$6 AND a.id<$7 ORDER BY a.id {} LIMIT $8", condition(), if filter.before < i64::MAX { "DESC" } else { "ASC" });
     let mut stream = sqlx::query_as::<_, Attestation>(&sql)
-        .bind(filter.actor).bind(filter.owner.and_then(Owner::org)).bind(filter.repo).bind(filter.digests).bind(filter.predicate).bind(filter.after).bind(filter.before).bind(filter.limit).bind(filter.owner.and_then(Owner::user)).bind(filter.session).fetch(pool);
+        .bind(filter.actor)
+        .bind(filter.owner.and_then(Owner::org))
+        .bind(filter.repo)
+        .bind(filter.digests)
+        .bind(filter.predicate)
+        .bind(filter.after)
+        .bind(filter.before)
+        .bind(filter.limit)
+        .bind(filter.owner.and_then(Owner::user))
+        .bind(filter.session)
+        .fetch(pool);
     let mut rows = Vec::new();
     let mut bytes = 0;
     while let Some(row) = stream.try_next().await? {
-        if !crate::backend::db::attestations::append_page(&mut rows, &mut bytes, row) { break; }
+        if !crate::backend::db::attestations::append_page(&mut rows, &mut bytes, row) {
+            break;
+        }
     }
     Ok(rows)
 }
@@ -116,14 +133,28 @@ pub async fn delete(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = begin(pool).await?;
-    super::credentials::require_account(&mut tx, &credential).await
-        .map_err(|error| if error.is::<crate::backend::db::users::accounts::AccountRestricted>() { anyhow::Error::new(Refusal::Denied) } else { error })?;
+    super::credentials::require_account(&mut tx, &credential)
+        .await
+        .map_err(|error| {
+            if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+                anyhow::Error::new(Refusal::Denied)
+            } else {
+                error
+            }
+        })?;
     let rows: Vec<(i64,i64)> = sqlx::query_as(&format!("SELECT DISTINCT a.id,a.repo_id FROM artifact_attestations a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=$4 WHERE ((CAST($1 AS BIGINT) IS NOT NULL AND r.owner_org_id=$1) OR (CAST($5 AS BIGINT) IS NOT NULL AND r.owner_user_id=$5)) AND (a.id=ANY($2) OR EXISTS(SELECT 1 FROM attestation_subjects s WHERE s.attestation_id=a.id AND s.digest=ANY($3))) AND {} ORDER BY a.repo_id,a.id",super::repositories::access::readable_condition()))
         .bind(owner.org()).bind(ids).bind(digests).bind(actor).bind(owner.user()).fetch_all(&mut *tx).await?;
     for (_, repo) in &rows {
         anyhow::ensure!(
             super::discussions::lock_write_authority(&mut tx, actor, *repo).await?
-                && super::credentials::repository(&mut tx, &credential, *repo, "attestations", true).await?,
+                && super::credentials::repository(
+                    &mut tx,
+                    &credential,
+                    *repo,
+                    "attestations",
+                    true
+                )
+                .await?,
             Refusal::Denied
         );
         let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND ((owner_kind='org' AND owner_org_id=$2) OR (owner_kind='user' AND owner_user_id=$3)))").bind(repo).bind(owner.org()).bind(owner.user()).fetch_one(&mut *tx).await?;

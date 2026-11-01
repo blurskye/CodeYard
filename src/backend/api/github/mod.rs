@@ -137,7 +137,9 @@ pub(super) fn json_error(error: axum::extract::rejection::JsonRejection) -> Erro
 pub(super) fn json_bytes_error(error: axum::Error) -> Error {
     let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
     while let Some(error) = source {
-        if error.is::<http_body_util::LengthLimitError>() { return Error::new(StatusCode::PAYLOAD_TOO_LARGE, "Request body is too large"); }
+        if error.is::<http_body_util::LengthLimitError>() {
+            return Error::new(StatusCode::PAYLOAD_TOO_LARGE, "Request body is too large");
+        }
         source = error.source();
     }
     Error::new(StatusCode::BAD_REQUEST, "Failed to read request body")
@@ -145,7 +147,11 @@ pub(super) fn json_bytes_error(error: axum::Error) -> Error {
 
 /// Byte-buffered endpoints intentionally keep their optional-body and media-type policies.
 pub(super) fn json_parse_error(error: serde_json::Error) -> Error {
-    let status = if error.is_data() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::BAD_REQUEST };
+    let status = if error.is_data() {
+        StatusCode::UNPROCESSABLE_ENTITY
+    } else {
+        StatusCode::BAD_REQUEST
+    };
     Error::new(status, error.to_string())
 }
 
@@ -304,9 +310,7 @@ async fn get_repository(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    Ok(Json(
-        repos::document(&state, &repo, auth.as_ref()).await?,
-    ))
+    Ok(Json(repos::document(&state, &repo, auth.as_ref()).await?))
 }
 
 pub(super) fn empty(status: StatusCode) -> Response {
@@ -344,7 +348,9 @@ async fn responses(request: Request, next: Next) -> Response {
         .headers_mut()
         .entry(header::CACHE_CONTROL)
         .or_insert_with(|| "no-store".parse().unwrap());
-    response.headers_mut().append(header::VARY, "Accept".parse().unwrap());
+    response
+        .headers_mut()
+        .append(header::VARY, "Accept".parse().unwrap());
     response.headers_mut().insert(
         "x-github-api-version-selected",
         "2022-11-28".parse().unwrap(),
@@ -514,7 +520,9 @@ pub fn router() -> Router<Arc<AppState>> {
             axum::routing::post(code_scanning::databases::upload)
                 .layer(axum::extract::DefaultBodyLimit::disable()),
         )
-        .layer(axum::middleware::from_fn(super::http::interaction_proofs::prepare))
+        .layer(axum::middleware::from_fn(
+            super::http::interaction_proofs::prepare,
+        ))
         .layer(axum::middleware::from_fn(auth::authorize_request))
         .layer(axum::middleware::from_fn(rate_limits::enforce))
         .layer(axum::middleware::from_fn(auth::request_context))

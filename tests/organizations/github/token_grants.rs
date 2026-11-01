@@ -284,19 +284,31 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[erin])
         .await;
     assert_eq!(
-        db::fine_grained_tokens::review(f.pool(), org, erin, &[pending], "pending", "approved", None)
-            .await
-            .unwrap(),
+        db::fine_grained_tokens::review(
+            f.pool(),
+            org,
+            erin,
+            &[pending],
+            "pending",
+            "approved",
+            None
+        )
+        .await
+        .unwrap(),
         0
     );
     assert!(!db::fine_grained_tokens::set_policy(
         f.pool(),
         (
             erin,
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), erin).await),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(f.pool(), erin).await
+            ),
         ),
         org,
-        &db::fine_grained_tokens::policy(f.pool(), org).await.unwrap()
+        &db::fine_grained_tokens::policy(f.pool(), org)
+            .await
+            .unwrap()
     )
     .await
     .unwrap());

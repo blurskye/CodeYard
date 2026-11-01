@@ -172,7 +172,10 @@ pub async fn get_browser_session(pool: &PgPool, id: &str) -> Result<Option<Brows
         .bind(id).fetch_optional(pool).await.map_err(Into::into)
 }
 
-#[expect(clippy::too_many_arguments, reason = "Each argument is one column or check of the rotated session.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one column or check of the rotated session."
+)]
 pub async fn rotate_authenticated_session(
     pool: &PgPool,
     old: Option<&str>,
@@ -501,9 +504,19 @@ pub async fn keep_newest_anonymous_sessions(pool: &PgPool, cap: i64) -> Result<u
     Ok(removed as u64)
 }
 
-pub async fn session_page(pool: &PgPool, user: i64, current: &str, before: i64) -> Result<Vec<crate::backend::db::users::sessions::SessionPageRow>> {
+pub async fn session_page(
+    pool: &PgPool,
+    user: i64,
+    current: &str,
+    before: i64,
+) -> Result<Vec<crate::backend::db::users::sessions::SessionPageRow>> {
     let mut tx = pool.begin().await?;
-    super::transitions::require_account(&mut tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(current)).await?;
+    super::transitions::require_account(
+        &mut tx,
+        user,
+        &crate::backend::db::users::accounts::AccountCredential::Session(current),
+    )
+    .await?;
     let rows = sqlx::query_as("SELECT id,user_id,user_agent,ip_address::text AS ip_address,expires_at,created_at,ordinal FROM sessions WHERE user_id=$1 AND expires_at>clock_timestamp() AND ($2<=0 OR ordinal<=$2) ORDER BY ordinal DESC LIMIT 101")
         .bind(user).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;

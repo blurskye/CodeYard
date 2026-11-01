@@ -91,10 +91,16 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    let claimed = db::ci::claim_ci_run(f.pool(), "log-worker", "local", &[alice_id, bob_id], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db::ci::claim_ci_run(
+        f.pool(),
+        "log-worker",
+        "local",
+        &[alice_id, bob_id],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.id, run.id);
     let output = [
         "failed to pull act-latest",
@@ -710,10 +716,16 @@ async fn pull_request_run_is_run_again(pg: bool) {
 
     // The run fails on its worker, which then records the result.
     let worker = "node/slot-1";
-    let claimed = db::ci::claim_ci_run(f.pool(), worker, "local", &[alice_id, bob_id], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .expect("the run is claimed");
+    let claimed = db::ci::claim_ci_run(
+        f.pool(),
+        worker,
+        "local",
+        &[alice_id, bob_id],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .expect("the run is claimed");
     assert_eq!(claimed.id, first.id);
     db::ci::finish_ci_run(
         f.pool(),

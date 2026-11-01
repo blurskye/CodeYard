@@ -98,9 +98,10 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &name, false).await?;
-    let secrets = db::dependabot::list_organization_secrets(&state.pool, actor.database_actor(), org)
-        .await
-        .map_err(error)?;
+    let secrets =
+        db::dependabot::list_organization_secrets(&state.pool, actor.database_actor(), org)
+            .await
+            .map_err(error)?;
     let (offset, limit) = page.window()?;
     let total = secrets.len();
     let secrets: Vec<_> = secrets
@@ -126,9 +127,10 @@ pub(super) async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (id, key) = db::dependabot::organization_key(&state.pool, encryptor, actor.database_actor(), org)
-        .await
-        .map_err(error)?;
+    let (id, key) =
+        db::dependabot::organization_key(&state.pool, encryptor, actor.database_actor(), org)
+            .await
+            .map_err(error)?;
     Ok(Json(
         json!({"key_id":id,"key":STANDARD.encode(key.public_key().as_bytes())}),
     ))
@@ -140,12 +142,13 @@ async fn secret(
     Path((org_name, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (org, actor) = organization(&state, &headers, &org_name, false).await?;
-    let secret = db::dependabot::list_organization_secrets(&state.pool, actor.database_actor(), org)
-        .await
-        .map_err(error)?
-        .into_iter()
-        .find(|s| s.name == name.to_ascii_uppercase())
-        .ok_or_else(Error::missing)?;
+    let secret =
+        db::dependabot::list_organization_secrets(&state.pool, actor.database_actor(), org)
+            .await
+            .map_err(error)?
+            .into_iter()
+            .find(|s| s.name == name.to_ascii_uppercase())
+            .ok_or_else(Error::missing)?;
     Ok(Json(document(&org_name, secret)))
 }
 
@@ -187,9 +190,10 @@ async fn save(
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
     // The key operation checks live organization authority even for metadata-only updates.
-    let (id, key) = db::dependabot::organization_key(&state.pool, encryptor, actor.database_actor(), org)
-        .await
-        .map_err(error)?;
+    let (id, key) =
+        db::dependabot::organization_key(&state.pool, encryptor, actor.database_actor(), org)
+            .await
+            .map_err(error)?;
     let value = match (body.encrypted_value, body.key_id) {
         (Some(value), Some(key_id)) => Some(open_value(&key, &id, &key_id, &value)?),
         (None, None) => None,

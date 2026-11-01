@@ -42,8 +42,14 @@ pub fn valid_kind(kind: &str) -> bool {
 }
 
 pub fn valid_package_name(kind: &str, name: &str) -> bool {
-    if kind == "container" { return valid_name(name); }
-    if kind == "npm" { return !name.starts_with('@') && !name.contains('/') && crate::backend::npm::package_name(name); }
+    if kind == "container" {
+        return valid_name(name);
+    }
+    if kind == "npm" {
+        return !name.starts_with('@')
+            && !name.contains('/')
+            && crate::backend::npm::package_name(name);
+    }
     let part = |s: &str| {
         !s.is_empty()
             && s.bytes()
@@ -81,8 +87,12 @@ pub async fn store(
     let (hash, bytes) = tokio::task::spawn_blocking(move || {
         let _io = hashing_io;
         (digest(&bytes), bytes)
-    }).await?;
-    let blob = Blob { digest: hash, size: bytes.len() as i64 };
+    })
+    .await?;
+    let blob = Blob {
+        digest: hash,
+        size: bytes.len() as i64,
+    };
     let key = db::packages::object_key(&blob.digest);
     let _lock = storage.lock_file(&key).await?;
     if !db::packages::reserve_blob(pool, package, token, &blob, charge).await? {
@@ -112,7 +122,8 @@ pub async fn read(storage: &ObjectStore, blob: &Blob) -> Result<Vec<u8>> {
     let (actual, bytes) = tokio::task::spawn_blocking(move || {
         let _io = io;
         (digest(&bytes), bytes)
-    }).await?;
+    })
+    .await?;
     ensure!(actual == blob.digest, "package object checksum mismatch");
     Ok(bytes)
 }
@@ -128,8 +139,11 @@ pub async fn collect(pool: &db::DbPool, storage: &ObjectStore) -> Result<()> {
             storage.delete(&key).await?;
             db::packages::removed_blob(pool, &digest).await?;
             anyhow::Ok(())
-        }.await;
-        if let Err(error) = result { tracing::warn!(%digest, %error, "package blob cleanup deferred"); }
+        }
+        .await;
+        if let Err(error) = result {
+            tracing::warn!(%digest, %error, "package blob cleanup deferred");
+        }
     }
     Ok(())
 }

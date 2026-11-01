@@ -33,9 +33,9 @@ async fn catalog(
         Some("topics") => Kind::Topics,
         _ => return Err(Error::missing()),
     };
-    let search =
-        Search::parse(kind, q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?
-            .with_classic_policy(authentication.as_ref().map(|auth| auth.token.id));
+    let search = Search::parse(kind, q.get("q").map_or("", String::as_str))
+        .map_err(Error::invalid)?
+        .with_classic_policy(authentication.as_ref().map(|auth| auth.token.id));
     if search.needs_viewer() && viewer.is_none() {
         return Err(auth::required());
     }
@@ -111,7 +111,11 @@ async fn catalog(
     )
     .await
     .map_err(Error::unavailable)?;
-    let mut ids: Vec<i64> = results.items.iter().filter_map(|hit| hit.repository_id).collect();
+    let mut ids: Vec<i64> = results
+        .items
+        .iter()
+        .filter_map(|hit| hit.repository_id)
+        .collect();
     ids.sort_unstable();
     ids.dedup();
     let readable =
@@ -197,9 +201,14 @@ async fn catalog(
                 }
             }
             Kind::Topics => {
-                let Some(topic) = db::catalog_search::topic(&state.pool, viewer, &hit.key, authentication.as_ref().map(|auth| auth.token.id))
-                    .await
-                    .map_err(Error::unavailable)?
+                let Some(topic) = db::catalog_search::topic(
+                    &state.pool,
+                    viewer,
+                    &hit.key,
+                    authentication.as_ref().map(|auth| auth.token.id),
+                )
+                .await
+                .map_err(Error::unavailable)?
                 else {
                     incomplete = true;
                     continue;

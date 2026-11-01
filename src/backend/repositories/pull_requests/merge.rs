@@ -165,12 +165,18 @@ async fn last_push_approved(
     pull: &db::models::PullRequest,
     decisions: &[db::pull_requests::reviews::PullRequestReviewDecision],
 ) -> anyhow::Result<bool> {
-    let Some(repository) = db::repositories::records::get_repository_by_id(pool, pull.head_repo_id.unwrap_or(pull.repo_id)).await? else {
+    let Some(repository) = db::repositories::records::get_repository_by_id(
+        pool,
+        pull.head_repo_id.unwrap_or(pull.repo_id),
+    )
+    .await?
+    else {
         return Ok(false);
     };
     let Some(record) = repo_store(&repository, ci.cluster.as_ref())
         .branch_publication(repository.id, &format!("refs/heads/{}", pull.head_branch))
-        .await? else {
+        .await?
+    else {
         return Ok(false);
     };
     if record.publication.new != pull.head_sha {
@@ -199,12 +205,9 @@ pub async fn review_decision(
     pull: &db::models::PullRequest,
 ) -> anyhow::Result<Option<ReviewDecision>> {
     let target = super::stacks::merge_target(pool, pull).await?;
-    let rules = crate::backend::repositories::protection::matching_rules(
-        pool,
-        repository,
-        &target.0,
-    )
-    .await?;
+    let rules =
+        crate::backend::repositories::protection::matching_rules(pool, repository, &target.0)
+            .await?;
     let decisions = eligible_reviews(pool, pull, repository).await?;
     let mut approved = false;
     for rule in &rules {
@@ -232,12 +235,7 @@ pub async fn review_decision(
                 .map(|d| d.author_id)
                 .collect::<Vec<_>>();
             if !code_owners::missing_owner_approvals(
-                pool,
-                ci,
-                repository,
-                &target.1,
-                pull,
-                &approvers,
+                pool, ci, repository, &target.1, pull, &approvers,
             )
             .await?
             .is_empty()
@@ -298,14 +296,19 @@ fn required_status_check_failures(
             run.commit_status_context(),
             run.alias_commit_status_context(),
         ] {
-            ci_by_context.entry(context.to_ascii_lowercase()).or_default().push(run);
+            ci_by_context
+                .entry(context.to_ascii_lowercase())
+                .or_default()
+                .push(run);
         }
     }
     let mut failures = Vec::new();
     for required in required_checks {
         // A stored success can hide another producer's failure, so a server-owned requirement
         // is checked against the actual runs, under their full names and their aliases.
-        if !bound_apps.contains_key(required.as_str()) && db::repositories::protection::server_owned_status_context(required) {
+        if !bound_apps.contains_key(required.as_str())
+            && db::repositories::protection::server_owned_status_context(required)
+        {
             match ci_by_context.get(&required.to_ascii_lowercase()) {
                 Some(runs) => {
                     if runs.iter().any(|run| run.status != "success") {
@@ -405,7 +408,10 @@ async fn merge_blockers(
             &pull_request.head_sha,
             rule.dismiss_stale_reviews,
         );
-        if db::repositories::protection::has_review_requirements(rule) && has_changes_requested && !changes_requested_reported {
+        if db::repositories::protection::has_review_requirements(rule)
+            && has_changes_requested
+            && !changes_requested_reported
+        {
             changes_requested_reported = true;
             blockers.push(OperationError::Conflict {
                 code: "branch_protection",
@@ -525,10 +531,13 @@ async fn merge_blockers(
                 }
                 // Old ambiguous bindings must fail closed as well as being refused by new writes.
                 let mut bindings = rule.github_settings.checks.clone();
-                db::repositories::protection::normalize_check_bindings(&mut bindings).map_err(|_| OperationError::Conflict {
-                    code: "branch_protection",
-                    message: "Required check producers conflict; update branch protection.".to_owned(),
-                })?;
+                db::repositories::protection::normalize_check_bindings(&mut bindings).map_err(
+                    |_| OperationError::Conflict {
+                        code: "branch_protection",
+                        message: "Required check producers conflict; update branch protection."
+                            .to_owned(),
+                    },
+                )?;
                 // Protection binds GitHub App ids, but a check suite records the app's OAuth
                 // client row, so each binding is translated to that row.
                 let mut bound_apps: HashMap<&str, Option<i64>> = HashMap::new();
@@ -567,7 +576,9 @@ async fn merge_blockers(
                         Some(app) => *app,
                         None => None,
                     };
-                    if !bound_apps.contains_key(required.as_str()) && db::repositories::protection::server_owned_status_context(required) {
+                    if !bound_apps.contains_key(required.as_str())
+                        && db::repositories::protection::server_owned_status_context(required)
+                    {
                         continue;
                     }
                     let key = (required.clone(), app_id);
@@ -1016,7 +1027,10 @@ impl PreparedMerge {
         self.async_request = Some((uuid.into(), token_id));
     }
     pub(super) fn bind_auto_merge(&mut self, pull_request_id: i64, generation: &str) {
-        self.auto_merge = Some(db::pull_requests::merge_policy::AutoMergeIdentity { pull_request_id, generation: generation.into() });
+        self.auto_merge = Some(db::pull_requests::merge_policy::AutoMergeIdentity {
+            pull_request_id,
+            generation: generation.into(),
+        });
     }
     pub(super) fn matches_request(&self, repo_id: i64, pull_id: i64) -> bool {
         self.repository.id == repo_id && self.pull_request.id == pull_id
@@ -1049,10 +1063,13 @@ async fn prepare_pull_request_merge_checked(
             message: "Repository not found".to_owned(),
         })?;
 
-    if expected.is_some_and(|(id, _)| repository.id != id) { return Err(stale_revision()); }
+    if expected.is_some_and(|(id, _)| repository.id != id) {
+        return Err(stale_revision());
+    }
     let user = super::actor(pool, actor_id).await?;
     super::require_write(pool, &user, &repository).await?;
-    crate::backend::repositories::access::check_publication_actor(pool, &authority, &repository).await
+    crate::backend::repositories::access::check_publication_actor(pool, &authority, &repository)
+        .await
         .map_err(|error| publish_failure(error.into(), request.merge_method))?;
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
@@ -1062,7 +1079,9 @@ async fn prepare_pull_request_merge_checked(
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
-    if expected.is_some_and(|(_, id)| pull_request.id != id) { return Err(stale_revision()); }
+    if expected.is_some_and(|(_, id)| pull_request.id != id) {
+        return Err(stale_revision());
+    }
     // A merge uses this pull request's branches as they are now. An unrelated
     // broken fork must not deny a healthy pull request.
     pull_requests::refresh_open_pull_request(
@@ -1162,7 +1181,13 @@ async fn prepare_pull_request_merge_checked(
     } else {
         None
     };
-    let message = merge_message(&pull_request, request.merge_method, request.commit_title.as_deref(), request.commit_message.as_deref(), request.author_email.as_deref())?;
+    let message = merge_message(
+        &pull_request,
+        request.merge_method,
+        request.commit_title.as_deref(),
+        request.commit_message.as_deref(),
+        request.author_email.as_deref(),
+    )?;
     let merge = StoreMerge {
         head_branch: head_ref(&repository, &pull_request),
         base_branch: trunk.base_branch.clone(),
@@ -1201,24 +1226,44 @@ async fn prepare_pull_request_merge_checked(
     })
 }
 
-pub(super) fn merge_message(pull: &db::models::PullRequest, method: MergeMethod, title: Option<&str>, body: Option<&str>, email: Option<&str>) -> Result<String, OperationError> {
+pub(super) fn merge_message(
+    pull: &db::models::PullRequest,
+    method: MergeMethod,
+    title: Option<&str>,
+    body: Option<&str>,
+    email: Option<&str>,
+) -> Result<String, OperationError> {
     validate_options(title, body, email)?;
     let (default_title, default_body) = default_merge_text(pull, method);
-    let default = if default_body.is_empty() { default_title } else { format!("{default_title}\n\n{default_body}") };
+    let default = if default_body.is_empty() {
+        default_title
+    } else {
+        format!("{default_title}\n\n{default_body}")
+    };
     let message = if method == MergeMethod::Squash {
         title.map(str::to_owned).unwrap_or(default)
     } else if method != MergeMethod::Rebase && (title.is_some() || body.is_some()) {
         let (default_title, default_body) = default.split_once("\n\n").unwrap_or((&default, ""));
         let title = title.unwrap_or(default_title);
         let body = body.unwrap_or(default_body);
-        if body.is_empty() { title.to_owned() } else { format!("{title}\n\n{body}") }
+        if body.is_empty() {
+            title.to_owned()
+        } else {
+            format!("{title}\n\n{body}")
+        }
     } else {
         default
     };
-    let length = message.len() + if method == MergeMethod::Squash {
-        body.filter(|body| !body.is_empty()).map_or(0, |body| body.len() + 2)
-    } else { 0 };
-    if method != MergeMethod::Rebase && (message.is_empty() || length > crate::backend::git::MAX_MERGE_MESSAGE_BYTES) {
+    let length = message.len()
+        + if method == MergeMethod::Squash {
+            body.filter(|body| !body.is_empty())
+                .map_or(0, |body| body.len() + 2)
+        } else {
+            0
+        };
+    if method != MergeMethod::Rebase
+        && (message.is_empty() || length > crate::backend::git::MAX_MERGE_MESSAGE_BYTES)
+    {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "Merge commit messages must contain 1 to 8192 bytes".into(),
@@ -1227,7 +1272,11 @@ pub(super) fn merge_message(pull: &db::models::PullRequest, method: MergeMethod,
     Ok(message)
 }
 
-fn validate_options(title: Option<&str>, message: Option<&str>, email: Option<&str>) -> Result<(), OperationError> {
+fn validate_options(
+    title: Option<&str>,
+    message: Option<&str>,
+    email: Option<&str>,
+) -> Result<(), OperationError> {
     for text in [title, message].into_iter().flatten() {
         if text.contains('\0') || crate::backend::issues::validate_body(text, false).is_err() {
             return Err(OperationError::Invalid {
@@ -1236,8 +1285,14 @@ fn validate_options(title: Option<&str>, message: Option<&str>, email: Option<&s
             });
         }
     }
-    if email.is_some_and(|email| email.is_empty() || email.len() > 255 || !email.contains('@')
-        || email.chars().any(|c| c.is_control() || matches!(c, '<' | '>'))) {
+    if email.is_some_and(|email| {
+        email.is_empty()
+            || email.len() > 255
+            || !email.contains('@')
+            || email
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '<' | '>'))
+    }) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "Invalid merge author email".into(),
@@ -1287,8 +1342,14 @@ pub async fn publish_prepared_merge(
 ) -> Result<MergeResponse, OperationError> {
     // A dropped request must not cancel a publication halfway, so it runs on its own task.
     let (pool, ci, broadcaster) = (pool.clone(), ci.clone(), std::sync::Arc::clone(broadcaster));
-    tokio::spawn(async move { publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await })
-        .await.map_err(|_| OperationError::Unavailable { code: "merge_interrupted", message: "Merge publication was interrupted; check the branch before retrying.".into() })?
+    tokio::spawn(
+        async move { publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await },
+    )
+    .await
+    .map_err(|_| OperationError::Unavailable {
+        code: "merge_interrupted",
+        message: "Merge publication was interrupted; check the branch before retrying.".into(),
+    })?
 }
 async fn publish_prepared_merge_owned(
     pool: &db::DbPool,
@@ -1310,7 +1371,9 @@ async fn publish_prepared_merge_owned(
         auto_merge,
     } = prepared;
     let policy = db::pull_requests::merge_policy::Snapshot {
-        revision: db::pull_requests::merge_policy::revision(pool, repository.id).await.map_err(database_error)?,
+        revision: db::pull_requests::merge_policy::revision(pool, repository.id)
+            .await
+            .map_err(database_error)?,
         auto_merge,
     };
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id)

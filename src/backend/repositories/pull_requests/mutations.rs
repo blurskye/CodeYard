@@ -301,7 +301,16 @@ pub async fn create_pull_request(
                 db::pull_requests::records::IssueConversionRefusal::Missing.into(),
             ));
         }
-        repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing, req.suppress_ci).await?;
+        repair_open_pull(
+            pool,
+            ci,
+            &repository,
+            &head_repository,
+            credential,
+            &existing,
+            req.suppress_ci,
+        )
+        .await?;
         return Err(OperationError::Conflict {
             code: "pull_request_exists",
             message: format!(
@@ -393,7 +402,16 @@ pub async fn create_pull_request(
                     message: "Pull request state changed; retry the request".to_owned(),
                 });
             };
-            repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing, req.suppress_ci).await?;
+            repair_open_pull(
+                pool,
+                ci,
+                &repository,
+                &head_repository,
+                credential,
+                &existing,
+                req.suppress_ci,
+            )
+            .await?;
             return Err(OperationError::Conflict {
                 code: "pull_request_exists",
                 message: format!(

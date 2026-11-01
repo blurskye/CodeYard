@@ -202,7 +202,13 @@ pub(super) async fn apply(
     let pool = &ctx.state.pool;
     let result = match command {
         Command::Visibility { public } => {
-            organizations::discovery::set_membership_public(pool, ctx.database_actor(actor), org, public).await
+            organizations::discovery::set_membership_public(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                public,
+            )
+            .await
         }
         Command::Invite {
             username,
@@ -233,10 +239,15 @@ pub(super) async fn apply(
                 reinstate,
                 teams: Some(organizations::InvitationTeams::Slugs(team_slugs)),
             };
-            let outcome =
-                organizations::create_organization_invitation(pool, ctx.database_actor(actor), org, &input, false)
-                    .await
-                    .map_err(|_| unavailable(ctx))?;
+            let outcome = organizations::create_organization_invitation(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                &input,
+                false,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?;
             if let OrganizationOutcome::Applied(invitation) = &outcome {
                 organization_invitation(
                     pool,
@@ -249,18 +260,36 @@ pub(super) async fn apply(
             return Ok(unit(outcome));
         }
         Command::CancelInvitation { user } => {
-            organizations::cancel_organization_invitation(pool, ctx.database_actor(actor), org, user).await
+            organizations::cancel_organization_invitation(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+            )
+            .await
         }
         Command::CancelInvitationId { invitation } => {
-            organizations::cancel_invitation_id(pool, ctx.database_actor(actor), org, invitation, false).await
+            organizations::cancel_invitation_id(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                invitation,
+                false,
+            )
+            .await
         }
-        Command::ChangeRole { user, role } => {
-            organizations::update_organization_member_role(pool, ctx.database_actor(actor), org, user, role)
-                .await
-                .map(unit)
-        }
+        Command::ChangeRole { user, role } => organizations::update_organization_member_role(
+            pool,
+            ctx.database_actor(actor),
+            org,
+            user,
+            role,
+        )
+        .await
+        .map(unit),
         Command::Remove { user } => {
-            organizations::remove_organization_member(pool, ctx.database_actor(actor), org, user).await
+            organizations::remove_organization_member(pool, ctx.database_actor(actor), org, user)
+                .await
         }
         Command::Block { username } => {
             let Some(user) = target(ctx, &username).await? else {
@@ -272,7 +301,13 @@ pub(super) async fn apply(
             organizations::blocks::change(pool, ctx.database_actor(actor), org, user, false).await
         }
         Command::ConvertOutside { user } => {
-            organizations::convert_to_outside_collaborator(pool, ctx.database_actor(actor), org, user).await
+            organizations::convert_to_outside_collaborator(
+                pool,
+                ctx.database_actor(actor),
+                org,
+                user,
+            )
+            .await
         }
         Command::RemoveOutside { user } => {
             organizations::outside::remove(pool, ctx.database_actor(actor), org, user).await

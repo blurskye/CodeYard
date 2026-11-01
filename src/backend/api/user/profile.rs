@@ -166,7 +166,10 @@ pub(crate) async fn load_settings(
                 .unwrap_or(0),
         )
         .await
-        .map_err(settings_read_failure(ctx, "Unable to load your signing keys."))?
+        .map_err(settings_read_failure(
+            ctx,
+            "Unable to load your signing keys.",
+        ))?
         .into_iter()
         .map(settings_key)
         .collect()
@@ -179,23 +182,28 @@ pub(crate) async fn load_settings(
             .get("tokens_before")
             .and_then(|value| value.parse().ok())
             .unwrap_or(0);
-        db::users::tokens::list_tokens(&ctx.state.pool, user.id, &session::extract_session_id(&ctx.headers).unwrap_or_default(), before)
-            .await
-            .map_err(settings_read_failure(ctx, "Unable to load your tokens."))?
-            .into_iter()
-            .map(|token| Token {
-                id: token.id,
-                name: token.name,
-                scope: token.scope,
-                expires: token
-                    .expires_at
-                    .map(|expiry| expiry.to_rfc3339())
-                    .unwrap_or_else(|| "never".to_owned()),
-                created: token.created_at.format("%b %e, %Y").to_string(),
-                last_used: token.last_used_at.map(|at| at.to_rfc3339()),
-                last_ip: token.last_used_ip,
-            })
-            .collect()
+        db::users::tokens::list_tokens(
+            &ctx.state.pool,
+            user.id,
+            &session::extract_session_id(&ctx.headers).unwrap_or_default(),
+            before,
+        )
+        .await
+        .map_err(settings_read_failure(ctx, "Unable to load your tokens."))?
+        .into_iter()
+        .map(|token| Token {
+            id: token.id,
+            name: token.name,
+            scope: token.scope,
+            expires: token
+                .expires_at
+                .map(|expiry| expiry.to_rfc3339())
+                .unwrap_or_else(|| "never".to_owned()),
+            created: token.created_at.format("%b %e, %Y").to_string(),
+            last_used: token.last_used_at.map(|at| at.to_rfc3339()),
+            last_ip: token.last_used_ip,
+        })
+        .collect()
     } else {
         Vec::new()
     };
@@ -204,11 +212,15 @@ pub(crate) async fn load_settings(
             &ctx.state.pool,
             user.id,
             session.as_deref(),
-            submitted.and_then(|form| form.get("sessions_before")).or_else(|| ctx.query.get("sessions_before"))
-                .and_then(|value| value.parse::<i64>().ok()).unwrap_or(0).max(0),
+            submitted
+                .and_then(|form| form.get("sessions_before"))
+                .or_else(|| ctx.query.get("sessions_before"))
+                .and_then(|value| value.parse::<i64>().ok())
+                .unwrap_or(0)
+                .max(0),
         )
         .await
-        .map_err(|error| ctx.error(error.0, public_api_message(&error.1.0)))?
+        .map_err(|error| ctx.error(error.0, public_api_message(&error.1 .0)))?
     } else {
         super::sessions::SessionListing::default()
     };
@@ -261,7 +273,10 @@ pub(crate) async fn load_settings(
     let emails = if tab == "email" {
         db::users::emails::list_account_emails(&ctx.state.pool, user.id, &credential)
             .await
-            .map_err(settings_read_failure(ctx, "Unable to load your email addresses."))?
+            .map_err(settings_read_failure(
+                ctx,
+                "Unable to load your email addresses.",
+            ))?
             .into_iter()
             .map(|email| SecondaryEmail {
                 email: email.email,
@@ -274,7 +289,10 @@ pub(crate) async fn load_settings(
     let email_notifications = if tab == "email" {
         db::email::get_email_notifications(&ctx.state.pool, user.id, &credential)
             .await
-            .map_err(settings_read_failure(ctx, "Unable to load your notification setting."))?
+            .map_err(settings_read_failure(
+                ctx,
+                "Unable to load your notification setting.",
+            ))?
     } else {
         true
     };

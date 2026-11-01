@@ -261,9 +261,13 @@ pub fn detect() -> Detection {
             Ok(name) if name.trim() == "sshd" => {
                 use std::os::unix::fs::MetadataExt;
                 let trusted = fs::metadata(entry.path()).is_ok_and(|metadata| metadata.uid() == 0)
-                    && fs::read_link(entry.path().join("exe")).is_ok_and(|path| path.file_name().is_some_and(|name| name == "sshd"))
-                    && fs::metadata(entry.path().join("exe")).is_ok_and(|metadata| metadata.uid() == 0 && metadata.mode() & 0o022 == 0);
-                if trusted { return Detection::Active; }
+                    && fs::read_link(entry.path().join("exe"))
+                        .is_ok_and(|path| path.file_name().is_some_and(|name| name == "sshd"))
+                    && fs::metadata(entry.path().join("exe"))
+                        .is_ok_and(|metadata| metadata.uid() == 0 && metadata.mode() & 0o022 == 0);
+                if trusted {
+                    return Detection::Active;
+                }
             }
             Err(error) if error.kind() == std::io::ErrorKind::PermissionDenied => denied = true,
             _ => {}

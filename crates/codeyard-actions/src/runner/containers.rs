@@ -74,7 +74,10 @@ impl Podman {
         if job.is_none() && services.is_empty() {
             return Ok(serde_json::json!({}));
         }
-        anyhow::ensure!(!self.deny_docker, "Container actions require CI_EXECUTION_MODE=podman");
+        anyhow::ensure!(
+            !self.deny_docker,
+            "Container actions require CI_EXECUTION_MODE=podman"
+        );
         let network = format!("{}-network", self.prefix);
         self.network = Some(network.clone());
         let mut args: Vec<String> = vec!["network".into(), "create".into()];
@@ -135,8 +138,16 @@ impl Podman {
                 .create("job", container, workspace, temp, cache, true)
                 .await?;
             self.output(&["start".into(), id.clone()]).await?;
-            let environment = self.output(&["inspect".into(), "--format".into(), "{{json .Config.Env}}".into(), id.clone()]).await?;
-            self.path = serde_json::from_str::<Vec<String>>(&environment)?.into_iter()
+            let environment = self
+                .output(&[
+                    "inspect".into(),
+                    "--format".into(),
+                    "{{json .Config.Env}}".into(),
+                    id.clone(),
+                ])
+                .await?;
+            self.path = serde_json::from_str::<Vec<String>>(&environment)?
+                .into_iter()
                 .find_map(|entry| entry.strip_prefix("PATH=").map(str::to_owned));
             self.job = Some(id);
         }
@@ -152,12 +163,19 @@ impl Podman {
         cache: &Path,
         job: bool,
     ) -> Result<String> {
-        let id = if job { format!("{}-job", self.prefix) } else { format!("{}-service-{name}", self.prefix) };
+        let id = if job {
+            format!("{}-job", self.prefix)
+        } else {
+            format!("{}-service-{name}", self.prefix)
+        };
         self.containers.push(id.clone());
         let mut args = vec!["create".into(), "--name".into(), id.clone()];
         args.extend(self.options.clone());
-        let auth_directory = container.credentials.as_ref()
-            .map(|_| crate::fs::private_tempdir("codeyard-registry-", None)).transpose()?;
+        let auth_directory = container
+            .credentials
+            .as_ref()
+            .map(|_| crate::fs::private_tempdir("codeyard-registry-", None))
+            .transpose()?;
         if let Some((username, password)) = &container.credentials {
             let first = container.image.split('/').next().unwrap_or("docker.io");
             let registry = if container.image.contains('/')
@@ -169,7 +187,11 @@ impl Podman {
             };
             let auth =
                 base64::engine::general_purpose::STANDARD.encode(format!("{username}:{password}"));
-            let path = auth_directory.as_ref().expect("registry directory exists").path().join("auth.json");
+            let path = auth_directory
+                .as_ref()
+                .expect("registry directory exists")
+                .path()
+                .join("auth.json");
             std::fs::write(
                 &path,
                 serde_json::to_vec(&serde_json::json!({"auths": {registry: {"auth": auth}}}))?,
@@ -237,7 +259,10 @@ impl Podman {
         command
     }
 
-    #[expect(clippy::too_many_arguments, reason = "A step's process takes its command, directory, environment, deadline and output maps one by one.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "A step's process takes its command, directory, environment, deadline and output maps one by one."
+    )]
     pub async fn docker_action(
         &mut self,
         image: &str,
@@ -249,14 +274,20 @@ impl Podman {
         args: &[String],
         deadline: std::time::Instant,
     ) -> Result<(Command, String)> {
-        anyhow::ensure!(!self.deny_docker, "Docker actions require CI_EXECUTION_MODE=podman");
+        anyhow::ensure!(
+            !self.deny_docker,
+            "Docker actions require CI_EXECUTION_MODE=podman"
+        );
         let built = builds_image(directory, image);
         let key = (directory.to_owned(), image.to_owned());
         let image = if let Some(image) = self.action_images.get(&key) {
             image.clone()
         } else if built {
             // The Dockerfile must be the action's own, not another file of the host.
-            let dockerfile = directory.join(image).canonicalize().context("The action's Dockerfile does not exist")?;
+            let dockerfile = directory
+                .join(image)
+                .canonicalize()
+                .context("The action's Dockerfile does not exist")?;
             anyhow::ensure!(
                 dockerfile.starts_with(directory.canonicalize()?) && dockerfile.is_file(),
                 "The action's Dockerfile must be inside the action"
@@ -274,20 +305,42 @@ impl Podman {
                 dockerfile.display().to_string(),
                 directory.display().to_string(),
             ]);
-            let output = super::process::output(self.command().args(&args), deadline.saturating_duration_since(std::time::Instant::now())).await?;
-            anyhow::ensure!(output.status.success(), "Docker action image build failed: {}", String::from_utf8_lossy(&output.stderr));
+            let output = super::process::output(
+                self.command().args(&args),
+                deadline.saturating_duration_since(std::time::Instant::now()),
+            )
+            .await?;
+            anyhow::ensure!(
+                output.status.success(),
+                "Docker action image build failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
             self.action_images.insert(key, tag.clone());
             tag
         } else {
             let image = image.strip_prefix("docker://").unwrap_or(image);
             // A leading dash would make Podman read the image as an option.
-            anyhow::ensure!(!image.is_empty() && !image.starts_with('-'), "Invalid Docker image '{image}'");
-            if self.pull { self.output(&["pull".into(), "--".into(), image.into()]).await?; }
-            let inspect = ["image".into(), "inspect".into(), "--format".into(), "{{.Id}}".into(), "--".into(), image.into()];
+            anyhow::ensure!(
+                !image.is_empty() && !image.starts_with('-'),
+                "Invalid Docker image '{image}'"
+            );
+            if self.pull {
+                self.output(&["pull".into(), "--".into(), image.into()])
+                    .await?;
+            }
+            let inspect = [
+                "image".into(),
+                "inspect".into(),
+                "--format".into(),
+                "{{.Id}}".into(),
+                "--".into(),
+                image.into(),
+            ];
             let resolved = match self.output(&inspect).await {
                 Ok(image) => image,
                 Err(_) => {
-                    self.output(&["pull".into(), "--".into(), image.into()]).await?;
+                    self.output(&["pull".into(), "--".into(), image.into()])
+                        .await?;
                     self.output(&inspect).await?
                 }
             };
@@ -313,11 +366,16 @@ impl Podman {
             }
         }
         if workspace != Path::new("/github/workspace") {
-            command.arg("--volume").arg(bind(workspace, Path::new("/github/workspace"))?);
+            command
+                .arg("--volume")
+                .arg(bind(workspace, Path::new("/github/workspace"))?);
         }
         command.arg("--workdir").arg("/github/workspace");
         add_env(&mut command, env);
-        command.arg("--env").arg("GITHUB_WORKSPACE").env("GITHUB_WORKSPACE", "/github/workspace");
+        command
+            .arg("--env")
+            .arg("GITHUB_WORKSPACE")
+            .env("GITHUB_WORKSPACE", "/github/workspace");
         if let Some(entrypoint) = entrypoint {
             // One argument, so an entrypoint that starts with a dash stays the entrypoint.
             command.arg(format!("--entrypoint={entrypoint}"));
@@ -328,16 +386,30 @@ impl Podman {
 
     pub async fn cleanup_active_actions(&mut self) -> bool {
         let prefix = format!("{}-action-", self.prefix);
-        let actions: Vec<_> = self.containers.iter().filter(|id| id.starts_with(&prefix)).cloned().collect();
+        let actions: Vec<_> = self
+            .containers
+            .iter()
+            .filter(|id| id.starts_with(&prefix))
+            .cloned()
+            .collect();
         for action in actions {
-            if !self.cleanup_action(&action).await { return false; }
+            if !self.cleanup_action(&action).await {
+                return false;
+            }
         }
         true
     }
 
     pub async fn cleanup_action(&mut self, id: &str) -> bool {
-        let mut pending = Cleanup { url: self.url.clone(), containers: vec![id.into()], network: None, images: vec![] };
-        if !pending.run().await { return false; }
+        let mut pending = Cleanup {
+            url: self.url.clone(),
+            containers: vec![id.into()],
+            network: None,
+            images: vec![],
+        };
+        if !pending.run().await {
+            return false;
+        }
         self.containers.retain(|container| container != id);
         true
     }
@@ -346,8 +418,10 @@ impl Podman {
         // Keep the live owner unchanged while awaiting: dropping this future must not forget
         // identifiers. Removal is idempotent, including after a lost client reply.
         let mut pending = Cleanup {
-            url: self.url.clone(), containers: self.containers.clone(),
-            network: self.network.clone(), images: self.images.clone(),
+            url: self.url.clone(),
+            containers: self.containers.clone(),
+            network: self.network.clone(),
+            images: self.images.clone(),
         };
         let succeeded = pending.run().await;
         self.containers = pending.containers;
@@ -370,9 +444,12 @@ impl Cleanup {
 
     async fn remove(&self, args: &[&str]) -> bool {
         let mut command = Command::new("podman");
-        if let Some(url) = &self.url { command.args(["--url", url]); }
+        if let Some(url) = &self.url {
+            command.args(["--url", url]);
+        }
         command.args(args);
-        super::process::output(&mut command, Duration::from_secs(5)).await
+        super::process::output(&mut command, Duration::from_secs(5))
+            .await
             .is_ok_and(|output| output.status.success())
     }
 
@@ -380,14 +457,19 @@ impl Cleanup {
         tokio::time::timeout(Duration::from_secs(30), async {
             for attempt in 0..3 {
                 for id in self.containers.clone().into_iter().rev() {
-                    if self.remove(&["rm", "--ignore", "--force", "--volumes", &id]).await {
+                    if self
+                        .remove(&["rm", "--ignore", "--force", "--volumes", &id])
+                        .await
+                    {
                         self.containers.retain(|container| container != &id);
                     }
                 }
                 // Networks and images cannot be retired until all their consumers are gone.
                 if self.containers.is_empty() {
                     if let Some(network) = self.network.clone() {
-                        if self.remove(&["network", "rm", "--ignore", &network]).await { self.network = None; }
+                        if self.remove(&["network", "rm", "--ignore", &network]).await {
+                            self.network = None;
+                        }
                     }
                     for image in self.images.clone() {
                         if self.remove(&["rmi", "--ignore", "--force", &image]).await {
@@ -395,11 +477,17 @@ impl Cleanup {
                         }
                     }
                 }
-                if self.empty() { return true; }
-                if attempt < 2 { tokio::time::sleep(Duration::from_secs(1)).await; }
+                if self.empty() {
+                    return true;
+                }
+                if attempt < 2 {
+                    tokio::time::sleep(Duration::from_secs(1)).await;
+                }
             }
             false
-        }).await.unwrap_or(false)
+        })
+        .await
+        .unwrap_or(false)
     }
 }
 
@@ -418,7 +506,10 @@ fn builds_image(directory: &Path, image: &str) -> bool {
 fn bind(source: &Path, target: &Path) -> Result<String> {
     let (source, target) = (source.display().to_string(), target.display().to_string());
     for path in [&source, &target] {
-        anyhow::ensure!(!path.contains(':'), "Cannot mount '{path}' into a container: the path contains ':'");
+        anyhow::ensure!(
+            !path.contains(':'),
+            "Cannot mount '{path}' into a container: the path contains ':'"
+        );
     }
     Ok(format!("{source}:{target}:rw"))
 }
@@ -493,17 +584,27 @@ fn add_env(command: &mut Command, env: &BTreeMap<String, String>) {
 impl Drop for Podman {
     fn drop(&mut self) {
         let mut pending = Cleanup {
-            url: self.url.clone(), containers: std::mem::take(&mut self.containers),
-            network: self.network.take(), images: std::mem::take(&mut self.images),
+            url: self.url.clone(),
+            containers: std::mem::take(&mut self.containers),
+            network: self.network.take(),
+            images: std::mem::take(&mut self.images),
         };
-        if pending.empty() { return; }
+        if pending.empty() {
+            return;
+        }
         // A dropped job may be running inside Tokio. A separate, joined runtime lets the same
         // ordered cleanup finish even during standalone runtime shutdown; no children detach.
         let _ = std::thread::spawn(move || {
-            if let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() {
-                if !runtime.block_on(pending.run()) { eprintln!("Container cleanup failed"); }
+            if let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                if !runtime.block_on(pending.run()) {
+                    eprintln!("Container cleanup failed");
+                }
             }
-        }).join();
+        })
+        .join();
     }
 }
 
@@ -513,7 +614,11 @@ mod tests {
     use clap::Parser;
 
     fn arguments(command: &Command) -> Vec<String> {
-        command.as_std().get_args().map(|arg| arg.to_string_lossy().into_owned()).collect()
+        command
+            .as_std()
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect()
     }
 
     fn variable(command: &Command, key: &str) -> Option<String> {
@@ -546,7 +651,12 @@ mod tests {
             job: Some("job".into()),
             path: None,
         };
-        let exec = podman.exec(&env, Path::new("/work"), "sh", &["-c".into(), "true".into()]);
+        let exec = podman.exec(
+            &env,
+            Path::new("/work"),
+            "sh",
+            &["-c".into(), "true".into()],
+        );
         // Container creation and Docker actions pass their variables through the same function.
         let mut run = Command::new("podman");
         add_env(&mut run, &env);
@@ -558,8 +668,12 @@ mod tests {
                 assert_eq!(variable(command, secret).as_deref(), Some("hunter2"));
             }
             // The client keeps its own PATH and loader, so it still finds its helpers.
-            assert!(args.windows(2).any(|pair| pair == ["--env", "PATH=/container/bin"]));
-            assert!(args.windows(2).any(|pair| pair == ["--env", "LD_PRELOAD=/tmp/hook.so"]));
+            assert!(args
+                .windows(2)
+                .any(|pair| pair == ["--env", "PATH=/container/bin"]));
+            assert!(args
+                .windows(2)
+                .any(|pair| pair == ["--env", "LD_PRELOAD=/tmp/hook.so"]));
             assert_eq!(variable(command, "PATH"), None);
             assert_eq!(variable(command, "LD_PRELOAD"), None);
         }
@@ -567,11 +681,15 @@ mod tests {
 
     #[tokio::test]
     async fn a_docker_action_entrypoint_that_starts_with_a_dash_stays_the_entrypoint() {
-        let options = Options::try_parse_from(["codeyard-actions", "push", "-W", "unused"]).unwrap();
+        let options =
+            Options::try_parse_from(["codeyard-actions", "push", "-W", "unused"]).unwrap();
         let mut podman = Podman::new(&options, "test".into()).unwrap();
         // A resolved image needs no Podman call.
         podman.action_images.insert(
-            (Path::new("/action").to_path_buf(), "docker://alpine:3.21".into()),
+            (
+                Path::new("/action").to_path_buf(),
+                "docker://alpine:3.21".into(),
+            ),
             "resolved".into(),
         );
         let (command, _) = podman
@@ -603,7 +721,8 @@ mod tests {
         std::fs::create_dir_all(&outside).unwrap();
         std::fs::write(outside.join("Dockerfile"), "FROM scratch\n").unwrap();
         std::os::unix::fs::symlink(outside.join("Dockerfile"), action.join("Dockerfile")).unwrap();
-        let options = Options::try_parse_from(["codeyard-actions", "push", "-W", "unused"]).unwrap();
+        let options =
+            Options::try_parse_from(["codeyard-actions", "push", "-W", "unused"]).unwrap();
         // Each image is refused before Podman runs.
         for (image, refusal) in [
             ("docker://--privileged", "Invalid Docker image"),
@@ -632,6 +751,9 @@ mod tests {
         assert!(builds_image(&action, "Dockerfile"));
         assert!(bind(&root.path().join("a:b"), Path::new("/github/workspace")).is_err());
         assert!(bind(Path::new("/work"), Path::new("/a:b")).is_err());
-        assert_eq!(bind(Path::new("/work"), Path::new("/work")).unwrap(), "/work:/work:rw");
+        assert_eq!(
+            bind(Path::new("/work"), Path::new("/work")).unwrap(),
+            "/work:/work:rw"
+        );
     }
 }

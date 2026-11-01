@@ -41,7 +41,10 @@ pub async fn list_entries(
     )
 }
 
-#[expect(clippy::too_many_arguments, reason = "Each argument is one column of the timeline event.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one column of the timeline event."
+)]
 pub async fn record_event(
     pool: &PgPool,
     repo_id: i64,
@@ -53,15 +56,27 @@ pub async fn record_event(
     previous: &str,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    append(&mut tx, repo_id, subject, subject_id, actor_id, kind, detail, previous).await?;
+    append(
+        &mut tx, repo_id, subject, subject_id, actor_id, kind, detail, previous,
+    )
+    .await?;
     tx.commit().await?;
     Ok(())
 }
 
-#[expect(clippy::too_many_arguments, reason = "Each argument is one column of the timeline event.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one column of the timeline event."
+)]
 pub(crate) async fn append(
-    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, repo_id: i64, subject: &str, subject_id: i64,
-    actor_id: i64, kind: &str, detail: &str, previous: &str,
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    repo_id: i64,
+    subject: &str,
+    subject_id: i64,
+    actor_id: i64,
+    kind: &str,
+    detail: &str,
+    previous: &str,
 ) -> Result<i64> {
     let (detail, previous) = crate::backend::db::timeline::event_details(kind, detail, previous)?;
     Ok(sqlx::query_scalar(
@@ -79,7 +94,10 @@ pub(crate) async fn append(
 }
 
 /// The events from `after` up to `before`, each bound optional, oldest first.
-#[expect(clippy::too_many_arguments, reason = "Each argument is one filter or page bound of the query.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one filter or page bound of the query."
+)]
 pub async fn list_events(
     pool: &PgPool,
     repo: i64,

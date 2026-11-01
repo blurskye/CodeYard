@@ -22,9 +22,11 @@ pub(crate) async fn lock_membership(tx: &mut Transaction<'_, Postgres>) -> Resul
 /// and an acknowledgement locks an account before organizations. Without the shared form,
 /// those two orders could each wait for a row the other holds.
 pub(crate) async fn lock_membership_shared(connection: &mut PgConnection) -> Result<()> {
-    sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtext(COALESCE(current_schema(),'')), 37002)")
-        .execute(connection)
-        .await?;
+    sqlx::query(
+        "SELECT pg_advisory_xact_lock_shared(hashtext(COALESCE(current_schema(),'')), 37002)",
+    )
+    .execute(connection)
+    .await?;
     Ok(())
 }
 
@@ -49,8 +51,14 @@ pub(crate) async fn organization_name_exists(
     )
 }
 
-pub(crate) async fn email_owned(tx: &mut Transaction<'_, Postgres>, email: Option<&str>, except: i64) -> Result<bool> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')),37004)").execute(&mut **tx).await?;
+pub(crate) async fn email_owned(
+    tx: &mut Transaction<'_, Postgres>,
+    email: Option<&str>,
+    except: i64,
+) -> Result<bool> {
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')),37004)")
+        .execute(&mut **tx)
+        .await?;
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($1) AND id<>$2) OR EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower($1) AND user_id<>$2)")
         .bind(email).bind(except).fetch_one(&mut **tx).await?)
 }
@@ -86,27 +94,54 @@ pub(crate) async fn live_session(
 }
 
 /// Call within a transaction; authority and session locks are retained until commit.
-async fn active_account_locked(connection: &mut PgConnection, actor: i64, exclusive: bool) -> Result<bool> {
+async fn active_account_locked(
+    connection: &mut PgConnection,
+    actor: i64,
+    exclusive: bool,
+) -> Result<bool> {
     lock_membership_shared(connection).await?;
-    let lock = if exclusive { "FOR NO KEY UPDATE" } else { "FOR SHARE" };
-    Ok(sqlx::query_scalar(&format!("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 {lock}"))
-        .bind(actor).fetch_optional(connection).await?.unwrap_or(false))
+    let lock = if exclusive {
+        "FOR NO KEY UPDATE"
+    } else {
+        "FOR SHARE"
+    };
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 {lock}"
+    ))
+    .bind(actor)
+    .fetch_optional(connection)
+    .await?
+    .unwrap_or(false))
 }
 
 pub(crate) async fn active_account(connection: &mut PgConnection, actor: i64) -> Result<bool> {
     active_account_locked(connection, actor, true).await
 }
 
-async fn active_session_locked(connection: &mut PgConnection, actor: i64, session: &str, exclusive: bool) -> Result<bool> {
-    Ok(active_account_locked(connection, actor, exclusive).await? && live_session(connection, actor, session).await?)
+async fn active_session_locked(
+    connection: &mut PgConnection,
+    actor: i64,
+    session: &str,
+    exclusive: bool,
+) -> Result<bool> {
+    Ok(active_account_locked(connection, actor, exclusive).await?
+        && live_session(connection, actor, session).await?)
 }
 
-pub(crate) async fn active_session(connection: &mut PgConnection, actor: i64, session: &str) -> Result<bool> {
+pub(crate) async fn active_session(
+    connection: &mut PgConnection,
+    actor: i64,
+    session: &str,
+) -> Result<bool> {
     active_session_locked(connection, actor, session, true).await
 }
 
 /// For operations which do not modify the account or upgrade its lock later.
-pub(crate) async fn active_session_read(connection: &mut PgConnection, actor: i64, session: &str) -> Result<bool> {
+pub(crate) async fn active_session_read(
+    connection: &mut PgConnection,
+    actor: i64,
+    session: &str,
+) -> Result<bool> {
     active_session_locked(connection, actor, session, false).await
 }
 
@@ -146,15 +181,23 @@ async fn require_account_with_mode(
     // Repository/org authority already holds a shared actor lock. Upgrading it
     // after acquiring resource locks deadlocks concurrent requests by one actor.
     // Shared is sufficient to prevent account restrictions through commit.
-    anyhow::ensure!(active_account_locked(tx, actor, exclusive_actor).await?, AccountRestricted);
-    anyhow::ensure!(credential_live(tx, actor, credential, write).await?, AccountRestricted);
+    anyhow::ensure!(
+        active_account_locked(tx, actor, exclusive_actor).await?,
+        AccountRestricted
+    );
+    anyhow::ensure!(
+        credential_live(tx, actor, credential, write).await?,
+        AccountRestricted
+    );
     Ok(())
 }
 
 /// The caller retains account/role authority before locking its originating credential.
 pub(crate) async fn credential_live(
-    tx: &mut sqlx::PgConnection, actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>, write: bool,
+    tx: &mut sqlx::PgConnection,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    write: bool,
 ) -> Result<bool> {
     use crate::backend::db::users::accounts::AccountCredential;
     Ok(match credential {
@@ -475,15 +518,25 @@ pub async fn change_email(
     if email_owned(&mut tx, Some(email), user_id).await? {
         return Ok(EmailChange::Taken);
     }
-    let changed: bool = sqlx::query_scalar("SELECT email IS DISTINCT FROM $2 FROM users WHERE id=$1")
-        .bind(user_id).bind(email).fetch_one(&mut *tx).await?;
+    let changed: bool =
+        sqlx::query_scalar("SELECT email IS DISTINCT FROM $2 FROM users WHERE id=$1")
+            .bind(user_id)
+            .bind(email)
+            .fetch_one(&mut *tx)
+            .await?;
     let verified: bool = sqlx::query_scalar("SELECT COALESCE(bool_or(verified),FALSE) FROM user_emails WHERE user_id=$1 AND lower(email)=lower($2)")
         .bind(user_id).bind(email).fetch_one(&mut *tx).await?;
     if changed {
-        sqlx::query("DELETE FROM email_tokens WHERE user_id=$1").bind(user_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM email_tokens WHERE user_id=$1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
     }
     sqlx::query("DELETE FROM user_emails WHERE user_id=$1 AND lower(email)=lower($2)")
-        .bind(user_id).bind(email).execute(&mut *tx).await?;
+        .bind(user_id)
+        .bind(email)
+        .execute(&mut *tx)
+        .await?;
     let user = sqlx::query_as::<_, User>(
         "UPDATE users SET email_verified=CASE WHEN email IS DISTINCT FROM $2 THEN $3 ELSE email_verified END,email=$2,updated_at=NOW() WHERE id=$1 RETURNING *",
     )
@@ -648,10 +701,7 @@ pub async fn admit_oauth_account(
     // After the numbered names, a few random ones, so taken numbers cannot block the sign-in.
     for suffix in 0..36 {
         if suffix >= 32 {
-            name = format!(
-                "{base}_{}",
-                &crate::backend::crypto::random_hex()[..8]
-            );
+            name = format!("{base}_{}", &crate::backend::crypto::random_hex()[..8]);
         } else if suffix > 0 {
             name = format!("{base}_{suffix}");
         }
@@ -778,12 +828,19 @@ pub async fn reset_password_with_link(
     let mut tx = pool.begin().await?;
     // Retain the owning organizations and account before the issuance, as in account changes.
     lock_membership(&mut tx).await?;
-    let user: Option<i64> = sqlx::query_scalar("SELECT user_id FROM email_tokens WHERE purpose='reset' AND token_hash=$1")
-        .bind(token_hash).fetch_optional(&mut *tx).await?;
+    let user: Option<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM email_tokens WHERE purpose='reset' AND token_hash=$1",
+    )
+    .bind(token_hash)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some(user) = user else { return Ok(None) };
     owned_organizations_for_account_change(&mut tx, user).await?;
     if sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
-        .bind(user).fetch_optional(&mut *tx).await?.is_none()
+        .bind(user)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_none()
     {
         return Ok(None);
     }

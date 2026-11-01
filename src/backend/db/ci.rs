@@ -86,16 +86,22 @@ pub enum CiReplaySelection {
 /// Serializes selection, credential rotation and state initialization for one worker,
 /// including retries that arrive through a different core.
 pub(crate) async fn prepare_claim<T>(
-    pool: &DbPool, worker: &str, prepare: impl std::future::Future<Output = Result<T>>,
+    pool: &DbPool,
+    worker: &str,
+    prepare: impl std::future::Future<Output = Result<T>>,
 ) -> Result<T> {
     match pool {
         DbPool::Postgres(pool) => {
-            use sqlx::{Connection, postgres::{PgAdvisoryLock, PgConnection}};
+            use sqlx::{
+                postgres::{PgAdvisoryLock, PgConnection},
+                Connection,
+            };
             // A preparation performs other pool operations. A dedicated connection avoids
             // exhausting the pool with lock holders that then need another connection.
             let mut connection = PgConnection::connect_with(&pool.connect_options()).await?;
             let schema: String = sqlx::query_scalar("SELECT current_schema()")
-                .fetch_one(&mut connection).await?;
+                .fetch_one(&mut connection)
+                .await?;
             let lock = PgAdvisoryLock::new(format!("codeyard-ci-prepare:{schema}:{worker}"));
             let guard = lock.acquire(connection).await?;
             let result = prepare.await;
@@ -103,10 +109,17 @@ pub(crate) async fn prepare_claim<T>(
             result
         }
         DbPool::Sqlite(_) => {
-            use std::{collections::HashMap, sync::{Arc, Mutex, OnceLock, Weak}};
-            static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
+            use std::{
+                collections::HashMap,
+                sync::{Arc, Mutex, OnceLock, Weak},
+            };
+            static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> =
+                OnceLock::new();
             let lock = {
-                let mut locks = LOCKS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
+                let mut locks = LOCKS
+                    .get_or_init(Default::default)
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 locks.retain(|_, lock| lock.strong_count() > 0);
                 match locks.get(worker).and_then(Weak::upgrade) {
                     Some(lock) => lock,
@@ -126,7 +139,11 @@ pub(crate) async fn prepare_claim<T>(
 #[derive(Clone)]
 pub enum CiCredential {
     Session(String),
-    Token { id: i64, hash: String, permission: &'static str },
+    Token {
+        id: i64,
+        hash: String,
+        permission: &'static str,
+    },
 }
 
 pub struct NewCiAttempt {

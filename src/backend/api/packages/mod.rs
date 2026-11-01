@@ -182,7 +182,10 @@ async fn owner(state: &AppState, name: &str) -> Result<Owner> {
 }
 
 async fn container_owner(state: &AppState, name: &str) -> Result<Owner> {
-    db::packages::container_owner(&state.pool, name).await.map_err(Error::db)?.ok_or_else(Error::missing)
+    db::packages::container_owner(&state.pool, name)
+        .await
+        .map_err(Error::db)?
+        .ok_or_else(Error::missing)
 }
 
 async fn package(
@@ -282,12 +285,21 @@ async fn owner_packages(
     let mut before = i64::MAX;
     let mut bytes = 0usize;
     loop {
-        let page = db::packages::owner_page(&state.pool, auth.map(|a| a.token.id.into()), owner, kind, before)
-            .await.map_err(Error::db)?;
+        let page = db::packages::owner_page(
+            &state.pool,
+            auth.map(|a| a.token.id.into()),
+            owner,
+            kind,
+            before,
+        )
+        .await
+        .map_err(Error::db)?;
         let done = page.len() < 100;
         for package in page {
             bytes = bytes.saturating_add(package.name.len() + 512);
-            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES { return Err(Error::unavailable()); }
+            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
+                return Err(Error::unavailable());
+            }
             before = package.id;
             packages.push(package);
         }
@@ -297,7 +309,10 @@ async fn owner_packages(
     }
 }
 
-enum RegistryFormat { Standard, Npm }
+enum RegistryFormat {
+    Standard,
+    Npm,
+}
 
 fn finish(
     result: std::result::Result<Result<Response>, tokio::time::error::Elapsed>,
@@ -309,7 +324,9 @@ fn finish(
         result => {
             // Private and unknown resources challenge alike, without an existence oracle.
             let error = match result {
-                Ok(Err(error)) if anonymous && error.0 == StatusCode::NOT_FOUND => Error::required(),
+                Ok(Err(error)) if anonymous && error.0 == StatusCode::NOT_FOUND => {
+                    Error::required()
+                }
                 Ok(Err(error)) => error,
                 _ => Error::unavailable(),
             };
@@ -319,12 +336,17 @@ fn finish(
             };
             let mut response = (error.0, Json(body)).into_response();
             if error.0 == StatusCode::UNAUTHORIZED {
-                response.headers_mut().insert(header::WWW_AUTHENTICATE, "Basic realm=\"Codeyard Packages\"".parse().unwrap());
+                response.headers_mut().insert(
+                    header::WWW_AUTHENTICATE,
+                    "Basic realm=\"Codeyard Packages\"".parse().unwrap(),
+                );
             }
             response
         }
     };
-    response.headers_mut().insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
     response
 }
 

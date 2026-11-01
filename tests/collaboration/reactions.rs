@@ -794,7 +794,11 @@ async fn toggles_check_access_in_their_transaction(pg: bool) {
         db::reactions::toggle_reaction(
             pool,
             actor,
-            if actor == owner { &owner_credential } else { &bob_credential },
+            if actor == owner {
+                &owner_credential
+            } else {
+                &bob_credential
+            },
             repo,
             issue,
             db::reactions::Subject::Issue,

@@ -51,7 +51,11 @@ fn reader(actor: Option<&auth::Authentication>) -> db::repositories::credentials
         credential: actor.map(auth::Authentication::credential),
     }
 }
-async fn require_site(state: &AppState, actor: Option<&auth::Authentication>, repo: i64) -> Result<pages::Site> {
+async fn require_site(
+    state: &AppState,
+    actor: Option<&auth::Authentication>,
+    repo: i64,
+) -> Result<pages::Site> {
     pages::site(&state.pool, &reader(actor), repo)
         .await
         .map_err(failure)?
@@ -113,9 +117,16 @@ async fn mutate(
                 }
             })?;
     }
-    let site = pages::save(&state.pool, actor.user.id, &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash), repo.id, &update, create)
-        .await
-        .map_err(failure)?;
+    let site = pages::save(
+        &state.pool,
+        actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        repo.id,
+        &update,
+        create,
+    )
+    .await
+    .map_err(failure)?;
     if create {
         Ok((
             StatusCode::CREATED,
@@ -177,9 +188,15 @@ async fn builds(
     let (repo, actor) = visible(&state, &headers, &params, false).await?;
     require_site(&state, actor.as_ref(), repo.id).await?;
     let (offset, limit) = page.window()?;
-    let rows = pages::builds(&state.pool, &reader(actor.as_ref()), repo.id, offset as i64, (limit + 1) as i64)
-        .await
-        .map_err(failure)?;
+    let rows = pages::builds(
+        &state.pool,
+        &reader(actor.as_ref()),
+        repo.id,
+        offset as i64,
+        (limit + 1) as i64,
+    )
+    .await
+    .map_err(failure)?;
     let has_next = rows.len() > limit;
     let mut documents = Vec::new();
     for row in rows.into_iter().take(limit) {
@@ -230,9 +247,15 @@ async fn request_build(
         .commit(&format!("refs/heads/{branch}"))
         .await
         .map_err(store_error)?;
-    let build = pages::request_build(&state.pool, actor.user.id, &actor.credential(), repo.id, &commit.sha)
-        .await
-        .map_err(failure)?;
+    let build = pages::request_build(
+        &state.pool,
+        actor.user.id,
+        &actor.credential(),
+        repo.id,
+        &commit.sha,
+    )
+    .await
+    .map_err(failure)?;
     Ok((StatusCode::CREATED,Json(json!({"url":format!("{}/pages/builds/{}",repo_url(&params["owner"],&params["repo"]),build.id),"status":build.status}))).into_response())
 }
 #[derive(Deserialize)]
@@ -339,15 +362,9 @@ async fn cancel(
         .parse()
         .map_err(|_| Error::missing())?;
     let actor = actor.ok_or_else(auth::required)?;
-    pages::cancel(
-        &state.pool,
-        actor.user.id,
-        &actor.credential(),
-        repo.id,
-        id,
-    )
-    .await
-    .map_err(failure)?;
+    pages::cancel(&state.pool, actor.user.id, &actor.credential(), repo.id, id)
+        .await
+        .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)
 }
 async fn health(

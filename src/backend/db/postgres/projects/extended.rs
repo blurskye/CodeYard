@@ -44,7 +44,9 @@ pub async fn link_team(
 
 async fn read_snapshot(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ").execute(&mut *tx).await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *tx)
+        .await?;
     Ok(tx)
 }
 
@@ -52,11 +54,21 @@ pub async fn by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Projec
     by_id_at(pool, viewer, id, false).await
 }
 
-pub async fn by_id_at(pool: &PgPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Project> {
+pub async fn by_id_at(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<Project> {
     super::super::retry_on_conflict(|| by_id_at_once(pool, viewer, id, include_deleted)).await
 }
 
-async fn by_id_at_once(pool: &PgPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Project> {
+async fn by_id_at_once(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<Project> {
     let mut tx = read_snapshot(pool).await?;
     readable_at(&mut tx, viewer, id, include_deleted).await?;
     let project = sqlx::query_as("SELECT * FROM projects WHERE id=$1")
@@ -85,11 +97,21 @@ pub async fn item_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<I
     item_by_id_at(pool, viewer, id, false).await
 }
 
-pub async fn item_by_id_at(pool: &PgPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Item> {
+pub async fn item_by_id_at(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<Item> {
     super::super::retry_on_conflict(|| item_by_id_at_once(pool, viewer, id, include_deleted)).await
 }
 
-async fn item_by_id_at_once(pool: &PgPool, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<Item> {
+async fn item_by_id_at_once(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<Item> {
     let mut tx = read_snapshot(pool).await?;
     let item: Item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
         .bind(id)
@@ -111,7 +133,10 @@ pub async fn metadata(
     readme: Option<&str>,
     template: Option<bool>,
 ) -> Result<Project> {
-    anyhow::ensure!(readme.is_none_or(|text| crate::backend::issues::validate_body(text, false).is_ok()), Refusal::Invalid);
+    anyhow::ensure!(
+        readme.is_none_or(|text| crate::backend::issues::validate_body(text, false).is_ok()),
+        Refusal::Invalid
+    );
     let mut tx = pool.begin().await?;
     write_project(&mut tx, actor, credential, project).await?;
     let result = sqlx::query_as("UPDATE projects SET readme=COALESCE($2,readme),template=COALESCE($3,template),updated_at=$4 WHERE id=$1 RETURNING *").bind(project).bind(readme).bind(template).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
@@ -226,7 +251,10 @@ pub async fn copy(
     let mut tx = pool.begin().await?;
     owner_authority(&mut tx, actor, owner, true).await?;
     let (kind, id) = owner.parts();
-    anyhow::ensure!(super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     readable(&mut tx, Some(actor), source).await?;
     let original: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")

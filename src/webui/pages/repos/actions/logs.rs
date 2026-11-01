@@ -98,10 +98,14 @@ fn act_prefix(line: &str) -> Option<(&str, &str)> {
     let inner = line.strip_prefix('[')?;
     let mut depth = 1;
     for (at, character) in inner.char_indices() {
-        if character == '[' { depth += 1; }
+        if character == '[' {
+            depth += 1;
+        }
         if character == ']' {
             depth -= 1;
-            if depth == 0 { return Some((&inner[..at], inner[at + 1..].trim_start())); }
+            if depth == 0 {
+                return Some((&inner[..at], inner[at + 1..].trim_start()));
+            }
         }
     }
     None
@@ -442,20 +446,29 @@ pub fn add_planned_steps(jobs: &mut Vec<WorkflowJob>, planned: &[PlannedJob], ru
     let active = matches!(normalize_status(run_status), "queued" | "running");
     let missing = if active { "pending" } else { "unknown" };
     for plan in planned.iter().filter(|plan| !plan.steps.is_empty()) {
-        let logged = jobs
-            .iter()
-            .any(|job| job.name == plan.name && (plan.workflow.is_empty() || job.stage == plan.workflow) && !job.steps.is_empty());
+        let logged = jobs.iter().any(|job| {
+            job.name == plan.name
+                && (plan.workflow.is_empty() || job.stage == plan.workflow)
+                && !job.steps.is_empty()
+        });
         let phases = active || !logged;
         let names = phases
             .then_some("Set up job")
             .into_iter()
             .chain(plan.steps.iter().map(|step| step.as_str()))
             .chain(phases.then_some("Complete job"));
-        let job = match jobs.iter().position(|job| job.name == plan.name && (plan.workflow.is_empty() || job.stage == plan.workflow)) {
+        let job = match jobs.iter().position(|job| {
+            job.name == plan.name && (plan.workflow.is_empty() || job.stage == plan.workflow)
+        }) {
             Some(index) => &mut jobs[index],
             None => {
                 jobs.push(WorkflowJob {
-                    key: format!("planned:{}:{}:{}", plan.workflow.len(), plan.workflow, plan.name),
+                    key: format!(
+                        "planned:{}:{}:{}",
+                        plan.workflow.len(),
+                        plan.workflow,
+                        plan.name
+                    ),
                     stage: plan.workflow.clone(),
                     name: plan.name.clone(),
                     steps: Vec::new(),

@@ -21,7 +21,9 @@ pub async fn recover_suspended_organization_owner(
     {
         return Ok(Missing);
     }
-    if !crate::backend::db::sqlite::users::transitions::active_admin_session(&mut tx, &actor).await? {
+    if !crate::backend::db::sqlite::users::transitions::active_admin_session(&mut tx, &actor)
+        .await?
+    {
         return Ok(Denied);
     }
     if remaining_active_owner(&mut tx, org, -1).await? {

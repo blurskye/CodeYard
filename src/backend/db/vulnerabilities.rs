@@ -18,12 +18,17 @@ pub struct Settings {
 impl Settings {
     pub(crate) fn normalized(&self) -> std::result::Result<Self, Refusal> {
         let url = url::Url::parse(self.base_url.trim()).map_err(|_| Refusal::Invalid)?;
-        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none()
-            || !url.username().is_empty() || url.password().is_some()
-            || url.query().is_some() || url.fragment().is_some() {
+        if !matches!(url.scheme(), "http" | "https")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
             return Err(Refusal::Invalid);
         }
-        let ecosystems: Vec<String> = serde_json::from_str(&self.ecosystems).map_err(|_| Refusal::Invalid)?;
+        let ecosystems: Vec<String> =
+            serde_json::from_str(&self.ecosystems).map_err(|_| Refusal::Invalid)?;
         let mut unique = Vec::new();
         for ecosystem in ecosystems {
             if !crate::backend::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
@@ -36,7 +41,10 @@ impl Settings {
         if unique.len() > 10 {
             return Err(Refusal::Invalid);
         }
-        Ok(Self { base_url: url.into(), ecosystems: serde_json::json!(unique).to_string() })
+        Ok(Self {
+            base_url: url.into(),
+            ecosystems: serde_json::json!(unique).to_string(),
+        })
     }
 }
 native_operation!(super::postgres::vulnerabilities::settings,super::sqlite::vulnerabilities::settings,

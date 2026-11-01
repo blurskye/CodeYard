@@ -111,8 +111,14 @@ impl Conditions {
     }
 }
 impl Definition {
-    pub fn matches_repository(&self, repository: &RepositoryContext<'_>, budget: &mut WorkflowMatchBudget) -> Result<bool, Invalid> {
-        self.conditions.as_ref().map_or(Ok(true), |conditions| conditions.matches_repository(repository, budget))
+    pub fn matches_repository(
+        &self,
+        repository: &RepositoryContext<'_>,
+        budget: &mut WorkflowMatchBudget,
+    ) -> Result<bool, Invalid> {
+        self.conditions.as_ref().map_or(Ok(true), |conditions| {
+            conditions.matches_repository(repository, budget)
+        })
     }
 
     pub fn matches_reference(

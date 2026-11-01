@@ -70,9 +70,14 @@ pub async fn get_download_url(
 ) -> Result<Response, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     let file_id = parse_file_id(&file_id)?;
-    let download = files::download_for_user(&state.pool, &state.storage, (user.id, extract_session_id(&headers).unwrap_or_default()), file_id)
-        .await
-        .map_err(download_failure)?;
+    let download = files::download_for_user(
+        &state.pool,
+        &state.storage,
+        (user.id, extract_session_id(&headers).unwrap_or_default()),
+        file_id,
+    )
+    .await
+    .map_err(download_failure)?;
     Ok(download_response(download))
 }
 
@@ -81,7 +86,12 @@ pub(crate) fn asset_response(
     method: Method,
 ) -> Result<Response, ApiFailure> {
     if method == Method::HEAD {
-        return asset_body(&download.filename, download.inline_type.as_deref(), download.file_size, axum::body::Body::empty());
+        return asset_body(
+            &download.filename,
+            download.inline_type.as_deref(),
+            download.file_size,
+            axum::body::Body::empty(),
+        );
     }
     match download.transport {
         DownloadTransport::RemoteUrl(url) => Ok(private_response(Redirect::temporary(&url))),
@@ -130,18 +140,48 @@ pub(crate) fn asset_response(
                     )))
                 },
             );
-            asset_body(&download.filename, download.inline_type.as_deref(), bytes, crate::backend::api::http::middleware::download_body(stream))
+            asset_body(
+                &download.filename,
+                download.inline_type.as_deref(),
+                bytes,
+                crate::backend::api::http::middleware::download_body(stream),
+            )
         }
     }
 }
 
-fn asset_body(filename: &str, inline: Option<&str>, size: i64, body: axum::body::Body) -> Result<Response, ApiFailure> {
+fn asset_body(
+    filename: &str,
+    inline: Option<&str>,
+    size: i64,
+    body: axum::body::Body,
+) -> Result<Response, ApiFailure> {
     let response = Response::builder()
-        .header(header::CONTENT_TYPE, inline.unwrap_or("application/octet-stream"))
-        .header(header::CONTENT_DISPOSITION, if inline.is_some() { "inline".to_owned() } else { attachment_disposition(filename) })
+        .header(
+            header::CONTENT_TYPE,
+            inline.unwrap_or("application/octet-stream"),
+        )
+        .header(
+            header::CONTENT_DISPOSITION,
+            if inline.is_some() {
+                "inline".to_owned()
+            } else {
+                attachment_disposition(filename)
+            },
+        )
         .header(header::CONTENT_LENGTH, size.to_string())
-        .header(header::CONTENT_SECURITY_POLICY, "default-src 'none'; sandbox")
-        .body(body).map_err(|_| ApiError::failure(StatusCode::INTERNAL_SERVER_ERROR, "response_unavailable", "Object response unavailable"))?;
+        .header(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; sandbox",
+        )
+        .body(body)
+        .map_err(|_| {
+            ApiError::failure(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "response_unavailable",
+                "Object response unavailable",
+            )
+        })?;
     Ok(private_response(response))
 }
 

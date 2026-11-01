@@ -8,31 +8,75 @@ pub(super) fn error(error: anyhow::Error) -> Error {
     }
 }
 
-pub(super) async fn linked(branch: store::LinkedBranch, request: &RequestContext) -> Result<Option<Value>> {
+pub(super) async fn linked(
+    branch: store::LinkedBranch,
+    request: &RequestContext,
+) -> Result<Option<Value>> {
     linked_at(branch, request, &mut std::collections::HashMap::new()).await
 }
 
-type LinkedSnapshots = std::collections::HashMap<i64, Option<(db::models::Repository, std::collections::HashMap<String, String>)>>;
+type LinkedSnapshots = std::collections::HashMap<
+    i64,
+    Option<(
+        db::models::Repository,
+        std::collections::HashMap<String, String>,
+    )>,
+>;
 
-async fn linked_target(branch: &store::LinkedBranch, request: &RequestContext, snapshots: &mut LinkedSnapshots) -> Result<Option<String>> {
+async fn linked_target(
+    branch: &store::LinkedBranch,
+    request: &RequestContext,
+    snapshots: &mut LinkedSnapshots,
+) -> Result<Option<String>> {
     if !snapshots.contains_key(&branch.repo_id) {
         snapshots.insert(branch.repo_id, None);
         if repository::optional_authority(branch.repo_id, "contents", request).await? {
-            if let Some(repo) = db::repositories::records::get_repository_by_id(&request.state.pool, branch.repo_id).await.map_err(unavailable)? {
-                let refs = crate::backend::repositories::store::repo_store(&repo, request.state.cluster.as_ref()).refs().await.map_err(unavailable)?;
-                request.charge(refs.iter().map(|(name, oid)| name.len() + oid.len() + 64).sum())?;
+            if let Some(repo) =
+                db::repositories::records::get_repository_by_id(&request.state.pool, branch.repo_id)
+                    .await
+                    .map_err(unavailable)?
+            {
+                let refs = crate::backend::repositories::store::repo_store(
+                    &repo,
+                    request.state.cluster.as_ref(),
+                )
+                .refs()
+                .await
+                .map_err(unavailable)?;
+                request.charge(
+                    refs.iter()
+                        .map(|(name, oid)| name.len() + oid.len() + 64)
+                        .sum(),
+                )?;
                 snapshots.insert(repo.id, Some((repo, refs)));
             }
         }
     }
-    Ok(snapshots[&branch.repo_id].as_ref().and_then(|(_, refs)| refs.get(&format!("refs/heads/{}", branch.name))).cloned())
+    Ok(snapshots[&branch.repo_id]
+        .as_ref()
+        .and_then(|(_, refs)| refs.get(&format!("refs/heads/{}", branch.name)))
+        .cloned())
 }
 
-async fn linked_at(branch: store::LinkedBranch, request: &RequestContext, snapshots: &mut LinkedSnapshots) -> Result<Option<Value>> {
-    let Some(oid) = linked_target(&branch, request, snapshots).await? else { return Ok(None); };
+async fn linked_at(
+    branch: store::LinkedBranch,
+    request: &RequestContext,
+    snapshots: &mut LinkedSnapshots,
+) -> Result<Option<Value>> {
+    let Some(oid) = linked_target(&branch, request, snapshots).await? else {
+        return Ok(None);
+    };
     let (repo, _) = snapshots[&branch.repo_id].as_ref().ok_or_else(missing)?;
-    let reference = super::super::git_objects::reference_at(repo, &format!("refs/heads/{}", branch.name), &oid, request).await?;
-    Ok(Some(json!({"__typename":"LinkedBranch","_repo":repo.id,"_scope":"contents","id":node_id::encode("LB",branch.id),"ref":reference})))
+    let reference = super::super::git_objects::reference_at(
+        repo,
+        &format!("refs/heads/{}", branch.name),
+        &oid,
+        request,
+    )
+    .await?;
+    Ok(Some(
+        json!({"__typename":"LinkedBranch","_repo":repo.id,"_scope":"contents","id":node_id::encode("LB",branch.id),"ref":reference}),
+    ))
 }
 
 pub(super) async fn resolve(
@@ -89,14 +133,28 @@ pub(super) async fn resolve(
             connection::validate(ctx)?;
             let mut branches = Vec::new();
             let mut snapshots = LinkedSnapshots::new();
-            for branch in store::linked_branches(&request.state.pool, id).await.map_err(unavailable)? {
+            for branch in store::linked_branches(&request.state.pool, id)
+                .await
+                .map_err(unavailable)?
+            {
                 request.charge(branch.name.len() + 104)?;
-                if linked_target(&branch, request, &mut snapshots).await?.is_some() { branches.push(branch); }
+                if linked_target(&branch, request, &mut snapshots)
+                    .await?
+                    .is_some()
+                {
+                    branches.push(branch);
+                }
             }
             let page = connection::Page::new(ctx, branches.len() as i64)?;
             let mut nodes = Vec::new();
-            for branch in branches.into_iter().skip(page.offset as usize).take(page.limit as usize) {
-                if let Some(node) = linked_at(branch, request, &mut snapshots).await? { nodes.push(node); }
+            for branch in branches
+                .into_iter()
+                .skip(page.offset as usize)
+                .take(page.limit as usize)
+            {
+                if let Some(node) = linked_at(branch, request, &mut snapshots).await? {
+                    nodes.push(node);
+                }
             }
             Ok(page.finish(nodes))
         }
@@ -136,7 +194,9 @@ pub(super) async fn mutation(
         }
         "transferIssue" => {
             if input["createLabelsIfMissing"] == true {
-                return Err(Error::new("Creating labels during issue transfer is not supported"));
+                return Err(Error::new(
+                    "Creating labels during issue transfer is not supported",
+                ));
             }
             let destination = super::mutations::id(input, "repositoryId", "R")?;
             let target = repository::by_id(destination, request).await?;

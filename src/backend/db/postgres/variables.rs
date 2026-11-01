@@ -11,7 +11,8 @@ async fn credential_authority(
 ) -> Result<(), VariableError> {
     use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
     if !super::users::transitions::credential_live(tx, actor, credential, write)
-        .await.map_err(VariableError::Authority)?
+        .await
+        .map_err(VariableError::Authority)?
     {
         return Err(VariableError::Denied);
     }
@@ -29,10 +30,23 @@ async fn credential_authority(
     Ok(())
 }
 
-pub async fn list(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64) -> Result<Vec<Variable>, VariableError> {
+pub async fn list(
+    pool: &PgPool,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    repo: i64,
+) -> Result<Vec<Variable>, VariableError> {
     let mut tx = pool.begin().await?;
-    if super::repositories::access::lock_user_repo_access_in_transaction(&mut tx, actor, repo, super::repositories::access::RepositoryRowLock::Shared, true)
-        .await.map_err(VariableError::Authority)?.is_none()
+    if super::repositories::access::lock_user_repo_access_in_transaction(
+        &mut tx,
+        actor,
+        repo,
+        super::repositories::access::RepositoryRowLock::Shared,
+        true,
+    )
+    .await
+    .map_err(VariableError::Authority)?
+    .is_none()
     {
         return Err(VariableError::Denied);
     }
@@ -110,7 +124,13 @@ pub async fn save(
     Ok(())
 }
 
-pub async fn delete(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, name: &str) -> Result<(), VariableError> {
+pub async fn delete(
+    pool: &PgPool,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    repo: i64,
+    name: &str,
+) -> Result<(), VariableError> {
     let mut tx = pool.begin().await?;
     if !super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo)
         .await

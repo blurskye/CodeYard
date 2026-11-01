@@ -1438,11 +1438,19 @@ async fn hooks_contract(pg: bool) {
     for (input, path, kept) in [
         (json!({"secret":"kept"}), &config_path, true),
         (json!({"active":true}), &hook_path, true),
-        (json!({"config":{"url":"https://hooks.example.test/push"}}), &hook_path, false),
+        (
+            json!({"config":{"url":"https://hooks.example.test/push"}}),
+            &hook_path,
+            false,
+        ),
     ] {
         checked(
             &router,
-            if path == &config_path { "repos/update-webhook-config-for-repo" } else { "repos/update-webhook" },
+            if path == &config_path {
+                "repos/update-webhook-config-for-repo"
+            } else {
+                "repos/update-webhook"
+            },
             "PATCH",
             path,
             Some(&writer),
@@ -1450,10 +1458,11 @@ async fn hooks_contract(pg: bool) {
             StatusCode::OK,
         )
         .await;
-        let stored = db::webhooks::get_webhook(f.pool(), db::webhooks::HookOwner::Repository(repo.id), id)
-            .await
-            .unwrap()
-            .unwrap();
+        let stored =
+            db::webhooks::get_webhook(f.pool(), db::webhooks::HookOwner::Repository(repo.id), id)
+                .await
+                .unwrap()
+                .unwrap();
         assert_eq!(stored.encrypted_secret.is_some(), kept, "{path}");
     }
     checked(
@@ -3406,9 +3415,11 @@ async fn releases_contract(pg: bool) {
     .unwrap();
     let (pool, session, token_id) = (f.pool().clone(), client.session.clone(), doomed.token.id);
     let body = Body::from_stream(futures_util::stream::once(async move {
-        assert!(db::users::tokens::delete_token(&pool, alice, &session, token_id)
-            .await
-            .unwrap());
+        assert!(
+            db::users::tokens::delete_token(&pool, alice, &session, token_id)
+                .await
+                .unwrap()
+        );
         Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"late\n"))
     }));
     let response = router

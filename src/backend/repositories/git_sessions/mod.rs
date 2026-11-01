@@ -138,10 +138,7 @@ impl ReceiveCredential {
         crate::backend::db::models::User,
         crate::backend::db::models::AccessLevel,
     )> {
-        use crate::backend::{
-            db,
-            repositories::deploy_keys,
-        };
+        use crate::backend::{db, repositories::deploy_keys};
         anyhow::ensure!(
             !(repo.is_gist && write && matches!(self, Self::DeployKey(_))),
             CredentialRefusal::Denied
@@ -168,12 +165,18 @@ impl ReceiveCredential {
             }
             Self::DeployKey(id) => {
                 let admitted = deploy_keys::authorize(pool, id, repo, write).await?;
-                anyhow::ensure!(!write || !db::repository_exports::locked(pool, repo.id).await?, CredentialRefusal::Migration);
+                anyhow::ensure!(
+                    !write || !db::repository_exports::locked(pool, repo.id).await?,
+                    CredentialRefusal::Migration
+                );
                 return Ok(admitted);
             }
             Self::Token(id) => {
-                let public_read = !write && !repo.is_private && db::node_config::get_node_configuration(pool).await?
-                    .is_some_and(|config| config.setup_completed && !config.is_private());
+                let public_read = !write
+                    && !repo.is_private
+                    && db::node_config::get_node_configuration(pool)
+                        .await?
+                        .is_some_and(|config| config.setup_completed && !config.is_private());
                 let bounds = crate::backend::identity::github_apps::authority(pool, id).await?;
                 anyhow::ensure!(
                     crate::backend::identity::oauth_apps::allows_git(
@@ -186,7 +189,8 @@ impl ReceiveCredential {
                     .await?,
                     CredentialRefusal::TokenScope
                 );
-                let user = db::users::tokens::token_user(pool, id, false).await?
+                let user = db::users::tokens::token_user(pool, id, false)
+                    .await?
                     .ok_or(CredentialRefusal::Credential)?;
                 (user, bounds)
             }
@@ -198,8 +202,20 @@ impl ReceiveCredential {
         if let Self::Token(id) = self {
             if let Some(bounds) = bounds {
                 let granted = bounds.repository(pool, identity.id, repo.id).await?;
-                if !granted.as_ref().is_some_and(|granted| crate::backend::identity::github_apps::allows(granted, "contents", write)) {
-                    if bounds.personal().is_some() && (granted.is_none() || !db::repositories::access::git_access(pool, identity.id, repo.id, false).await?.can_read()) {
+                if !granted.as_ref().is_some_and(|granted| {
+                    crate::backend::identity::github_apps::allows(granted, "contents", write)
+                }) {
+                    if bounds.personal().is_some()
+                        && (granted.is_none()
+                            || !db::repositories::access::git_access(
+                                pool,
+                                identity.id,
+                                repo.id,
+                                false,
+                            )
+                            .await?
+                            .can_read())
+                    {
                         anyhow::bail!(CredentialRefusal::Missing);
                     }
                     anyhow::bail!(CredentialRefusal::Integration);
@@ -225,17 +241,29 @@ impl ReceiveCredential {
             let permissions: crate::backend::ci::tokens::Permissions =
                 serde_json::from_str(&token.permissions)?;
             anyhow::ensure!(token.repo_id == repo.id, CredentialRefusal::Missing);
-            anyhow::ensure!(permissions.allows("contents", write), CredentialRefusal::TokenScope);
+            anyhow::ensure!(
+                permissions.allows("contents", write),
+                CredentialRefusal::TokenScope
+            );
         }
         // Read the account, gist owner and repository grants in one snapshot; refuse writes below.
         let level = db::repositories::access::git_access(pool, identity.id, repo.id, false).await?;
         anyhow::ensure!(level.can_read(), CredentialRefusal::Missing);
         if let Self::Token(id) = self {
-            anyhow::ensure!(!write || db::users::tokens::token_user(pool, id, true).await?.is_some(), CredentialRefusal::ReadOnly);
+            anyhow::ensure!(
+                !write
+                    || db::users::tokens::token_user(pool, id, true)
+                        .await?
+                        .is_some(),
+                CredentialRefusal::ReadOnly
+            );
         }
         anyhow::ensure!(!write || level.can_write(), CredentialRefusal::Denied);
         anyhow::ensure!(!write || !repo.is_archived, CredentialRefusal::Archived);
-        anyhow::ensure!(!write || !db::repository_exports::locked(pool, repo.id).await?, CredentialRefusal::Migration);
+        anyhow::ensure!(
+            !write || !db::repository_exports::locked(pool, repo.id).await?,
+            CredentialRefusal::Migration
+        );
         Ok((identity, level))
     }
 

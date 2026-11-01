@@ -99,10 +99,15 @@ async fn upstream(
     let (send, receive) = tokio::sync::oneshot::channel();
     if !tasks.spawn(async move {
         let result = complete_upstream(state, repo, parent, input, owner, base_branch, auth).await;
-        if result.is_err() { tracing::warn!("upstream synchronization or its follow-up failed"); }
+        if result.is_err() {
+            tracing::warn!("upstream synchronization or its follow-up failed");
+        }
         let _ = send.send(result);
     }) {
-        return Err(Error::new(StatusCode::SERVICE_UNAVAILABLE, "Repository writes are busy"));
+        return Err(Error::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Repository writes are busy",
+        ));
     }
     receive.await.map_err(Error::unavailable)?
 }

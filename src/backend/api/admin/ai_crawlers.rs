@@ -51,10 +51,16 @@ async fn settings_response(
             model: AdminSettings {
                 private,
                 ai_crawlers,
-                osv_base_url: submitted.map(|form| field(form, "osv_base_url").to_owned()).unwrap_or(osv.base_url),
-                osv_ecosystems: submitted.map(|form| field(form, "osv_ecosystems").to_owned()).unwrap_or_else(|| serde_json::from_str::<Vec<String>>(&osv.ecosystems)
-                    .unwrap_or_default()
-                    .join(", ")),
+                osv_base_url: submitted
+                    .map(|form| field(form, "osv_base_url").to_owned())
+                    .unwrap_or(osv.base_url),
+                osv_ecosystems: submitted
+                    .map(|form| field(form, "osv_ecosystems").to_owned())
+                    .unwrap_or_else(|| {
+                        serde_json::from_str::<Vec<String>>(&osv.ecosystems)
+                            .unwrap_or_default()
+                            .join(", ")
+                    }),
             },
             csrf_token: ctx.csrf_token.clone(),
             message: message.map(str::to_owned),
@@ -116,7 +122,9 @@ pub(crate) async fn settings_post(
                 settings_response(
                     &ctx,
                     match error.downcast_ref::<db::vulnerabilities::Refusal>() {
-                        Some(db::vulnerabilities::Refusal::Invalid) => StatusCode::UNPROCESSABLE_ENTITY,
+                        Some(db::vulnerabilities::Refusal::Invalid) => {
+                            StatusCode::UNPROCESSABLE_ENTITY
+                        }
                         Some(db::vulnerabilities::Refusal::Denied) => StatusCode::FORBIDDEN,
                         None => StatusCode::SERVICE_UNAVAILABLE,
                     },
@@ -173,6 +181,8 @@ pub(crate) async fn settings_post(
             )
             .await
         }
-        Err(_) => settings_response(&ctx, StatusCode::SERVICE_UNAVAILABLE, Some(failure), None).await,
+        Err(_) => {
+            settings_response(&ctx, StatusCode::SERVICE_UNAVAILABLE, Some(failure), None).await
+        }
     }
 }

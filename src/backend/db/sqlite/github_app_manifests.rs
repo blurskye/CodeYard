@@ -35,7 +35,9 @@ pub async fn approve(
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    if !super::users::transitions::active_session(&mut tx, actor, session).await? { return Ok(false); }
+    if !super::users::transitions::active_session(&mut tx, actor, session).await? {
+        return Ok(false);
+    }
     let changed=sqlx::query("UPDATE github_app_manifests SET conversion_hash=$4,user_id=$2,session_id=$3,expires_at=$5 WHERE hash=$1 AND user_id IS NULL AND expires_at>$6").bind(hash).bind(actor).bind(session).bind(code).bind(chrono::Utc::now().timestamp()+3600).bind(chrono::Utc::now().timestamp()).execute(&mut *tx).await?.rows_affected()==1;
     tx.commit().await?;
     Ok(changed)

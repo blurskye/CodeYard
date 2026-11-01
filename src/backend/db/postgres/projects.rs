@@ -1,6 +1,7 @@
 mod exports;
 use crate::backend::db::projects::{
-    validate_project, Field, NewField, NewView, Owner, Project, ProjectContents, Refusal, SelectOption, Settings,
+    validate_project, Field, NewField, NewView, Owner, Project, ProjectContents, Refusal,
+    SelectOption, Settings,
 };
 use crate::backend::db::users::accounts::AccountCredential;
 use anyhow::Result;
@@ -19,13 +20,25 @@ async fn owner_authority(
 ) -> Result<()> {
     super::users::transitions::lock_membership_shared(tx).await?;
     let (kind, id) = owner.parts();
-    let table = if kind == "user" { "users" } else { "organizations" };
+    let table = if kind == "user" {
+        "users"
+    } else {
+        "organizations"
+    };
     let lock = if allocate { "FOR UPDATE" } else { "FOR SHARE" };
-    let exists: Option<i64> = sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE id=$1 {lock}"))
-        .bind(id).fetch_optional(&mut **tx).await?;
+    let exists: Option<i64> =
+        sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE id=$1 {lock}"))
+            .bind(id)
+            .fetch_optional(&mut **tx)
+            .await?;
     anyhow::ensure!(exists.is_some(), Refusal::Missing);
-    let active: bool = sqlx::query_scalar("SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR SHARE")
-        .bind(actor).fetch_optional(&mut **tx).await?.unwrap_or(false);
+    let active: bool = sqlx::query_scalar(
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR SHARE",
+    )
+    .bind(actor)
+    .fetch_optional(&mut **tx)
+    .await?
+    .unwrap_or(false);
     anyhow::ensure!(active, Refusal::Denied);
     match owner {
         Owner::User(id) => {
@@ -44,7 +57,12 @@ async fn owner_authority(
     Ok(())
 }
 
-async fn write_project(tx: &mut Transaction<'_, Postgres>, actor: i64, credential: &AccountCredential<'_>, id: i64) -> Result<Project> {
+async fn write_project(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    id: i64,
+) -> Result<Project> {
     super::users::transitions::lock_membership_shared(tx).await?;
     let project: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
@@ -58,7 +76,10 @@ async fn write_project(tx: &mut Transaction<'_, Postgres>, actor: i64, credentia
         Owner::User(project.owner_id)
     };
     owner_authority(tx, actor, owner, false).await?;
-    anyhow::ensure!(super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::users::transitions::credential_live(tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL FOR UPDATE")
             .bind(id)
@@ -72,7 +93,12 @@ async fn readable(tx: &mut Transaction<'_, Postgres>, viewer: Option<i64>, id: i
     readable_at(tx, viewer, id, false).await
 }
 
-async fn readable_at(tx: &mut Transaction<'_, Postgres>, viewer: Option<i64>, id: i64, include_deleted: bool) -> Result<()> {
+async fn readable_at(
+    tx: &mut Transaction<'_, Postgres>,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<()> {
     super::users::transitions::lock_membership_shared(tx).await?;
     let visible: Option<i64> = sqlx::query_scalar(&format!(
         "SELECT p.id FROM projects p WHERE p.id=$1 AND ($3 OR p.deleted_at IS NULL) AND {} FOR SHARE",
@@ -100,7 +126,10 @@ pub async fn create(
     let mut tx = pool.begin().await?;
     owner_authority(&mut tx, actor, owner, true).await?;
     let (kind, id) = owner.parts();
-    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    anyhow::ensure!(
+        super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     let now = chrono::Utc::now();
     let project: Project = sqlx::query_as("INSERT INTO projects(owner_user_id,owner_org_id,number,creator_id,title,description,public,created_at,updated_at) SELECT $1,$2,COALESCE(MAX(number),0)+1,$3,$4,$5,$6,$7,$7 FROM projects WHERE owner_kind=$8 AND owner_id=$9 RETURNING *")
         .bind(if kind == "user" {Some(id)} else {None}).bind(if kind == "org" {Some(id)} else {None}).bind(actor).bind(title).bind(description).bind(public).bind(now).bind(kind).bind(id).fetch_one(&mut *tx).await?;
@@ -152,18 +181,37 @@ pub async fn create(
     Ok(project)
 }
 
-pub async fn list(pool: &PgPool, viewer: Option<i64>, filter: &crate::backend::db::projects::ListFilter, offset: i64, limit: i64) -> Result<(i64, Vec<Project>)> {
+pub async fn list(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    filter: &crate::backend::db::projects::ListFilter,
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<Project>)> {
     anyhow::ensure!(offset >= 0 && (0..=101).contains(&limit), Refusal::Invalid);
     let statement = filter.statement(true);
     let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
     let count_sql = format!("SELECT COUNT(*) {}", statement.prefix);
     let mut count = sqlx::query_scalar::<_, i64>(&count_sql).bind(viewer);
-    for arg in &statement.args { count = count.bind(arg); }
+    for arg in &statement.args {
+        count = count.bind(arg);
+    }
     let count = count.fetch_one(&mut *tx).await?;
-    let query = format!("SELECT {} {} ORDER BY {} LIMIT {} OFFSET {}", crate::backend::db::projects::SUMMARY_COLUMNS, statement.prefix, filter.order(true), statement.placeholder(statement.args.len()+2), statement.placeholder(statement.args.len()+3));
+    let query = format!(
+        "SELECT {} {} ORDER BY {} LIMIT {} OFFSET {}",
+        crate::backend::db::projects::SUMMARY_COLUMNS,
+        statement.prefix,
+        filter.order(true),
+        statement.placeholder(statement.args.len() + 2),
+        statement.placeholder(statement.args.len() + 3)
+    );
     let mut rows = sqlx::query_as(&query).bind(viewer);
-    for arg in &statement.args { rows = rows.bind(arg); }
+    for arg in &statement.args {
+        rows = rows.bind(arg);
+    }
     let rows = rows.bind(limit).bind(offset).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok((count, rows))
@@ -179,7 +227,13 @@ pub async fn get(pool: &PgPool, viewer: Option<i64>, owner: Owner, number: i64) 
     Ok(project)
 }
 
-pub async fn save(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, project: i64, settings: &Settings) -> Result<Project> {
+pub async fn save(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    settings: &Settings,
+) -> Result<Project> {
     let Settings {
         title,
         description,
@@ -197,7 +251,12 @@ pub async fn save(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>,
     Ok(project)
 }
 
-pub async fn delete(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, project: i64) -> Result<ProjectContents> {
+pub async fn delete(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+) -> Result<ProjectContents> {
     let mut tx = pool.begin().await?;
     write_project(&mut tx, actor, credential, project).await?;
     // What the actor could see comes back, so the deletion's answer can still describe it.
@@ -208,8 +267,17 @@ pub async fn delete(pool: &PgPool, actor: i64, credential: &AccountCredential<'_
             .await?,
         items: items::readable_items(&mut tx, Some(actor), project).await?,
     };
-    for table in ["project_items", "project_views", "project_fields", "project_repositories", "project_teams"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1")).bind(project).execute(&mut *tx).await?;
+    for table in [
+        "project_items",
+        "project_views",
+        "project_fields",
+        "project_repositories",
+        "project_teams",
+    ] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE project_id=$1"))
+            .bind(project)
+            .execute(&mut *tx)
+            .await?;
     }
     sqlx::query("UPDATE projects SET title='',description=NULL,readme='',public=FALSE,deleted_at=$2,updated_at=$2 WHERE id=$1")
         .bind(project)
@@ -224,7 +292,12 @@ pub async fn fields(pool: &PgPool, viewer: Option<i64>, project: i64) -> Result<
     fields_at(pool, viewer, project, false).await
 }
 
-pub async fn fields_at(pool: &PgPool, viewer: Option<i64>, project: i64, include_deleted: bool) -> Result<Vec<Field>> {
+pub async fn fields_at(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    project: i64,
+    include_deleted: bool,
+) -> Result<Vec<Field>> {
     let mut tx = pool.begin().await?;
     readable_at(&mut tx, viewer, project, include_deleted).await?;
     let fields = sqlx::query_as("SELECT * FROM project_fields WHERE project_id=$1 ORDER BY id")
@@ -235,7 +308,13 @@ pub async fn fields_at(pool: &PgPool, viewer: Option<i64>, project: i64, include
     Ok(fields)
 }
 
-pub async fn add_field(pool: &PgPool, actor: i64, credential: &AccountCredential<'_>, project: i64, input: &NewField) -> Result<Field> {
+pub async fn add_field(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    project: i64,
+    input: &NewField,
+) -> Result<Field> {
     let config = input.configuration()?;
     let mut tx = pool.begin().await?;
     write_project(&mut tx, actor, credential, project).await?;
@@ -247,9 +326,17 @@ pub async fn add_field(pool: &PgPool, actor: i64, credential: &AccountCredential
         count < crate::backend::db::projects::MAX_FIELDS as i64,
         Refusal::Invalid
     );
-    let names: Vec<String> = sqlx::query_scalar("SELECT name FROM project_fields WHERE project_id=$1")
-        .bind(project).fetch_all(&mut *tx).await?;
-    anyhow::ensure!(!names.iter().any(|name| name.eq_ignore_ascii_case(&input.name)), Refusal::Invalid);
+    let names: Vec<String> =
+        sqlx::query_scalar("SELECT name FROM project_fields WHERE project_id=$1")
+            .bind(project)
+            .fetch_all(&mut *tx)
+            .await?;
+    anyhow::ensure!(
+        !names
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case(&input.name)),
+        Refusal::Invalid
+    );
     let field = sqlx::query_as("INSERT INTO project_fields(project_id,name,data_type,configuration,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$5) ON CONFLICT(project_id,name) DO NOTHING RETURNING *")
         .bind(project).bind(&input.name).bind(&input.data_type).bind(config).bind(chrono::Utc::now()).fetch_optional(&mut *tx).await?.ok_or(Refusal::Invalid)?;
     sqlx::query("UPDATE projects SET updated_at=$2 WHERE id=$1")

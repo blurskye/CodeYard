@@ -276,9 +276,7 @@ async fn paging_contract(pg: bool) {
     assert_eq!(status, StatusCode::OK, "{second}");
     let hits = |html: &str| {
         (0..35)
-            .filter(|number| {
-                has_code_hit(html, "search_pager", &format!("pager-{number:02}"))
-            })
+            .filter(|number| has_code_hit(html, "search_pager", &format!("pager-{number:02}")))
             .count()
     };
     assert_eq!(hits(&first), 30, "{first}");
@@ -330,14 +328,8 @@ async fn budget_contract(pg: bool) {
 
     let (status, html) = anonymous.page("/search?q=budget-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(
-        has_code_hit(&html, "search_budget", "budget-a"),
-        "{html}"
-    );
-    assert!(
-        !has_code_hit(&html, "search_budget", "budget-b"),
-        "{html}"
-    );
+    assert!(has_code_hit(&html, "search_budget", "budget-a"), "{html}");
+    assert!(!has_code_hit(&html, "search_budget", "budget-b"), "{html}");
     assert!(
         html.contains("Searched 1 of 3 repositories, narrow with repo:/user:/org:"),
         "{html}"
@@ -347,10 +339,7 @@ async fn budget_contract(pg: bool) {
         .page("/search?q=repo%3Asearch_budget%2Fbudget-b%20budget-token&type=code")
         .await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(
-        has_code_hit(&html, "search_budget", "budget-b"),
-        "{html}"
-    );
+    assert!(has_code_hit(&html, "search_budget", "budget-b"), "{html}");
     assert!(!html.contains("Searched "), "{html}");
     f.finish().await;
 }
@@ -650,10 +639,7 @@ async fn empty_repository_contract(pg: bool) {
         assert!(!html.contains("could not be searched"), "{path}: {html}");
     }
     let (_, html) = anonymous.page("/search?q=walk-token&type=code").await;
-    assert!(
-        has_code_hit(&html, "search_empty", "walk-full"),
-        "{html}"
-    );
+    assert!(has_code_hit(&html, "search_empty", "walk-full"), "{html}");
     f.finish().await;
 }
 
@@ -704,14 +690,8 @@ async fn budget_cuts_the_least_recent_repository_contract(pg: bool) {
     let anonymous = http::Client::anonymous(&router);
     let (status, html) = anonymous.page("/search?q=recent-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    assert!(
-        has_code_hit(&html, "search_recent", "recent-new"),
-        "{html}"
-    );
-    assert!(
-        has_code_hit(&html, "search_recent", "recent-mid"),
-        "{html}"
-    );
+    assert!(has_code_hit(&html, "search_recent", "recent-new"), "{html}");
+    assert!(has_code_hit(&html, "search_recent", "recent-mid"), "{html}");
     assert!(
         !has_code_hit(&html, "search_recent", "recent-old"),
         "{html}"
@@ -843,10 +823,7 @@ async fn repository_scope_paging_contract(pg: bool) {
         .page("/search?q=page-token%20repo:search_pages/paged&type=code&page=2")
         .await;
     assert_eq!(status, StatusCode::OK, "{second}");
-    let hits = |html: &str| {
-        html.matches("/search_pages/paged/blob/")
-            .count()
-    };
+    let hits = |html: &str| html.matches("/search_pages/paged/blob/").count();
     assert_eq!(hits(&first), 30, "{first}");
     assert_eq!(hits(&second), 2, "{second}");
     assert!(first.contains(">Older<") && !first.contains(">Newer<"));
@@ -917,8 +894,7 @@ async fn one_file_and_unrelated_tables_contract(pg: bool) {
             .await;
         assert_eq!(status, StatusCode::OK, "{html}");
         assert_eq!(
-            html.matches("/notes.txt?view=code&#38;line=")
-                .count(),
+            html.matches("/notes.txt?view=code&#38;line=").count(),
             count
         );
     }
@@ -967,8 +943,7 @@ async fn truncation_contract(pg: bool) {
     let (status, html) = anonymous.page("/search?q=trunc-token&type=code").await;
     assert_eq!(status, StatusCode::OK, "{html}");
     assert_eq!(
-        html.matches("/search_trunc/many/blob/")
-            .count(),
+        html.matches("/search_trunc/many/blob/").count(),
         5,
         "{html}"
     );

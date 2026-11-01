@@ -33,7 +33,8 @@ async fn writable(
     let (repository, user) = access::check_write(pool, repo_id, actor.user_id)
         .await
         .map_err(RefError::Access)?;
-    access::check_publication_actor(pool, actor, &repository).await
+    access::check_publication_actor(pool, actor, &repository)
+        .await
         .map_err(|error| publication_error(RepoError::from(error)))?;
     Ok((repository, user))
 }

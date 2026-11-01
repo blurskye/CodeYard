@@ -58,7 +58,11 @@ pub(crate) fn label_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiEr
             "invalid_labels",
             "Invalid label scope or batch",
         ),
-        Some(db::labels::LabelWriteRefusal::Conflict) => (StatusCode::CONFLICT, "label_changed", "The label changed. Your draft is preserved; reload before saving."),
+        Some(db::labels::LabelWriteRefusal::Conflict) => (
+            StatusCode::CONFLICT,
+            "label_changed",
+            "The label changed. Your draft is preserved; reload before saving.",
+        ),
         Some(db::labels::LabelWriteRefusal::DuplicateName) => (
             StatusCode::CONFLICT,
             "duplicate_label",
@@ -144,9 +148,14 @@ pub async fn delete_label(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    db::labels::delete_label(&state.pool, (actor.id, extract_session_id(&headers).unwrap_or_default()), repository.id, label_id)
-        .await
-        .map_err(label_write_error)?;
+    db::labels::delete_label(
+        &state.pool,
+        (actor.id, extract_session_id(&headers).unwrap_or_default()),
+        repository.id,
+        label_id,
+    )
+    .await
+    .map_err(label_write_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -191,16 +200,15 @@ pub(crate) async fn native_index(
     let has_next =
         super::paging::has_next_page(page_number, items.len(), limit, super::paging::MAX_PAGE);
     items.truncate(limit);
-    let usage: std::collections::BTreeMap<i64, i64> =
-        db::labels::list_label_usage(
-            &ctx.state.pool,
-            repo.record.id,
-            &items.iter().map(|item| item.id).collect::<Vec<_>>(),
-        )
-        .await
-        .map_err(|_| unavailable(&ctx))?
-        .into_iter()
-        .collect();
+    let usage: std::collections::BTreeMap<i64, i64> = db::labels::list_label_usage(
+        &ctx.state.pool,
+        repo.record.id,
+        &items.iter().map(|item| item.id).collect::<Vec<_>>(),
+    )
+    .await
+    .map_err(|_| unavailable(&ctx))?
+    .into_iter()
+    .collect();
     Ok(ctx.page_model(
         "Labels",
         page(view::Page::Labels {

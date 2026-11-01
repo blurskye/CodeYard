@@ -184,7 +184,12 @@ pub struct ReviewTarget {
 
 impl From<(String, String, i32)> for ReviewTarget {
     fn from((owner, name, number): (String, String, i32)) -> Self {
-        Self { owner, name, number, expected: None }
+        Self {
+            owner,
+            name,
+            number,
+            expected: None,
+        }
     }
 }
 
@@ -197,7 +202,17 @@ pub async fn create_pull_request_review(
     target: impl Into<ReviewTarget>,
     req: CreatePullRequestReviewRequest,
 ) -> Result<db::models::PullRequestReview, OperationError> {
-    create_review(pool, cluster, broadcaster, actor_id, credential, target.into(), req, None).await
+    create_review(
+        pool,
+        cluster,
+        broadcaster,
+        actor_id,
+        credential,
+        target.into(),
+        req,
+        None,
+    )
+    .await
 }
 
 pub async fn create_pull_request_review_batch(
@@ -209,10 +224,23 @@ pub async fn create_pull_request_review_batch(
     target: impl Into<ReviewTarget>,
     batch: CreatePullRequestReviewBatchRequest,
 ) -> Result<db::models::PullRequestReview, OperationError> {
-    create_review(pool, cluster, broadcaster, actor_id, credential, target.into(), batch.review, Some(batch.comments)).await
+    create_review(
+        pool,
+        cluster,
+        broadcaster,
+        actor_id,
+        credential,
+        target.into(),
+        batch.review,
+        Some(batch.comments),
+    )
+    .await
 }
 
-#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 async fn create_review(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
@@ -223,7 +251,12 @@ async fn create_review(
     req: CreatePullRequestReviewRequest,
     batch: Option<Vec<super::comments::CreatePullRequestCommentRequest>>,
 ) -> Result<db::models::PullRequestReview, OperationError> {
-    let ReviewTarget { owner, name: repo, number, expected } = target;
+    let ReviewTarget {
+        owner,
+        name: repo,
+        number,
+        expected,
+    } = target;
     let user = super::actor(pool, actor_id).await?;
 
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
@@ -256,7 +289,9 @@ async fn create_review(
             message: "Pull request not found".to_owned(),
         })?;
 
-    if expected.is_some_and(|(repository_id, pull_id, _)| repository_id != repository.id || pull_id != pull_request.id) {
+    if expected.is_some_and(|(repository_id, pull_id, _)| {
+        repository_id != repository.id || pull_id != pull_request.id
+    }) {
         return Err(OperationError::Conflict {
             code: "revision_conflict",
             message: "The repository or pull request changed. Reload before submitting.".to_owned(),
@@ -294,10 +329,18 @@ async fn create_review(
     }
 
     let draft_commit = if let Some(id) = req.review_id {
-        db::pull_requests::reviews::get_pull_request_review_by_id(pool, id).await.map_err(database_error)?
-            .filter(|review| review.pull_request_id == pull_request.id && review.author_id == user.id && review.state == "pending")
+        db::pull_requests::reviews::get_pull_request_review_by_id(pool, id)
+            .await
+            .map_err(database_error)?
+            .filter(|review| {
+                review.pull_request_id == pull_request.id
+                    && review.author_id == user.id
+                    && review.state == "pending"
+            })
             .and_then(|review| review.commit_sha)
-    } else { None };
+    } else {
+        None
+    };
     let mut commit_sha = req
         .commit_sha
         .as_deref()
@@ -354,22 +397,61 @@ async fn create_review(
 
     let create_pending = batch.is_some();
     let comments = batch.unwrap_or_default();
-    if comments.len() > db::pull_requests::reviews::MAX_REVIEW_COMMENTS as usize || comments.iter().any(|comment| comment.path.is_none() || comment.in_reply_to_comment_id.is_some()) {
-        return Err(OperationError::Invalid { code: "validation_error", message: "A review holds at most 200 new inline threads.".into() });
+    if comments.len() > db::pull_requests::reviews::MAX_REVIEW_COMMENTS as usize
+        || comments
+            .iter()
+            .any(|comment| comment.path.is_none() || comment.in_reply_to_comment_id.is_some())
+    {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "A review holds at most 200 new inline threads.".into(),
+        });
     }
     let mut patches = super::comments::DiffCache::new();
     let mut prepared = Vec::with_capacity(comments.len());
     for comment in comments {
-        prepared.push(super::comments::prepare_comment(pool, cluster, &repository, &pull_request, comment, &mut patches).await?);
+        prepared.push(
+            super::comments::prepare_comment(
+                pool,
+                cluster,
+                &repository,
+                &pull_request,
+                comment,
+                &mut patches,
+            )
+            .await?,
+        );
     }
-    let comments: Vec<_> = prepared.iter().map(|comment| comment.input(&pull_request, user.id)).collect();
-    let (review, published_ids) = db::pull_requests::reviews::save_review_batch(pool, db::pull_requests::reviews::ReviewBatch {
-        pr_id: pull_request.id, author_id: user.id,
-        state: if create_pending && req.state.is_none() { None } else { Some(&review_state) },
-        body: req.body.as_deref(), commit_sha: Some(&commit_sha), expected_pending: expected.map(|(_, _, pending)| pending).or_else(|| req.review_id.map(Some)),
-        create_pending, comments: &comments, token: req.token, credential,
-    }).await.map_err(super::write_error)?;
-    if review.state == "pending" { return Ok(review); }
+    let comments: Vec<_> = prepared
+        .iter()
+        .map(|comment| comment.input(&pull_request, user.id))
+        .collect();
+    let (review, published_ids) = db::pull_requests::reviews::save_review_batch(
+        pool,
+        db::pull_requests::reviews::ReviewBatch {
+            pr_id: pull_request.id,
+            author_id: user.id,
+            state: if create_pending && req.state.is_none() {
+                None
+            } else {
+                Some(&review_state)
+            },
+            body: req.body.as_deref(),
+            commit_sha: Some(&commit_sha),
+            expected_pending: expected
+                .map(|(_, _, pending)| pending)
+                .or_else(|| req.review_id.map(Some)),
+            create_pending,
+            comments: &comments,
+            token: req.token,
+            credential,
+        },
+    )
+    .await
+    .map_err(super::write_error)?;
+    if review.state == "pending" {
+        return Ok(review);
+    }
 
     // The link names the review; the pull request page finds its current page when followed.
     let base = format!("/{}/{}/pulls/{}", owner, repo, pull_request.number);
@@ -572,15 +654,32 @@ pub async fn dismiss_pull_request_review(
 }
 
 pub async fn request_reviewer(
-    pool: &db::DbPool, broadcaster: &NotificationBroadcaster, actor_id: i64,
-    owner: String, repo: String, number: i32, req: RequestReviewerRequest,
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    owner: String,
+    repo: String,
+    number: i32,
+    req: RequestReviewerRequest,
 ) -> Result<RequestReviewerResult, OperationError> {
-    request_reviewer_bound(pool, broadcaster, actor_id, (owner, repo, number), req, None).await
+    request_reviewer_bound(
+        pool,
+        broadcaster,
+        actor_id,
+        (owner, repo, number),
+        req,
+        None,
+    )
+    .await
 }
 
 pub async fn request_reviewer_bound(
-    pool: &db::DbPool, broadcaster: &NotificationBroadcaster, actor_id: i64,
-    (owner, repo, number): (String, String, i32), req: RequestReviewerRequest, expected_repository: Option<i64>,
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    actor_id: i64,
+    (owner, repo, number): (String, String, i32),
+    req: RequestReviewerRequest,
+    expected_repository: Option<i64>,
 ) -> Result<RequestReviewerResult, OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -782,20 +881,31 @@ pub(super) async fn notify_review_request(
 
 fn check_repository_binding(expected: Option<i64>, actual: i64) -> Result<(), OperationError> {
     if expected.is_some_and(|id| id != actual) {
-        return Err(OperationError::Conflict { code: "repository_changed", message: "The repository changed. Reload before changing reviewers.".to_owned() });
+        return Err(OperationError::Conflict {
+            code: "repository_changed",
+            message: "The repository changed. Reload before changing reviewers.".to_owned(),
+        });
     }
     Ok(())
 }
 
 pub async fn remove_requested_reviewer(
-    pool: &db::DbPool, actor_id: i64, owner: String, repo: String, number: i32, username: String,
+    pool: &db::DbPool,
+    actor_id: i64,
+    owner: String,
+    repo: String,
+    number: i32,
+    username: String,
 ) -> Result<(), OperationError> {
     remove_requested_reviewer_bound(pool, actor_id, (owner, repo, number), username, None).await
 }
 
 pub async fn remove_requested_reviewer_bound(
-    pool: &db::DbPool, actor_id: i64, (owner, repo, number): (String, String, i32),
-    username: String, expected_repository: Option<i64>,
+    pool: &db::DbPool,
+    actor_id: i64,
+    (owner, repo, number): (String, String, i32),
+    username: String,
+    expected_repository: Option<i64>,
 ) -> Result<(), OperationError> {
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await

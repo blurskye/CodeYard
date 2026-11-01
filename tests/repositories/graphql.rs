@@ -862,7 +862,14 @@ async fn contract(pg: bool) {
             "Commit",
         ),
         (
-            node_id::git("B", &format!("{}/{}", repo.id, changed["content"]["sha"].as_str().unwrap())),
+            node_id::git(
+                "B",
+                &format!(
+                    "{}/{}",
+                    repo.id,
+                    changed["content"]["sha"].as_str().unwrap()
+                ),
+            ),
             "Blob",
         ),
         (

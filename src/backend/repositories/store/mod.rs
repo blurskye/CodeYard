@@ -39,19 +39,19 @@ pub use crate::backend::git::{
     MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
 };
 pub use editor::{
-    CommitIdentities, FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_FILES,
-    MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
+    CommitIdentities, FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES,
+    MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use error::invalid_ref;
 pub use error::{ErrorKind, RepoError, RepoErrorReason, MERGE_METHOD_NOT_ALLOWED, REPLICA_BUSY};
 pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};
 pub use types::{
-    GitService, GitSession, GitStreams, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate, PullHeadActor,
-    allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobPreviewMetadata, BlobRange, BranchMergePublication,
-    RestackMove, RevertRequest, UpstreamMerge, UpstreamMergeType, MAX_ARCHIVE_RESPONSE_BYTES,
-    MAX_BLOB_RESPONSE_BYTES, MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE,
-    MAX_CONTRIBUTOR_RESPONSE_BYTES,
+    allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobPreviewMetadata, BlobRange,
+    BranchMergePublication, GitService, GitSession, GitStreams, MergeFailure, MergeMethod,
+    MergeRequest, PullBranchUpdate, PullHeadActor, RestackMove, RevertRequest, UpstreamMerge,
+    UpstreamMergeType, MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES, MAX_COMMIT_OFFSET,
+    MAX_COMMIT_PAGE_SIZE, MAX_CONTRIBUTOR_RESPONSE_BYTES,
 };
 pub(crate) use types::{BlobMetadata, WorkflowPayloadEntry, MAX_WORKFLOW_PAYLOAD_BYTES};
 
@@ -155,10 +155,17 @@ impl RepoStore {
         }
     }
 
-    pub async fn introduced_blobs(&self, sha: &str) -> Result<Vec<git::objects::TreeObjectEntry>, RepoError> {
+    pub async fn introduced_blobs(
+        &self,
+        sha: &str,
+    ) -> Result<Vec<git::objects::TreeObjectEntry>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.introduced_blobs(sha).await,
-            Backend::Remote(remote) => remote.call(Operation::IntroducedBlobs { sha: sha.into() }, b"").await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(Operation::IntroducedBlobs { sha: sha.into() }, b"")
+                    .await
+            }
         }
     }
 
@@ -178,7 +185,13 @@ impl RepoStore {
             Backend::Local(local) => local.git_tag(sha).await,
             Backend::Remote(remote) => {
                 remote
-                    .call(Operation::GitTag { sha: sha.into(), raw_json: true }, b"")
+                    .call(
+                        Operation::GitTag {
+                            sha: sha.into(),
+                            raw_json: true,
+                        },
+                        b"",
+                    )
                     .await
             }
         }
@@ -344,9 +357,11 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => {
                 let (local, pool) = (local.clone(), pool.clone());
-                tokio::spawn(async move {
-                    local.import_git(&pool, repo_id, actor, import, &pack).await
-                }).await.map_err(|_| RepoError::applied_followup_failed())?
+                tokio::spawn(
+                    async move { local.import_git(&pool, repo_id, actor, import, &pack).await },
+                )
+                .await
+                .map_err(|_| RepoError::applied_followup_failed())?
             }
             Backend::Remote(remote) => {
                 remote
@@ -443,7 +458,10 @@ impl RepoStore {
                 let source = rpc::repository_uuid(&from.disk_path)?;
                 let operation = Operation::InitializeCopy {
                     source,
-                    default_branch: rpc::wire::PublicationText::retain(&options.default_branch, authority),
+                    default_branch: rpc::wire::PublicationText::retain(
+                        &options.default_branch,
+                        authority,
+                    ),
                     template: options.template,
                     default_branch_only: options.default_branch_only,
                 };
@@ -494,13 +512,21 @@ impl RepoStore {
 
     /// Accepted primary writes share one coalesced accounting owner with file mutations.
     pub(crate) fn refresh_storage_size(&self, pool: db::DbPool, repo_id: i64) {
-        if let Backend::Local(store) = &self.0 { local::refresh_storage_size(pool, repo_id, store.clone()); }
+        if let Backend::Local(store) = &self.0 {
+            local::refresh_storage_size(pool, repo_id, store.clone());
+        }
     }
 
     /// Wait for this request's coalesced scan to be published, including on a remote primary.
-    pub(crate) async fn refresh_storage_size_now(&self, pool: &db::DbPool, repo_id: i64) -> Result<i64, RepoError> {
+    pub(crate) async fn refresh_storage_size_now(
+        &self,
+        pool: &db::DbPool,
+        repo_id: i64,
+    ) -> Result<i64, RepoError> {
         match &self.0 {
-            Backend::Local(store) => local::refresh_storage_size_now(pool.clone(), repo_id, store.clone()).await,
+            Backend::Local(store) => {
+                local::refresh_storage_size_now(pool.clone(), repo_id, store.clone()).await
+            }
             Backend::Remote(remote) => remote.call(Operation::RefreshStorageSize, b"").await,
         }
     }
@@ -528,7 +554,16 @@ impl RepoStore {
     pub async fn matching_refs(&self, prefix: &str) -> Result<HashMap<String, String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.matching_refs(prefix).await,
-            Backend::Remote(remote) => remote.call(Operation::MatchingRefs { prefix: prefix.to_owned() }, b"").await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::MatchingRefs {
+                            prefix: prefix.to_owned(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 
@@ -564,10 +599,15 @@ impl RepoStore {
         }
     }
 
-    pub(crate) async fn existing_commits(&self, ids: &[String]) -> Result<std::collections::HashSet<String>, RepoError> {
+    pub(crate) async fn existing_commits(
+        &self,
+        ids: &[String],
+    ) -> Result<std::collections::HashSet<String>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.existing_commits(ids).await,
-            Backend::Remote(_) => Err(rpc::wire::invalid("replica commit checks run on their node")),
+            Backend::Remote(_) => Err(rpc::wire::invalid(
+                "replica commit checks run on their node",
+            )),
         }
     }
 
@@ -685,7 +725,12 @@ impl RepoStore {
     }
 
     /// Match across the entire tree before retaining the bounded sorted result.
-    pub async fn file_paths_matching(&self, git_ref: &str, query: &str, limit: usize) -> Result<FileList, RepoError> {
+    pub async fn file_paths_matching(
+        &self,
+        git_ref: &str,
+        query: &str,
+        limit: usize,
+    ) -> Result<FileList, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.file_paths(git_ref, limit, query).await,
             Backend::Remote(remote) => {
@@ -695,7 +740,10 @@ impl RepoStore {
                             git_ref: if query.is_empty() {
                                 git_ref.into()
                             } else {
-                                rpc::wire::FilePathQuery::Filtered { reference: git_ref.into(), query: query.into() }
+                                rpc::wire::FilePathQuery::Filtered {
+                                    reference: git_ref.into(),
+                                    query: query.into(),
+                                }
                             },
                             limit,
                             raw_json: true,
@@ -765,7 +813,11 @@ impl RepoStore {
     }
 
     /// Bounded bytes and metadata of a blob addressed by its immutable ID.
-    pub async fn blob_by_id_range(&self, id: &str, range: BlobRange) -> Result<BlobBytes, RepoError> {
+    pub async fn blob_by_id_range(
+        &self,
+        id: &str,
+        range: BlobRange,
+    ) -> Result<BlobBytes, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.blob_by_id_range(id, range).await,
             Backend::Remote(remote) => remote.blob_by_id_range(id, range).await,
@@ -886,7 +938,11 @@ impl RepoStore {
         limit: usize,
     ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.pull_request_commits(base_ref, head_ref, offset, limit).await,
+            Backend::Local(local) => {
+                local
+                    .pull_request_commits(base_ref, head_ref, offset, limit)
+                    .await
+            }
             Backend::Remote(remote) => {
                 remote
                     .call(
@@ -913,16 +969,27 @@ impl RepoStore {
         head_ref: &str,
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        self.commits_between_page(base_ref, head_ref, 0, limit).await
+        self.commits_between_page(base_ref, head_ref, 0, limit)
+            .await
     }
 
     /// A bounded range page, newest first; skipped commit bodies are never loaded.
-    pub async fn commits_between_page(&self, base_ref: &str, head_ref: &str, offset: usize, limit: usize) -> Result<Vec<CommitInfo>, RepoError> {
+    pub async fn commits_between_page(
+        &self,
+        base_ref: &str,
+        head_ref: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<CommitInfo>, RepoError> {
         if limit > MAX_COMMIT_PAGE_SIZE {
             return Err(RepoError::response_too_large());
         }
         match &self.0 {
-            Backend::Local(local) => local.commits_between(base_ref, head_ref, offset, limit).await,
+            Backend::Local(local) => {
+                local
+                    .commits_between(base_ref, head_ref, offset, limit)
+                    .await
+            }
             Backend::Remote(remote) => {
                 remote
                     .call(
@@ -1297,10 +1364,22 @@ impl RepoStore {
 
     /// Primary-only default-branch statistics. Remote owners also publish the cache
     /// while holding their repository publication lease.
-    pub(crate) async fn languages_from_primary(&self, branch: &str) -> Result<Vec<LanguageStat>, RepoError> {
+    pub(crate) async fn languages_from_primary(
+        &self,
+        branch: &str,
+    ) -> Result<Vec<LanguageStat>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.languages(branch).await,
-            Backend::Remote(remote) => remote.call(Operation::PrimaryLanguages { git_ref: branch.into() }, b"").await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::PrimaryLanguages {
+                            git_ref: branch.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 
@@ -1340,10 +1419,22 @@ impl RepoStore {
     }
 
     /// Count-only history on the default branch, including merge commits.
-    pub async fn branch_contributors(&self, branch: &str) -> Result<Vec<ContributorInfo>, RepoError> {
+    pub async fn branch_contributors(
+        &self,
+        branch: &str,
+    ) -> Result<Vec<ContributorInfo>, RepoError> {
         match &self.0 {
             Backend::Local(local) => local.branch_contributors(branch).await,
-            Backend::Remote(remote) => remote.call(Operation::BranchContributors { branch: branch.into() }, b"").await,
+            Backend::Remote(remote) => {
+                remote
+                    .call(
+                        Operation::BranchContributors {
+                            branch: branch.into(),
+                        },
+                        b"",
+                    )
+                    .await
+            }
         }
     }
 
@@ -1546,7 +1637,11 @@ impl RepoStore {
     ) -> Result<String, RepoError> {
         let authority = actor.into();
         match &self.0 {
-            Backend::Local(local) => local.rename_branch(pool, repo_id, authority, old, new).await,
+            Backend::Local(local) => {
+                local
+                    .rename_branch(pool, repo_id, authority, old, new)
+                    .await
+            }
             Backend::Remote(remote) => {
                 remote
                     .call_as(
@@ -1655,7 +1750,10 @@ impl RepoStore {
         }
     }
 
-    #[expect(clippy::too_many_arguments, reason = "The store forwards the dependency-security request's explicit fields.")]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The store forwards the dependency-security request's explicit fields."
+    )]
     pub(crate) async fn configure_dependency_security_as(
         &self,
         pool: &db::DbPool,
@@ -1780,7 +1878,9 @@ impl RepoStore {
                 remote
                     .call_as(
                         actor.user_id,
-                        Operation::SetDefaultBranch { name: rpc::wire::PublicationText::retain(name, actor) },
+                        Operation::SetDefaultBranch {
+                            name: rpc::wire::PublicationText::retain(name, actor),
+                        },
                         b"",
                     )
                     .await
@@ -1804,7 +1904,13 @@ impl RepoStore {
             Backend::Local(local) => local.delete_branch(pool, repo_id, actor, name).await,
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor.user_id, Operation::DeleteBranch { name: rpc::wire::PublicationText::retain(name, actor) }, b"")
+                    .call_as(
+                        actor.user_id,
+                        Operation::DeleteBranch {
+                            name: rpc::wire::PublicationText::retain(name, actor),
+                        },
+                        b"",
+                    )
                     .await
             }
         }
@@ -1880,7 +1986,13 @@ impl RepoStore {
             Backend::Local(local) => local.delete_tag(pool, repo_id, actor, name).await,
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor.user_id, Operation::DeleteTag { name: rpc::wire::PublicationText::retain(name, actor) }, b"")
+                    .call_as(
+                        actor.user_id,
+                        Operation::DeleteTag {
+                            name: rpc::wire::PublicationText::retain(name, actor),
+                        },
+                        b"",
+                    )
                     .await
             }
         }
@@ -1894,14 +2006,32 @@ impl RepoStore {
         author: &str,
         email: &str,
     ) -> Result<PreparedFile, RepoError> {
-        self.prepare_file_with_identities(write, content, author, email, &CommitIdentities::default()).await
+        self.prepare_file_with_identities(
+            write,
+            content,
+            author,
+            email,
+            &CommitIdentities::default(),
+        )
+        .await
     }
 
-    pub async fn prepare_file_with_identities(&self, write: &FileWrite, content: &[u8], author: &str, email: &str, identities: &CommitIdentities) -> Result<PreparedFile, RepoError> {
+    pub async fn prepare_file_with_identities(
+        &self,
+        write: &FileWrite,
+        content: &[u8],
+        author: &str,
+        email: &str,
+        identities: &CommitIdentities,
+    ) -> Result<PreparedFile, RepoError> {
         write.validate()?;
         identities.validate()?;
         let prepared = match &self.0 {
-            Backend::Local(local) => local.prepare_file_with_identities(write, content, author, email, identities).await,
+            Backend::Local(local) => {
+                local
+                    .prepare_file_with_identities(write, content, author, email, identities)
+                    .await
+            }
             Backend::Remote(remote) => {
                 remote
                     .call(

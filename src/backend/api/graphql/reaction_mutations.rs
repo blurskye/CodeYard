@@ -72,9 +72,15 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     };
     let actor = request.auth.user.id;
     let reaction = if field == "addReaction" {
-        let (row, _) = db::reactions::create_reaction(pool, actor, &request.auth.credential(), target, content)
-            .await
-            .map_err(|e| github::reactions::write_error(e).graphql())?;
+        let (row, _) = db::reactions::create_reaction(
+            pool,
+            actor,
+            &request.auth.credential(),
+            target,
+            content,
+        )
+        .await
+        .map_err(|e| github::reactions::write_error(e).graphql())?;
         super::node_objects::database("REA", row.id, request).await?
     } else if let Some(row) = db::reactions::find_reaction(pool, actor, target, content)
         .await

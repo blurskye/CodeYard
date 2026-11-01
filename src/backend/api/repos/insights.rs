@@ -12,7 +12,8 @@ use crate::backend::repositories::store::repo_store;
 use crate::webui::app::Page;
 use crate::webui::components::charts::{normalize_days, DailyActivity};
 use crate::webui::pages::repos::insights::{
-    Contributor, DependencyRow, Fork, Page as InsightsPage, Week, WorkflowUsage, CONTRIBUTORS_SHOWN, FORKS_PER_PAGE,
+    Contributor, DependencyRow, Fork, Page as InsightsPage, Week, WorkflowUsage,
+    CONTRIBUTORS_SHOWN, FORKS_PER_PAGE,
 };
 use crate::webui::pages::repos::page::Page as RepoPage;
 use axum::extract::{Path, State};
@@ -35,7 +36,10 @@ pub fn page_router() -> Router<Arc<AppState>> {
 }
 
 async fn show(ctx: &PageContext, loaded: Loaded, title: &str, page: InsightsPage) -> Response {
-    if let Err((status, _)) = super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await {
+    if let Err((status, _)) =
+        super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
+            .await
+    {
         return ctx.error(status, "Repository not found.");
     }
     ctx.page_model(
@@ -75,7 +79,14 @@ async fn ref_activity(
         Ok(opened) => opened,
         Err(response) => return response,
     };
-    let page = match activity::page(&ctx.state.pool, loaded.repository.id, &input, ctx.user.as_ref().map(|user| user.id)).await {
+    let page = match activity::page(
+        &ctx.state.pool,
+        loaded.repository.id,
+        &input,
+        ctx.user.as_ref().map(|user| user.id),
+    )
+    .await
+    {
         Ok(page) => page,
         Err(error) => {
             return match error.downcast_ref::<activity::InvalidQuery>() {
@@ -131,7 +142,8 @@ async fn ref_activity(
                 time_period: input.time_period.unwrap_or_default(),
             }),
         },
-    ).await
+    )
+    .await
 }
 
 async fn dependencies(
@@ -148,19 +160,49 @@ async fn dependencies(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    let reader = db::dependency_graph::Reader::Viewer(ctx.user.as_ref().map(|user| ctx.database_actor(user.id)));
-    let reference = ctx.query.get("ref").cloned().unwrap_or_else(|| format!("refs/heads/{}", loaded.default_branch));
-    if !reference.starts_with("refs/heads/") || !crate::backend::git::ref_names::is_canonical_ref(&reference) {
-        return ctx.error(axum::http::StatusCode::BAD_REQUEST, "Invalid dependency reference.");
+    let reader = db::dependency_graph::Reader::Viewer(
+        ctx.user.as_ref().map(|user| ctx.database_actor(user.id)),
+    );
+    let reference = ctx
+        .query
+        .get("ref")
+        .cloned()
+        .unwrap_or_else(|| format!("refs/heads/{}", loaded.default_branch));
+    if !reference.starts_with("refs/heads/")
+        || !crate::backend::git::ref_names::is_canonical_ref(&reference)
+    {
+        return ctx.error(
+            axum::http::StatusCode::BAD_REQUEST,
+            "Invalid dependency reference.",
+        );
     }
     let revision = ctx.query.get("sha").cloned();
-    if revision.as_deref().is_some_and(|sha| !crate::backend::git::ref_names::is_full_commit_id(sha)) {
-        return ctx.error(axum::http::StatusCode::BAD_REQUEST, "Invalid dependency revision.");
+    if revision
+        .as_deref()
+        .is_some_and(|sha| !crate::backend::git::ref_names::is_full_commit_id(sha))
+    {
+        return ctx.error(
+            axum::http::StatusCode::BAD_REQUEST,
+            "Invalid dependency revision.",
+        );
     }
     let snapshots = match if let Some(sha) = revision.as_deref() {
-        db::dependency_graph::snapshots(&ctx.state.pool, &reader, loaded.repository.id, Some(&reference), Some(&sha.to_ascii_lowercase())).await
+        db::dependency_graph::snapshots(
+            &ctx.state.pool,
+            &reader,
+            loaded.repository.id,
+            Some(&reference),
+            Some(&sha.to_ascii_lowercase()),
+        )
+        .await
     } else {
-        db::dependency_graph::latest_snapshots(&ctx.state.pool, &reader, loaded.repository.id, &reference).await
+        db::dependency_graph::latest_snapshots(
+            &ctx.state.pool,
+            &reader,
+            loaded.repository.id,
+            &reference,
+        )
+        .await
     } {
         Ok(snapshots) => snapshots,
         Err(_) => return chrome::unavailable(&ctx),
@@ -198,7 +240,8 @@ async fn dependencies(
             reference,
             revision,
         },
-    ).await
+    )
+    .await
 }
 
 async fn pulse(
@@ -239,7 +282,8 @@ async fn pulse(
         loaded,
         "Pulse",
         InsightsPage::Pulse { days, activity },
-    ).await
+    )
+    .await
 }
 
 async fn community(
@@ -315,7 +359,8 @@ async fn community(
             health_percentage: profile.health_percentage(),
             checks,
         },
-    ).await
+    )
+    .await
 }
 
 async fn contributors(
@@ -356,7 +401,8 @@ async fn contributors(
         loaded,
         "Contributors",
         InsightsPage::Contributors { rows, omitted },
-    ).await
+    )
+    .await
 }
 
 async fn code_frequency(
@@ -394,7 +440,8 @@ async fn code_frequency(
         loaded,
         "Code frequency",
         InsightsPage::CodeFrequency { weeks },
-    ).await
+    )
+    .await
 }
 
 async fn actions(
@@ -433,7 +480,8 @@ async fn actions(
         loaded,
         "Actions usage",
         InsightsPage::Actions { days, workflows },
-    ).await
+    )
+    .await
 }
 
 async fn forks(
@@ -453,7 +501,8 @@ async fn forks(
         .unwrap_or(1)
         .clamp(1, 10_000);
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let offset = (page - 1) * FORKS_PER_PAGE;
     let Ok((found, has_more)) = visible_forks(
         &ctx.state.pool,
@@ -471,11 +520,20 @@ async fn forks(
     let Ok(mut owners) = repository_owners(&ctx.state.pool, &ids).await else {
         return chrome::unavailable(&ctx);
     };
-    let viewer = match crate::backend::api::http::session::get_optional_user(&ctx.state.pool, &ctx.headers).await {
-        Ok(user) => user.map(|user| user.id),
-        Err(_) => return chrome::unavailable(&ctx),
-    };
-    let readable = match db::repositories::access::readable_repository_ids(&ctx.state.pool, viewer, &ids).await {
+    let viewer =
+        match crate::backend::api::http::session::get_optional_user(&ctx.state.pool, &ctx.headers)
+            .await
+        {
+            Ok(user) => user.map(|user| user.id),
+            Err(_) => return chrome::unavailable(&ctx),
+        };
+    let readable = match db::repositories::access::readable_repository_ids(
+        &ctx.state.pool,
+        viewer,
+        &ids,
+    )
+    .await
+    {
         Ok(ids) => ids,
         Err(_) => return chrome::unavailable(&ctx),
     };
@@ -501,5 +559,6 @@ async fn forks(
             page,
             has_more,
         },
-    ).await
+    )
+    .await
 }

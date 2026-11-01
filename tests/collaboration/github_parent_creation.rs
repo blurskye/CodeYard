@@ -255,16 +255,9 @@ async fn parents(pg: bool) {
         denied.downcast_ref::<db::relationships::Refusal>(),
         Some(db::relationships::Refusal::Missing)
     ));
-    let same_repo = create_child(
-        f.pool(),
-        bot,
-        repos[0].id,
-        local.id,
-        "Same-job parent",
-        "",
-    )
-    .await
-    .unwrap();
+    let same_repo = create_child(f.pool(), bot, repos[0].id, local.id, "Same-job parent", "")
+        .await
+        .unwrap();
     assert_eq!(
         db::relationships::list(f.pool(), Some(bot), same_repo.id, Kind::Parent, 0, 100)
             .await
@@ -288,11 +281,22 @@ async fn parents(pg: bool) {
     )
     .await;
     let bot_token = f
-        .scalar("SELECT id FROM personal_access_tokens WHERE user_id=$1", &[bot])
+        .scalar(
+            "SELECT id FROM personal_access_tokens WHERE user_id=$1",
+            &[bot],
+        )
         .await;
-    db::suggestions::set_enabled(f.pool(), repos[0].id, alice, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await), true)
-        .await
-        .unwrap();
+    db::suggestions::set_enabled(
+        f.pool(),
+        repos[0].id,
+        alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
+        true,
+    )
+    .await
+    .unwrap();
     let proposal = db::suggestions::Proposal {
         action: db::suggestions::Action::CloseIssue,
         target_id: Some(parent.id),
@@ -300,15 +304,32 @@ async fn parents(pg: bool) {
         rationale: None,
         confidence: None,
     };
-    let suggested = db::suggestions::propose(f.pool(), repos[0].id, alice, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await), child, &proposal, None)
-        .await
-        .unwrap();
+    let suggested = db::suggestions::propose(
+        f.pool(),
+        repos[0].id,
+        alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
+        child,
+        &proposal,
+        None,
+    )
+    .await
+    .unwrap();
     for approve in [false, true] {
-        let denied =
-            db::suggestions::resolve(f.pool(), repos[0].id, bot, &db::users::accounts::AccountCredential::Token(bot_token, BOT_TOKEN_HASH), child, suggested.id, approve)
-                .await
-                .err()
-                .unwrap();
+        let denied = db::suggestions::resolve(
+            f.pool(),
+            repos[0].id,
+            bot,
+            &db::users::accounts::AccountCredential::Token(bot_token, BOT_TOKEN_HASH),
+            child,
+            suggested.id,
+            approve,
+        )
+        .await
+        .err()
+        .unwrap();
         assert!(matches!(
             db::suggestions::refusal(&denied),
             Some(db::suggestions::Refusal::Missing)
@@ -328,9 +349,17 @@ async fn parents(pg: bool) {
             .unwrap()
             .is_empty()
     );
-    let denied = db::suggestions::propose(f.pool(), repos[0].id, bot, &db::users::accounts::AccountCredential::Token(bot_token, BOT_TOKEN_HASH), child, &proposal, None)
-        .await
-        .unwrap_err();
+    let denied = db::suggestions::propose(
+        f.pool(),
+        repos[0].id,
+        bot,
+        &db::users::accounts::AccountCredential::Token(bot_token, BOT_TOKEN_HASH),
+        child,
+        &proposal,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(
         db::suggestions::refusal(&denied),
         Some(db::suggestions::Refusal::Invalid)
@@ -346,17 +375,10 @@ async fn parents(pg: bool) {
     // Graph limits roll back the newly allocated issue as well as the edge.
     let mut deepest = local.id;
     for _ in 0..7 {
-        deepest = create_child(
-            f.pool(),
-            alice,
-            repos[0].id,
-            deepest,
-            "Deep child",
-            "",
-        )
-        .await
-        .unwrap()
-        .id;
+        deepest = create_child(f.pool(), alice, repos[0].id, deepest, "Deep child", "")
+            .await
+            .unwrap()
+            .id;
     }
     let count = f
         .scalar(
@@ -364,10 +386,9 @@ async fn parents(pg: bool) {
             &[repos[0].id],
         )
         .await;
-    let denied =
-        create_child(f.pool(), alice, repos[0].id, deepest, "Too deep", "")
-            .await
-            .unwrap_err();
+    let denied = create_child(f.pool(), alice, repos[0].id, deepest, "Too deep", "")
+        .await
+        .unwrap_err();
     assert!(matches!(
         denied.downcast_ref::<db::relationships::Refusal>(),
         Some(db::relationships::Refusal::Limit)

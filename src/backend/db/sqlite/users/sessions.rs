@@ -162,7 +162,10 @@ pub async fn get_browser_session(pool: &SqlitePool, id: &str) -> Result<Option<B
         .bind(id).fetch_optional(pool).await.map_err(Into::into)
 }
 
-#[expect(clippy::too_many_arguments, reason = "Each argument is one column or check of the rotated session.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one column or check of the rotated session."
+)]
 pub async fn rotate_authenticated_session(
     pool: &SqlitePool,
     old: Option<&str>,
@@ -475,9 +478,19 @@ pub async fn keep_newest_anonymous_sessions(pool: &SqlitePool, cap: i64) -> Resu
     Ok(removed as u64)
 }
 
-pub async fn session_page(pool: &SqlitePool, user: i64, current: &str, before: i64) -> Result<Vec<crate::backend::db::users::sessions::SessionPageRow>> {
+pub async fn session_page(
+    pool: &SqlitePool,
+    user: i64,
+    current: &str,
+    before: i64,
+) -> Result<Vec<crate::backend::db::users::sessions::SessionPageRow>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_account(&mut tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(current)).await?;
+    super::transitions::require_account(
+        &mut tx,
+        user,
+        &crate::backend::db::users::accounts::AccountCredential::Session(current),
+    )
+    .await?;
     let rows = sqlx::query_as("SELECT id,user_id,user_agent,ip_address,expires_at,created_at,ordinal FROM sessions WHERE user_id=?1 AND expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND (?2<=0 OR ordinal<=?2) ORDER BY ordinal DESC LIMIT 101")
         .bind(user).bind(before).fetch_all(&mut *tx).await?;
     tx.commit().await?;

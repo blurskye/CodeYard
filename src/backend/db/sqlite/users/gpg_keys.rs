@@ -1,6 +1,8 @@
 use crate::backend::db::users::{
     accounts::AccountCredential,
-    gpg_keys::{GpgKey, GpgKeyRefusal, GpgKeySummary, NewGpgKey, StoredGpgKey, StoredGpgKeySummary},
+    gpg_keys::{
+        GpgKey, GpgKeyRefusal, GpgKeySummary, NewGpgKey, StoredGpgKey, StoredGpgKeySummary,
+    },
 };
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};

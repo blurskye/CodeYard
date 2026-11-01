@@ -29,15 +29,25 @@ pub struct ClusterNode {
 impl ClusterNode {
     /// Eligible allocation targets, most reported free bytes first, then oldest id.
     pub fn ranked_storage(nodes: &[Self]) -> Vec<&Self> {
-        let mut nodes: Vec<_> = nodes.iter().filter(|node| node.is_serving_storage()).collect();
-        nodes.sort_by_key(|node| (std::cmp::Reverse(node.disk_free.unwrap_or_default()), node.id));
+        let mut nodes: Vec<_> = nodes
+            .iter()
+            .filter(|node| node.is_serving_storage())
+            .collect();
+        nodes.sort_by_key(|node| {
+            (
+                std::cmp::Reverse(node.disk_free.unwrap_or_default()),
+                node.id,
+            )
+        });
         nodes
     }
 
     /// Online, reporting its free space and holding the `storage` role, which a repository
     /// needs of its primary.
     pub fn is_serving_storage(&self) -> bool {
-        self.is_online() && self.disk_free.is_some() && self.roles.iter().any(|role| role == "storage")
+        self.is_online()
+            && self.disk_free.is_some()
+            && self.roles.iter().any(|role| role == "storage")
     }
 
     /// Active and reporting in when read from the database.
@@ -47,11 +57,16 @@ impl ClusterNode {
 }
 
 /// One database-clock predicate for node and runner presentation alike.
-pub fn heartbeat_online(status: &str, last_seen: Option<DateTime<Utc>>, observed_at: DateTime<Utc>) -> bool {
-    status == "active" && last_seen.is_some_and(|seen| {
-        let age = observed_at - seen;
-        age >= chrono::Duration::zero() && age <= chrono::Duration::seconds(60)
-    })
+pub fn heartbeat_online(
+    status: &str,
+    last_seen: Option<DateTime<Utc>>,
+    observed_at: DateTime<Utc>,
+) -> bool {
+    status == "active"
+        && last_seen.is_some_and(|seen| {
+            let age = observed_at - seen;
+            age >= chrono::Duration::zero() && age <= chrono::Duration::seconds(60)
+        })
 }
 
 /// An invite as an operator sees it. The secret and its hash are never listed.

@@ -20,43 +20,72 @@ use std::collections::BTreeMap;
 pub const MAX_JOB_STEPS: usize = crate::progress::MAX_STEP_NUMBER as usize - 2;
 
 pub fn validate_timeout_minutes(value: f64) -> anyhow::Result<()> {
-    anyhow::ensure!(value.is_finite() && value > 0.0 && value <= 525_600.0, "timeout-minutes must be a positive number no greater than one year");
+    anyhow::ensure!(
+        value.is_finite() && value > 0.0 && value <= 525_600.0,
+        "timeout-minutes must be a positive number no greater than one year"
+    );
     Ok(())
 }
 
 pub const MAX_REUSABLE_LEVELS: usize = 4;
 pub const MAX_CALLED_WORKFLOWS: usize = 20;
 pub fn has_job_concurrency(raw: &serde_yaml::Value) -> bool {
-    raw.get("jobs").and_then(serde_yaml::Value::as_mapping)
+    raw.get("jobs")
+        .and_then(serde_yaml::Value::as_mapping)
         .is_some_and(|jobs| jobs.values().any(|job| job.get("concurrency").is_some()))
 }
 pub fn validate_called_concurrency(raw: &serde_yaml::Value) -> anyhow::Result<()> {
-    anyhow::ensure!(raw.get("concurrency").is_none() && !has_job_concurrency(raw), "Called workflow concurrency is unsupported");
+    anyhow::ensure!(
+        raw.get("concurrency").is_none() && !has_job_concurrency(raw),
+        "Called workflow concurrency is unsupported"
+    );
     Ok(())
 }
 pub const MAX_CONCURRENCY_GROUP_BYTES: usize = 256;
 pub fn valid_concurrency_group(group: &str) -> bool {
-    !group.is_empty() && group.len() <= MAX_CONCURRENCY_GROUP_BYTES && !group.chars().any(char::is_control)
+    !group.is_empty()
+        && group.len() <= MAX_CONCURRENCY_GROUP_BYTES
+        && !group.chars().any(char::is_control)
 }
 
 pub const PERMISSION_SCOPES: &[&str] = &[
-    "actions", "artifact-metadata", "attestations", "checks", "contents", "deployments",
-    "discussions", "id-token", "issues", "models", "packages", "pages", "pull-requests",
-    "repository-projects", "security-events", "statuses", "vulnerability-alerts", "metadata",
+    "actions",
+    "artifact-metadata",
+    "attestations",
+    "checks",
+    "contents",
+    "deployments",
+    "discussions",
+    "id-token",
+    "issues",
+    "models",
+    "packages",
+    "pages",
+    "pull-requests",
+    "repository-projects",
+    "security-events",
+    "statuses",
+    "vulnerability-alerts",
+    "metadata",
 ];
 
 pub fn permission_level_allowed(scope: &str, level: &str) -> bool {
-    PERMISSION_SCOPES.contains(&scope) && match level {
-        "none" => true,
-        "read" => scope != "id-token",
-        "write" => !matches!(scope, "models" | "metadata" | "vulnerability-alerts"),
-        _ => false,
-    }
+    PERMISSION_SCOPES.contains(&scope)
+        && match level {
+            "none" => true,
+            "read" => scope != "id-token",
+            "write" => !matches!(scope, "models" | "metadata" | "vulnerability-alerts"),
+            _ => false,
+        }
 }
 
 pub fn valid_identifier(id: &str) -> bool {
-    !id.is_empty() && id.len() < 100 && !id.starts_with("__")
-        && id.bytes().enumerate().all(|(i, b)| b.is_ascii_alphabetic() || b == b'_' || (i > 0 && (b.is_ascii_digit() || b == b'-')))
+    !id.is_empty()
+        && id.len() < 100
+        && !id.starts_with("__")
+        && id.bytes().enumerate().all(|(i, b)| {
+            b.is_ascii_alphabetic() || b == b'_' || (i > 0 && (b.is_ascii_digit() || b == b'-'))
+        })
 }
 
 /// A parsed and checked workflow file. Its fields belong to this module.
@@ -127,32 +156,62 @@ pub enum EnvironmentTemplate {
     Expression(String),
 }
 impl Default for EnvironmentTemplate {
-    fn default() -> Self { Self::Entries(BTreeMap::new()) }
+    fn default() -> Self {
+        Self::Entries(BTreeMap::new())
+    }
 }
 impl EnvironmentTemplate {
-    pub fn resolve(&self, contexts: &Contexts, status: Status) -> anyhow::Result<BTreeMap<String, String>> {
+    pub fn resolve(
+        &self,
+        contexts: &Contexts,
+        status: Status,
+    ) -> anyhow::Result<BTreeMap<String, String>> {
         use crate::expressions::{self, Value};
-        fn insert(result: &mut BTreeMap<String, String>, bytes: &mut usize, key: String, value: Value) -> anyhow::Result<()> {
-            anyhow::ensure!(!key.is_empty() && !key.contains(['=', '\0']), "Invalid environment name");
-            anyhow::ensure!(!matches!(value, Value::Array(_) | Value::Object(_)), "Environment values must be scalar");
+        fn insert(
+            result: &mut BTreeMap<String, String>,
+            bytes: &mut usize,
+            key: String,
+            value: Value,
+        ) -> anyhow::Result<()> {
+            anyhow::ensure!(
+                !key.is_empty() && !key.contains(['=', '\0']),
+                "Invalid environment name"
+            );
+            anyhow::ensure!(
+                !matches!(value, Value::Array(_) | Value::Object(_)),
+                "Environment values must be scalar"
+            );
             let value = value.to_text();
             anyhow::ensure!(!value.contains('\0'), "Invalid environment value");
             *bytes = bytes.saturating_add(key.len()).saturating_add(value.len());
-            anyhow::ensure!(*bytes <= crate::values::MAX_ENVIRONMENT_FILE_BYTES, "Environment scope exceeds its delivery budget");
+            anyhow::ensure!(
+                *bytes <= crate::values::MAX_ENVIRONMENT_FILE_BYTES,
+                "Environment scope exceeds its delivery budget"
+            );
             result.insert(key, value);
             Ok(())
         }
         let mut result = BTreeMap::new();
         let mut bytes = 0;
         match self {
-            Self::Entries(entries) => for (key, template) in entries {
-                insert(&mut result, &mut bytes, key.clone(), expressions::interpolate(template, contexts, status)?)?;
-            },
+            Self::Entries(entries) => {
+                for (key, template) in entries {
+                    insert(
+                        &mut result,
+                        &mut bytes,
+                        key.clone(),
+                        expressions::interpolate(template, contexts, status)?,
+                    )?;
+                }
+            }
             Self::Expression(template) => {
-                let Value::Object(entries) = expressions::interpolate(template, contexts, status)? else {
+                let Value::Object(entries) = expressions::interpolate(template, contexts, status)?
+                else {
                     anyhow::bail!("Environment expression must produce an object");
                 };
-                for (key, value) in entries { insert(&mut result, &mut bytes, key, value)?; }
+                for (key, value) in entries {
+                    insert(&mut result, &mut bytes, key, value)?;
+                }
             }
         }
         Ok(result)
@@ -210,7 +269,11 @@ pub fn job_order(workflow: &Workflow) -> anyhow::Result<Vec<String>> {
 
 /// Declared dependency names, with the same scalar and case rules used by planning.
 pub fn job_dependencies(workflow: &Workflow) -> anyhow::Result<BTreeMap<String, Vec<String>>> {
-    workflow.jobs.iter().map(|(id, job)| Ok((id.clone(), planner::needs(job)?))).collect()
+    workflow
+        .jobs
+        .iter()
+        .map(|(id, job)| Ok((id.clone(), planner::needs(job)?)))
+        .collect()
 }
 
 /// The runs a job makes once the jobs it needs have finished: `contexts` holds `github`,

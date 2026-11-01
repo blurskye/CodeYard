@@ -98,12 +98,36 @@ pub(crate) async fn native_assign(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
-    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
+    crate::backend::api::repos::discussion::require_item_binding(
+        &ctx,
+        &form,
+        repo.record.id,
+        value.id,
+    )?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let username = field(&form, "username");
-    let target = assignments::Target { actor: ctx.require_user()?, repository: &repo.record, owner: &owner, item: subject, number, title: &value.title };
-    let outcome = match db::users::accounts::get_user_by_username(&ctx.state.pool, username.trim()).await.map_err(|_| unavailable(&ctx))? {
-        Some(assignee) => assignments::assign(&ctx.state.pool, &ctx.state.notification_broadcaster, &target, authority(&ctx)?, &[assignee]).await.map(|_| ()).map_err(assignment_error),
+    let target = assignments::Target {
+        actor: ctx.require_user()?,
+        repository: &repo.record,
+        owner: &owner,
+        item: subject,
+        number,
+        title: &value.title,
+    };
+    let outcome = match db::users::accounts::get_user_by_username(&ctx.state.pool, username.trim())
+        .await
+        .map_err(|_| unavailable(&ctx))?
+    {
+        Some(assignee) => assignments::assign(
+            &ctx.state.pool,
+            &ctx.state.notification_broadcaster,
+            &target,
+            authority(&ctx)?,
+            &[assignee],
+        )
+        .await
+        .map(|_| ())
+        .map_err(assignment_error),
         None => Err(assignment_error(AssignmentRefusal::Unassignable.into())),
     };
     detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
@@ -121,10 +145,25 @@ pub(crate) async fn native_unassign(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
-    crate::backend::api::repos::discussion::require_item_binding(&ctx, &form, repo.record.id, value.id)?;
+    crate::backend::api::repos::discussion::require_item_binding(
+        &ctx,
+        &form,
+        repo.record.id,
+        value.id,
+    )?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     // A name that is no user, or is not assigned, leaves the item as it is and records nothing.
-    let target = assignments::Target { actor: ctx.require_user()?, repository: &repo.record, owner: &owner, item: subject, number, title: &value.title };
-    let outcome = assignments::unassign(&ctx.state.pool, &target, authority(&ctx)?, &[username]).await.map(|_| ()).map_err(assignment_error);
+    let target = assignments::Target {
+        actor: ctx.require_user()?,
+        repository: &repo.record,
+        owner: &owner,
+        item: subject,
+        number,
+        title: &value.title,
+    };
+    let outcome = assignments::unassign(&ctx.state.pool, &target, authority(&ctx)?, &[username])
+        .await
+        .map(|_| ())
+        .map_err(assignment_error);
     detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
 }

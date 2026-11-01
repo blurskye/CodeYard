@@ -47,7 +47,10 @@ pub async fn create_issue(
     let issue = crate::backend::issues::mutations::create_issue(
         &state.pool,
         &state.notification_broadcaster,
-        crate::backend::db::credentials::Actor::from((current_actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            current_actor.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         owner,
         repo,
         req,
@@ -275,11 +278,23 @@ async fn list_filters(
     selected_labels: Vec<String>,
     selected_author: Option<i64>,
 ) -> ResultPage<view::ListFilters> {
-    let mut labels: Vec<_> = db::labels::list_repo_labels_page(&ctx.state.pool, repo.record.id, "", "name", 100, 0)
-        .await.map_err(|_| unavailable(ctx))?.into_iter().map(label).collect();
+    let mut labels: Vec<_> =
+        db::labels::list_repo_labels_page(&ctx.state.pool, repo.record.id, "", "name", 100, 0)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .into_iter()
+            .map(label)
+            .collect();
     for name in &selected_labels {
-        if !labels.iter().any(|label| label.name.eq_ignore_ascii_case(name)) {
-            if let Some(found) = db::labels::get_repo_label_by_name(&ctx.state.pool, repo.record.id, name).await.map_err(|_| unavailable(ctx))? {
+        if !labels
+            .iter()
+            .any(|label| label.name.eq_ignore_ascii_case(name))
+        {
+            if let Some(found) =
+                db::labels::get_repo_label_by_name(&ctx.state.pool, repo.record.id, name)
+                    .await
+                    .map_err(|_| unavailable(ctx))?
+            {
                 labels.push(label(found));
             }
         }
@@ -293,9 +308,13 @@ async fn list_filters(
         assignee: query_value(ctx, "assignee"),
         milestones: milestones.into_iter().map(milestone_choice_view).collect(),
         milestone: query_value(ctx, "milestone"),
-        authors: db::discussions::list_repo_authors(&ctx.state.pool, repo.record.id, selected_author)
-            .await
-            .map_err(|_| unavailable(ctx))?,
+        authors: db::discussions::list_repo_authors(
+            &ctx.state.pool,
+            repo.record.id,
+            selected_author,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?,
         author: query_value(ctx, "author"),
         sort: query_value(ctx, "sort"),
         ..Default::default()
@@ -488,9 +507,10 @@ pub(crate) async fn native_index(
                 .iter()
                 .map(|value| value.pull_request.id)
                 .collect::<Vec<_>>();
-            let mut labels = db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &ids)
-                .await
-                .map_err(|_| unavailable(&ctx))?;
+            let mut labels =
+                db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &ids)
+                    .await
+                    .map_err(|_| unavailable(&ctx))?;
             let mut assignees = listed_assignees(&ctx, &ids, true).await?;
             let mut comments: HashMap<i64, i64> =
                 db::pull_requests::reviews::count_pull_request_comments_for(&ctx.state.pool, &ids)
@@ -747,7 +767,12 @@ fn form_fields(form: &[FormElement], answers: &[Vec<String>]) -> Vec<view::FormF
                     .iter()
                     .map(|option| option.label.clone())
                     .collect(),
-                required_options: element.options.iter().filter(|option| option.required).map(|option| option.label.clone()).collect(),
+                required_options: element
+                    .options
+                    .iter()
+                    .filter(|option| option.required)
+                    .map(|option| option.label.clone())
+                    .collect(),
                 multiple: element.multiple,
                 required: element.required || element.options.iter().any(|option| option.required),
                 values,
@@ -955,7 +980,12 @@ pub(crate) async fn native_create(
         }) {
             if !template.form.is_empty() {
                 let answers: Vec<Vec<String>> = (0..template.form.len())
-                    .map(|index| repeated(&pairs, &format!("form_{index}")).into_iter().map(|value| value.replace("\r\n", "\n")).collect())
+                    .map(|index| {
+                        repeated(&pairs, &format!("form_{index}"))
+                            .into_iter()
+                            .map(|value| value.replace("\r\n", "\n"))
+                            .collect()
+                    })
                     .collect();
                 missing_answer = first_missing_answer(&template.form, &answers).map(str::to_owned);
                 draft.body = compose_form_body(&template.form, &answers);
@@ -1108,7 +1138,9 @@ pub(crate) async fn native_create(
             let mut names = draft.assignees.clone();
             names.sort_unstable();
             names.dedup();
-            let users = match db::users::accounts::get_users_by_usernames(&ctx.state.pool, &names).await {
+            let users = match db::users::accounts::get_users_by_usernames(&ctx.state.pool, &names)
+                .await
+            {
                 Ok(users) => users,
                 Err(error) => {
                     tracing::warn!(?error, "Initial issue assignees could not be verified");
@@ -1117,11 +1149,23 @@ pub(crate) async fn native_create(
                 }
             };
             if users.len() != names.len() {
-                return Ok(new_page("Submission failed", StatusCode::UNPROCESSABLE_ENTITY, None,
-                    Some("An assignee is no longer available. Review your preserved submission.".to_owned()), false));
+                return Ok(new_page(
+                    "Submission failed",
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    None,
+                    Some(
+                        "An assignee is no longer available. Review your preserved submission."
+                            .to_owned(),
+                    ),
+                    false,
+                ));
             }
             let assignees: Vec<i64> = users.iter().map(|user| user.id).collect();
-            let labels: Vec<i64> = draft.labels.iter().filter_map(|id| id.parse().ok()).collect();
+            let labels: Vec<i64> = draft
+                .labels
+                .iter()
+                .filter_map(|id| id.parse().ok())
+                .collect();
             let created = crate::backend::issues::mutations::create_issue_with_metadata(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
@@ -1136,7 +1180,8 @@ pub(crate) async fn native_create(
                     parent_repository_id: None,
                 },
                 db::issues::OwnedIssueMetadata {
-                    labels, assignees,
+                    labels,
+                    assignees,
                     milestone: draft.milestone.parse().ok(),
                     ..Default::default()
                 },

@@ -111,7 +111,12 @@ fn branch_or_trunk_sql(branch: &str) -> String {
     )
 }
 
-pub async fn accept_repository_dispatch(pool: &SqlitePool, actor: i64, repo: i64, credential: &crate::backend::db::ci::CiCredential) -> Result<bool> {
+pub async fn accept_repository_dispatch(
+    pool: &SqlitePool,
+    actor: i64,
+    repo: i64,
+    credential: &crate::backend::db::ci::CiCredential,
+) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?
         && super::credentials::ci(&mut tx, actor, repo, credential).await?;
@@ -152,7 +157,8 @@ pub async fn enqueue_ci_run(
         None,
         None,
     )
-    .await.map(|(run, _)| run)
+    .await
+    .map(|(run, _)| run)
 }
 pub async fn enqueue_ci_run_for_runners(
     pool: &SqlitePool,
@@ -162,7 +168,16 @@ pub async fn enqueue_ci_run_for_runners(
     event_payload: Option<&serde_json::Value>,
     credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<crate::backend::db::ci::Enqueued> {
-    enqueue_ci_run_inner(pool, input, trusted_ids, None, scheduling, event_payload, credential).await
+    enqueue_ci_run_inner(
+        pool,
+        input,
+        trusted_ids,
+        None,
+        scheduling,
+        event_payload,
+        credential,
+    )
+    .await
 }
 pub async fn enqueue_ci_run_attempt(
     pool: &SqlitePool,
@@ -216,9 +231,15 @@ async fn enqueue_ci_run_inner(
         },
         CiAdmissionRefusal::Denied("CI repository execution permission denied")
     );
-    if let Some(proof) = credential.or_else(|| requested_attempt.as_ref().and_then(|attempt| attempt.credential.as_ref())) {
-        ensure!(super::credentials::ci(&mut tx, input.triggered_by_id, input.repo_id, proof).await?,
-            CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+    if let Some(proof) = credential.or_else(|| {
+        requested_attempt
+            .as_ref()
+            .and_then(|attempt| attempt.credential.as_ref())
+    }) {
+        ensure!(
+            super::credentials::ci(&mut tx, input.triggered_by_id, input.repo_id, proof).await?,
+            CiAdmissionRefusal::Denied("CI credential is no longer authorized")
+        );
     }
     let paths: Vec<_> = input.workflow_path.split(',').collect();
     let disabled: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM actions_workflows WHERE repo_id=$1 AND path IN (SELECT value FROM json_each($2)) AND state<>'active')").bind(input.repo_id).bind(serde_json::to_string(&paths)?).fetch_one(&mut *tx).await?;
@@ -337,7 +358,9 @@ async fn enqueue_ci_run_inner(
         is_fork = fork;
         ensure!(
             !fork || super::action_settings::fork_runs_allowed(&mut tx, input.repo_id).await?,
-            CiAdmissionRefusal::Denied("Workflows from fork pull requests are turned off for this private repository")
+            CiAdmissionRefusal::Denied(
+                "Workflows from fork pull requests are turned off for this private repository"
+            )
         );
         pull_request_id = Some(id);
         pull_request_event = Some(event);
@@ -426,8 +449,11 @@ async fn enqueue_ci_run_inner(
     }
     super::deployment_protection::snapshot(&mut tx, &run).await?;
     let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
-    run.deployment_waiting = sqlx::query_scalar(&format!("SELECT {waiting} FROM ci_runs r WHERE r.id=?1"))
-        .bind(run.id).fetch_one(&mut *tx).await?;
+    run.deployment_waiting =
+        sqlx::query_scalar(&format!("SELECT {waiting} FROM ci_runs r WHERE r.id=?1"))
+            .bind(run.id)
+            .fetch_one(&mut *tx)
+            .await?;
     // Adding retained input changes what a current replica must contain.
     sqlx::query("UPDATE repositories SET write_version=write_version+1 WHERE id=?1 AND storage_node_id IS NOT NULL")
         .bind(run.repo_id).execute(&mut *tx).await?;
@@ -449,7 +475,9 @@ async fn schedule_concurrency(
             .bind(run.workflow_run_id.unwrap_or(run.id)).fetch_optional(&mut **tx).await?;
         let contexts = crate::backend::ci::concurrency::run_contexts(contexts.clone(), run, actor);
         Some(crate::backend::ci::concurrency::resolve(expression.clone(), contexts).await?)
-    } else { scheduling.concurrency.clone() };
+    } else {
+        scheduling.concurrency.clone()
+    };
     if let Some(config) = &config {
         let victims = super::action_concurrency::record(tx, run, config).await?;
         for victim in victims {
@@ -596,8 +624,8 @@ async fn claim_queued_run(
         let Some(run) = next else { break };
         after = run.id;
         // A private repository's fork switch may have been turned off after admission.
-        let fork_refused = run.is_fork
-            && !super::action_settings::fork_runs_allowed(&mut tx, run.repo_id).await?;
+        let fork_refused =
+            run.is_fork && !super::action_settings::fork_runs_allowed(&mut tx, run.repo_id).await?;
         let permitted = match run.triggered_by_id {
             Some(actor) if !run.cancel_requested && !fork_refused => {
                 ci_actor_has_permission(
@@ -687,8 +715,15 @@ pub async fn ci_run_allows_repository_read(
 
 /// Records that the worker is alive. Returns whether cancellation was requested,
 /// or `None` if this worker no longer owns the run.
-pub async fn heartbeat_ci_run_on_node(pool: &SqlitePool, id: i64, worker: &str, node_key: &str) -> Result<Option<bool>> {
-    if !worker.starts_with(&format!("{node_key}/")) { return Ok(None); }
+pub async fn heartbeat_ci_run_on_node(
+    pool: &SqlitePool,
+    id: i64,
+    worker: &str,
+    node_key: &str,
+) -> Result<Option<bool>> {
+    if !worker.starts_with(&format!("{node_key}/")) {
+        return Ok(None);
+    }
     Ok(sqlx::query_scalar("UPDATE ci_runs SET heartbeat_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND worker=?2 AND status='running' AND EXISTS(SELECT 1 FROM nodes n,json_each(n.roles) role WHERE n.public_key=?3 AND n.status='active' AND role.value='runner') RETURNING cancel_requested")
         .bind(id).bind(worker).bind(node_key).fetch_optional(pool).await?)
 }
@@ -828,7 +863,9 @@ pub async fn fail_stale_ci_runs(
     let mut closed_jobs = Vec::new();
     for run in &runs {
         let message = Some("The CI worker stopped before the run finished");
-        if let Some((finished, created, jobs)) = finish_in_tx(&mut tx, run, "failed", message).await? {
+        if let Some((finished, created, jobs)) =
+            finish_in_tx(&mut tx, run, "failed", message).await?
+        {
             finished_runs.push(finished);
             notifications.extend(created);
             closed_jobs.extend(jobs.into_iter().map(|job| (run.id, job)));
@@ -978,15 +1015,26 @@ async fn request_cancellation(
             .await?;
     let personal_admin = user.is_admin && repo.owner_kind == "user" && repo.owner_org_id.is_none();
     if let Some(proof) = credential {
-        ensure!(super::credentials::ci(&mut tx, actor_id, repo.id, proof).await?,
-            CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+        ensure!(
+            super::credentials::ci(&mut tx, actor_id, repo.id, proof).await?,
+            CiAdmissionRefusal::Denied("CI credential is no longer authorized")
+        );
     }
     let workflow_authorized = match credential {
-        Some(crate::backend::db::ci::CiCredential::Token { id, .. }) => sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)")
-            .bind(id).fetch_one(&mut *tx).await?,
+        Some(crate::backend::db::ci::CiCredential::Token { id, .. }) => {
+            sqlx::query_scalar::<_, bool>(
+                "SELECT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=$1)",
+            )
+            .bind(id)
+            .fetch_one(&mut *tx)
+            .await?
+        }
         _ => false,
     };
-    ensure!(user.username != crate::backend::db::ci_tokens::BOT || workflow_authorized, CiAdmissionRefusal::Denied("CI cancellation permission denied"));
+    ensure!(
+        user.username != crate::backend::db::ci_tokens::BOT || workflow_authorized,
+        CiAdmissionRefusal::Denied("CI cancellation permission denied")
+    );
     ensure!(
         workflow_authorized
             || crate::backend::db::ci::may_cancel_run(
@@ -1002,8 +1050,13 @@ async fn request_cancellation(
     match run.status.as_str() {
         "queued" => {
             if let Some((finished, created, _)) = finish_in_tx(
-                &mut tx, &run, "cancelled", Some("Cancelled before it started"),
-            ).await? {
+                &mut tx,
+                &run,
+                "cancelled",
+                Some("Cancelled before it started"),
+            )
+            .await?
+            {
                 notifications = created;
                 completed = Some(finished);
             }
@@ -1035,7 +1088,10 @@ pub async fn delete_ci_run_data(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         CiAdmissionRefusal::Denied("CI run deletion permission denied")
     );
-    ensure!(super::credentials::writes(&mut tx, &credential, Some(repo), None, "actions").await?, CiAdmissionRefusal::Denied("CI credential is no longer authorized"));
+    ensure!(
+        super::credentials::writes(&mut tx, &credential, Some(repo), None, "actions").await?,
+        CiAdmissionRefusal::Denied("CI credential is no longer authorized")
+    );
     let statuses: Vec<(i64, String)> = sqlx::query_as("SELECT id,status FROM ci_runs WHERE repo_id=$1 AND COALESCE(workflow_run_id,id)=$2 ORDER BY id").bind(repo).bind(id).fetch_all(&mut *tx).await?;
     if statuses.is_empty() {
         return Ok(false);
@@ -1067,30 +1123,34 @@ pub async fn delete_ci_run_data(
 
 pub async fn get_ci_run_by_id(pool: &SqlitePool, repo_id: i64, id: i64) -> Result<Option<CiRun>> {
     let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
-    Ok(
-        sqlx::query_as(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.repo_id=$1 AND r.id=$2"))
-            .bind(repo_id)
-            .bind(id)
-            .fetch_optional(pool)
-            .await?,
-    )
+    Ok(sqlx::query_as(&format!(
+        "SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.repo_id=$1 AND r.id=$2"
+    ))
+    .bind(repo_id)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?)
 }
 
 /// For callers that hold a run's own id but not its repository, such as a worker's report.
 pub async fn get_ci_run(pool: &SqlitePool, id: i64) -> Result<Option<CiRun>> {
     let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
-    Ok(sqlx::query_as(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.id=$1"))
-        .bind(id)
-        .fetch_optional(pool)
-        .await?)
+    Ok(sqlx::query_as(&format!(
+        "SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.id=$1"
+    ))
+    .bind(id)
+    .fetch_optional(pool)
+    .await?)
 }
 
 pub async fn get_ci_run_by_run_id(pool: &SqlitePool, run_id: uuid::Uuid) -> Result<Option<CiRun>> {
     let waiting = crate::backend::db::deployment_protection::waiting_sql(false, "r");
-    let run = sqlx::query_as::<_, CiRun>(&format!("SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.run_id=?1"))
-        .bind(run_id)
-        .fetch_optional(pool)
-        .await?;
+    let run = sqlx::query_as::<_, CiRun>(&format!(
+        "SELECT r.*,{waiting} AS deployment_waiting FROM ci_runs r WHERE r.run_id=?1"
+    ))
+    .bind(run_id)
+    .fetch_optional(pool)
+    .await?;
 
     Ok(run)
 }
@@ -1187,9 +1247,9 @@ pub async fn list_ci_runs_for_repo(
 ) -> Result<Vec<CiRun>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
     let columns = crate::backend::db::ci::RUN_METADATA_COLUMNS;
-    let rows = sqlx::query_as::<_, CiRun>(
-        &format!("SELECT {columns} FROM ci_runs c WHERE repo_id = ?1 ORDER BY created_at DESC LIMIT ?2"),
-    )
+    let rows = sqlx::query_as::<_, CiRun>(&format!(
+        "SELECT {columns} FROM ci_runs c WHERE repo_id = ?1 ORDER BY created_at DESC LIMIT ?2"
+    ))
     .bind(repo_id)
     .bind(limit)
     .fetch_all(pool)

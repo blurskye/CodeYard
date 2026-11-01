@@ -20,13 +20,23 @@ pub async fn create_notification(
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
-    if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
+    if matches!(
+        input.kind,
+        "user_followed" | "repository_starred" | "repository_watched"
+    ) {
         sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'') || ':notification:' || ($1::bigint)::text,0))")
             .bind(input.user_id).execute(&mut *tx).await?;
     }
     if input.kind == "repository_forked" {
-        let fork = input.metadata.get("fork_repository_id").and_then(serde_json::Value::as_i64).ok_or(NotificationSuppressed)?;
-        anyhow::ensure!(lock_notification_scope_readable(&mut tx, input.user_id, fork).await?, NotificationSuppressed);
+        let fork = input
+            .metadata
+            .get("fork_repository_id")
+            .and_then(serde_json::Value::as_i64)
+            .ok_or(NotificationSuppressed)?;
+        anyhow::ensure!(
+            lock_notification_scope_readable(&mut tx, input.user_id, fork).await?,
+            NotificationSuppressed
+        );
     }
     if let Some(actor) = input.actor_id {
         anyhow::ensure!(
@@ -73,7 +83,10 @@ pub async fn create_notification(
         .await?;
         anyhow::ensure!(!ignoring, NotificationSuppressed);
     }
-    if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
+    if matches!(
+        input.kind,
+        "user_followed" | "repository_starred" | "repository_watched"
+    ) {
         let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=$1 AND actor_id=$2 AND kind=$3 AND ($3='user_followed' OR repo_id=$4) AND created_at>clock_timestamp()-INTERVAL '1 day')")
             .bind(input.user_id).bind(input.actor_id).bind(input.kind).bind(input.repo_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!recent, NotificationSuppressed);
@@ -648,9 +661,14 @@ pub(super) async fn refresh_links(
         .bind(&ids).fetch_all(&mut *connection).await?;
     for notification in notifications {
         if notification.kind == "repository_forked" {
-            let fork = notification.metadata.get("fork_repository_id").and_then(serde_json::Value::as_i64);
+            let fork = notification
+                .metadata
+                .get("fork_repository_id")
+                .and_then(serde_json::Value::as_i64);
             let readable = match fork {
-                Some(fork) => lock_notification_scope_readable(connection, notification.user_id, fork).await?,
+                Some(fork) => {
+                    lock_notification_scope_readable(connection, notification.user_id, fork).await?
+                }
                 None => false,
             };
             if !readable {
@@ -683,11 +701,12 @@ pub async fn get_notification(
 
 pub async fn notification_email_allowed(pool: &PgPool, notification_id: i64) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    let row: Option<(i64, i64, String, serde_json::Value)> =
-        sqlx::query_as("SELECT user_id, scope_repository_id, kind, metadata FROM notifications WHERE id=$1")
-            .bind(notification_id)
-            .fetch_optional(&mut *tx)
-            .await?;
+    let row: Option<(i64, i64, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT user_id, scope_repository_id, kind, metadata FROM notifications WHERE id=$1",
+    )
+    .bind(notification_id)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some((user_id, scope, kind, metadata)) = row else {
         return Ok(false);
     };
@@ -695,11 +714,16 @@ pub async fn notification_email_allowed(pool: &PgPool, notification_id: i64) -> 
         return Ok(false);
     }
     let fork_allowed = if kind == "repository_forked" {
-        match metadata.get("fork_repository_id").and_then(serde_json::Value::as_i64) {
+        match metadata
+            .get("fork_repository_id")
+            .and_then(serde_json::Value::as_i64)
+        {
             Some(fork) => lock_notification_scope_readable(&mut tx, user_id, fork).await?,
             None => false,
         }
-    } else { true };
+    } else {
+        true
+    };
     let allowed = fork_allowed && lock_notification_scope_readable(&mut tx, user_id, scope).await?;
     tx.commit().await?;
     Ok(allowed)

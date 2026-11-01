@@ -43,7 +43,10 @@ pub enum TokenError {
 /// Installation credentials use the hex format; Actions uses the URL-safe format with
 /// the same public prefix. Scanners must recognize both complete values.
 pub(crate) fn installation_token() -> String {
-    format!("{INSTALLATION_PREFIX}{}", crate::backend::crypto::random_hex())
+    format!(
+        "{INSTALLATION_PREFIX}{}",
+        crate::backend::crypto::random_hex()
+    )
 }
 
 /// A feed credential has only read-only event access and remains bound to this API token's
@@ -96,23 +99,45 @@ pub async fn activity_feed_user(
 }
 
 /// Recheck a retained token's account, organization policy and effective repository grant.
-pub(crate) async fn repository_scope(pool: &DbPool, token: i64, actor: i64, repo: i64, permission: &str, write: bool) -> anyhow::Result<bool> {
-    if !tokens::token_user(pool, token, write).await?.is_some_and(|user| user.id == actor)
-        || crate::backend::db::fine_grained_tokens::classic_refused_repository(pool, token, repo).await? {
+pub(crate) async fn repository_scope(
+    pool: &DbPool,
+    token: i64,
+    actor: i64,
+    repo: i64,
+    permission: &str,
+    write: bool,
+) -> anyhow::Result<bool> {
+    if !tokens::token_user(pool, token, write)
+        .await?
+        .is_some_and(|user| user.id == actor)
+        || crate::backend::db::fine_grained_tokens::classic_refused_repository(pool, token, repo)
+            .await?
+    {
         return Ok(false);
     }
     if let Some(authority) = super::github_apps::authority(pool, token).await? {
         return authority.allows(pool, actor, repo, permission, write).await;
     }
     if let Some(job) = crate::backend::db::ci_tokens::get(pool, token).await? {
-        return Ok(job.repo_id == repo && super::github_apps::allows(&serde_json::from_str(&job.permissions)?, permission, write));
+        return Ok(job.repo_id == repo
+            && super::github_apps::allows(
+                &serde_json::from_str(&job.permissions)?,
+                permission,
+                write,
+            ));
     }
     if let Some(oauth) = crate::backend::db::oauth_apps::token(pool, token).await? {
-        if super::oauth_apps::client(pool, &oauth.client_id).await?.is_none() {
+        if super::oauth_apps::client(pool, &oauth.client_id)
+            .await?
+            .is_none()
+        {
             return Ok(false);
         }
-        return Ok(super::oauth_apps::has_scope(&oauth.scopes, "repo") || (!write
-            && crate::backend::db::repositories::records::get_repository_by_id(pool, repo).await?.is_some_and(|repo| !repo.is_private)));
+        return Ok(super::oauth_apps::has_scope(&oauth.scopes, "repo")
+            || (!write
+                && crate::backend::db::repositories::records::get_repository_by_id(pool, repo)
+                    .await?
+                    .is_some_and(|repo| !repo.is_private)));
     }
     Ok(true)
 }

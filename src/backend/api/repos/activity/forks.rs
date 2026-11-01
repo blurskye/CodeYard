@@ -3,7 +3,8 @@ use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::paging::{json_page, PageQuery};
 use crate::backend::api::repos::responses::{
-    repository_fork_counts, repository_owners, repository_topics, repository_unavailable, ForkParent, RepoResponse,
+    repository_fork_counts, repository_owners, repository_topics, repository_unavailable,
+    ForkParent, RepoResponse,
 };
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -46,7 +47,10 @@ pub async fn fork_repo(
         state.cluster.as_ref(),
         &state.repos_path,
         &state.notification_broadcaster,
-        crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            user.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         source_repo.id,
         &owner,
     )
@@ -60,10 +64,14 @@ pub async fn fork_repo(
         full_name: format!("{}/{}", owner, source_repo.name),
     };
 
-    let topics = repository_topics(&pool, &[forked_repo.id]).await?
-        .remove(&forked_repo.id).unwrap_or_default();
-    let forks = repository_fork_counts(&pool, Some(&headers), &[forked_repo.id]).await?
-        .remove(&forked_repo.id).unwrap_or_default();
+    let topics = repository_topics(&pool, &[forked_repo.id])
+        .await?
+        .remove(&forked_repo.id)
+        .unwrap_or_default();
+    let forks = repository_fork_counts(&pool, Some(&headers), &[forked_repo.id])
+        .await?
+        .remove(&forked_repo.id)
+        .unwrap_or_default();
     Ok((
         StatusCode::CREATED,
         Json(ForkResponse {
@@ -126,8 +134,14 @@ pub(crate) async fn visible_forks(
     offset: i64,
 ) -> anyhow::Result<(Vec<Repository>, bool)> {
     let mut forks = db::repositories::discovery::list_visible_forks(
-        pool, viewer, Some(session), repo_id, limit + 1, offset,
-    ).await?;
+        pool,
+        viewer,
+        Some(session),
+        repo_id,
+        limit + 1,
+        offset,
+    )
+    .await?;
     let more = forks.len() as i64 > limit;
     forks.truncate(limit as usize);
     Ok((forks, more))
@@ -142,7 +156,8 @@ pub async fn list_forks(
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let (offset, limit) = json_page(query.page, query.per_page)?;
     let user = crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
-    let session = crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
     let (visible_forks, _) = visible_forks(
         &state.pool,
         user.map(|user| user.id),
@@ -160,14 +175,22 @@ pub async fn list_forks(
     let mut topics = repository_topics(&state.pool, &ids).await?;
     let mut fork_counts = repository_fork_counts(&state.pool, Some(&headers), &ids).await?;
     // Enrichment may have observed topics written after a privacy or membership change.
-    let viewer = crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
+    let viewer =
+        crate::backend::api::http::session::get_optional_user(&state.pool, &headers).await?;
     let mut readable = std::collections::HashSet::new();
     for ids in ids.chunks(100) {
-        readable.extend(db::repositories::access::readable_repository_ids(
-            &state.pool, viewer.as_ref().map(|user| user.id), ids,
-        ).await.map_err(|_| repository_unavailable())?);
+        readable.extend(
+            db::repositories::access::readable_repository_ids(
+                &state.pool,
+                viewer.as_ref().map(|user| user.id),
+                ids,
+            )
+            .await
+            .map_err(|_| repository_unavailable())?,
+        );
     }
-    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
+    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers)
+        .await?;
     let owner = owners.remove(&repository.id).expect("validated owner");
     let parent_info = ForkParent {
         id: repository.id,
@@ -178,7 +201,9 @@ pub async fn list_forks(
 
     let mut responses = Vec::with_capacity(visible_forks.len());
     for fork in visible_forks {
-        if !readable.contains(&fork.id) { continue; }
+        if !readable.contains(&fork.id) {
+            continue;
+        }
         let fork_owner = owners.remove(&fork.id).expect("validated owner");
         let topics = topics.remove(&fork.id).unwrap_or_default();
         responses.push(RepoResponse::new(

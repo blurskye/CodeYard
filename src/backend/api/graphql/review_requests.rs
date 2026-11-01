@@ -1,14 +1,11 @@
 //! Pull review requests project the native user/team records and use the same mutations as REST.
+use super::mutations::pull_error as operation;
 use super::{
     connection, db, issue, missing, node_id, repository, unavailable, url, user, Arguments,
     RequestContext, Result, Value,
 };
-use crate::backend::repositories::{
-    access,
-    pull_requests::team_reviewers,
-};
+use crate::backend::repositories::{access, pull_requests::team_reviewers};
 use async_graphql::Error;
-use super::mutations::pull_error as operation;
 use serde_json::json;
 
 pub(super) async fn team_object(
@@ -43,22 +40,74 @@ async fn pull(id: i64, request: &RequestContext) -> Result<db::models::PullReque
     Ok(pull)
 }
 
-async fn window(pull: &db::models::PullRequest, request: &RequestContext) -> Result<db::pull_requests::team_reviewers::RequestWindow> {
-    Ok(db::pull_requests::team_reviewers::RequestWindow { pull: pull.id, repo: pull.repo_id, viewer: request.private_viewer(pull.repo_id, "pull-requests").await?, target: None, offset: 0, limit: 0, count: true })
+async fn window(
+    pull: &db::models::PullRequest,
+    request: &RequestContext,
+) -> Result<db::pull_requests::team_reviewers::RequestWindow> {
+    Ok(db::pull_requests::team_reviewers::RequestWindow {
+        pull: pull.id,
+        repo: pull.repo_id,
+        viewer: request
+            .private_viewer(pull.repo_id, "pull-requests")
+            .await?,
+        target: None,
+        offset: 0,
+        limit: 0,
+        count: true,
+    })
 }
 
-async fn objects(pull: &db::models::PullRequest, origins: &[db::pull_requests::reviews::ReviewRequestOrigin], viewer: Option<i64>, request: &RequestContext) -> Result<Vec<Value>> {
+async fn objects(
+    pull: &db::models::PullRequest,
+    origins: &[db::pull_requests::reviews::ReviewRequestOrigin],
+    viewer: Option<i64>,
+    request: &RequestContext,
+) -> Result<Vec<Value>> {
     request.charge(origins.len() * 64)?;
     let pool = &request.state.pool;
     let ids: Vec<_> = origins.iter().filter_map(|origin| origin.user_id).collect();
-    let users: std::collections::HashMap<_, _> = if ids.is_empty() { std::collections::HashMap::new() } else { db::users::accounts::get_users_by_ids(pool, &ids).await.map_err(unavailable)?.into_iter().map(|user| (user.id, user)).collect() };
+    let users: std::collections::HashMap<_, _> = if ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        db::users::accounts::get_users_by_ids(pool, &ids)
+            .await
+            .map_err(unavailable)?
+            .into_iter()
+            .map(|user| (user.id, user))
+            .collect()
+    };
     let ids: Vec<_> = origins.iter().filter_map(|origin| origin.team_id).collect();
-    let teams: std::collections::HashMap<_, _> = if ids.is_empty() { std::collections::HashMap::new() } else { db::pull_requests::team_reviewers::by_ids(pool, pull.repo_id, viewer, &ids).await.map_err(unavailable)?.into_iter().map(|team| (team.id, team)).collect() };
+    let teams: std::collections::HashMap<_, _> = if ids.is_empty() {
+        std::collections::HashMap::new()
+    } else {
+        db::pull_requests::team_reviewers::by_ids(pool, pull.repo_id, viewer, &ids)
+            .await
+            .map_err(unavailable)?
+            .into_iter()
+            .map(|team| (team.id, team))
+            .collect()
+    };
     let mut nodes = Vec::new();
     for origin in origins {
         let (team, id, reviewer) = match (origin.user_id, origin.team_id) {
-            (Some(id), None) => (false, id, users.get(&id).filter(|user| !user.is_banned).map_or(Value::Null, |user| user::actor_object(user, request.auth.user.id))),
-            (None, Some(id)) => (true, id, match teams.get(&id) { Some(team) => team_object(team, request).await?, None => Value::Null }),
+            (Some(id), None) => (
+                false,
+                id,
+                users
+                    .get(&id)
+                    .filter(|user| !user.is_banned)
+                    .map_or(Value::Null, |user| {
+                        user::actor_object(user, request.auth.user.id)
+                    }),
+            ),
+            (None, Some(id)) => (
+                true,
+                id,
+                match teams.get(&id) {
+                    Some(team) => team_object(team, request).await?,
+                    None => Value::Null,
+                },
+            ),
             _ => return Err(missing()),
         };
         let node = json!({"__typename":"ReviewRequest","_repo":pull.repo_id,"_scope":"pull-requests","_pull":pull.id,"id":node_id::review_request(pull.id,team,id),
@@ -66,15 +115,30 @@ async fn objects(pull: &db::models::PullRequest, origins: &[db::pull_requests::r
         request.charge_value(&node)?;
         nodes.push(node);
     }
-    if request.private_viewer(pull.repo_id, "pull-requests").await? != viewer { return Err(missing()); }
+    if request
+        .private_viewer(pull.repo_id, "pull-requests")
+        .await?
+        != viewer
+    {
+        return Err(missing());
+    }
     Ok(nodes)
 }
 
 pub(super) async fn count(id: i64, request: &RequestContext) -> Result<i64> {
     let pull = pull(id, request).await?;
     let window = window(&pull, request).await?;
-    let total = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window).await.map_err(unavailable)?.0;
-    if request.private_viewer(pull.repo_id, "pull-requests").await? != window.viewer { return Err(missing()); }
+    let total = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
+        .await
+        .map_err(unavailable)?
+        .0;
+    if request
+        .private_viewer(pull.repo_id, "pull-requests")
+        .await?
+        != window.viewer
+    {
+        return Err(missing());
+    }
     Ok(total)
 }
 
@@ -82,10 +146,22 @@ pub(super) async fn list(ctx: &Arguments, request: &RequestContext, id: i64) -> 
     connection::validate(ctx)?;
     let pull = pull(id, request).await?;
     let mut window = window(&pull, request).await?;
-    let total = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window).await.map_err(unavailable)?.0;
+    let total = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
+        .await
+        .map_err(unavailable)?
+        .0;
     let page = connection::Page::new(ctx, total)?;
-    window.offset = page.offset; window.limit = page.limit; window.count = false;
-    let rows = if page.limit == 0 { Vec::new() } else { db::pull_requests::team_reviewers::request_page(&request.state.pool, &window).await.map_err(unavailable)?.1 };
+    window.offset = page.offset;
+    window.limit = page.limit;
+    window.count = false;
+    let rows = if page.limit == 0 {
+        Vec::new()
+    } else {
+        db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
+            .await
+            .map_err(unavailable)?
+            .1
+    };
     Ok(page.finish(objects(&pull, &rows, window.viewer, request).await?))
 }
 
@@ -93,9 +169,18 @@ pub(super) async fn node(id: &str, request: &RequestContext) -> Result<Value> {
     let (id, team, target) = node_id::decode_review_request(id).ok_or_else(missing)?;
     let pull = pull(id, request).await?;
     let mut window = window(&pull, request).await?;
-    window.target = Some((team, target)); window.count = false; window.limit = 1;
-    let rows = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window).await.map_err(unavailable)?.1;
-    objects(&pull, &rows, window.viewer, request).await?.into_iter().next().ok_or_else(missing)
+    window.target = Some((team, target));
+    window.count = false;
+    window.limit = 1;
+    let rows = db::pull_requests::team_reviewers::request_page(&request.state.pool, &window)
+        .await
+        .map_err(unavailable)?
+        .1;
+    objects(&pull, &rows, window.viewer, request)
+        .await?
+        .into_iter()
+        .next()
+        .ok_or_else(missing)
 }
 
 pub(super) async fn pull_projection(id: i64, request: &RequestContext) -> Result<Value> {
@@ -104,8 +189,16 @@ pub(super) async fn pull_projection(id: i64, request: &RequestContext) -> Result
 
 pub(super) async fn reviewers(ctx: &Arguments, request: &RequestContext, id: i64) -> Result<Value> {
     let mut value = list(ctx, request, id).await?;
-    if let Some(nodes) = value["nodes"].as_array_mut() { for node in nodes { *node = node["requestedReviewer"].take(); } }
-    if let Some(edges) = value["edges"].as_array_mut() { for edge in edges { edge["node"] = edge["node"]["requestedReviewer"].take(); } }
+    if let Some(nodes) = value["nodes"].as_array_mut() {
+        for node in nodes {
+            *node = node["requestedReviewer"].take();
+        }
+    }
+    if let Some(edges) = value["edges"].as_array_mut() {
+        for edge in edges {
+            edge["node"] = edge["node"]["requestedReviewer"].take();
+        }
+    }
     Ok(value)
 }
 
@@ -127,9 +220,10 @@ pub(super) async fn mutation(
         .require_write()
         .map_err(|_| Error::new("Resource not accessible by token"))?;
     let input: Value = ctx.args.try_get("input")?.deserialize()?;
-    if !input["botIds"].is_null() && input["botIds"]
-        .as_array()
-        .is_none_or(|bots| !bots.is_empty())
+    if !input["botIds"].is_null()
+        && input["botIds"]
+            .as_array()
+            .is_none_or(|bots| !bots.is_empty())
     {
         return Err(Error::new("Bot review requests are not supported"));
     }
@@ -157,12 +251,22 @@ pub(super) async fn mutation(
     if user_ids.len() + team_ids.len() > 100 {
         return Err(Error::new("At most 100 reviewers are allowed"));
     }
-    team_reviewers::set_requests(pool, &request.state.notification_broadcaster, actor, &repo, &pull,
+    team_reviewers::set_requests(
+        pool,
+        &request.state.notification_broadcaster,
+        actor,
+        &repo,
+        &pull,
         &db::pull_requests::team_reviewers::ReviewRequests {
-            users: &user_ids, teams: &team_ids, union: input["union"].as_bool().unwrap_or(false),
-            rerequest: field == "rerequestReviews", token: Some(request.auth.token.id),
+            users: &user_ids,
+            teams: &team_ids,
+            union: input["union"].as_bool().unwrap_or(false),
+            rerequest: field == "rerequestReviews",
+            token: Some(request.auth.token.id),
         },
-    ).await.map_err(operation)?;
+    )
+    .await
+    .map_err(operation)?;
     Ok(
         json!({"clientMutationId":input["clientMutationId"],"actor":user::by_id(actor.id,request).await?,
         "pullRequest":issue::pull_object(&pull),"requestedReviewersEdge":null}),

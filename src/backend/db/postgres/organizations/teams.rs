@@ -76,8 +76,16 @@ async fn public_team(
     })
 }
 
-async fn manages_team(c: &mut sqlx::PgConnection, actor: i64, org: i64, team: i64, role: OrgRole) -> Result<bool> {
-    if administers(role) { return Ok(true); }
+async fn manages_team(
+    c: &mut sqlx::PgConnection,
+    actor: i64,
+    org: i64,
+    team: i64,
+    role: OrgRole,
+) -> Result<bool> {
+    if administers(role) {
+        return Ok(true);
+    }
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM teams t JOIN team_memberships m ON m.team_id=t.id WHERE t.id=$1 AND t.org_id=$2 AND m.user_id=$3 AND m.role='maintainer')")
         .bind(team).bind(org).bind(actor).fetch_one(c).await?)
 }
@@ -92,8 +100,14 @@ pub async fn create_organization_team(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
-    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -111,7 +125,19 @@ pub async fn create_organization_team(
         }
     }
     for &repo in &input.repositories {
-        if let Some(token) = token { if !super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "administration").await? { return Ok(Denied); } }
+        if let Some(token) = token {
+            if !super::super::users::tokens::repository_write_on(
+                &mut tx,
+                token,
+                actor,
+                repo,
+                "administration",
+            )
+            .await?
+            {
+                return Ok(Denied);
+            }
+        }
         if !scoped_repo(&mut tx, org, repo).await? {
             return Ok(Conflict);
         }
@@ -145,16 +171,26 @@ pub async fn update_organization_team(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
-    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
-    if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
+    if !manages_team(&mut tx, actor, org, team, role).await? {
+        return Ok(Denied);
+    }
     let Some(current) = scoped_team(&mut tx, org, team).await? else {
         return Ok(Missing);
     };
     let parent = input.parent_team_id.unwrap_or(current.parent_team_id);
     if !administers(role) && parent != current.parent_team_id {
         if let Some(parent) = parent {
-            if !manages_team(&mut tx, actor, org, parent, role).await? { return Ok(Denied); }
+            if !manages_team(&mut tx, actor, org, parent, role).await? {
+                return Ok(Denied);
+            }
         }
     }
     let privacy = match input.privacy {
@@ -217,9 +253,17 @@ pub async fn delete_organization_team(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
-    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
-    if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
+    if !manages_team(&mut tx, actor, org, team, role).await? {
+        return Ok(Denied);
+    }
     if scoped_team(&mut tx, org, team).await?.is_none() {
         return Ok(Missing);
     }
@@ -302,7 +346,14 @@ pub async fn list_organization_team_members(
 ) -> Result<OrganizationOutcome<Vec<TeamMembership>>> {
     list_members(pool, actor, org, team, page, false).await
 }
-async fn list_members(pool: &PgPool, actor: i64, org: i64, team: i64, page: OrganizationPage, direct: bool) -> Result<OrganizationOutcome<Vec<TeamMembership>>> {
+async fn list_members(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    team: i64,
+    page: OrganizationPage,
+    direct: bool,
+) -> Result<OrganizationOutcome<Vec<TeamMembership>>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
     let Some(team) = read_scoped_team(&mut tx, org, team).await? else {
@@ -330,9 +381,17 @@ pub async fn add_organization_team_member(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = begin(pool).await?;
     let actor_role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
-    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
-    if !manages_team(&mut tx, actor, org, team, actor_role).await? { return Ok(Denied); }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
+    if !manages_team(&mut tx, actor, org, team, actor_role).await? {
+        return Ok(Denied);
+    }
     if !active(&mut tx, target).await? {
         return Ok(Denied);
     }
@@ -363,9 +422,17 @@ pub async fn remove_organization_team_member(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
-    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? { return Ok(Denied); } }
-    if !manages_team(&mut tx, actor, org, team, role).await? { return Ok(Denied); }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
+    if !manages_team(&mut tx, actor, org, team, role).await? {
+        return Ok(Denied);
+    }
     // Exact scoped cleanup, not a grant: target activity/org role is irrelevant.
     if scoped_team(&mut tx, org, team).await?.is_none() {
         return Ok(Missing);
@@ -403,8 +470,23 @@ pub async fn grant_organization_team_repository(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
-    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? || !super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "administration").await? { return Ok(Denied); } }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await?
+            || !super::super::users::tokens::repository_write_on(
+                &mut tx,
+                token,
+                actor,
+                repo,
+                "administration",
+            )
+            .await?
+        {
+            return Ok(Denied);
+        }
+    }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -442,8 +524,23 @@ pub async fn revoke_organization_team_repository(
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
-    if !super::super::credentials::live(&mut tx, &grant, true).await? { return Ok(Denied); }
-    if let Some(token) = token { if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? || !super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo, "administration").await? { return Ok(Denied); } }
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await?
+            || !super::super::users::tokens::repository_write_on(
+                &mut tx,
+                token,
+                actor,
+                repo,
+                "administration",
+            )
+            .await?
+        {
+            return Ok(Denied);
+        }
+    }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -480,7 +577,14 @@ pub async fn list_organization_team_repositories(
 ) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>> {
     list_repositories(pool, actor, org, team, page, false).await
 }
-async fn list_repositories(pool: &PgPool, actor: i64, org: i64, team: i64, page: OrganizationPage, direct: bool) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>> {
+async fn list_repositories(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    team: i64,
+    page: OrganizationPage,
+    direct: bool,
+) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
     let Some(team) = read_scoped_team(&mut tx, org, team).await? else {
@@ -492,10 +596,20 @@ async fn list_repositories(pool: &PgPool, actor: i64, org: i64, team: i64, page:
     // Team visibility is not READ. Apply effective access before LIMIT/projection;
     // Use the canonical projection, including direct and inherited organization roles.
     let sql = team_repositories_sql("a.id>$2");
-    let sql = if direct { sql.replace("effective_team_repo_access", "team_repo_access") } else { sql };
+    let sql = if direct {
+        sql.replace("effective_team_repo_access", "team_repo_access")
+    } else {
+        sql
+    };
     let rows = sqlx::query_as(&sql)
-        .bind(team.id).bind(page.after).bind(org).bind(page.limit).bind(administers(role)).bind(actor)
-        .fetch_all(&mut *tx).await?;
+        .bind(team.id)
+        .bind(page.after)
+        .bind(org)
+        .bind(page.limit)
+        .bind(administers(role))
+        .bind(actor)
+        .fetch_all(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(Applied(rows))
 }
@@ -553,10 +667,12 @@ pub async fn list_public_team_members(
     team: i64,
     page: OrganizationPage,
 ) -> Result<Option<Vec<TeamMembership>>> {
-    Ok(match list_members(pool, actor, org, team, page, false).await? {
-        Applied(rows) => Some(rows),
-        _ => None,
-    })
+    Ok(
+        match list_members(pool, actor, org, team, page, false).await? {
+            Applied(rows) => Some(rows),
+            _ => None,
+        },
+    )
 }
 pub async fn list_public_team_repositories(
     pool: &PgPool,
@@ -565,10 +681,12 @@ pub async fn list_public_team_repositories(
     team: i64,
     page: OrganizationPage,
 ) -> Result<Option<Vec<TeamRepositoryGrant>>> {
-    Ok(match list_repositories(pool, actor, org, team, page, false).await? {
-        Applied(rows) => Some(rows),
-        _ => None,
-    })
+    Ok(
+        match list_repositories(pool, actor, org, team, page, false).await? {
+            Applied(rows) => Some(rows),
+            _ => None,
+        },
+    )
 }
 pub async fn get_public_team_repository(
     pool: &PgPool,
@@ -699,19 +817,47 @@ pub async fn get_team_parent(pool: &PgPool, team: i64) -> Result<Option<Team>> {
         .await?)
 }
 
-pub async fn team_identity(pool: &PgPool, actor: i64, token: i64, identity: crate::backend::db::organizations::teams::TeamIdentity<'_>) -> Result<Option<Team>> {
+pub async fn team_identity(
+    pool: &PgPool,
+    actor: i64,
+    token: i64,
+    identity: crate::backend::db::organizations::teams::TeamIdentity<'_>,
+) -> Result<Option<Team>> {
     use crate::backend::{db::organizations::teams::TeamIdentity, identity::oauth_apps};
     let mut tx = begin_read(pool).await?;
     let scopes: Option<Option<String>> = sqlx::query_scalar("SELECT oa.scopes FROM personal_access_tokens t JOIN users u ON u.id=t.user_id LEFT JOIN oauth_app_tokens oa ON oa.token_id=t.id WHERE t.id=$1 AND t.user_id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens j WHERE j.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_app_tokens a WHERE a.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_apps a WHERE a.client_id=oa.client_id) AND (oa.client_id IS NULL OR oa.client_id=$3 OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=oa.client_id))")
         .bind(token).bind(actor).bind(oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
-    let Some(scopes) = scopes else { return Ok(None); };
-    if scopes.as_ref().is_some_and(|scopes| !oauth_apps::has_scope(scopes, "read:org")) { return Ok(None); }
-    let (id, org, slug) = match identity { TeamIdentity::Id(id) => (Some(id), None, None), TeamIdentity::Slug(org, slug) => (None, Some(org), Some(slug)) };
-    let Some(team) = sqlx::query_as::<_, Team>("SELECT * FROM teams WHERE (id=$1 AND $2::bigint IS NULL) OR (org_id=$2 AND slug=$3)")
-        .bind(id).bind(org).bind(slug).fetch_optional(&mut *tx).await? else { return Ok(None); };
+    let Some(scopes) = scopes else {
+        return Ok(None);
+    };
+    if scopes
+        .as_ref()
+        .is_some_and(|scopes| !oauth_apps::has_scope(scopes, "read:org"))
+    {
+        return Ok(None);
+    }
+    let (id, org, slug) = match identity {
+        TeamIdentity::Id(id) => (Some(id), None, None),
+        TeamIdentity::Slug(org, slug) => (None, Some(org), Some(slug)),
+    };
+    let Some(team) = sqlx::query_as::<_, Team>(
+        "SELECT * FROM teams WHERE (id=$1 AND $2::bigint IS NULL) OR (org_id=$2 AND slug=$3)",
+    )
+    .bind(id)
+    .bind(org)
+    .bind(slug)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
     if scopes.is_none() && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=$1 AND NOT classic_allowed)").bind(team.org_id).fetch_one(&mut *tx).await? { return Ok(None); }
-    let Applied(role) = read_authority(&mut tx, actor, team.org_id).await? else { return Ok(None); };
-    if !team_visible(&mut tx, actor, role, &team).await? { return Ok(None); }
+    let Applied(role) = read_authority(&mut tx, actor, team.org_id).await? else {
+        return Ok(None);
+    };
+    if !team_visible(&mut tx, actor, role, &team).await? {
+        return Ok(None);
+    }
     tx.commit().await?;
     Ok(Some(team))
 }

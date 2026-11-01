@@ -36,7 +36,8 @@ pub fn compare(
         encode_component(head),
         repo.chrome.id
     );
-    let can_open_pull = base != head && branches.iter().any(|branch| branch == base)
+    let can_open_pull = base != head
+        && branches.iter().any(|branch| branch == base)
         && branches.iter().any(|branch| branch == head);
     let mut selectable = branches.to_vec();
     for reference in [base, head] {

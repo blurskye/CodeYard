@@ -7,7 +7,10 @@ use crate::backend::db::{
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
 pub async fn window(pool: &PgPool, page: &Window<'_>) -> Result<Vec<Link>> {
-    anyhow::ensure!(page.offset >= 0 && (1..=101).contains(&page.limit), Refusal::Invalid);
+    anyhow::ensure!(
+        page.offset >= 0 && (1..=101).contains(&page.limit),
+        Refusal::Invalid
+    );
     let readable = super::repositories::access::readable_condition();
     let sql = window_sql(page, &readable, "$5::BIGINT[] IS NULL OR i.repo_id=ANY($5)");
     Ok(sqlx::query_as(&sql)
@@ -85,7 +88,18 @@ async fn change_once(
     token: Option<i64>,
 ) -> Result<()> {
     let tx = pool.begin().await?;
-    let triage = matches!(mutation, Mutation::Move { .. } | Mutation::Add { kind: Kind::Children | Kind::Parent, .. } | Mutation::Remove { kind: Kind::Children | Kind::Parent, .. });
+    let triage = matches!(
+        mutation,
+        Mutation::Move { .. }
+            | Mutation::Add {
+                kind: Kind::Children | Kind::Parent,
+                ..
+            }
+            | Mutation::Remove {
+                kind: Kind::Children | Kind::Parent,
+                ..
+            }
+    );
     let tx = change_in_transaction(tx, actor, repo, root, mutation, triage, token).await?;
     tx.commit().await?;
     Ok(())
@@ -136,7 +150,13 @@ pub(crate) async fn change_in_transaction<'a>(
     anyhow::ensure!(!restricted || target_repo == repo, Refusal::Missing);
     if let Some(token) = token {
         for affected in [repo, target_repo] {
-            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, affected, "issues").await?, Refusal::Denied);
+            anyhow::ensure!(
+                super::users::tokens::repository_write_on(
+                    &mut tx, token, actor, affected, "issues"
+                )
+                .await?,
+                Refusal::Denied
+            );
         }
     }
     let access = super::repositories::access::lock_user_repo_access_in_transaction(
@@ -212,14 +232,25 @@ pub(crate) async fn change_in_transaction<'a>(
                         anyhow::ensure!(!restricted || old_repo == repo, Refusal::Missing);
                         anyhow::ensure!(replace, Refusal::HasParent);
                         if let Some(token) = token {
-                            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, old_repo, "issues").await?, Refusal::Denied);
+                            anyhow::ensure!(
+                                super::users::tokens::repository_write_on(
+                                    &mut tx, token, actor, old_repo, "issues"
+                                )
+                                .await?,
+                                Refusal::Denied
+                            );
                         }
                         anyhow::ensure!(
                             authority(&mut tx, actor, old_repo, triage).await?,
                             Refusal::Denied
                         );
-                        let pinned: Option<i64> = sqlx::query_scalar("SELECT id FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
-                            .bind(old_parent).bind(old_repo).fetch_optional(&mut *tx).await?;
+                        let pinned: Option<i64> = sqlx::query_scalar(
+                            "SELECT id FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE",
+                        )
+                        .bind(old_parent)
+                        .bind(old_repo)
+                        .fetch_optional(&mut *tx)
+                        .await?;
                         anyhow::ensure!(pinned.is_some(), Refusal::Missing);
                         former_parent = Some(old_parent);
                     }

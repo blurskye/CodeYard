@@ -86,7 +86,9 @@ async fn register(
     let installation_id = match input.installation_id {
         Some(id) => Some(id),
         None => crate::backend::identity::github_apps::authority(&state.pool, actor.token.id)
-            .await.map_err(Error::unavailable)?.and_then(|authority| authority.installation()),
+            .await
+            .map_err(Error::unavailable)?
+            .and_then(|authority| authority.installation()),
     };
     let row = outcome(
         data::register(

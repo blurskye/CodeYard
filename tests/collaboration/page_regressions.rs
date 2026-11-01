@@ -308,7 +308,10 @@ async fn label_submissions(pg: bool) {
         .await;
     assert_eq!(exact.as_array().unwrap().len(), 2);
     // Issue 1's history names each of its labels once, with the label's color.
-    let first = db::issues::get_issue(database.pool(), repo.id, 1).await.unwrap().unwrap();
+    let first = db::issues::get_issue(database.pool(), repo.id, 1)
+        .await
+        .unwrap()
+        .unwrap();
     for (sql, expected) in [
         ("SELECT COUNT(*) FROM timeline_events WHERE subject_kind='issue' AND subject_id=$1 AND kind='labeled'", 100),
         ("SELECT COUNT(*) FROM timeline_events WHERE subject_kind='issue' AND subject_id=$1 AND kind='labeled' AND previous<>'123456'", 0),
@@ -349,7 +352,12 @@ async fn label_submissions(pg: bool) {
             ],
         )
         .await;
-    assert_eq!(partial.status, StatusCode::SERVICE_UNAVAILABLE, "{}", partial.text());
+    assert_eq!(
+        partial.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        partial.text()
+    );
     assert!(partial.text().contains("Partial creation"));
     assert_eq!(
         db::issues::count_repo_issues(database.pool(), repo.id, &Default::default())

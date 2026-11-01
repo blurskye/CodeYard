@@ -138,18 +138,33 @@ async fn list(
     let (owner, name) = owner(&state, &params, false).await?;
     let (after, before, limit) = page.window()?;
     let query = query.q.as_deref().unwrap_or("");
-    if query.len() > 4096 { return Err(Error::invalid("Project query is too long")); }
+    if query.len() > 4096 {
+        return Err(Error::invalid("Project query is too long"));
+    }
     let mut filter = projects::ListFilter::search(Some(owner), query);
     filter.after = (after > 0).then_some(after);
     filter.before = (before < i64::MAX).then_some(before);
     filter.descending = before < i64::MAX;
-    let (_, mut selected) = projects::list(&state.pool, auth.as_ref().map(|a| a.user.id), &filter, 0, (limit + 1) as i64)
-        .await
-        .map_err(project_error)?;
+    let (_, mut selected) = projects::list(
+        &state.pool,
+        auth.as_ref().map(|a| a.user.id),
+        &filter,
+        0,
+        (limit + 1) as i64,
+    )
+    .await
+    .map_err(project_error)?;
     let more = page.trim(&mut selected)?;
-    let (headers, _) = page.links(&uri, selected.first().map(|project| project.id), selected.last().map(|project| project.id), more)?;
+    let (headers, _) = page.links(
+        &uri,
+        selected.first().map(|project| project.id),
+        selected.last().map(|project| project.id),
+        more,
+    )?;
     let mut documents = Vec::new();
-    for project in selected { documents.push(document(&state, &project, &name).await?); }
+    for project in selected {
+        documents.push(document(&state, &project, &name).await?);
+    }
     Ok((headers, Json(documents)).into_response())
 }
 
@@ -171,10 +186,23 @@ async fn fields(
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, false, false).await?;
     let (after, before, limit) = page.window()?;
-    let mut fields = projects::fields_window(&state.pool, auth.as_ref().map(|a| a.user.id), project.id, after, before, (limit + 1) as i64)
-        .await.map_err(project_error)?;
+    let mut fields = projects::fields_window(
+        &state.pool,
+        auth.as_ref().map(|a| a.user.id),
+        project.id,
+        after,
+        before,
+        (limit + 1) as i64,
+    )
+    .await
+    .map_err(project_error)?;
     let more = page.trim(&mut fields)?;
-    let (headers, _) = page.links(&uri, fields.first().map(|field| field.id), fields.last().map(|field| field.id), more)?;
+    let (headers, _) = page.links(
+        &uri,
+        fields.first().map(|field| field.id),
+        fields.last().map(|field| field.id),
+        more,
+    )?;
     let documents = fields
         .iter()
         .map(|f| {
@@ -210,8 +238,7 @@ async fn add_field(
     input: std::result::Result<Json<projects::NewField>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
     let (project, name, auth) = context(&state, &headers, &params, true, false).await?;
-    let Json(input) =
-        input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(super::json_error)?;
     let auth = auth.ok_or_else(auth::required)?;
     let field = projects::add_field(
         &state.pool,

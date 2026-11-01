@@ -1140,11 +1140,18 @@ async fn release_validation_and_atomic_files(pg: bool) {
         size: 1,
     };
     // Unverified uploads cannot be attached, and a refused attachment leaves expiry intact.
-    assert!(
-        db::releases::add_release_asset(pool, actor, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await), repo.id, release_id, &input)
-            .await
-            .is_err()
-    );
+    assert!(db::releases::add_release_asset(
+        pool,
+        actor,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, actor).await
+        ),
+        repo.id,
+        release_id,
+        &input
+    )
+    .await
+    .is_err());
     let pending = db::files::get_file_by_id(pool, file.id)
         .await
         .unwrap()
@@ -1153,9 +1160,18 @@ async fn release_validation_and_atomic_files(pg: bool) {
     db::files::verify_pending_upload(pool, file.id, actor)
         .await
         .unwrap();
-    let asset = db::releases::add_release_asset(pool, actor, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await), repo.id, release_id, &input)
-        .await
-        .unwrap();
+    let asset = db::releases::add_release_asset(
+        pool,
+        actor,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, actor).await,
+        ),
+        repo.id,
+        release_id,
+        &input,
+    )
+    .await
+    .unwrap();
     let active = db::files::get_file_by_id(pool, file.id)
         .await
         .unwrap()
@@ -1209,7 +1225,9 @@ async fn release_validation_and_atomic_files(pg: bool) {
     db::releases::add_release_asset(
         pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, actor).await,
+        ),
         repo.id,
         release_id,
         &db::releases::NewReleaseAsset {

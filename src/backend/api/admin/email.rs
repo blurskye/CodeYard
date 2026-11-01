@@ -53,7 +53,11 @@ async fn save(
     fields: &Fields,
 ) -> Result<(), (StatusCode, String)> {
     let server = parse_fields(fields).map_err(|message| (StatusCode::BAD_REQUEST, message))?;
-    let mut password = if server.username.is_empty() { String::new() } else { field(fields, "password").to_owned() };
+    let mut password = if server.username.is_empty() {
+        String::new()
+    } else {
+        field(fields, "password").to_owned()
+    };
     if password.len() > 255 {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -63,12 +67,14 @@ async fn save(
     // Inherit credentials only for an authenticated relay and only from valid environment
     // settings. An invalid old environment must not prevent saving its replacement.
     if password.is_empty() && !server.username.is_empty() {
-        let saved = db::email::get_email_settings(&state.pool).await.map_err(|_| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Unable to read the current mail settings.".to_owned(),
-            )
-        })?;
+        let saved = db::email::get_email_settings(&state.pool)
+            .await
+            .map_err(|_| {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to read the current mail settings.".to_owned(),
+                )
+            })?;
         if saved.is_none() {
             if let Ok(Some(env)) = config::from_env() {
                 password = env.password.unwrap_or_default();
@@ -248,7 +254,13 @@ async fn test_form(
     // The result page's own forms, such as the theme, return to the page and not the POST URL.
     ctx.return_to = Some("/admin/email".into());
     let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match email::send_test(&ctx.state.pool, ctx.state.secret_encryptor.as_deref(), &session).await {
+    match email::send_test(
+        &ctx.state.pool,
+        ctx.state.secret_encryptor.as_deref(),
+        &session,
+    )
+    .await
+    {
         Ok(to) => {
             render(
                 &ctx,
@@ -260,12 +272,20 @@ async fn test_form(
         }
         Err(error) => {
             let status = match &error {
-                email::TestMailError::Authority(crate::backend::identity::sessions::AccountAuthorityError::SessionUnavailable) => StatusCode::SERVICE_UNAVAILABLE,
+                email::TestMailError::Authority(
+                    crate::backend::identity::sessions::AccountAuthorityError::SessionUnavailable,
+                ) => StatusCode::SERVICE_UNAVAILABLE,
                 email::TestMailError::Authority(_) => StatusCode::FORBIDDEN,
                 email::TestMailError::NoAddress => StatusCode::BAD_REQUEST,
                 email::TestMailError::Delivery(_) => StatusCode::BAD_GATEWAY,
             };
-            render(&ctx, status, Some(format!("The test email failed: {error}")), None).await
+            render(
+                &ctx,
+                status,
+                Some(format!("The test email failed: {error}")),
+                None,
+            )
+            .await
         }
     }
 }

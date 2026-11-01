@@ -1,6 +1,9 @@
 use super::super::chrome::{csrf, repository_id, RepoChrome};
 use super::{secrets, Settings};
-use crate::webui::{components::{DraftInput, DraftSelect, SelectOption}, navigation::NavLink};
+use crate::webui::{
+    components::{DraftInput, DraftSelect, SelectOption},
+    navigation::NavLink,
+};
 use dioxus::prelude::*;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -24,10 +27,19 @@ pub fn section(repo: &RepoChrome, settings: &Settings) -> Element {
             .map(|name| SelectOption::new(name.clone(), format!("Environment: {name}"))),
     );
     if !selected.is_empty() && !settings.environments.contains(&selected) {
-        options.push(SelectOption::new(selected.clone(), format!("Environment: {selected}")));
+        options.push(SelectOption::new(
+            selected.clone(),
+            format!("Environment: {selected}"),
+        ));
     }
     let page = settings.environment_page.max(1);
-    let page_url = |page| format!("{}/settings?tab=secrets&environment_page={page}&environment={}", repo.base(), crate::webui::encode_component(&selected));
+    let page_url = |page| {
+        format!(
+            "{}/settings?tab=secrets&environment_page={page}&environment={}",
+            repo.base(),
+            crate::webui::encode_component(&selected)
+        )
+    };
     rsx! {
         form { class: "repo-settings-section panel", method: "get", action: format!("{}/settings", repo.base()),
             input { r#type: "hidden", name: "tab", value: "secrets" }

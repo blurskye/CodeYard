@@ -35,7 +35,10 @@ use axum::{
 };
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::{
-    compression::{CompressionLayer, predicate::{DefaultPredicate, NotForContentType, Predicate}},
+    compression::{
+        predicate::{DefaultPredicate, NotForContentType, Predicate},
+        CompressionLayer,
+    },
     cors::{AllowOrigin, CorsLayer},
 };
 use tracing::info;
@@ -131,9 +134,17 @@ pub fn create_router(state: AppState) -> Router {
         .layer(Extension(config))
         .layer(cors)
         // tower-http skips upgrades, encoded responses and HEAD bodies.
-        .layer(CompressionLayer::new().compress_when(DefaultPredicate::new()
-            .and(NotForContentType::const_new("application/x-git-upload-pack-result"))
-            .and(NotForContentType::const_new("application/x-git-receive-pack-result"))))
+        .layer(
+            CompressionLayer::new().compress_when(
+                DefaultPredicate::new()
+                    .and(NotForContentType::const_new(
+                        "application/x-git-upload-pack-result",
+                    ))
+                    .and(NotForContentType::const_new(
+                        "application/x-git-receive-pack-result",
+                    )),
+            ),
+        )
 }
 
 /// Serves until `stop` is set, then waits for in-flight requests and the Git tasks they started.

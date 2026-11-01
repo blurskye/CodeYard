@@ -1,6 +1,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{access_error, check_repo_read_access, readable_repository};
+use crate::backend::api::repos::access::{
+    access_error, check_repo_read_access, readable_repository,
+};
 use crate::backend::api::repos::chrome::{commit, hex_revision, store_error, Loaded};
 use crate::backend::api::repos::pulls::diff::diff_model;
 use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};

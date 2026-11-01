@@ -78,8 +78,7 @@ async fn product(
     let input: Value = if body.is_empty() {
         Value::Null
     } else {
-        serde_json::from_slice(&body)
-            .map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
     };
     if !input.is_null() {
         let fields = input

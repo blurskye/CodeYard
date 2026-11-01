@@ -66,18 +66,28 @@ pub async fn git_repositories(pool: &PgPool, repo_ids: &[i64]) -> Result<Vec<Rep
     if repo_ids.is_empty() {
         return Ok(Vec::new());
     }
-    Ok(sqlx::query_as("SELECT * FROM repositories WHERE id = ANY($1) AND is_gist")
-        .bind(repo_ids)
-        .fetch_all(pool)
-        .await?)
+    Ok(
+        sqlx::query_as("SELECT * FROM repositories WHERE id = ANY($1) AND is_gist")
+            .bind(repo_ids)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 pub async fn list(pool: &PgPool, input: &GistList) -> Result<Vec<Gist>> {
     list_on(&mut *pool.acquire().await?, input).await
 }
 pub async fn list_for_session(pool: &PgPool, input: &GistList, session: &str) -> Result<Vec<Gist>> {
-    let actor = match input.scope { ListScope::Owner(actor, true) | ListScope::Starred(actor) => actor, _ => return list(pool, input).await };
+    let actor = match input.scope {
+        ListScope::Owner(actor, true) | ListScope::Starred(actor) => actor,
+        _ => return list(pool, input).await,
+    };
     let mut tx = pool.begin().await?;
-    super::users::transitions::require_account(&mut tx, actor, &AccountCredential::Session(session)).await?;
+    super::users::transitions::require_account(
+        &mut tx,
+        actor,
+        &AccountCredential::Session(session),
+    )
+    .await?;
     let entries = list_on(&mut tx, input).await?;
     tx.commit().await?;
     Ok(entries)
@@ -360,7 +370,13 @@ pub async fn comment(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Comment
     )
 }
 pub async fn comment_position(pool: &PgPool, repo: i64, id: i64) -> Result<i64> {
-    Ok(sqlx::query_scalar("SELECT COUNT(*) FROM gist_comments WHERE repo_id=$1 AND id<=$2").bind(repo).bind(id).fetch_one(pool).await?)
+    Ok(
+        sqlx::query_scalar("SELECT COUNT(*) FROM gist_comments WHERE repo_id=$1 AND id<=$2")
+            .bind(repo)
+            .bind(id)
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 pub async fn create_comment(

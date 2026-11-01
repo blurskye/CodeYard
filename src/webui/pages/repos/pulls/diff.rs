@@ -517,7 +517,10 @@ async fn save_mark(
     let mut serializer = url::form_urlencoded::Serializer::new(String::new());
     serializer
         .append_pair("csrf_token", &csrf)
-        .append_pair("path_json", &serde_json::to_string(&path).unwrap_or_default())
+        .append_pair(
+            "path_json",
+            &serde_json::to_string(&path).unwrap_or_default(),
+        )
         .append_pair("expected_head", &head)
         .append_pair("expected_base", &base)
         .append_pair("background", "yes")
@@ -531,8 +534,14 @@ async fn save_mark(
         .credentials(web_sys::RequestCredentials::SameOrigin)
         .body(serializer.finish());
     let saved = match (request, controller.as_ref()) {
-        (Ok(request), Some(controller)) => crate::webui::navigation::load::with_abort_timeout(request.send(), controller, 15_000).await
-            .is_ok_and(|response| response.is_ok_and(|response| response.status() == 204 && !response.redirected())),
+        (Ok(request), Some(controller)) => {
+            crate::webui::navigation::load::with_abort_timeout(request.send(), controller, 15_000)
+                .await
+                .is_ok_and(|response| {
+                    response
+                        .is_ok_and(|response| response.status() == 204 && !response.redirected())
+                })
+        }
         _ => false,
     };
     if !saved {
@@ -614,10 +623,17 @@ fn row_index(rows: &[PatchRow<'_>], side: &str, line: i32) -> Option<usize> {
 }
 
 fn thread_row_index(rows: &[PatchRow<'_>], thread: &Thread) -> Option<usize> {
-    if thread.root.conversation.as_ref().is_some_and(|conversation| conversation.outdated) {
+    if thread
+        .root
+        .conversation
+        .as_ref()
+        .is_some_and(|conversation| conversation.outdated)
+    {
         return None;
     }
-    thread.line.and_then(|line| row_index(rows, &thread.side, line))
+    thread
+        .line
+        .and_then(|line| row_index(rows, &thread.side, line))
 }
 
 /// One file's patch. A conversation whose line is no longer in the patch shows above it.

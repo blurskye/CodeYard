@@ -196,7 +196,9 @@ fn compact(body: String, method: &Method, headers: &HeaderMap) -> Result<Respons
     if !headers.contains_key(header::IF_NONE_MATCH) {
         // Ignoring an unsatisfiable range sends a complete new index instead of stranding
         // a client whose old cached index was longer than the current one.
-        if let Ok(Some((first, last))) = super::oci::byte_range(headers, bytes.len() as u64, Some(&etag)) {
+        if let Ok(Some((first, last))) =
+            super::oci::byte_range(headers, bytes.len() as u64, Some(&etag))
+        {
             start = first as usize;
             end = last as usize + 1;
             status = StatusCode::PARTIAL_CONTENT;
@@ -346,7 +348,9 @@ async fn dispatch(
         .strip_prefix("gems/")
         .and_then(|s| s.strip_suffix(".gem"))
     {
-        let blob = db::packages::rubygems_file(&state.pool, &owner, token, filename).await.map_err(Error::db)?;
+        let blob = db::packages::rubygems_file(&state.pool, &owner, token, filename)
+            .await
+            .map_err(Error::db)?;
         return super::oci::download(state, &blob, request.method(), request.headers()).await;
     }
     Err(Error::missing())

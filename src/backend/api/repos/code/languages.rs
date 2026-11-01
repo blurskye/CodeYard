@@ -35,7 +35,10 @@ pub async fn get_repo_languages(
     .map_err(|error| repo_store_error(error, StatusCode::INTERNAL_SERVER_ERROR))?;
     let current = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     if current.id != repository.id {
-        return Err((StatusCode::NOT_FOUND, Json(ApiError::new("not_found", "Repository not found"))));
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiError::new("not_found", "Repository not found")),
+        ));
     }
 
     Ok(Json(

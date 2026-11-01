@@ -8,17 +8,17 @@
 )]
 #[cfg(not(target_arch = "wasm32"))]
 pub mod backend;
-pub mod webui;
-pub mod website;
-pub mod media;
-pub mod git_paths;
-pub mod git_limits;
 pub mod git_ids;
+pub mod git_limits;
+pub mod git_paths;
+pub mod media;
+pub mod website;
+pub mod webui;
 // Only this dependency-free codec is shared with wasm, never the runner implementation.
 #[path = "../crates/codeyard-actions/src/command_codec.rs"]
 pub mod command_codec;
-pub mod repository_names;
 pub mod file_search;
+pub mod repository_names;
 
 #[cfg(all(target_arch = "wasm32", not(feature = "web")))]
 compile_error!("Build the browser with --no-default-features --features web.");

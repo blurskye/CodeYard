@@ -225,7 +225,10 @@ pub(super) async fn react(
     if let Err(error) = db::reactions::toggle_reaction(
         &ctx.state.pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
         loaded.repository.id,
         row.id,
         db::reactions::Subject::CommitComment,
@@ -411,16 +414,29 @@ pub(super) async fn submit(
     .await;
     let (status, message) = match operation {
         Ok(Some(entry)) => {
-            let mut target = comments::comment_link(&loaded.chrome.owner, &loaded.chrome.name, &entry.comment);
+            let mut target =
+                comments::comment_link(&loaded.chrome.owner, &loaded.chrome.name, &entry.comment);
             if ctx.query.get("view").is_some_and(|view| view == "split") {
-                if let Some(anchor) = target.find('#') { target.insert_str(anchor, "&view=split"); }
+                if let Some(anchor) = target.find('#') {
+                    target.insert_str(anchor, "&view=split");
+                }
             }
             return ctx.redirect(&target);
         }
         Ok(None) if route.as_str().ends_with("/delete") && !draft.preview => {
-            return ctx.redirect(&format!("{}/commit/{sha}?comments_page={}{}#comments", loaded.chrome.base(),
-                ctx.query.get("comments_page").and_then(|page| page.parse::<usize>().ok()).unwrap_or(1),
-                if ctx.query.get("view").is_some_and(|view| view == "split") { "&view=split" } else { "" }));
+            return ctx.redirect(&format!(
+                "{}/commit/{sha}?comments_page={}{}#comments",
+                loaded.chrome.base(),
+                ctx.query
+                    .get("comments_page")
+                    .and_then(|page| page.parse::<usize>().ok())
+                    .unwrap_or(1),
+                if ctx.query.get("view").is_some_and(|view| view == "split") {
+                    "&view=split"
+                } else {
+                    ""
+                }
+            ));
         }
         Ok(None) => (StatusCode::OK, None),
         Err(error) => (failure(&error), Some(error.to_string())),

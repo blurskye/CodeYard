@@ -34,10 +34,21 @@ impl LocalStore {
         if !super::repository_matches_path(&repo, self.path(), self.node_id) {
             let replica = if let Some(node) = self.node_id.flatten().filter(|_| read) {
                 self.path().file_name() == std::path::Path::new(&repo.disk_path).file_name()
-                    && self.path().parent().and_then(std::path::Path::file_name).is_some_and(|name| name == "mirrors")
-                    && db::cluster::replica_applied_version(pool, id, node).await.map_err(failure)?.is_some_and(|version| version >= 0)
-            } else { false };
-            if !replica { return Err(RepoError::storage_node_unavailable()); }
+                    && self
+                        .path()
+                        .parent()
+                        .and_then(std::path::Path::file_name)
+                        .is_some_and(|name| name == "mirrors")
+                    && db::cluster::replica_applied_version(pool, id, node)
+                        .await
+                        .map_err(failure)?
+                        .is_some_and(|version| version >= 0)
+            } else {
+                false
+            };
+            if !replica {
+                return Err(RepoError::storage_node_unavailable());
+            }
         }
         if gists::by_repository(pool, id)
             .await
@@ -105,7 +116,7 @@ impl LocalStore {
             let _lock = _lock;
             git::gists::snapshot(path, revision.as_deref())
         })
-            .await
+        .await
     }
     pub(in crate::backend::repositories::store) async fn gist_history(
         &self,
@@ -120,7 +131,9 @@ impl LocalStore {
             self.recover_gist(pool, id).await?;
         }
         let lock = git::locks::lock(self.path()).await;
-        git::gists::history(self.path(), revision, offset, limit, lock).await.map_err(RepoError::from)
+        git::gists::history(self.path(), revision, offset, limit, lock)
+            .await
+            .map_err(RepoError::from)
     }
     pub(in crate::backend::repositories::store) async fn gist_write(
         &self,

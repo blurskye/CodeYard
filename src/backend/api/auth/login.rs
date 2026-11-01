@@ -222,7 +222,12 @@ pub(crate) async fn auth_post(
             let supplied_secret = optional_field(&form, "admin_secret");
             let expected_secret = match identity::setup::configured_admin_secret() {
                 Ok(secret) => secret,
-                Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Node setup configuration is invalid."),
+                Err(_) => {
+                    return ctx.error(
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        "Node setup configuration is invalid.",
+                    )
+                }
             };
             identity::setup::complete_setup(
                 &ctx.state.pool,

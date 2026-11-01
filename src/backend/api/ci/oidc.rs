@@ -43,7 +43,8 @@ async fn token(
     headers: HeaderMap,
     Query(input): Query<Audience>,
 ) -> Result<(HeaderMap, Json<Value>), StatusCode> {
-    let credential = crate::backend::api::http::credentials::bearer(&headers).ok_or(StatusCode::FORBIDDEN)?;
+    let credential =
+        crate::backend::api::http::credentials::bearer(&headers).ok_or(StatusCode::FORBIDDEN)?;
     if input
         .audience
         .as_ref()

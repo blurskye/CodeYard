@@ -260,7 +260,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .1[0]
-    .id;
+        .id;
     request(
         &router,
         "issues/create",
@@ -532,7 +532,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .1[0]
-    .id;
+        .id;
     user.page_ok("/apps/private-bot").await;
     let page = user.page_ok("/settings/apps/installations").await;
     assert!(page.contains("Private Bot"));

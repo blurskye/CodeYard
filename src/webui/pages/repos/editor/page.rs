@@ -174,7 +174,13 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
     // The gutter and the field grow with the text, so one scroll box moves both together. The
     // memo changes only when a line is added or removed, not on every key.
     let lines = use_memo(move || content.read().matches('\n').count() + 1);
-    let gutter = use_memo(move || if lines() <= 2000 { line_numbers(lines()) } else { String::new() });
+    let gutter = use_memo(move || {
+        if lines() <= 2000 {
+            line_numbers(lines())
+        } else {
+            String::new()
+        }
+    });
     // The path field's live value decides whether the preview links the page's references. A new
     // file's first load resolves only this repository's numbers, so links to other repositories and
     // to users appear once the native Preview posts the text.

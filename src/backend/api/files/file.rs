@@ -25,9 +25,14 @@ pub async fn delete_file(
             "Invalid file ID format",
         )
     })?;
-    files::delete_owned_file(&state.pool, &state.storage, (user.id, extract_session_id(&headers).unwrap_or_default()), file_uuid)
-        .await
-        .map_err(deletion_failure)?;
+    files::delete_owned_file(
+        &state.pool,
+        &state.storage,
+        (user.id, extract_session_id(&headers).unwrap_or_default()),
+        file_uuid,
+    )
+    .await
+    .map_err(deletion_failure)?;
     Ok(StatusCode::NO_CONTENT)
 }
 

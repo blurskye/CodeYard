@@ -171,9 +171,20 @@ fn field_editor(field: &Field, raw: &str, item: i64) -> Element {
 pub fn render(page: Page) -> Element {
     let base = &page.base;
     let visible: Vec<_> = if page.view_state.visible_fields.is_empty() {
-        page.fields.iter().filter(|field| field.data_type != "title").collect()
+        page.fields
+            .iter()
+            .filter(|field| field.data_type != "title")
+            .collect()
     } else {
-        page.view_state.visible_fields.iter().filter_map(|id| page.fields.iter().find(|field| field.id == *id && field.data_type != "title")).collect()
+        page.view_state
+            .visible_fields
+            .iter()
+            .filter_map(|id| {
+                page.fields
+                    .iter()
+                    .find(|field| field.id == *id && field.data_type != "title")
+            })
+            .collect()
     };
     rsx! {
         main { class: "container mx-auto px-4 py-6", style: "max-width:1280px;min-width:0;overflow-wrap:anywhere",

@@ -1,11 +1,18 @@
 //! Native output and its original browser authority share one read snapshot.
 use super::{Annotation, Refusal, Run, Suite};
-use crate::backend::db::{checks::PageSnapshot, sqlite::repositories::access::USER_REPO_ACCESS_SQL};
+use crate::backend::db::{
+    checks::PageSnapshot, sqlite::repositories::access::USER_REPO_ACCESS_SQL,
+};
 use anyhow::{ensure, Result};
 use sqlx::{types::Json, SqlitePool};
 
 pub async fn page_snapshot(
-    pool: &SqlitePool, viewer: Option<i64>, session: Option<&str>, repo: i64, id: i64, offset: i64,
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    session: Option<&str>,
+    repo: i64,
+    id: i64,
+    offset: i64,
 ) -> Result<PageSnapshot> {
     ensure!(offset >= 0, Refusal::Invalid);
     let mut tx = pool.begin().await?;
@@ -14,13 +21,34 @@ pub async fn page_snapshot(
     )).bind(viewer).bind(session).bind(repo).fetch_one(&mut *tx).await?;
     ensure!(allowed, Refusal::Missing);
     let run = sqlx::query_as::<_, Run>("SELECT * FROM check_runs WHERE repo_id=?1 AND id=?2")
-        .bind(repo).bind(id).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
+        .bind(repo)
+        .bind(id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Refusal::Missing)?;
     let suite = sqlx::query_as::<_, Suite>("SELECT * FROM check_suites WHERE repo_id=?1 AND id=?2")
-        .bind(repo).bind(run.suite_id).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
-    let annotations = sqlx::query_scalar::<_, Json<Annotation>>("SELECT data FROM check_annotations WHERE run_id=?1 ORDER BY id LIMIT ?2 OFFSET ?3")
-        .bind(id).bind((crate::backend::db::checks::ANNOTATIONS_PER_PAGE + 1) as i64).bind(offset).fetch_all(&mut *tx).await?;
+        .bind(repo)
+        .bind(run.suite_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Refusal::Missing)?;
+    let annotations = sqlx::query_scalar::<_, Json<Annotation>>(
+        "SELECT data FROM check_annotations WHERE run_id=?1 ORDER BY id LIMIT ?2 OFFSET ?3",
+    )
+    .bind(id)
+    .bind((crate::backend::db::checks::ANNOTATIONS_PER_PAGE + 1) as i64)
+    .bind(offset)
+    .fetch_all(&mut *tx)
+    .await?;
     let total = sqlx::query_scalar("SELECT COUNT(*) FROM check_annotations WHERE run_id=?1")
-        .bind(id).fetch_one(&mut *tx).await?;
+        .bind(id)
+        .fetch_one(&mut *tx)
+        .await?;
     tx.commit().await?;
-    Ok(PageSnapshot { run, suite, annotations, total })
+    Ok(PageSnapshot {
+        run,
+        suite,
+        annotations,
+        total,
+    })
 }

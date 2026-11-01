@@ -11,7 +11,8 @@ impl LocalStore {
         authority: db::credentials::Actor,
         old: &str,
         new: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RepoError>> + Send>> {
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RepoError>> + Send>>
+    {
         let (store, pool, old, new) = (self.clone(), pool.clone(), old.to_owned(), new.to_owned());
         Box::pin(async move {
             // Finish metadata and HEAD updates even if the HTTP client leaves after the ref moves.
@@ -39,7 +40,9 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        let user = self.rename_authority(pool, repo, &authority, old, new).await?;
+        let user = self
+            .rename_authority(pool, repo, &authority, old, new)
+            .await?;
         let refs = self.refs().await?;
         let target = refs
             .get(&old_ref)
@@ -93,7 +96,8 @@ impl LocalStore {
             )
         })
         .await?;
-        self.rename_authority(pool, repo, &authority, old, new).await?;
+        self.rename_authority(pool, repo, &authority, old, new)
+            .await?;
         publication
             .scope(git::publish_branch_rename(self.path(), old, new, &target))
             .await
@@ -159,8 +163,21 @@ impl LocalStore {
         }
         // Renaming a protected or default branch needs a token's administration permission.
         if let Some(token) = authority.token_id() {
-            if !crate::backend::identity::tokens::repository_scope(pool, token, actor, repo, if protected { "administration" } else { "contents" }, true).await
-                .map_err(|_| RepoError::authority_unavailable())? {
+            if !crate::backend::identity::tokens::repository_scope(
+                pool,
+                token,
+                actor,
+                repo,
+                if protected {
+                    "administration"
+                } else {
+                    "contents"
+                },
+                true,
+            )
+            .await
+            .map_err(|_| RepoError::authority_unavailable())?
+            {
                 return Err(RepoError::write_denied());
             }
         }
@@ -171,7 +188,9 @@ impl LocalStore {
         {
             return Err(RepoError::write_denied());
         }
-        access::check_publication_actor(pool, authority, &repository).await.map_err(RepoError::from)?;
+        access::check_publication_actor(pool, authority, &repository)
+            .await
+            .map_err(RepoError::from)?;
         Ok(user)
     }
 
@@ -187,7 +206,8 @@ impl LocalStore {
         use super::super::{UpstreamMerge, UpstreamMergeType};
         let reference =
             git::branch_ref(branch).ok_or_else(|| super::super::invalid_ref("branch"))?;
-        self.upstream_authority(pool, repo, actor, source, token).await?;
+        self.upstream_authority(pool, repo, actor, source, token)
+            .await?;
         let target = git::repository::current_branch_head(source.1.path(), branch)
             .await
             .map_err(RepoError::from)?
@@ -195,7 +215,8 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        self.upstream_authority(pool, repo, actor, source, token).await?;
+        self.upstream_authority(pool, repo, actor, source, token)
+            .await?;
         let old = git::repository::current_branch_head(self.path(), branch)
             .await
             .map_err(RepoError::from)?
@@ -247,7 +268,8 @@ impl LocalStore {
                 Some(prepared.path()),
             )
             .await?;
-        self.upstream_authority(pool, repo, actor, source, token).await?;
+        self.upstream_authority(pool, repo, actor, source, token)
+            .await?;
         self.check_publication_grant(
             pool,
             repo,
@@ -257,11 +279,21 @@ impl LocalStore {
             Some(prepared.path().to_owned()),
         )
         .await?;
-        let repository = access::current_repository(pool, repo).await.map_err(|_| RepoError::write_denied())?;
+        let repository = access::current_repository(pool, repo)
+            .await
+            .map_err(|_| RepoError::write_denied())?;
         let quarantine = prepared.path().join("objects");
-        let bypasses = crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
-            pool, &repository, actor, self.path(), Some(&quarantine), std::slice::from_ref(&target),
-        ).await.map_err(RepoError::from)?;
+        let bypasses =
+            crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
+                pool,
+                &repository,
+                actor,
+                self.path(),
+                Some(&quarantine),
+                std::slice::from_ref(&target),
+            )
+            .await
+            .map_err(RepoError::from)?;
         publication
             .scope(git::repository::publish_pull_branch_update(
                 self.path(),
@@ -328,11 +360,19 @@ impl LocalStore {
         .await?;
         live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
         if let Some(token) = token {
-            let credential = crate::backend::repositories::git_sessions::ReceiveCredential::Token(token);
-            let upstream = access::current_repository(pool, source.0).await.map_err(|_| RepoError::write_denied())?;
+            let credential =
+                crate::backend::repositories::git_sessions::ReceiveCredential::Token(token);
+            let upstream = access::current_repository(pool, source.0)
+                .await
+                .map_err(|_| RepoError::write_denied())?;
             for (repository, write) in [(&repository, true), (&upstream, false)] {
-                let (user, _) = credential.authorize(pool, repository, write).await.map_err(|_| RepoError::write_denied())?;
-                if user.id != actor { return Err(RepoError::write_denied()); }
+                let (user, _) = credential
+                    .authorize(pool, repository, write)
+                    .await
+                    .map_err(|_| RepoError::write_denied())?;
+                if user.id != actor {
+                    return Err(RepoError::write_denied());
+                }
             }
         }
         Ok(())

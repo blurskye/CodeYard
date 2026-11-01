@@ -24,7 +24,9 @@ fn main() {
             eprintln!("codeyard-actions: {error:#}");
             std::process::exit(if error.is::<codeyard_actions::runner::Cancelled>() {
                 codeyard_actions::runner::CANCELLED_EXIT_CODE
-            } else { 1 });
+            } else {
+                1
+            });
         }
     }
 }

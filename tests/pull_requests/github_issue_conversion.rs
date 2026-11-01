@@ -294,14 +294,24 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::suggestions::set_enabled(f.pool(), repo.id, alice_id, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice_id).await), true)
-        .await
-        .unwrap();
+    db::suggestions::set_enabled(
+        f.pool(),
+        repo.id,
+        alice_id,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice_id).await,
+        ),
+        true,
+    )
+    .await
+    .unwrap();
     let suggestion = db::suggestions::propose(
         f.pool(),
         repo.id,
         alice_id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice_id).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice_id).await,
+        ),
         filler.id,
         &db::suggestions::Proposal {
             action: db::suggestions::Action::CloseIssue,

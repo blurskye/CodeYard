@@ -105,19 +105,33 @@ pub async fn emit_ref_moves(
                         .previous
                         .get_or_insert_with(|| previous_tips(&push_path, &all_moves))
                         .as_deref();
-                    let commits = match payloads::pushed_commits(&push_path, before, &new, previous) {
+                    let commits = match payloads::pushed_commits(&push_path, before, &new, previous)
+                    {
                         Ok(commits) => commits,
                         Err(error) => {
                             tracing::warn!(%error, "could not read push webhook history");
                             return serde_json::Value::Null;
                         }
                     };
-                    let bytes: usize = commits.commits.iter().chain(commits.head.iter()).map(|commit| {
-                        std::mem::size_of::<payloads::PushedCommit>() + commit.id.len() + commit.tree_id.len()
-                            + commit.message.len() + commit.author_name.len() + commit.author_email.len()
-                            + commit.committer_name.len() + commit.committer_email.len()
-                            + commit.files.as_ref().map_or(0, payloads::ChangedFiles::bytes)
-                    }).sum();
+                    let bytes: usize = commits
+                        .commits
+                        .iter()
+                        .chain(commits.head.iter())
+                        .map(|commit| {
+                            std::mem::size_of::<payloads::PushedCommit>()
+                                + commit.id.len()
+                                + commit.tree_id.len()
+                                + commit.message.len()
+                                + commit.author_name.len()
+                                + commit.author_email.len()
+                                + commit.committer_name.len()
+                                + commit.committer_email.len()
+                                + commit
+                                    .files
+                                    .as_ref()
+                                    .map_or(0, payloads::ChangedFiles::bytes)
+                        })
+                        .sum();
                     if history.bytes.saturating_add(bytes) <= 16 * 1024 * 1024 {
                         history.bytes += bytes;
                         history.listed.insert(key, commits.clone());
@@ -140,9 +154,15 @@ pub async fn emit_ref_moves(
         if let Some((branch, sha)) = check_request {
             match head_receiver.await {
                 Ok(Some(head)) => {
-                    crate::backend::api::github::checks::requested_after_push(pool, repo, pusher_id, &sha, &branch, &head).await;
+                    crate::backend::api::github::checks::requested_after_push(
+                        pool, repo, pusher_id, &sha, &branch, &head,
+                    )
+                    .await;
                 }
-                _ => tracing::warn!(repo_id=repo.id, "Accepted push head could not be retained for automatic checks"),
+                _ => tracing::warn!(
+                    repo_id = repo.id,
+                    "Accepted push head could not be retained for automatic checks"
+                ),
             }
         }
     }

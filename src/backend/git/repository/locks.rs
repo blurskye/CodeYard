@@ -20,17 +20,27 @@ static READERS: LazyLock<crate::backend::locks::KeyedRwLock<PathBuf>> =
 /// nearest existing ancestor, including before a destination directory exists, so creating
 /// that directory does not change the lock selected through a symlinked parent.
 async fn canonical(path: &Path) -> PathBuf {
-    let absolute = if path.is_absolute() { path.to_owned() } else { std::env::current_dir().unwrap_or_default().join(path) };
+    let absolute = if path.is_absolute() {
+        path.to_owned()
+    } else {
+        std::env::current_dir().unwrap_or_default().join(path)
+    };
     let mut ancestor = absolute.as_path();
     let mut tail = Vec::new();
     loop {
         if let Ok(mut canonical) = tokio::fs::canonicalize(ancestor).await {
-            for component in tail.iter().rev() { canonical.push(component); }
+            for component in tail.iter().rev() {
+                canonical.push(component);
+            }
             break canonical;
         }
-        let Some(name) = ancestor.file_name() else { break absolute.clone(); };
+        let Some(name) = ancestor.file_name() else {
+            break absolute.clone();
+        };
         tail.push(name.to_owned());
-        let Some(parent) = ancestor.parent() else { break absolute.clone(); };
+        let Some(parent) = ancestor.parent() else {
+            break absolute.clone();
+        };
         ancestor = parent;
     }
 }

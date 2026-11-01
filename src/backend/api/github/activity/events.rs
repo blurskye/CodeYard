@@ -1,7 +1,10 @@
 use super::{auth, repository, Error, Pagination, Result};
 use crate::backend::{
     app::AppState,
-    db::{self, events::{EventScope, EventViewer}},
+    db::{
+        self,
+        events::{EventScope, EventViewer},
+    },
     webhooks::payloads,
 };
 use axum::{
@@ -67,20 +70,21 @@ pub(super) async fn documents(
         if !actor.is_object() {
             return Err(Error::unavailable(()));
         }
-        let mut value = payloads::event_json(
-            &entry.event,
-            &entry.repository,
-            &entry.owner,
-            actor,
-        );
+        let mut value = payloads::event_json(&entry.event, &entry.repository, &entry.owner, actor);
         if let Some(id) = value["payload"]["forkee"]["id"].as_i64() {
-            if auth::referenced_repository(state, authentication, id).await?.is_none() {
+            if auth::referenced_repository(state, authentication, id)
+                .await?
+                .is_none()
+            {
                 continue;
             }
         }
         for side in ["head", "base"] {
             if let Some(id) = value["payload"]["pull_request"][side]["repo"]["id"].as_i64() {
-                if auth::referenced_repository(state, authentication, id).await?.is_none() {
+                if auth::referenced_repository(state, authentication, id)
+                    .await?
+                    .is_none()
+                {
                     let document = &mut value["payload"]["pull_request"][side];
                     document["repo"] = Value::Null;
                     document["user"] = Value::Null;
@@ -185,8 +189,20 @@ async fn list(
             }
         };
         let (offset, limit) = page.window()?;
-        let reader = identity.as_ref().map(|auth| EventViewer::Token { user: auth.user.id, token: auth.token.id });
-        let (values, more) = documents(&state, reader, identity.as_ref(), scope, public, offset, limit).await?;
+        let reader = identity.as_ref().map(|auth| EventViewer::Token {
+            user: auth.user.id,
+            token: auth.token.id,
+        });
+        let (values, more) = documents(
+            &state,
+            reader,
+            identity.as_ref(),
+            scope,
+            public,
+            offset,
+            limit,
+        )
+        .await?;
         let etag = format!(
             "\"{:x}\"",
             Sha256::digest(serde_json::to_vec(&values).map_err(Error::unavailable)?)

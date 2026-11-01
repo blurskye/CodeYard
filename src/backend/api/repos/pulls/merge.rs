@@ -31,7 +31,10 @@ pub async fn merge_pull_request(
     let actor = get_current_user(&state.pool, &headers).await?;
     pull_requests::merge::merge_pull_request(
         &state,
-        crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            actor.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         (owner, repo, number),
         request,
     )

@@ -612,10 +612,16 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
     let a_running = enqueue(pool, member, repo_a, false, &[member])
         .await
         .unwrap();
-    let claimed = db::ci::claim_ci_run(pool, "team-worker", "local", &[member], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db::ci::claim_ci_run(
+        pool,
+        "team-worker",
+        "local",
+        &[member],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.id, a_running.id);
     let b_queued = enqueue(pool, member, repo_b, false, &[member])
         .await

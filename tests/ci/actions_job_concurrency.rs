@@ -55,14 +55,26 @@ async fn start(
         StatusCode::OK,
     )
     .await;
-    let run = db::ci::claim_ci_run(f.pool(), worker, "local", &[actor], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let run = db::ci::claim_ci_run(
+        f.pool(),
+        worker,
+        "local",
+        &[actor],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     let generation = runtime::token_hash(&format!("runtime-{worker}"));
-    db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
-        .await
-        .unwrap();
+    db::action_objects::issue_token(
+        f.pool(),
+        run.id,
+        run.worker.as_deref().unwrap_or(""),
+        &generation,
+        &run.run_id.to_string(),
+    )
+    .await
+    .unwrap();
     super::actions_objects::job_credentials(f, &run, &["test"]).await;
     let queued = event(Update::Queued {
         workflow_name: "Build".into(),
@@ -72,7 +84,8 @@ async fn start(
     });
     let id = db::action_jobs::apply(f.pool(), worker, run.id, &generation, WORKFLOW, &queued)
         .await
-        .unwrap().id;
+        .unwrap()
+        .id;
     db::action_jobs::apply(
         f.pool(),
         worker,

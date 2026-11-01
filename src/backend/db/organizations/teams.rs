@@ -6,7 +6,6 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 
-
 /// A lean identity read: credential, organization policy and team visibility share one snapshot.
 pub enum TeamIdentity<'a> {
     Id(i64),

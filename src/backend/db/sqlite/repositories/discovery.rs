@@ -50,7 +50,11 @@ pub async fn get_owner_fork(
 }
 
 /// Resolve an owner's fork by network identity, not its mutable repository name.
-pub async fn comparison_forks(pool: &SqlitePool, repo: i64, owner: &str) -> Result<Vec<Repository>> {
+pub async fn comparison_forks(
+    pool: &SqlitePool,
+    repo: i64,
+    owner: &str,
+) -> Result<Vec<Repository>> {
     Ok(sqlx::query_as("WITH RECURSIVE ancestors(id,forked_from_id) AS (SELECT id,forked_from_id FROM repositories WHERE id=?1 UNION SELECT r.id,r.forked_from_id FROM repositories r JOIN ancestors a ON a.forked_from_id=r.id), network(id) AS (SELECT id FROM ancestors WHERE forked_from_id IS NULL UNION SELECT r.id FROM repositories r JOIN network n ON r.forked_from_id=n.id) SELECT r.* FROM repositories r JOIN network n ON n.id=r.id LEFT JOIN users u ON u.id=r.owner_user_id LEFT JOIN organizations o ON o.id=r.owner_org_id WHERE (u.username=?2 OR o.name=?2) ORDER BY (r.name=(SELECT name FROM repositories WHERE id=?1)) DESC,r.id LIMIT 2").bind(repo).bind(owner).fetch_all(pool).await?)
 }
 
@@ -80,7 +84,9 @@ pub async fn visible_fork_counts(
     ids: &[i64],
 ) -> Result<std::collections::HashMap<i64, i32>> {
     ensure!(ids.len() <= 100, "Too many repository counts");
-    if ids.is_empty() { return Ok(std::collections::HashMap::new()); }
+    if ids.is_empty() {
+        return Ok(std::collections::HashMap::new());
+    }
     let rows = sqlx::query_as::<_, (i64, i32)>(&format!(
         "SELECT r.forked_from_id, COUNT(*) FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id IN (SELECT value FROM json_each(?3)) AND {} GROUP BY r.forked_from_id",
         readable_condition(),
@@ -376,7 +382,11 @@ pub async fn search_users(
         "SELECT * FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 \
          ORDER BY username, id LIMIT ?2 OFFSET ?3",
     )
-    .bind(contains(query)).bind(limit).bind(offset).fetch_all(&mut *connection).await;
+    .bind(contains(query))
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&mut *connection)
+    .await;
     connection.finish().await?;
     Ok(result?)
 }

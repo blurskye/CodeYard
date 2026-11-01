@@ -3,6 +3,7 @@
 //! sign-in state through the browser. A sealed token is AES-GCM under the master key, so the
 //! browser can carry it but cannot read or change it.
 
+use super::tokens::token_hash;
 use super::{
     admission::AdmissionError,
     passwords::{self, CurrentPasswordError, PasswordError},
@@ -20,7 +21,6 @@ use data_encoding::BASE32_NOPAD;
 use hmac::{Hmac, Mac};
 use rand::{seq::SliceRandom, RngCore};
 use sha1::Sha1;
-use super::tokens::token_hash;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 const STEP_SECONDS: u64 = 30;

@@ -209,7 +209,10 @@ async fn render_slot(waiters: usize) -> Option<tokio::sync::SemaphorePermit<'sta
         return Some(permit);
     }
     let _waiter = RenderWaiter::join(waiters)?;
-    tokio::time::timeout(RENDER_WAIT, MODEL_RENDERS.acquire()).await.ok()?.ok()
+    tokio::time::timeout(RENDER_WAIT, MODEL_RENDERS.acquire())
+        .await
+        .ok()?
+        .ok()
 }
 
 pub(crate) async fn render_page(

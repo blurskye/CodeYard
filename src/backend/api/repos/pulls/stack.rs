@@ -70,7 +70,10 @@ pub async fn post_rebase(
     restack::rebase_stack(
         &state.pool,
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((current_actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            current_actor.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         (owner, repo, number),
     )
     .await

@@ -34,8 +34,7 @@ async fn set(
     let input: Value = if body.is_empty() {
         json!({})
     } else {
-        serde_json::from_slice(&body)
-            .map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
     };
     let object = input
         .as_object()

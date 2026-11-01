@@ -91,13 +91,31 @@ pub(super) async fn list(
 }
 
 pub(super) async fn node(id: i64, request: &RequestContext) -> Result<Value> {
-    let (repo, org) = super::db::graphql::ruleset_owner(&request.state.pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
+    let (repo, org) = super::db::graphql::ruleset_owner(&request.state.pool, id)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
     let owner = match (repo, org) {
-        (Some(repo), None) => { request.authorize(repo, "metadata", false).await?; Owner::Repository(repo) }
-        (None, Some(org)) => { request.authorize_organization(org).await?; Owner::Organization(org) }
+        (Some(repo), None) => {
+            request.authorize(repo, "metadata", false).await?;
+            Owner::Repository(repo)
+        }
+        (None, Some(org)) => {
+            request.authorize_organization(org).await?;
+            Owner::Organization(org)
+        }
         _ => return Err(missing()),
     };
-    match rulesets::get_ruleset(&request.state.pool, Some(request.auth.user.id), owner, id, false).await.map_err(unavailable)? {
+    match rulesets::get_ruleset(
+        &request.state.pool,
+        Some(request.auth.user.id),
+        owner,
+        id,
+        false,
+    )
+    .await
+    .map_err(unavailable)?
+    {
         OrganizationOutcome::Applied(row) => object(row.value, request).await,
         _ => Err(missing()),
     }
@@ -105,7 +123,10 @@ pub(super) async fn node(id: i64, request: &RequestContext) -> Result<Value> {
 
 async fn object(ruleset: Ruleset, request: &RequestContext) -> Result<Value> {
     let source = match ruleset.owner {
-        Owner::Organization(org) => { request.authorize_organization(org).await?; user::organization_by_id(org, request).await? }
+        Owner::Organization(org) => {
+            request.authorize_organization(org).await?;
+            user::organization_by_id(org, request).await?
+        }
         Owner::Repository(repo) => repository::object(&repository::by_id(repo, request).await?),
     };
     let mut rules = Vec::with_capacity(ruleset.definition.rules.len());
@@ -116,8 +137,14 @@ async fn object(ruleset: Ruleset, request: &RequestContext) -> Result<Value> {
         "name":ruleset.definition.name,"target":upper(ruleset.definition.target)?,"enforcement":upper(ruleset.definition.enforcement)?,
         "source":source,"createdAt":ruleset.created_at,"updatedAt":ruleset.updated_at,"_rules":rules});
     match ruleset.owner {
-        Owner::Repository(repo) => { value["_repo"] = json!(repo); value["_scope"] = json!("metadata"); }
-        Owner::Organization(org) => { value["_ownerKind"] = json!("org"); value["_owner"] = json!(org); }
+        Owner::Repository(repo) => {
+            value["_repo"] = json!(repo);
+            value["_scope"] = json!("metadata");
+        }
+        Owner::Organization(org) => {
+            value["_ownerKind"] = json!("org");
+            value["_owner"] = json!(org);
+        }
     }
     Ok(value)
 }

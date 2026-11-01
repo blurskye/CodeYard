@@ -51,12 +51,30 @@ async fn emit_issue_event(
     }
     let issue = issue.clone();
     let document = repository.clone();
-    webhooks::emit(pool, repository, events::ISSUES, vec![author_id, sender_id], move |owner, people| {
-        let (author, sender) = (people.get(author_id), people.get(sender_id));
-        let mut payload = payloads::issues(action, &issue, &author, Scope { repo: &document, owner, sender: &sender });
-        if action == "edited" { payload["changes"] = serde_json::Value::Object(changes.clone()); }
-        payload
-    }).await;
+    webhooks::emit(
+        pool,
+        repository,
+        events::ISSUES,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            let mut payload = payloads::issues(
+                action,
+                &issue,
+                &author,
+                Scope {
+                    repo: &document,
+                    owner,
+                    sender: &sender,
+                },
+            );
+            if action == "edited" {
+                payload["changes"] = serde_json::Value::Object(changes.clone());
+            }
+            payload
+        },
+    )
+    .await;
 }
 
 /// The duplicate relationship, closure and timeline event commit together; the closure's
@@ -73,27 +91,49 @@ pub async fn close_duplicate(
     tokio::spawn(async move {
         let user = super::actor(&pool, actor.user_id).await?;
         let (repository, owner) = super::repository(&pool, repo).await?;
-        let (previous, saved) = db::issues::management::close_duplicate_with_previous(&pool, actor, repo, issue, duplicate)
-            .await
-            .map_err(|error| {
-                use db::issues::management::Refusal;
-                match error.downcast_ref::<Refusal>() {
-                    Some(Refusal::Missing) => OperationError::Missing { code: "not_found", message: error.to_string() },
-                    Some(Refusal::Denied) => OperationError::Denied { code: "forbidden", message: error.to_string() },
-                    Some(_) => OperationError::Invalid { code: "validation_error", message: error.to_string() },
-                    None => database_error(error),
-                }
-            })?;
+        let (previous, saved) = db::issues::management::close_duplicate_with_previous(
+            &pool, actor, repo, issue, duplicate,
+        )
+        .await
+        .map_err(|error| {
+            use db::issues::management::Refusal;
+            match error.downcast_ref::<Refusal>() {
+                Some(Refusal::Missing) => OperationError::Missing {
+                    code: "not_found",
+                    message: error.to_string(),
+                },
+                Some(Refusal::Denied) => OperationError::Denied {
+                    code: "forbidden",
+                    message: error.to_string(),
+                },
+                Some(_) => OperationError::Invalid {
+                    code: "validation_error",
+                    message: error.to_string(),
+                },
+                None => database_error(error),
+            }
+        })?;
         if previous.state != saved.state {
-            after_update(&pool, &broadcaster, &repository, &user, &owner, &previous, &saved).await;
+            after_update(
+                &pool,
+                &broadcaster,
+                &repository,
+                &user,
+                &owner,
+                &previous,
+                &saved,
+            )
+            .await;
         }
         Ok(saved)
     })
     .await
-    .unwrap_or_else(|_| Err(OperationError::Unavailable {
-        code: "publication_interrupted",
-        message: "Duplicate closure was interrupted; check the issue before retrying.".into(),
-    }))
+    .unwrap_or_else(|_| {
+        Err(OperationError::Unavailable {
+            code: "publication_interrupted",
+            message: "Duplicate closure was interrupted; check the issue before retrying.".into(),
+        })
+    })
 }
 
 pub async fn create_issue(
@@ -104,7 +144,16 @@ pub async fn create_issue(
     repo: String,
     req: CreateIssueRequest,
 ) -> Result<db::models::Issue, OperationError> {
-    create_issue_with_metadata(pool, broadcaster, actor, owner, repo, req, db::issues::OwnedIssueMetadata::default()).await
+    create_issue_with_metadata(
+        pool,
+        broadcaster,
+        actor,
+        owner,
+        repo,
+        req,
+        db::issues::OwnedIssueMetadata::default(),
+    )
+    .await
 }
 
 pub async fn create_issue_with_metadata(
@@ -118,11 +167,24 @@ pub async fn create_issue_with_metadata(
 ) -> Result<db::models::Issue, OperationError> {
     let (pool, broadcaster, actor) = (pool.clone(), broadcaster.clone(), actor.into());
     tokio::spawn(async move {
-        create_issue_owned(&pool, &broadcaster, actor, owner, repo, req, metadata.borrowed()).await
-    }).await.unwrap_or_else(|_| Err(OperationError::Unavailable {
-        code: "publication_interrupted",
-        message: "Issue creation was interrupted; check the repository before retrying.".into(),
-    }))
+        create_issue_owned(
+            &pool,
+            &broadcaster,
+            actor,
+            owner,
+            repo,
+            req,
+            metadata.borrowed(),
+        )
+        .await
+    })
+    .await
+    .unwrap_or_else(|_| {
+        Err(OperationError::Unavailable {
+            code: "publication_interrupted",
+            message: "Issue creation was interrupted; check the repository before retrying.".into(),
+        })
+    })
 }
 
 async fn create_issue_owned(
@@ -165,8 +227,16 @@ async fn create_issue_owned(
     let body = req.body.as_deref().unwrap_or("");
     metadata.parent = req.parent_issue_id.or(metadata.parent);
     metadata.parent_repository = req.parent_repository_id.or(metadata.parent_repository);
-    let issue = db::issues::create_issue_with_metadata(pool, repository.id, actor, &req.title, body, metadata)
-        .await.map_err(super::write_error)?;
+    let issue = db::issues::create_issue_with_metadata(
+        pool,
+        repository.id,
+        actor,
+        &req.title,
+        body,
+        metadata,
+    )
+    .await
+    .map_err(super::write_error)?;
 
     // Persistence has committed. Assignment effects are best-effort and cannot turn a successful
     // create into a metadata error that invites the caller to create the same issue again.
@@ -174,12 +244,26 @@ async fn create_issue_owned(
         match db::users::accounts::get_users_by_ids(pool, metadata.assignees).await {
             Ok(users) => {
                 let users: Vec<_> = users.iter().collect();
-                super::assignments::announce(pool, broadcaster, &super::assignments::Target {
-                    actor: &user, repository: &repository, owner: &owner,
-                    item: db::assignees::AssignedItem::Issue(issue.id), number: issue.number, title: &issue.title,
-                }, &users).await;
+                super::assignments::announce(
+                    pool,
+                    broadcaster,
+                    &super::assignments::Target {
+                        actor: &user,
+                        repository: &repository,
+                        owner: &owner,
+                        item: db::assignees::AssignedItem::Issue(issue.id),
+                        number: issue.number,
+                        title: &issue.title,
+                    },
+                    &users,
+                )
+                .await;
             }
-            Err(error) => tracing::warn!(issue_id = issue.id, ?error, "Initial issue assignments could not be announced"),
+            Err(error) => tracing::warn!(
+                issue_id = issue.id,
+                ?error,
+                "Initial issue assignments could not be announced"
+            ),
         }
     }
     let link = format!("/{owner}/{repo}/issues/{}", issue.number);
@@ -256,7 +340,10 @@ pub async fn update_issue(
         }
         None => None,
     };
-    if !db::issues::valid_state_reason(requested_state.unwrap_or(&existing.state), req.state_reason.as_deref()) {
+    if !db::issues::valid_state_reason(
+        requested_state.unwrap_or(&existing.state),
+        req.state_reason.as_deref(),
+    ) {
         return Err(OperationError::Invalid {
             code: "validation_error",
             message: "Invalid state reason".into(),
@@ -319,7 +406,16 @@ pub async fn update_issue(
         notify_state_change(pool, broadcaster, &user, (&repository, &owner), &issue).await;
     }
 
-    after_update(pool, broadcaster, &repository, &user, &owner, &existing, &issue).await;
+    after_update(
+        pool,
+        broadcaster,
+        &repository,
+        &user,
+        &owner,
+        &existing,
+        &issue,
+    )
+    .await;
     Ok(issue)
 }
 
@@ -361,7 +457,11 @@ async fn after_update(
         emit_issue_event(pool, repository, issue, user.id, "edited", Some(existing)).await;
     }
     if issue.state != existing.state {
-        let action = if issue.state == "closed" { "closed" } else { "reopened" };
+        let action = if issue.state == "closed" {
+            "closed"
+        } else {
+            "reopened"
+        };
         emit_issue_event(pool, repository, issue, user.id, action, Some(existing)).await;
     }
 }

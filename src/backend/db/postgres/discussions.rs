@@ -42,14 +42,23 @@ async fn lock_discussion_authority(
     include_archived: bool,
 ) -> Result<Option<DiscussionAuthority>> {
     let Some(authority) = super::repositories::access::lock_user_repo_access_in_transaction(
-        tx, actor_id, repo_id, lock, include_archived,
+        tx,
+        actor_id,
+        repo_id,
+        lock,
+        include_archived,
     )
     .await?
     else {
         return Ok(None);
     };
-    if include_archived && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=$1)")
-        .bind(repo_id).fetch_one(&mut **tx).await?
+    if include_archived
+        && sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=$1)",
+        )
+        .bind(repo_id)
+        .fetch_one(&mut **tx)
+        .await?
     {
         return Ok(None);
     }
@@ -72,10 +81,15 @@ async fn lock_discussion_authority(
 
 /// An effect by a configured repository reader, without issue interaction restrictions.
 pub(crate) async fn lock_read_authority(
-    tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64,
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
 ) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false).await?
-        .is_some_and(|authority| authority.access.can_read() || authority.personal_override))
+    Ok(
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
+            .await?
+            .is_some_and(|authority| authority.access.can_read() || authority.personal_override),
+    )
 }
 
 pub(crate) async fn lock_triage_authority(
@@ -117,10 +131,15 @@ pub(crate) async fn lock_exclusive_write_authority(
 }
 
 pub(crate) async fn lock_exclusive_maintain_authority(
-    tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64,
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
 ) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, false)
-        .await?.is_some_and(|a| a.access.can_maintain() || a.personal_override))
+    Ok(
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, false)
+            .await?
+            .is_some_and(|a| a.access.can_maintain() || a.personal_override),
+    )
 }
 
 /// Moderation of other people's comments: repository maintainers and site administrators.
@@ -169,12 +188,26 @@ pub(crate) async fn lock_repository_mutation_authority(
 /// Security managers administer security state without repository-wide administration.
 /// History reads include archived repositories; writers still require a mutable repository.
 pub(crate) async fn lock_security_authority(
-    tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64, write: bool,
+    tx: &mut Transaction<'_, Postgres>,
+    actor_id: i64,
+    repo_id: i64,
+    write: bool,
 ) -> Result<bool> {
-    let Some(authority) = lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, !write).await? else { return Ok(false); };
-    if authority.access.can_admin() || authority.personal_owner || authority.personal_override { return Ok(true); }
-    if !authority.organization { return Ok(false); }
-    let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1").bind(repo_id).fetch_one(&mut **tx).await?;
+    let Some(authority) =
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, !write).await?
+    else {
+        return Ok(false);
+    };
+    if authority.access.can_admin() || authority.personal_owner || authority.personal_override {
+        return Ok(true);
+    }
+    if !authority.organization {
+        return Ok(false);
+    }
+    let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1")
+        .bind(repo_id)
+        .fetch_one(&mut **tx)
+        .await?;
     match org {
         Some(org) => super::organizations::roles::manages_security(tx, actor_id, org).await,
         None => Ok(false),
@@ -201,7 +234,13 @@ pub(crate) async fn lock_settings_read_authority(
     if admin {
         lock_policy_authority(tx, actor_id, repo_id, false).await
     } else {
-        super::repositories::access::lock_readable_repository_in_transaction(tx, actor_id, repo_id, super::repositories::access::RepositoryRowLock::Shared).await
+        super::repositories::access::lock_readable_repository_in_transaction(
+            tx,
+            actor_id,
+            repo_id,
+            super::repositories::access::RepositoryRowLock::Shared,
+        )
+        .await
     }
 }
 
@@ -248,7 +287,8 @@ async fn lock_contribution_authority_with(
     repo_id: i64,
     repository_lock: RepositoryLock,
 ) -> Result<bool> {
-    let authority = lock_discussion_authority(tx, actor_id, repo_id, repository_lock, false).await?;
+    let authority =
+        lock_discussion_authority(tx, actor_id, repo_id, repository_lock, false).await?;
     let Some(authority) = authority else {
         return Ok(false);
     };
@@ -347,7 +387,17 @@ pub async fn set_lock(
     .ok_or(LockRefusal::Missing)?;
     if previous != locked || previous_reason.as_deref() != reason {
         sqlx::query(&format!("UPDATE {table} SET locked=$2,lock_reason=$3,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")).bind(id).bind(locked).bind(reason).execute(&mut *tx).await?;
-        super::timeline::append(&mut tx, repo_id, subject, id, actor_id, if locked {"locked"} else {"unlocked"}, reason.unwrap_or(""), "").await?;
+        super::timeline::append(
+            &mut tx,
+            repo_id,
+            subject,
+            id,
+            actor_id,
+            if locked { "locked" } else { "unlocked" },
+            reason.unwrap_or(""),
+            "",
+        )
+        .await?;
     }
     tx.commit().await?;
     Ok(())
@@ -485,7 +535,16 @@ pub(crate) async fn lock_review_dismissal_authority(
     Ok(pr)
 }
 
-pub async fn list_repo_authors(pool: &sqlx::PgPool, repo_id: i64, selected: Option<i64>) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar(&crate::backend::db::discussions::author_choices_sql(true))
-        .bind(repo_id).bind(selected).fetch_all(pool).await?)
+pub async fn list_repo_authors(
+    pool: &sqlx::PgPool,
+    repo_id: i64,
+    selected: Option<i64>,
+) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar(&crate::backend::db::discussions::author_choices_sql(true))
+            .bind(repo_id)
+            .bind(selected)
+            .fetch_all(pool)
+            .await?,
+    )
 }

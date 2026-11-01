@@ -30,9 +30,14 @@ pub async fn confirm_upload(
     Json(req): Json<ConfirmUploadRequest>,
 ) -> Result<Json<ConfirmUploadResponse>, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
-    files::confirm_upload(&state.pool, &state.storage, (user.id, extract_session_id(&headers).unwrap_or_default()), req.file_id)
-        .await
-        .map_err(confirmation_failure)?;
+    files::confirm_upload(
+        &state.pool,
+        &state.storage,
+        (user.id, extract_session_id(&headers).unwrap_or_default()),
+        req.file_id,
+    )
+    .await
+    .map_err(confirmation_failure)?;
     Ok(Json(ConfirmUploadResponse { success: true }))
 }
 

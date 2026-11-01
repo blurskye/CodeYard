@@ -152,10 +152,13 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         },
         None => None,
     };
-    let Ok(rows) = db::fine_grained_tokens::list_before(&ctx.state.pool, user.id, before).await else {
+    let Ok(rows) = db::fine_grained_tokens::list_before(&ctx.state.pool, user.id, before).await
+    else {
         return ctx.error(StatusCode::SERVICE_UNAVAILABLE, UNAVAILABLE);
     };
-    let next_before = (rows.len() == 100).then(|| rows.last().map(|row| row.token_id)).flatten();
+    let next_before = (rows.len() == 100)
+        .then(|| rows.last().map(|row| row.token_id))
+        .flatten();
     let mut names = HashMap::new();
     let mut tokens = Vec::new();
     for token in rows {
@@ -175,7 +178,15 @@ async fn list(State(state): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) 
         .query
         .contains_key("deleted")
         .then_some("Token deleted.");
-    respond(&ctx, StatusCode::OK, View::List { tokens, next_before }, message)
+    respond(
+        &ctx,
+        StatusCode::OK,
+        View::List {
+            tokens,
+            next_before,
+        },
+        message,
+    )
 }
 
 /// The organizations the user belongs to, which can own their tokens.
@@ -198,23 +209,35 @@ async fn owner_of(ctx: &PageContext, draft: &Draft, user: &User) -> anyhow::Resu
     if draft.owner == "user" || draft.owner.is_empty() {
         return Ok(Some(Owner::User(user.id)));
     }
-    let Ok(id) = draft.owner.parse::<i64>() else { return Ok(None) };
-    Ok(matches!(organizations::get_organization_role(&ctx.state.pool, user.id, id).await?, OrganizationOutcome::Applied(_))
-        .then_some(Owner::Organization(id)))
+    let Ok(id) = draft.owner.parse::<i64>() else {
+        return Ok(None);
+    };
+    Ok(matches!(
+        organizations::get_organization_role(&ctx.state.pool, user.id, id).await?,
+        OrganizationOutcome::Applied(_)
+    )
+    .then_some(Owner::Organization(id)))
 }
 
 /// What the create form offers for the draft's owner and search.
 async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Result<Choices> {
     let pool = &ctx.state.pool;
     let orgs = organizations_of(ctx, user, draft.owners_after).await?;
-    let next_owners = (orgs.len() == 100).then(|| orgs.last().map(|org| org.id)).flatten();
+    let next_owners = (orgs.len() == 100)
+        .then(|| orgs.last().map(|org| org.id))
+        .flatten();
     let mut owners = vec![("user".to_owned(), user.username.clone())];
     owners.extend(
         orgs.iter()
             .map(|org| (org.id.to_string(), org.name.clone())),
     );
-    let owner = owner_of(ctx, draft, user).await?.unwrap_or(Owner::User(user.id));
-    let org = match owner { Owner::User(_) => None, Owner::Organization(org) => Some(org) };
+    let owner = owner_of(ctx, draft, user)
+        .await?
+        .unwrap_or(Owner::User(user.id));
+    let org = match owner {
+        Owner::User(_) => None,
+        Owner::Organization(org) => Some(org),
+    };
     let prefix = owner_name(ctx, user, org).await?;
     if let Some(org) = org {
         if !owners.iter().any(|(id, _)| id == &org.to_string()) {
@@ -223,15 +246,39 @@ async fn choices(ctx: &PageContext, user: &User, draft: &Draft) -> anyhow::Resul
     }
     let session = extract_session_id(&ctx.headers).unwrap_or_default();
     let credential = db::users::accounts::AccountCredential::Session(&session);
-    let selected: Vec<_> = draft.repositories.iter().copied().take(fine_grained::MAX_REPOSITORIES).collect();
-    let choices = db::fine_grained_tokens::repository_choices(pool, user.id, &credential, org, &draft.query.trim().to_lowercase(), &selected).await?;
+    let selected: Vec<_> = draft
+        .repositories
+        .iter()
+        .copied()
+        .take(fine_grained::MAX_REPOSITORIES)
+        .collect();
+    let choices = db::fine_grained_tokens::repository_choices(
+        pool,
+        user.id,
+        &credential,
+        org,
+        &draft.query.trim().to_lowercase(),
+        &selected,
+    )
+    .await?;
     let more_repositories = choices.matching.len() > 100;
     let mut listed = std::collections::HashSet::new();
-    let repositories = choices.selected.into_iter().chain(choices.matching.into_iter().take(100))
-        .filter(|(id, _)| listed.insert(*id)).map(|(id, name)| (id, format!("{prefix}/{name}"))).collect();
+    let repositories = choices
+        .selected
+        .into_iter()
+        .chain(choices.matching.into_iter().take(100))
+        .filter(|(id, _)| listed.insert(*id))
+        .map(|(id, name)| (id, format!("{prefix}/{name}")))
+        .collect();
     let never_allowed = if let Some(org) = org {
-        fine_grained::max_lifetime(owner, Some(&db::fine_grained_tokens::policy(pool, org).await?)).is_none()
-    } else { false };
+        fine_grained::max_lifetime(
+            owner,
+            Some(&db::fine_grained_tokens::policy(pool, org).await?),
+        )
+        .is_none()
+    } else {
+        false
+    };
     let permissions = PERMISSIONS
         .iter()
         .filter(|permission| permission.key != "metadata")
@@ -446,11 +493,19 @@ async fn create(
                     message,
                 )
             }
-            Err(_) => respond(&ctx, StatusCode::OK, View::Revealed { id: created.id, value: created.value }, Some(if created.status == "pending" {
-                "Token created. Organization approval is required for private resources. Details could not be loaded; copy the token now."
-            } else {
-                "Token created. Details could not be loaded; copy the token before leaving this page."
-            })),
+            Err(_) => respond(
+                &ctx,
+                StatusCode::OK,
+                View::Revealed {
+                    id: created.id,
+                    value: created.value,
+                },
+                Some(if created.status == "pending" {
+                    "Token created. Organization approval is required for private resources. Details could not be loaded; copy the token now."
+                } else {
+                    "Token created. Details could not be loaded; copy the token before leaving this page."
+                }),
+            ),
         },
         Err(error) => {
             let (status, message) = refusal(error);
@@ -484,12 +539,19 @@ async fn detail(ctx: &PageContext, user: &User, id: i64) -> Result<Detail, Token
         None => false,
     };
     let repositories = if token.repository_access == "selected" {
-        db::fine_grained_tokens::repositories(pool, token.token_id, user.id, &db::users::accounts::AccountCredential::Session(ctx.session_id.as_deref().unwrap_or("")))
-            .await
-            .map_err(unavailable)?
-            .into_iter()
-            .map(|(_, name)| name)
-            .collect()
+        db::fine_grained_tokens::repositories(
+            pool,
+            token.token_id,
+            user.id,
+            &db::users::accounts::AccountCredential::Session(
+                ctx.session_id.as_deref().unwrap_or(""),
+            ),
+        )
+        .await
+        .map_err(unavailable)?
+        .into_iter()
+        .map(|(_, name)| name)
+        .collect()
     } else {
         Vec::new()
     };

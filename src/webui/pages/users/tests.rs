@@ -560,7 +560,10 @@ fn profile_stars_tab_has_the_stars_filter_bar_and_keeps_its_filters_in_pages() {
         "{older}"
     );
     // A later page of the search may be past its end, so it points back to the first page.
-    assert!(page.contains("No starred repositories on this page."), "{page}");
+    assert!(
+        page.contains("No starred repositories on this page."),
+        "{page}"
+    );
     // The search's first page is empty only when nothing matches, though the user has stars.
     let first = render(1);
     assert!(

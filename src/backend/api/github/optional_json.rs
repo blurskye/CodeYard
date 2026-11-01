@@ -31,6 +31,8 @@ where
         let bytes = Bytes::from_request(request, state)
             .await
             .map_err(IntoResponse::into_response)?;
-        decode(&bytes).map(Self).map_err(IntoResponse::into_response)
+        decode(&bytes)
+            .map(Self)
+            .map_err(IntoResponse::into_response)
     }
 }

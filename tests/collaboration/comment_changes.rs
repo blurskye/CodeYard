@@ -117,7 +117,9 @@ async fn edit_and_delete_rules(pg: bool) {
     // Writers can moderate; an unrelated reader still cannot edit.
     let rewrite = [("body", "Rewritten")];
     for (client, id) in [(bob, own), (alice, theirs)] {
-        let reply = client.form_reply(&format!("{}/edit", at(id)), &rewrite).await;
+        let reply = client
+            .form_reply(&format!("{}/edit", at(id)), &rewrite)
+            .await;
         assert!(reply.status.is_redirection(), "{}", reply.text());
     }
     refused(
@@ -133,10 +135,7 @@ async fn edit_and_delete_rules(pg: bool) {
     let saved = bob
         .form_reply(
             &format!("{}/edit", at(theirs)),
-            &[
-                ("body", "Bob revised"),
-                ("expected_body", "\"Rewritten\""),
-            ],
+            &[("body", "Bob revised"), ("expected_body", "\"Rewritten\"")],
         )
         .await;
     assert!(saved.status.is_redirection(), "{}", saved.text());
@@ -163,7 +162,12 @@ async fn edit_and_delete_rules(pg: bool) {
         .await;
     assert!(removed.status.is_redirection(), "{}", removed.text());
     let own_removed = alice.form_reply(&format!("{}/delete", at(own)), &[]).await;
-    assert_eq!(own_removed.status, StatusCode::NOT_FOUND, "{}", own_removed.text());
+    assert_eq!(
+        own_removed.status,
+        StatusCode::NOT_FOUND,
+        "{}",
+        own_removed.text()
+    );
     let page = bob.page_ok(issue).await;
     assert!(!page.contains(&format!("comment-{theirs}")), "{page}");
     assert!(!page.contains(&format!("comment-{own}")), "{page}");
@@ -177,7 +181,9 @@ async fn edit_and_delete_rules(pg: bool) {
     database
         .execute("UPDATE issues SET locked=TRUE WHERE number=1", &[])
         .await;
-    let saved = bob.form_reply(&format!("{}/edit", at(locked)), &rewrite).await;
+    let saved = bob
+        .form_reply(&format!("{}/edit", at(locked)), &rewrite)
+        .await;
     assert!(saved.status.is_redirection(), "{}", saved.text());
     refused(
         dave,
@@ -186,9 +192,16 @@ async fn edit_and_delete_rules(pg: bool) {
         "This conversation is locked.",
     )
     .await;
-    let posted = bob.form_reply(&format!("{issue}/comments"), &[
-        ("body", "After lock"), ("repository_id", &repository_id), ("issue_id", &issue_id),
-    ]).await;
+    let posted = bob
+        .form_reply(
+            &format!("{issue}/comments"),
+            &[
+                ("body", "After lock"),
+                ("repository_id", &repository_id),
+                ("issue_id", &issue_id),
+            ],
+        )
+        .await;
     assert!(posted.status.is_redirection(), "{}", posted.text());
     let (status, body) = bob
         .api(
@@ -209,7 +222,9 @@ async fn edit_and_delete_rules(pg: bool) {
         stored.issue_id,
         stored.author_id,
         "After lock",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(database.pool(), stored.author_id).await)
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(database.pool(), stored.author_id).await
+        )
     )
     .await
     .is_ok());
@@ -271,10 +286,13 @@ async fn pull_request_comment_rules(pg: bool) {
     assert!(theirs.status.is_redirection(), "{}", theirs.text());
     let bobs = theirs.id_after("#comment-");
 
-    let moderated = world.bob.form_reply(
-        &format!("{page}/comments/{alices}/edit"),
-        &[("body", "x"), ("expected_body", "\"Alice's question\"")],
-    ).await;
+    let moderated = world
+        .bob
+        .form_reply(
+            &format!("{page}/comments/{alices}/edit"),
+            &[("body", "x"), ("expected_body", "\"Alice's question\"")],
+        )
+        .await;
     assert!(moderated.status.is_redirection(), "{}", moderated.text());
     let saved = world
         .bob
@@ -353,12 +371,19 @@ async fn late_notifications_and_long_discussions(pg: bool) {
     db::notifications::records::create_notification(pool, input("mention"))
         .await
         .unwrap();
-    assert!(
-        db::issues::delete_issue_comment(pool, alice_id, repo.id, issue_id, comment_id, &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, alice_id).await))
-            .await
-            .unwrap()
-            .is_some()
-    );
+    assert!(db::issues::delete_issue_comment(
+        pool,
+        alice_id,
+        repo.id,
+        issue_id,
+        comment_id,
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, alice_id).await
+        )
+    )
+    .await
+    .unwrap()
+    .is_some());
     for kind in ["issue_comment", "mention"] {
         assert!(
             db::notifications::records::create_notification(pool, input(kind))

@@ -168,7 +168,9 @@ async fn contract(pg: bool) {
         "CALL_PASSWORD",
         "reusable-server-password",
         Some(actor),
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), actor).await,
+        ),
     )
     .await
     .unwrap();
@@ -223,7 +225,11 @@ jobs:
         }
         // Engine selection is made at claim time.
         let claim = queue
-            .claim(&format!("reusable-{engine}"), CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+            .claim(
+                &format!("reusable-{engine}"),
+                CiExecutionMode::Local,
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -313,7 +319,11 @@ jobs:
         assert_eq!(value["sha"], pinned);
     }
     queue
-        .claim("reusable-tag", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .claim(
+            "reusable-tag",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -348,7 +358,11 @@ jobs:
     )
     .await;
     assert!(queue
-        .claim("reusable-denied", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .claim(
+            "reusable-denied",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels()
+        )
         .await
         .is_err());
     let failed = db::ci::get_ci_run_by_run_id(f.pool(), revoked.run_id)
@@ -365,21 +379,37 @@ jobs:
     // fails the run, as GitHub reports "The nested job is requesting ... but is only allowed".
     let escalated = "permissions: {contents: write, issues: write, id-token: write}";
     for (called, leaf) in [
-        (CALLED.replace("permissions: {contents: read}", escalated), LEAF.to_owned()),
-        (CALLED.to_owned(), LEAF.replace("permissions: {contents: read}", escalated)),
+        (
+            CALLED.replace("permissions: {contents: read}", escalated),
+            LEAF.to_owned(),
+        ),
+        (
+            CALLED.to_owned(),
+            LEAF.replace("permissions: {contents: read}", escalated),
+        ),
     ] {
-        commit(&remote.disk_path, &[("called.yml", &called), ("leaf.yml", &leaf)]);
+        commit(
+            &remote.disk_path,
+            &[("called.yml", &called), ("leaf.yml", &leaf)],
+        );
         let run = state
             .ci_runs
             .trigger_run(request(caller.id, actor))
             .await
             .unwrap();
         let error = queue
-            .claim("reusable-escalated", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+            .claim(
+                "reusable-escalated",
+                CiExecutionMode::Local,
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            )
             .await
             .err()
             .expect("raised permissions must fail the claim");
-        assert!(format!("{error:#}").contains("exceed caller permissions"), "{error:#}");
+        assert!(
+            format!("{error:#}").contains("exceed caller permissions"),
+            "{error:#}"
+        );
         let failed = db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
             .await
             .unwrap()

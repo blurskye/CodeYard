@@ -17,18 +17,32 @@ pub(super) fn object(repo: &db::models::Repository) -> Value {
         "rebaseMergeAllowed":repo.allow_rebase_merge})
 }
 
-pub(super) async fn optional_authority(id: i64, scope: &str, request: &RequestContext) -> Result<bool> {
+pub(super) async fn optional_authority(
+    id: i64,
+    scope: &str,
+    request: &RequestContext,
+) -> Result<bool> {
     match request.authorize(id, scope, false).await {
         Ok(()) => Ok(true),
-        Err(error) if matches!(error.extensions.as_ref().and_then(|e| e.get("type")),
-            Some(async_graphql::Value::String(kind)) if kind == "NOT_FOUND" || kind == "FORBIDDEN") => Ok(false),
+        Err(error)
+            if matches!(error.extensions.as_ref().and_then(|e| e.get("type")),
+            Some(async_graphql::Value::String(kind)) if kind == "NOT_FOUND" || kind == "FORBIDDEN") =>
+        {
+            Ok(false)
+        }
         Err(error) => Err(error),
     }
 }
 
-pub(super) async fn shared_read_scope(id: i64, scopes: &[&'static str], request: &RequestContext) -> Result<&'static str> {
+pub(super) async fn shared_read_scope(
+    id: i64,
+    scopes: &[&'static str],
+    request: &RequestContext,
+) -> Result<&'static str> {
     for scope in scopes {
-        if optional_authority(id, scope, request).await? { return Ok(*scope); }
+        if optional_authority(id, scope, request).await? {
+            return Ok(*scope);
+        }
     }
     Err(missing())
 }
@@ -85,21 +99,48 @@ pub(super) fn label(label: &db::models::Label) -> Value {
     json!({"__typename":"Label","_repo":label.repo_id,"id":node_id::encode("L",label.id),"name":label.name,"color":label.color.trim_start_matches('#'),"description":label.description,"createdAt":label.created_at,"updatedAt":label.updated_at.unwrap_or(label.created_at),"isDefault":false})
 }
 
-pub(super) fn label_connection(ctx: &Arguments, mut labels: Vec<db::models::Label>, scope: &str) -> Result<Value> {
-    let order = ctx.args.get("orderBy").filter(|value| !value.is_null()).map(|value| value.object()).transpose()?;
-    let name = order.as_ref().map(|order| order.try_get("field")?.enum_name()).transpose()? == Some("NAME");
+pub(super) fn label_connection(
+    ctx: &Arguments,
+    mut labels: Vec<db::models::Label>,
+    scope: &str,
+) -> Result<Value> {
+    let order = ctx
+        .args
+        .get("orderBy")
+        .filter(|value| !value.is_null())
+        .map(|value| value.object())
+        .transpose()?;
+    let name = order
+        .as_ref()
+        .map(|order| order.try_get("field")?.enum_name())
+        .transpose()?
+        == Some("NAME");
     labels.sort_by(|a, b| {
-        if name { a.name.cmp(&b.name).then(a.id.cmp(&b.id)) }
-        else { a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)) }
+        if name {
+            a.name.cmp(&b.name).then(a.id.cmp(&b.id))
+        } else {
+            a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id))
+        }
     });
-    if order.as_ref().map(|order| order.try_get("direction")?.enum_name()).transpose()? == Some("DESC") {
+    if order
+        .as_ref()
+        .map(|order| order.try_get("direction")?.enum_name())
+        .transpose()?
+        == Some("DESC")
+    {
         labels.reverse();
     }
-    connection::slice(ctx, labels.iter().map(|row| {
-        let mut value = label(row);
-        value["_scope"] = json!(scope);
-        value
-    }).collect())
+    connection::slice(
+        ctx,
+        labels
+            .iter()
+            .map(|row| {
+                let mut value = label(row);
+                value["_scope"] = json!(scope);
+                value
+            })
+            .collect(),
+    )
 }
 
 pub(super) async fn label_url(parent: &Value, request: &RequestContext) -> Result<Value> {
@@ -131,7 +172,11 @@ pub(super) async fn resolve(
     let repo = by_id(id, request).await?;
     let pool = &request.state.pool;
     match field {
-        "forkCount" => Ok(json!(db::repositories::records::network_fork_count(pool, repo.id).await.map_err(unavailable)?)),
+        "forkCount" => Ok(json!(db::repositories::records::network_fork_count(
+            pool, repo.id
+        )
+        .await
+        .map_err(unavailable)?)),
         "hasWikiEnabled" => Ok(json!(db::repositories::records::repository_wiki(
             pool, repo.id
         )
@@ -253,9 +298,15 @@ pub(super) async fn resolve(
             .await
             .map_err(unavailable)?;
             let reference = format!("refs/heads/{default}");
-            request.charge(refs.iter().map(|(name, oid)| name.len() + oid.len() + 64).sum())?;
+            request.charge(
+                refs.iter()
+                    .map(|(name, oid)| name.len() + oid.len() + 64)
+                    .sum(),
+            )?;
             match refs.get(&reference) {
-                Some(oid) => super::git_objects::reference_at(&repo, &reference, oid, request).await,
+                Some(oid) => {
+                    super::git_objects::reference_at(&repo, &reference, oid, request).await
+                }
                 None => Ok(Value::Null),
             }
         }

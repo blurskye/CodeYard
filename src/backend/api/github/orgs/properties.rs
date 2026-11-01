@@ -151,8 +151,7 @@ async fn define_one(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) =
-        input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let input = definition(input, Some(&property))?;
     let definitions = outcome(
         properties::define(&state.pool, actor.database_actor(), org.id, &[input])
@@ -177,8 +176,7 @@ async fn define_many(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) =
-        input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let inputs = input
         .properties
         .into_iter()

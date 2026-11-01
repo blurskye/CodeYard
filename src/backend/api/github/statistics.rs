@@ -57,16 +57,32 @@ fn history_weeks(stats: &CommitStatistics) -> Result<Vec<i64>> {
     Ok((first..=last).step_by(604800).collect())
 }
 
-async fn live_read(state: &AppState, auth: Option<&super::auth::Authentication>, repo: i64) -> Result<()> {
+async fn live_read(
+    state: &AppState,
+    auth: Option<&super::auth::Authentication>,
+    repo: i64,
+) -> Result<()> {
     if let Some(auth) = auth {
         if crate::backend::db::users::tokens::token_user(&state.pool, auth.token.id, false)
-            .await.map_err(Error::unavailable)?.is_none() {
+            .await
+            .map_err(Error::unavailable)?
+            .is_none()
+        {
             return Err(super::auth::required());
         }
-        auth.repository_scope(&state.pool, repo, "metadata", false).await.map_err(super::auth::scope_error)?;
+        auth.repository_scope(&state.pool, repo, "metadata", false)
+            .await
+            .map_err(super::auth::scope_error)?;
     }
-    if crate::backend::db::repositories::access::readable_repository_ids(&state.pool, auth.map(|auth| auth.user.id), &[repo])
-        .await.map_err(Error::unavailable)?.is_empty() {
+    if crate::backend::db::repositories::access::readable_repository_ids(
+        &state.pool,
+        auth.map(|auth| auth.user.id),
+        &[repo],
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .is_empty()
+    {
         return Err(Error::missing());
     }
     Ok(())
@@ -80,7 +96,11 @@ async fn statistics(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let kind = uri.path().rsplit('/').next().unwrap_or("");
-    let mode = if matches!(kind, "contributors" | "code_frequency") { crate::backend::git::StatisticsMode::Full } else { crate::backend::git::StatisticsMode::Counts };
+    let mode = if matches!(kind, "contributors" | "code_frequency") {
+        crate::backend::git::StatisticsMode::Full
+    } else {
+        crate::backend::git::StatisticsMode::Counts
+    };
     let stats = repo_store(&repo, state.cluster.as_ref())
         .commit_statistics(&repo.default_branch, mode)
         .await
@@ -96,9 +116,7 @@ async fn statistics(
     let value = match kind {
         "code_frequency" => {
             if stats.commits >= 10_000 {
-                return Err(Error::invalid(
-                    "Repository contains 10,000 or more commits",
-                ));
+                return Err(Error::invalid("Repository contains 10,000 or more commits"));
             }
             Value::Array(
                 history_weeks(&stats)?
@@ -130,7 +148,13 @@ async fn statistics(
         "participation" => {
             let accounts = accounts(&state, &stats).await?;
             // The 52 weeks end with today, so today's commits count in the last one.
-            let end = chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp() + 86400;
+            let end = chrono::Utc::now()
+                .date_naive()
+                .and_hms_opt(0, 0, 0)
+                .unwrap()
+                .and_utc()
+                .timestamp()
+                + 86400;
             let start = end - 52 * 604800;
             let mut all = vec![0u64; 52];
             let mut own = vec![0u64; 52];
@@ -139,14 +163,25 @@ async fn statistics(
                     let date = week + day as i64 * 86400;
                     if date >= start && date < end {
                         let index = ((date - start) / 604800) as usize;
-                        if owner { own[index] += count } else { all[index] += count }
+                        if owner {
+                            own[index] += count
+                        } else {
+                            all[index] += count
+                        }
                     }
                 }
             };
-            for week in &stats.weeks { add(week.week, &week.days, false); }
-            for author in stats.authors.iter().filter(|author| accounts.get(&author.email)
-                .is_some_and(|user| repo.is_personal_owner(user.id))) {
-                for week in &author.weeks { add(week.week, &week.days, true); }
+            for week in &stats.weeks {
+                add(week.week, &week.days, false);
+            }
+            for author in stats.authors.iter().filter(|author| {
+                accounts
+                    .get(&author.email)
+                    .is_some_and(|user| repo.is_personal_owner(user.id))
+            }) {
+                for week in &author.weeks {
+                    add(week.week, &week.days, true);
+                }
             }
             json!({"all":all, "owner":own})
         }
@@ -216,12 +251,16 @@ async fn contributors(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let authors = repo_store(&repo, state.cluster.as_ref())
-        .branch_contributors(&repo.default_branch).await.map_err(store_error)?;
+        .branch_contributors(&repo.default_branch)
+        .await
+        .map_err(store_error)?;
     live_read(&state, auth.as_ref(), repo.id).await?;
     if authors.is_empty() {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let accounts = contributor_accounts(&state.pool, &authors).await.map_err(Error::unavailable)?;
+    let accounts = contributor_accounts(&state.pool, &authors)
+        .await
+        .map_err(Error::unavailable)?;
     let mut authors = authors.iter().collect::<Vec<_>>();
     authors.sort_by(|a, b| b.commits.cmp(&a.commits).then(a.email.cmp(&b.email)));
     let anonymous = matches!(query.anon.as_deref(), Some("true" | "1"));
@@ -229,8 +268,9 @@ async fn contributors(
     for (index, author) in authors.into_iter().enumerate() {
         if let Some(user) = accounts.get(&author.email).filter(|_| index < 500) {
             if let Some(value) = values.iter_mut().find(|value| value["id"] == user.id) {
-                value["contributions"] =
-                    json!(value["contributions"].as_u64().unwrap_or_default() + u64::from(author.commits));
+                value["contributions"] = json!(
+                    value["contributions"].as_u64().unwrap_or_default() + u64::from(author.commits)
+                );
             } else {
                 let mut value = payloads::simple_person(&payloads::Person::of(user));
                 value["contributions"] = json!(author.commits);

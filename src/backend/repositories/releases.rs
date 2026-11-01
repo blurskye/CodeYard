@@ -29,7 +29,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub use crate::backend::db::releases::{LatestSelection, ReleaseChanges, ReleaseFields, ReleaseRefusal};
+pub use crate::backend::db::releases::{
+    LatestSelection, ReleaseChanges, ReleaseFields, ReleaseRefusal,
+};
 
 pub const MAX_ASSET_BYTES: usize = crate::backend::storage::MAX_OBJECT_BYTES as usize;
 
@@ -148,11 +150,17 @@ async fn can_write(
     match viewer {
         Some(actor) => {
             let repo = access::current_repository(pool, repo_id).await?;
-            let Some(user) = db::users::accounts::get_user_by_id(pool, actor).await.map_err(unavailable)? else {
+            let Some(user) = db::users::accounts::get_user_by_id(pool, actor)
+                .await
+                .map_err(unavailable)?
+            else {
                 return Ok(false);
             };
-            Ok(access::user_access(pool, &user, &repo).await.map_err(unavailable)?.can_write())
-        },
+            Ok(access::user_access(pool, &user, &repo)
+                .await
+                .map_err(unavailable)?
+                .can_write())
+        }
         None => Ok(false),
     }
 }
@@ -163,7 +171,9 @@ fn unavailable<E>(_: E) -> ReleaseError {
 
 /// Maps a refusal the database raised inside a write to the error the caller shows.
 fn write_error(error: Error) -> ReleaseError {
-    if error.is::<db::users::accounts::AccountRestricted>() { return ReleaseError::Access(AccessError::WriteDenied); }
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return ReleaseError::Access(AccessError::WriteDenied);
+    }
     match error.downcast_ref::<ReleaseRefusal>() {
         Some(ReleaseRefusal::Denied) => ReleaseError::Access(AccessError::WriteDenied),
         Some(ReleaseRefusal::NotFound) => ReleaseError::NotFound,
@@ -254,8 +264,17 @@ pub async fn list(
         .filter(|_| page > 0 && (1..=100).contains(&per_page))
         .and_then(|page| page.checked_mul(per_page))
         .ok_or(ReleaseError::Invalid("Release pagination is out of range"))?;
-    let snapshot = db::releases::read_release_snapshot(pool, viewer, repo_id,
-        db::releases::ReleaseSelection::Page { limit: per_page, offset }).await.map_err(write_error)?;
+    let snapshot = db::releases::read_release_snapshot(
+        pool,
+        viewer,
+        repo_id,
+        db::releases::ReleaseSelection::Page {
+            limit: per_page,
+            offset,
+        },
+    )
+    .await
+    .map_err(write_error)?;
     let can_write = can_write(pool, viewer, repo_id).await?;
     Ok(ReleasesPage {
         repository: snapshot.repository,
@@ -273,7 +292,13 @@ pub async fn detail_by_tag(
     repo_id: i64,
     tag: &str,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    visible_detail(pool, viewer, repo_id, db::releases::ReleaseSelection::Tag(tag)).await
+    visible_detail(
+        pool,
+        viewer,
+        repo_id,
+        db::releases::ReleaseSelection::Tag(tag),
+    )
+    .await
 }
 
 /// One release by its number, for the JSON API. A draft is hidden from everyone but writers.
@@ -283,7 +308,13 @@ pub async fn detail_by_id(
     repo_id: i64,
     release_id: i64,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    visible_detail(pool, viewer, repo_id, db::releases::ReleaseSelection::Id(release_id)).await
+    visible_detail(
+        pool,
+        viewer,
+        repo_id,
+        db::releases::ReleaseSelection::Id(release_id),
+    )
+    .await
 }
 
 async fn visible_detail(
@@ -293,7 +324,8 @@ async fn visible_detail(
     selection: db::releases::ReleaseSelection<'_>,
 ) -> Result<ReleaseDetail, ReleaseError> {
     let mut snapshot = db::releases::read_release_snapshot(pool, viewer, repo_id, selection)
-        .await.map_err(write_error)?;
+        .await
+        .map_err(write_error)?;
     let release = snapshot.releases.pop().ok_or(ReleaseError::NotFound)?;
     let can_write = can_write(pool, viewer, repo_id).await?;
     Ok(ReleaseDetail {
@@ -568,7 +600,11 @@ pub async fn update(
     let mut fields = fields.clone();
     // Whether this edit publishes, and so which checks run, is decided from this state.
     fields.expected_draft = Some(current.is_draft);
-    let tag = fields.tag.as_deref().unwrap_or(&current.tag_name).to_owned();
+    let tag = fields
+        .tag
+        .as_deref()
+        .unwrap_or(&current.tag_name)
+        .to_owned();
     validate_tag(&tag)?;
     if current.is_immutable && tag != current.tag_name {
         return Err(write_error(ReleaseRefusal::Immutable.into()));
@@ -578,36 +614,43 @@ pub async fn update(
     if publishing || fields.tag.is_some() || fields.target.is_some() {
         // Pin the row revision across Git work; a concurrent edit must not change which tag
         // and target this publication was prepared for.
-        fields.expected_revision.get_or_insert_with(|| db::releases::release_revision(&current));
+        fields
+            .expected_revision
+            .get_or_insert_with(|| db::releases::release_revision(&current));
         let refs = store.refs_from_primary().await.map_err(ReleaseError::Git)?;
         let reference = format!("refs/tags/{tag}");
         if !refs.contains_key(&reference) {
-            let target = fields.target.as_deref().unwrap_or(&current.target_commitish);
+            let target = fields
+                .target
+                .as_deref()
+                .unwrap_or(&current.target_commitish);
             if target.trim().is_empty() || target.len() > 255 {
                 return Err(ReleaseError::TargetRequired);
             }
-            let commit = store.commit_from_primary(&target_revision(&refs, target))
-                .await.map_err(ReleaseError::Git)?;
+            let commit = store
+                .commit_from_primary(&target_revision(&refs, target))
+                .await
+                .map_err(ReleaseError::Git)?;
             fields.target = Some(commit.sha.clone());
             if !fields.is_draft.unwrap_or(current.is_draft) {
-            if fields.new_tag_denied {
-                return Err(ReleaseError::Ref(RefError::Access(
-                    AccessError::WriteDenied,
-                )));
-            }
-            refs::create_tag(
-                pool,
-                cluster,
-                ci,
-                actor,
-                owner,
-                repository.id,
-                &tag,
-                &commit.sha,
-                None,
-            )
-            .await
-            .map_err(ReleaseError::from)?;
+                if fields.new_tag_denied {
+                    return Err(ReleaseError::Ref(RefError::Access(
+                        AccessError::WriteDenied,
+                    )));
+                }
+                refs::create_tag(
+                    pool,
+                    cluster,
+                    ci,
+                    actor,
+                    owner,
+                    repository.id,
+                    &tag,
+                    &commit.sha,
+                    None,
+                )
+                .await
+                .map_err(ReleaseError::from)?;
             }
         } else {
             // An existing tag, not target_commitish, determines the release revision.
@@ -736,7 +779,10 @@ pub struct AssetUpload<'a> {
     pub bytes: Vec<u8>,
 }
 
-#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn upload_asset(
     pool: &db::DbPool,
     store: &ObjectStore,
@@ -890,10 +936,11 @@ pub async fn download(
     asset_name: &str,
     count: bool,
 ) -> Result<files::AssetDownload, ReleaseError> {
-    let asset = db::releases::download_asset(pool, viewer, repo_id, Some(tag), Some(asset_name), None)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
+    let asset =
+        db::releases::download_asset(pool, viewer, repo_id, Some(tag), Some(asset_name), None)
+            .await
+            .map_err(unavailable)?
+            .ok_or(ReleaseError::NotFound)?;
     open_asset(pool, store, asset, count).await
 }
 

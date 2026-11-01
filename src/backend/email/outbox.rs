@@ -48,7 +48,9 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
         // Claims can outlive a link rotation or a notification's repository grant.
         let allowed = match db::email::delivery_allowed(pool, message.id, message.attempts).await {
             Ok(true) => match message.notification_id {
-                Some(notification) => db::notifications::records::notification_email_allowed(pool, notification).await,
+                Some(notification) => {
+                    db::notifications::records::notification_email_allowed(pool, notification).await
+                }
                 None => Ok(true),
             },
             outcome => outcome,
@@ -56,10 +58,17 @@ pub async fn send_due(pool: &DbPool, secrets: Option<&SecretEncryptor>) -> (usiz
         let refusal = match allowed {
             Ok(true) => None,
             Ok(false) => Some(db::email::withdraw_email(pool, message.id, message.attempts).await),
-            Err(error) => Some(db::email::mark_email_failed(
-                pool, message.id, message.attempts, &format!("delivery check failed: {error}"),
-                retry_delay(message.attempts), MAX_ATTEMPTS,
-            ).await),
+            Err(error) => Some(
+                db::email::mark_email_failed(
+                    pool,
+                    message.id,
+                    message.attempts,
+                    &format!("delivery check failed: {error}"),
+                    retry_delay(message.attempts),
+                    MAX_ATTEMPTS,
+                )
+                .await,
+            ),
         };
         if let Some(outcome) = refusal {
             if let Err(error) = outcome {

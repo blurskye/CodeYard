@@ -15,7 +15,8 @@ pub(crate) fn scan_window(limit: i64, offset: i64) -> (i64, i64, i64) {
 /// Private rows need the viewer's live session `$6`; `session_live` is the engine's expiry test
 /// for the session alias `s`.
 pub(crate) fn activity_sql(readable: &str, session_live: &str) -> String {
-    format!(r#"
+    format!(
+        r#"
         WITH pushes AS (
             SELECT 'push' AS kind, p.id AS item_id, p.repo_id, p.created_at,
                    CAST(NULL AS INTEGER) AS number, CAST(NULL AS TEXT) AS title, p.branch, p.commit_count
@@ -69,7 +70,8 @@ pub(crate) fn activity_sql(readable: &str, session_live: &str) -> String {
         LEFT JOIN users u ON u.id=$4 AND NOT u.is_banned AND NOT u.must_change_password
             AND EXISTS(SELECT 1 FROM sessions s WHERE s.id=$6 AND s.user_id=u.id AND {session_live})
         ORDER BY a.created_at DESC,a.kind,a.item_id DESC
-        "#)
+        "#
+    )
 }
 
 /// One item of a user's activity. `kind` is one of `push`, `repository_created`,

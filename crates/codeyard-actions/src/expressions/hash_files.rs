@@ -22,7 +22,11 @@ struct Pattern {
 
 fn path_text(path: &Path) -> String {
     let text = path.to_string_lossy().into_owned();
-    if cfg!(windows) { text.replace('\\', "/") } else { text }
+    if cfg!(windows) {
+        text.replace('\\', "/")
+    } else {
+        text
+    }
 }
 
 impl Pattern {
@@ -77,8 +81,14 @@ impl Pattern {
         for (i, part) in parts.iter().enumerate() {
             if !found_glob {
                 if let Some(literal) = literal_segment(part) {
-                    if literal == "." || literal == ".." || literal.contains('/') || (cfg!(windows) && (literal.contains('\\') || literal.contains(':'))) {
-                        return Err(Error::Evaluation("Decoded glob segments must not change directories".into()));
+                    if literal == "."
+                        || literal == ".."
+                        || literal.contains('/')
+                        || (cfg!(windows) && (literal.contains('\\') || literal.contains(':')))
+                    {
+                        return Err(Error::Evaluation(
+                            "Decoded glob segments must not change directories".into(),
+                        ));
                     }
                     root.push(literal);
                 } else {
@@ -100,7 +110,9 @@ impl Pattern {
             expression.push('/');
         }
         let regex = regex::RegexBuilder::new(&format!("^(?:{expression})$"))
-            .case_insensitive(cfg!(windows)).size_limit(256 * 1024).build()
+            .case_insensitive(cfg!(windows))
+            .size_limit(256 * 1024)
+            .build()
             .map_err(|e| Error::Evaluation(format!("Invalid glob pattern '{pattern}': {e}")))?;
         Ok(Self {
             regex,
@@ -169,7 +181,9 @@ fn segment_regex(segment: &str) -> String {
                     for (n, c) in inside.iter().enumerate() {
                         if n == 0 && matches!(c, '!' | '^') {
                             class.push('^');
-                            if inside.len() > 1 { class.push('/'); }
+                            if inside.len() > 1 {
+                                class.push('/');
+                            }
                         } else if matches!(c, '[' | '\\' | '&' | '~') {
                             class.push('\\');
                             class.push(*c);
@@ -221,12 +235,18 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
     let deadline = Instant::now() + Duration::from_secs(120);
     let mut patterns = Vec::new();
     let mut pattern_bytes = 0usize;
-    for line in arguments.iter().flat_map(|argument| argument.lines()).map(str::trim)
+    for line in arguments
+        .iter()
+        .flat_map(|argument| argument.lines())
+        .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
     {
         pattern_bytes = pattern_bytes.saturating_add(line.len());
-        if patterns.len() >= 256 || pattern_bytes > 1_048_576 || super::execution_expired(deadline) {
-            return Err(Error::Evaluation("hashFiles pattern budget exceeded".into()));
+        if patterns.len() >= 256 || pattern_bytes > 1_048_576 || super::execution_expired(deadline)
+        {
+            return Err(Error::Evaluation(
+                "hashFiles pattern budget exceeded".into(),
+            ));
         }
         patterns.push(Pattern::parse(line, &workspace)?);
     }
@@ -265,7 +285,9 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
         while let Some((path, mut ancestors)) = stack.pop() {
             visited += 1;
             if visited > 100_000 || ancestors.len() > 256 {
-                return Err(Error::Evaluation("hashFiles traversal budget exceeded".into()));
+                return Err(Error::Evaluation(
+                    "hashFiles traversal budget exceeded".into(),
+                ));
             }
             if super::execution_expired(deadline) {
                 return Err(Error::Evaluation(
@@ -283,10 +305,20 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
                 Err(error) => return Err(io_error(&path, error)),
             };
             if metadata.is_dir() {
-                if !patterns.iter().filter(|pattern| !pattern.exclude).any(|pattern| {
-                    pattern.matches(&path, true) || pattern.root.starts_with(&path)
-                        || (path.starts_with(&pattern.root) && pattern.max_depth.is_none_or(|depth| path.components().count() < depth))
-                }) { continue; }
+                if !patterns
+                    .iter()
+                    .filter(|pattern| !pattern.exclude)
+                    .any(|pattern| {
+                        pattern.matches(&path, true)
+                            || pattern.root.starts_with(&path)
+                            || (path.starts_with(&pattern.root)
+                                && pattern
+                                    .max_depth
+                                    .is_none_or(|depth| path.components().count() < depth))
+                    })
+                {
+                    continue;
+                }
                 if follow_links {
                     let real = fs::canonicalize(&path).map_err(|e| io_error(&path, e))?;
                     if ancestors.contains(&real) {
@@ -304,8 +336,11 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
                 }
                 let mut children = Vec::new();
                 for entry in fs::read_dir(&path).map_err(|e| io_error(&path, e))? {
-                    if children.len() + stack.len() >= 100_000 || super::execution_expired(deadline) {
-                        return Err(Error::Evaluation("hashFiles traversal budget exceeded".into()));
+                    if children.len() + stack.len() >= 100_000 || super::execution_expired(deadline)
+                    {
+                        return Err(Error::Evaluation(
+                            "hashFiles traversal budget exceeded".into(),
+                        ));
                     }
                     children.push(entry.map_err(|e| io_error(&path, e))?.path());
                 }
@@ -345,7 +380,9 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
                     options.custom_flags(libc::O_NONBLOCK);
                 }
                 let mut file = options.open(&path).map_err(|e| io_error(&path, e))?;
-                if !file.metadata().map_err(|e| io_error(&path, e))?.is_file() { continue; }
+                if !file.metadata().map_err(|e| io_error(&path, e))?.is_file() {
+                    continue;
+                }
                 let mut hash = Sha256::new();
                 let mut buffer = [0; 65536];
                 loop {

@@ -642,17 +642,23 @@ pub(super) async fn respond_with_hook_draft(
             }));
         }
         if model.tab == "private-registries" {
-            let registries =
-                match crate::backend::db::private_registries::list(&ctx.state.pool, actor, org, None, 0, 100)
-                    .await
-                {
-                    Ok((_, registries)) => registries,
-                    Err(crate::backend::db::private_registries::RegistryError::Secret(
-                        crate::backend::db::secrets::SecretsError::Denied
-                        | crate::backend::db::secrets::SecretsError::NotFound,
-                    )) => return not_found(ctx),
-                    Err(_) => return unavailable(ctx),
-                };
+            let registries = match crate::backend::db::private_registries::list(
+                &ctx.state.pool,
+                actor,
+                org,
+                None,
+                0,
+                100,
+            )
+            .await
+            {
+                Ok((_, registries)) => registries,
+                Err(crate::backend::db::private_registries::RegistryError::Secret(
+                    crate::backend::db::secrets::SecretsError::Denied
+                    | crate::backend::db::secrets::SecretsError::NotFound,
+                )) => return not_found(ctx),
+                Err(_) => return unavailable(ctx),
+            };
             let registries = match registries
                 .into_iter()
                 .map(super::private_registries::project)
@@ -735,7 +741,17 @@ pub(super) async fn respond_with_hook_draft(
             let viewer = ctx.require_user().ok();
             let built = match viewer {
                 Some(viewer) => {
-                    webhooks::panel::build(&ctx.state.pool, viewer, &crate::backend::db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), &place, &ctx.query).await
+                    webhooks::panel::build(
+                        &ctx.state.pool,
+                        viewer,
+                        &crate::backend::db::users::accounts::AccountCredential::Session(
+                            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                                .unwrap_or_default(),
+                        ),
+                        &place,
+                        &ctx.query,
+                    )
+                    .await
                 }
                 None => Err(webhooks::settings::HookError::Denied),
             };
@@ -1032,15 +1048,23 @@ async fn delete_with_repositories(
     actor: i64,
     org: i64,
 ) -> Result<OrganizationOutcome<()>, Response> {
-    crate::backend::organizations::delete(&ctx.state, (actor, crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), org)
-        .await
-        .map_err(|error| {
-            if let Some(error) = error.downcast_ref::<lifecycle::StorageError>() {
-                ctx.error(StatusCode::CONFLICT, error.message)
-            } else {
-                unavailable(ctx)
-            }
-        })
+    crate::backend::organizations::delete(
+        &ctx.state,
+        (
+            actor,
+            crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
+        org,
+    )
+    .await
+    .map_err(|error| {
+        if let Some(error) = error.downcast_ref::<lifecycle::StorageError>() {
+            ctx.error(StatusCode::CONFLICT, error.message)
+        } else {
+            unavailable(ctx)
+        }
+    })
 }
 
 async fn apply(

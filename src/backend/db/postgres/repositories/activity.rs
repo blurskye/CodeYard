@@ -40,6 +40,21 @@ pub async fn list(
     limit: i64,
     viewer: Option<i64>,
 ) -> Result<Vec<Activity>> {
-    Ok(sqlx::query_as::<_,Activity>(&crate::backend::db::repositories::activity::list_sql(true, filter, &super::access::readable_condition()))
-        .bind(repo).bind(filter.boundary).bind(filter.reference).bind(filter.actor).bind(filter.kind.map(Kind::as_str)).bind(filter.since.as_ref()).bind(limit.clamp(1,101)).bind(viewer).fetch_all(pool).await?)
+    Ok(
+        sqlx::query_as::<_, Activity>(&crate::backend::db::repositories::activity::list_sql(
+            true,
+            filter,
+            &super::access::readable_condition(),
+        ))
+        .bind(repo)
+        .bind(filter.boundary)
+        .bind(filter.reference)
+        .bind(filter.actor)
+        .bind(filter.kind.map(Kind::as_str))
+        .bind(filter.since.as_ref())
+        .bind(limit.clamp(1, 101))
+        .bind(viewer)
+        .fetch_all(pool)
+        .await?,
+    )
 }

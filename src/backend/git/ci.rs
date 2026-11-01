@@ -73,7 +73,11 @@ pub(crate) fn resolve_ci_commit(
         "invalid CI ref kind"
     );
     let tip = match git.find_reference(&full_ref) {
-        Ok(_) => Some(peel_to_commit_checked(&git, &full_ref).map_err(|error| anyhow::anyhow!("CI reference target is unreadable: {error:#}"))?.id()),
+        Ok(_) => Some(
+            peel_to_commit_checked(&git, &full_ref)
+                .map_err(|error| anyhow::anyhow!("CI reference target is unreadable: {error:#}"))?
+                .id(),
+        ),
         Err(error) if error.code() == git2::ErrorCode::NotFound => None,
         Err(error) => return Err(error.into()),
     };
@@ -230,8 +234,14 @@ fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {
             visited.len() <= 16384,
             "CI ref ancestry exceeds admission traversal bound"
         );
-        ensure!(std::time::Instant::now() < deadline, "CI ancestry exceeded its time budget");
-        bytes = bytes.checked_add(odb.read_header(oid)?.0).filter(|bytes| *bytes <= super::repository::MAX_COMMIT_WALK_BYTES).ok_or(super::ObjectTooLarge)?;
+        ensure!(
+            std::time::Instant::now() < deadline,
+            "CI ancestry exceeded its time budget"
+        );
+        bytes = bytes
+            .checked_add(odb.read_header(oid)?.0)
+            .filter(|bytes| *bytes <= super::repository::MAX_COMMIT_WALK_BYTES)
+            .ok_or(super::ObjectTooLarge)?;
         let commit = find_commit_checked(git, oid)?;
         ensure!(
             commit.parent_count() <= 64,

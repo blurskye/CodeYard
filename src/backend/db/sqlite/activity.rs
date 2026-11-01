@@ -33,9 +33,17 @@ pub async fn list_user_activity(
 ) -> Result<ActivityBatch> {
     let (limit, offset, prefix) = activity::scan_window(limit, offset);
     let readable = super::repositories::access::readable_condition();
-    let rows = sqlx::query_as::<_, ScannedActivity>(&activity::activity_sql(&readable, "julianday(s.expires_at)>julianday('now')"))
-        .bind(user_id).bind(limit).bind(offset).bind(viewer.map(|viewer| viewer.user)).bind(prefix)
-        .bind(viewer.map(|viewer| viewer.session))
-        .fetch_all(pool).await?;
+    let rows = sqlx::query_as::<_, ScannedActivity>(&activity::activity_sql(
+        &readable,
+        "julianday(s.expires_at)>julianday('now')",
+    ))
+    .bind(user_id)
+    .bind(limit)
+    .bind(offset)
+    .bind(viewer.map(|viewer| viewer.user))
+    .bind(prefix)
+    .bind(viewer.map(|viewer| viewer.session))
+    .fetch_all(pool)
+    .await?;
     Ok(ActivityBatch::from_scan(rows))
 }

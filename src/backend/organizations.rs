@@ -16,7 +16,8 @@ pub async fn convert_to_outside(
     org: i64,
     target: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
-    let _permit = CONVERSION_SLOTS.try_acquire()
+    let _permit = CONVERSION_SLOTS
+        .try_acquire()
         .map_err(|_| anyhow::anyhow!("Organization conversion admission is full"))?;
     organizations::convert_to_outside_collaborator(pool, actor, org, target).await
 }
@@ -29,13 +30,16 @@ pub async fn delete(
     org: i64,
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     let actor = actor.into();
-    let repositories =
-        match organizations::list_organization_deletion_repositories(&state.pool, actor.clone(), org)
-            .await?
-        {
-            Applied(repositories) => repositories,
-            other => return Ok(other.map(|_| ())),
-        };
+    let repositories = match organizations::list_organization_deletion_repositories(
+        &state.pool,
+        actor.clone(),
+        org,
+    )
+    .await?
+    {
+        Applied(repositories) => repositories,
+        other => return Ok(other.map(|_| ())),
+    };
     for repository in repositories {
         let deleted = match organizations::delete_organization_repository(
             &state.pool,

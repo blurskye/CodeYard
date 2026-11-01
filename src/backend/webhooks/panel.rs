@@ -233,7 +233,18 @@ async fn with_saved_credentials(
     let Some(id) = draft.id else {
         return draft;
     };
-    if let Ok(Some(snapshot)) = hooks::read_settings(pool, owner, actor, credential, Some(id), None, 0, Default::default()).await {
+    if let Ok(Some(snapshot)) = hooks::read_settings(
+        pool,
+        owner,
+        actor,
+        credential,
+        Some(id),
+        None,
+        0,
+        Default::default(),
+    )
+    .await
+    {
         if let Some(hook) = snapshot.hook {
             draft.has_secret = hook.encrypted_secret.is_some();
             draft.has_password = hook.username.is_some();
@@ -249,7 +260,13 @@ pub fn draft_from_form(pairs: &[(String, String)]) -> HookDraft {
         pairs
             .iter()
             .find(|(key, _)| key == name)
-            .map(|(_, value)| if name == "username" { value.clone() } else { value.trim().to_owned() })
+            .map(|(_, value)| {
+                if name == "username" {
+                    value.clone()
+                } else {
+                    value.trim().to_owned()
+                }
+            })
             .unwrap_or_default()
     };
     let checked = |name: &str| {
@@ -280,7 +297,10 @@ pub fn draft_from_form(pairs: &[(String, String)]) -> HookDraft {
 /// Runs one posted webhook action: `webhook-save`, `webhook-delete`, `webhook-ping` or
 /// `webhook-redeliver`. Returns the notice that names what was done. A refused save also returns
 /// the draft, so its form can be shown again with what was typed.
-#[expect(clippy::too_many_arguments, reason = "Explicit actor and resources keep operations HTTP-free.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn apply(
     pool: &DbPool,
     encryptor: Option<&SecretEncryptor>,
@@ -297,11 +317,22 @@ pub async fn apply(
         "webhook-save" => {
             let draft = draft_from_form(pairs);
             let submitted = form_of(&draft, pairs);
-            let revision = chrono::DateTime::parse_from_rfc3339(&draft.expected_updated).ok().map(|date| date.with_timezone(&chrono::Utc));
+            let revision = chrono::DateTime::parse_from_rfc3339(&draft.expected_updated)
+                .ok()
+                .map(|date| date.with_timezone(&chrono::Utc));
             if draft.id.is_some() && revision.is_none() {
-                return Err((HookError::Invalid("The original webhook revision is required. Reload before saving."), Some(draft)));
+                return Err((
+                    HookError::Invalid(
+                        "The original webhook revision is required. Reload before saving.",
+                    ),
+                    Some(draft),
+                ));
             }
-            match settings::save_with_revision(pool, encryptor, owner, actor, credential, draft.id, &submitted, revision).await {
+            match settings::save_with_revision(
+                pool, encryptor, owner, actor, credential, draft.id, &submitted, revision,
+            )
+            .await
+            {
                 Ok(_) => Ok("saved"),
                 Err(error) => Err((
                     error,
@@ -360,7 +391,11 @@ pub fn refusal(error: &HookError) -> (axum::http::StatusCode, &'static str) {
 /// The save a posted form asks for. The draft's secret text is the form's `secret` field.
 pub fn form_of(draft: &HookDraft, pairs: &[(String, String)]) -> HookForm {
     HookForm {
-        username: (!draft.username.is_empty() || pairs.iter().any(|(key, value)| key == "password" && !value.is_empty())).then(|| draft.username.clone()),
+        username: (!draft.username.is_empty()
+            || pairs
+                .iter()
+                .any(|(key, value)| key == "password" && !value.is_empty()))
+        .then(|| draft.username.clone()),
         password: pairs
             .iter()
             .find(|(key, _)| key == "password")

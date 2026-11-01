@@ -29,7 +29,9 @@ fn unavailable(_: anyhow::Error) -> RepoError {
 
 fn graph_error(error: db::dependency_graph::GraphError) -> RepoError {
     match error {
-        error @ (db::dependency_graph::GraphError::Denied | db::dependency_graph::GraphError::Disabled | db::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
+        error @ (db::dependency_graph::GraphError::Denied
+        | db::dependency_graph::GraphError::Disabled
+        | db::dependency_graph::GraphError::Limit) => invalid(error.to_string()),
         error => unavailable(error.into()),
     }
 }
@@ -69,7 +71,10 @@ const MAX_INVENTORY_PACKAGES: usize = 10_000;
 
 fn is_manifest(path: &str) -> bool {
     let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
-    (matches!(name, "package.json" | "package-lock.json" | "npm-shrinkwrap.json") || super::dependencies::lockfiles::FILES.contains(&name))
+    (matches!(
+        name,
+        "package.json" | "package-lock.json" | "npm-shrinkwrap.json"
+    ) || super::dependencies::lockfiles::FILES.contains(&name))
         && !directory
             .split('/')
             .any(|part| matches!(part, "node_modules" | "vendor" | ".git"))
@@ -150,13 +155,16 @@ pub(crate) async fn native_inventory(
     repo: &Repository,
     reference: &str,
 ) -> Result<(String, Vec<Package>), RepoError> {
-    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(graph_error)?;
+    db::dependency_graph::check_read(&state.pool, reader, repo.id)
+        .await
+        .map_err(graph_error)?;
     let store = repo_store(repo, state.cluster.as_ref());
     let sha = if crate::backend::git::is_full_commit_id(reference) {
         store.commit(reference).await?
     } else {
         store.commit_from_primary(reference).await?
-    }.sha;
+    }
+    .sha;
     native_inventory_at(state, reader, repo, reference, &sha).await
 }
 
@@ -207,8 +215,18 @@ pub(crate) async fn native_inventory_at(
             "The repository has too many dependency files; submit a dependency snapshot",
         ));
     }
-    let paths = listing.paths.iter().map(String::as_str).collect::<HashSet<_>>();
-    let sibling = |directory: &str, name: &str| if directory.is_empty() { name.to_owned() } else { format!("{directory}/{name}") };
+    let paths = listing
+        .paths
+        .iter()
+        .map(String::as_str)
+        .collect::<HashSet<_>>();
+    let sibling = |directory: &str, name: &str| {
+        if directory.is_empty() {
+            name.to_owned()
+        } else {
+            format!("{directory}/{name}")
+        }
+    };
     let mut packages = BTreeMap::new();
     for path in manifests {
         if covered.contains(path) {
@@ -220,10 +238,14 @@ pub(crate) async fn native_inventory_at(
             continue;
         }
         if name == "package.json" {
-            if paths.contains(shrinkwrap.as_str()) || paths.contains(sibling(directory, "package-lock.json").as_str()) {
+            if paths.contains(shrinkwrap.as_str())
+                || paths.contains(sibling(directory, "package-lock.json").as_str())
+            {
                 continue;
             }
-            return Err(invalid("An npm manifest needs a supported lockfile; submit a complete dependency snapshot"));
+            return Err(invalid(
+                "An npm manifest needs a supported lockfile; submit a complete dependency snapshot",
+            ));
         }
         let Some(bytes) = file(&store, &sha, path).await? else {
             continue;
@@ -245,7 +267,9 @@ pub(crate) async fn native_inventory_at(
             }
         }
     }
-    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(graph_error)?;
+    db::dependency_graph::check_read(&state.pool, reader, repo.id)
+        .await
+        .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
 }
 
@@ -311,7 +335,9 @@ pub async fn inventory(
             "Dependency inventory exceeds its limit",
         ));
     }
-    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(graph_error)?;
+    db::dependency_graph::check_read(&state.pool, reader, repo.id)
+        .await
+        .map_err(graph_error)?;
     Ok((sha, packages.into_values().collect()))
 }
 
@@ -384,9 +410,10 @@ pub(crate) async fn pinned_snapshots(
         }
         Err(error) => return Err(error),
     };
-    let mut snapshots = db::dependency_graph::snapshots(&state.pool, reader, repo.id, Some(reference), Some(&sha))
-        .await
-        .map_err(graph_error)?;
+    let mut snapshots =
+        db::dependency_graph::snapshots(&state.pool, reader, repo.id, Some(reference), Some(&sha))
+            .await
+            .map_err(graph_error)?;
     append_native_snapshot(state, reader, repo, reference, Some(&sha), &mut snapshots).await?;
     Ok(snapshots)
 }

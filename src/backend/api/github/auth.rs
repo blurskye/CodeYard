@@ -29,18 +29,32 @@ tokio::task_local! {
 
 /// Header-based adapters share one verified identity without letting a public-only audience
 /// borrow account authority. The scope is request-local and is not inherited by spawned tasks.
-pub(super) async fn request_context(request: axum::extract::Request, next: axum::middleware::Next) -> axum::response::Response {
+pub(super) async fn request_context(
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
     let context = RequestContext {
-        authorization: request.headers().get_all(header::AUTHORIZATION).iter().cloned().collect(),
+        authorization: request
+            .headers()
+            .get_all(header::AUTHORIZATION)
+            .iter()
+            .cloned()
+            .collect(),
         authentication: tokio::sync::OnceCell::new(),
         public_only: std::sync::atomic::AtomicBool::new(false),
     };
-    REQUEST_CONTEXT.scope(std::sync::Arc::new(context), next.run(request)).await
+    REQUEST_CONTEXT
+        .scope(std::sync::Arc::new(context), next.run(request))
+        .await
 }
 
 fn context(headers: &HeaderMap) -> Option<std::sync::Arc<RequestContext>> {
     let context = REQUEST_CONTEXT.try_with(std::sync::Arc::clone).ok()?;
-    context.authorization.iter().eq(headers.get_all(header::AUTHORIZATION).iter()).then_some(context)
+    context
+        .authorization
+        .iter()
+        .eq(headers.get_all(header::AUTHORIZATION).iter())
+        .then_some(context)
 }
 
 #[derive(Debug)]
@@ -60,21 +74,40 @@ pub(super) async fn recheck_repository_read(
 ) -> Result<()> {
     let mut auth = authenticate(state, headers, false).await?;
     let repo = db::repositories::records::get_repository_by_id(&state.pool, repository)
-        .await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     if let Some(reader) = &auth {
         let bounds = crate::backend::identity::github_apps::authority(&state.pool, reader.token.id)
-            .await.map_err(Error::unavailable)?;
-        if scope == "contents" && !crate::backend::identity::oauth_apps::allows_git(&state.pool, reader.token.id, bounds.as_ref(), repo.is_gist, false)
-            .await.map_err(Error::unavailable)?
+            .await
+            .map_err(Error::unavailable)?;
+        if scope == "contents"
+            && !crate::backend::identity::oauth_apps::allows_git(
+                &state.pool,
+                reader.token.id,
+                bounds.as_ref(),
+                repo.is_gist,
+                false,
+            )
+            .await
+            .map_err(Error::unavailable)?
         {
             // An OAuth token without repo scope may still read public content.
             auth = None;
         } else {
-            reader.repository_scope(&state.pool, repository, scope, false).await.map_err(scope_error)?;
+            reader
+                .repository_scope(&state.pool, repository, scope, false)
+                .await
+                .map_err(scope_error)?;
         }
     }
-    if !crate::backend::repositories::access::can_read(&state.pool, auth.as_ref().map(|reader| &reader.user), &repo)
-        .await.map_err(Error::unavailable)?
+    if !crate::backend::repositories::access::can_read(
+        &state.pool,
+        auth.as_ref().map(|reader| &reader.user),
+        &repo,
+    )
+    .await
+    .map_err(Error::unavailable)?
     {
         return Err(Error::missing());
     }
@@ -96,7 +129,11 @@ impl Authentication {
         (self.user.id, &self.credential()).into()
     }
 
-    pub fn ci_credential(&self, headers: &HeaderMap, permission: &'static str) -> Result<db::ci::CiCredential> {
+    pub fn ci_credential(
+        &self,
+        headers: &HeaderMap,
+        permission: &'static str,
+    ) -> Result<db::ci::CiCredential> {
         Ok(db::ci::CiCredential::Token {
             id: self.token.id,
             hash: token_hash(credential(headers).ok_or_else(required)?),
@@ -214,8 +251,13 @@ pub(super) async fn readable_repositories(
     scope: &str,
 ) -> Result<std::collections::HashSet<i64>> {
     if let Some(auth) = auth {
-        if db::users::tokens::token_user(&state.pool, auth.token.id, false).await.map_err(Error::unavailable)?
-            .is_none_or(|user| user.id != auth.user.id) { return Err(required()); }
+        if db::users::tokens::token_user(&state.pool, auth.token.id, false)
+            .await
+            .map_err(Error::unavailable)?
+            .is_none_or(|user| user.id != auth.user.id)
+        {
+            return Err(required());
+        }
     }
     let mut readable = std::collections::HashSet::new();
     for chunk in ids.chunks(100) {
@@ -235,12 +277,22 @@ pub(super) async fn readable_repositories(
             .map_err(Error::unavailable)?
         {
             if !repo.is_private {
-                if !db::fine_grained_tokens::classic_refused_repository(&state.pool, auth.token.id, repo.id).await.map_err(Error::unavailable)? {
+                if !db::fine_grained_tokens::classic_refused_repository(
+                    &state.pool,
+                    auth.token.id,
+                    repo.id,
+                )
+                .await
+                .map_err(Error::unavailable)?
+                {
                     readable.insert(repo.id);
                 }
                 continue;
             }
-            match auth.repository_scope(&state.pool, repo.id, scope, false).await {
+            match auth
+                .repository_scope(&state.pool, repo.id, scope, false)
+                .await
+            {
                 Ok(()) => {
                     readable.insert(repo.id);
                 }
@@ -260,18 +312,31 @@ pub(super) async fn referenced_repository(
     id: i64,
 ) -> Result<Option<db::models::Repository>> {
     let Some(repo) = db::repositories::records::get_repository_by_id(&state.pool, id)
-        .await.map_err(Error::unavailable)? else { return Ok(None) };
+        .await
+        .map_err(Error::unavailable)?
+    else {
+        return Ok(None);
+    };
     if repo.is_private {
         if let Some(auth) = auth {
-            match auth.repository_scope(&state.pool, id, "metadata", false).await {
+            match auth
+                .repository_scope(&state.pool, id, "metadata", false)
+                .await
+            {
                 Ok(()) => {}
                 Err(ScopeError::Missing | ScopeError::Denied) => return Ok(None),
                 Err(error) => return Err(scope_error(error)),
             }
         }
     }
-    if crate::backend::repositories::access::can_read(&state.pool, auth.map(|auth| &auth.user), &repo)
-        .await.map_err(Error::unavailable)? {
+    if crate::backend::repositories::access::can_read(
+        &state.pool,
+        auth.map(|auth| &auth.user),
+        &repo,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    {
         Ok(Some(repo))
     } else {
         Ok(None)
@@ -417,10 +482,19 @@ pub(super) async fn authorize_request(
                 )
             })?;
             let _ = accepted_permission.set(format!("{permission}={}", level(write)));
-            match repository_bounds(&state, &auth, &bounds, params, path, write, deleting, permission).await? {
+            match repository_bounds(
+                &state, &auth, &bounds, params, path, write, deleting, permission,
+            )
+            .await?
+            {
                 Some(true) => {}
                 None => return Err(Error::missing()),
-                Some(false) => return Err(Error::new(StatusCode::FORBIDDEN, "Resource not accessible by integration")),
+                Some(false) => {
+                    return Err(Error::new(
+                        StatusCode::FORBIDDEN,
+                        "Resource not accessible by integration",
+                    ))
+                }
             }
             return Ok(None);
         }
@@ -547,19 +621,39 @@ pub(super) async fn authorize_request(
             Some("pulls") => Some("pull_requests"),
             Some("attestations") => Some("attestations"),
             Some("license" | "dispatches") => Some("contents"),
-            Some("actions") if segments.last().is_some_and(|part| matches!(*part, "retention-limit" | "storage-limit")) => Some("administration"),
+            Some("actions")
+                if segments
+                    .last()
+                    .is_some_and(|part| matches!(*part, "retention-limit" | "storage-limit")) =>
+            {
+                Some("administration")
+            }
             _ => crate::backend::identity::github_apps::repository_permission(path, write),
-        }.ok_or_else(|| Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token"))?;
+        }
+        .ok_or_else(|| Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token"))?;
         // Jobs share repository route classification, but cannot acquire a credential's
         // administration or workflow capabilities merely by naming those routes.
-        if permission == "workflows" || permission == "administration" && segments.get(3) != Some(&"actions") {
-            return Err(Error::new(StatusCode::FORBIDDEN, "Resource not accessible by token"));
+        if permission == "workflows"
+            || permission == "administration" && segments.get(3) != Some(&"actions")
+        {
+            return Err(Error::new(
+                StatusCode::FORBIDDEN,
+                "Resource not accessible by token",
+            ));
         }
         let scope = permission.replace('_', "-");
-        match auth.repository_scope(&state.pool, repo.id, &scope, write).await {
+        match auth
+            .repository_scope(&state.pool, repo.id, &scope, write)
+            .await
+        {
             Ok(()) => {}
-            Err(ScopeError::Denied) if permission == "issues" && pull_conversation(&state.pool, repo.id, path).await? => {
-                auth.repository_scope(&state.pool, repo.id, "pull-requests", write).await.map_err(scope_error)?;
+            Err(ScopeError::Denied)
+                if permission == "issues"
+                    && pull_conversation(&state.pool, repo.id, path).await? =>
+            {
+                auth.repository_scope(&state.pool, repo.id, "pull-requests", write)
+                    .await
+                    .map_err(scope_error)?;
             }
             Err(error) => return Err(scope_error(error)),
         }
@@ -568,7 +662,9 @@ pub(super) async fn authorize_request(
     .await;
     if anonymous.into_inner() {
         if let Some(context) = context(request.headers()) {
-            context.public_only.store(true, std::sync::atomic::Ordering::Relaxed);
+            context
+                .public_only
+                .store(true, std::sync::atomic::Ordering::Relaxed);
         } else {
             // Keep a safe downgrade for routers that do not install the shared context.
             request.headers_mut().remove(header::AUTHORIZATION);
@@ -604,11 +700,23 @@ fn level(write: bool) -> &'static str {
     }
 }
 
-async fn bound_repository(state: &AppState, params: &std::collections::HashMap<String, String>) -> Result<db::models::Repository> {
+async fn bound_repository(
+    state: &AppState,
+    params: &std::collections::HashMap<String, String>,
+) -> Result<db::models::Repository> {
     let repo = if let Some(id) = params.get("repository_id") {
-        db::repositories::records::get_repository_by_id(&state.pool, id.parse().map_err(|_| Error::missing())?).await
+        db::repositories::records::get_repository_by_id(
+            &state.pool,
+            id.parse().map_err(|_| Error::missing())?,
+        )
+        .await
     } else {
-        db::repositories::records::get_repository(&state.pool, params.get("owner").ok_or_else(Error::missing)?, params.get("repo").ok_or_else(Error::missing)?).await
+        db::repositories::records::get_repository(
+            &state.pool,
+            params.get("owner").ok_or_else(Error::missing)?,
+            params.get("repo").ok_or_else(Error::missing)?,
+        )
+        .await
     };
     repo.map_err(Error::unavailable)?.ok_or_else(Error::missing)
 }
@@ -618,11 +726,19 @@ async fn pull_conversation(pool: &db::DbPool, repo: i64, path: &str) -> Result<b
     let segments: Vec<_> = path.trim_start_matches('/').split('/').collect();
     match segments.as_slice() {
         ["repos", _, _, "issues", number, "comments"] => match number.parse() {
-            Ok(number) => Ok(db::pull_requests::records::get_pull_request(pool, repo, number).await.map_err(Error::unavailable)?.is_some()),
+            Ok(number) => Ok(
+                db::pull_requests::records::get_pull_request(pool, repo, number)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .is_some(),
+            ),
             Err(_) => Ok(false),
         },
         ["repos", _, _, "issues", "comments", id, ..] => match id.parse() {
-            Ok(id) => Ok(matches!(super::comments::find(pool, repo, id).await?.item, db::assignees::AssignedItem::PullRequest(_))),
+            Ok(id) => Ok(matches!(
+                super::comments::find(pool, repo, id).await?.item,
+                db::assignees::AssignedItem::PullRequest(_)
+            )),
             Err(_) => Ok(false),
         },
         _ => Ok(false),
@@ -631,7 +747,10 @@ async fn pull_conversation(pool: &db::DbPool, repo: i64, path: &str) -> Result<b
 
 /// Checks one repository request against an App's or a fine-grained token's bounds. `None`
 /// means the credential cannot reach the repository at all.
-#[expect(clippy::too_many_arguments, reason = "The check takes the credential, path parameters and access kind as the route has them.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The check takes the credential, path parameters and access kind as the route has them."
+)]
 async fn repository_bounds(
     state: &AppState,
     auth: &Authentication,
@@ -647,14 +766,16 @@ async fn repository_bounds(
     let segments: Vec<_> = path.trim_start_matches('/').split('/').collect();
     let pull_conversation = pull_conversation(&state.pool, repo.id, path).await?;
     let workflow = write
-        && ((!deleting && matches!(
-            segments.as_slice(),
-            ["repos", _, _, "git", "refs" | "ref", ..]
-        )) || params.get("path").is_some_and(|path| {
-            path == ".github"
-                || path == ".github/workflows"
-                || path.starts_with(".github/workflows/")
-        }));
+        && ((!deleting
+            && matches!(
+                segments.as_slice(),
+                ["repos", _, _, "git", "refs" | "ref", ..]
+            ))
+            || params.get("path").is_some_and(|path| {
+                path == ".github"
+                    || path == ".github/workflows"
+                    || path.starts_with(".github/workflows/")
+            }));
     let Some(granted) = bounds
         .repository(&state.pool, auth.user.id, repo.id)
         .await
@@ -679,7 +800,10 @@ async fn repository_bounds(
 
 /// Checks a fine-grained token's request. `Ok(true)` asks to answer it as an anonymous one,
 /// which reads public data only.
-#[expect(clippy::too_many_arguments, reason = "The check takes the credential, grant, path parameters and access kind as the route has them.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The check takes the credential, grant, path parameters and access kind as the route has them."
+)]
 async fn personal(
     state: &AppState,
     auth: &Authentication,
@@ -716,8 +840,14 @@ async fn personal(
         Need::Organization(key) => {
             let org = organization(segments.get(1).copied().unwrap_or_default()).await?;
             grant.organization(org.id, key, write)
-                && (!(write && key == "organization_custom_properties" && segments.get(3) == Some(&"schema"))
-                    || grant.permissions.get(key).and_then(serde_json::Value::as_str) == Some("admin"))
+                && (!(write
+                    && key == "organization_custom_properties"
+                    && segments.get(3) == Some(&"schema"))
+                    || grant
+                        .permissions
+                        .get(key)
+                        .and_then(serde_json::Value::as_str)
+                        == Some("admin"))
         }
         Need::CreateRepository => {
             let owner = match segments.as_slice() {
@@ -763,9 +893,10 @@ async fn personal(
         Need::Repository(key) => {
             let params = params.ok_or_else(Error::missing)?;
             // A private repository outside the token reads as missing, as on GitHub.
-            let allowed = repository_bounds(state, auth, bounds, params, path, write, deleting, key)
-                .await?
-                .ok_or_else(Error::missing)?;
+            let allowed =
+                repository_bounds(state, auth, bounds, params, path, write, deleting, key)
+                    .await?
+                    .ok_or_else(Error::missing)?;
             // A public repository outside the token's selection, or a token not yet approved,
             // reads as an anonymous request does: the user's own rights must not apply.
             if allowed && !write {
@@ -843,12 +974,19 @@ async fn classic_policy(
                 .map_err(Error::unavailable)?
                 .and_then(|repo| repo.owner_org_id)
         }
-        ["repositories", id, ..] => db::repositories::records::get_repository_by_id(&state.pool, id.parse().map_err(|_| Error::missing())?)
-            .await.map_err(Error::unavailable)?.and_then(|repo| repo.owner_org_id),
-        ["orgs" | "organizations", name, ..] => db::organizations::get_public_organization(&state.pool, name)
-            .await
-            .map_err(Error::unavailable)?
-            .map(|org| org.id),
+        ["repositories", id, ..] => db::repositories::records::get_repository_by_id(
+            &state.pool,
+            id.parse().map_err(|_| Error::missing())?,
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .and_then(|repo| repo.owner_org_id),
+        ["orgs" | "organizations", name, ..] => {
+            db::organizations::get_public_organization(&state.pool, name)
+                .await
+                .map_err(Error::unavailable)?
+                .map(|org| org.id)
+        }
         _ => None,
     };
     match org {
@@ -879,7 +1017,11 @@ pub(in crate::backend::api) async fn authenticate(
     required_auth: bool,
 ) -> Result<Option<Authentication>> {
     let identity = identity(state, headers, required_auth).await?;
-    if context(headers).is_some_and(|context| context.public_only.load(std::sync::atomic::Ordering::Relaxed)) {
+    if context(headers).is_some_and(|context| {
+        context
+            .public_only
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }) {
         return Ok(None);
     }
     Ok(identity)
@@ -887,17 +1029,30 @@ pub(in crate::backend::api) async fn authenticate(
 
 /// For operations that explicitly apply repository-permission filtering themselves, keep
 /// verified identity independent of the default public-data audience.
-pub(super) async fn identity(state: &AppState, headers: &HeaderMap, required_auth: bool) -> Result<Option<Authentication>> {
+pub(super) async fn identity(
+    state: &AppState,
+    headers: &HeaderMap,
+    required_auth: bool,
+) -> Result<Option<Authentication>> {
     let identity = if let Some(context) = context(headers) {
-        context.authentication.get_or_try_init(|| authenticate_uncached(state, headers)).await?.clone()
+        context
+            .authentication
+            .get_or_try_init(|| authenticate_uncached(state, headers))
+            .await?
+            .clone()
     } else {
         authenticate_uncached(state, headers).await?
     };
-    if required_auth && identity.is_none() { return Err(required()); }
+    if required_auth && identity.is_none() {
+        return Err(required());
+    }
     Ok(identity)
 }
 
-async fn authenticate_uncached(state: &AppState, headers: &HeaderMap) -> Result<Option<Authentication>> {
+async fn authenticate_uncached(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<Option<Authentication>> {
     let config = db::node_config::get_node_configuration(&state.pool)
         .await
         .map_err(Error::unavailable)?

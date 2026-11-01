@@ -188,7 +188,10 @@ fn policy(form: &Fields) -> Result<Policy, &'static str> {
 }
 
 async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow::Result<Outcome> {
-    let actor = db::credentials::Actor::from((actor, crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()));
+    let actor = db::credentials::Actor::from((
+        actor,
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    ));
     let pool = &ctx.state.pool;
     let token = organization::field(form, "token_id").parse::<i64>().ok();
     let changed = |done: bool| {

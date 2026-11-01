@@ -18,7 +18,9 @@ pub enum EngagementError {
 }
 
 fn mutation_error(error: anyhow::Error) -> EngagementError {
-    if error.is::<db::users::blocks::InteractionBlocked>() || error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<db::users::blocks::InteractionBlocked>()
+        || error.is::<db::users::accounts::AccountRestricted>()
+    {
         EngagementError::Access(access::AccessError::WriteDenied)
     } else {
         EngagementError::Unavailable
@@ -83,7 +85,15 @@ pub async fn set_subscription(
     let authority = actor.into();
     let actor = authority.user_id;
     if subscribed && !ignored {
-        change(pool, broadcaster, authority, repo_id, Engagement::Watch, true).await?;
+        change(
+            pool,
+            broadcaster,
+            authority,
+            repo_id,
+            Engagement::Watch,
+            true,
+        )
+        .await?;
     } else {
         access::check_read(pool, repo_id, Some(actor))
             .await
@@ -160,10 +170,7 @@ pub async fn change(
         )
         .await;
     }
-    if let Some(recipient) = updated
-        .personal_owner_id()
-        .filter(|_| enabled && changed)
-    {
+    if let Some(recipient) = updated.personal_owner_id().filter(|_| enabled && changed) {
         if let Some(owner) = db::repositories::records::repository_owner_name(pool, repo_id)
             .await
             .ok()

@@ -164,10 +164,11 @@ async fn tokens(
 ) -> Result<Vec<(Token, User)>> {
     let repository = match &filters.repository {
         Some(name) => {
-            let Some(repo) = db::repositories::records::get_repository(&state.pool, &org.name, name)
-                .await
-                .map_err(Error::unavailable)?
-                .filter(|repo| repo.owner_org_id == Some(org.id) && !repo.is_gist)
+            let Some(repo) =
+                db::repositories::records::get_repository(&state.pool, &org.name, name)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .filter(|repo| repo.owner_org_id == Some(org.id) && !repo.is_gist)
             else {
                 // No token reaches a repository the organization does not have.
                 return Ok(Vec::new());
@@ -323,9 +324,14 @@ async fn repositories(
     let mut more = false;
     match Access::parse(&token.repository_access) {
         Some(Access::Selected) => {
-            for (repo, _) in db::fine_grained_tokens::repositories(&state.pool, token.token_id, actor.user.id, &actor.credential())
-                .await
-                .map_err(Error::unavailable)?
+            for (repo, _) in db::fine_grained_tokens::repositories(
+                &state.pool,
+                token.token_id,
+                actor.user.id,
+                &actor.credential(),
+            )
+            .await
+            .map_err(Error::unavailable)?
             {
                 if let Some(repo) =
                     db::repositories::records::get_repository_by_id(&state.pool, repo)

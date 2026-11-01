@@ -113,7 +113,13 @@ async fn open(
     }
     if pull.state == "open" {
         pull_requests::mutations::repair_open_pull(
-            pool, ci, &pinned.repository, &pinned.repository, actor.into(), &pull, true,
+            pool,
+            ci,
+            &pinned.repository,
+            &pinned.repository,
+            actor.into(),
+            &pull,
+            true,
         )
         .await?;
     }
@@ -139,9 +145,24 @@ pub(crate) async fn propose(
 ) -> Result<()> {
     let actor = job.updates_actor_id.ok_or(Refusal::Denied)?;
     let snapshot = records::snapshot(pool, actor, pinned.repository.id).await?;
-    let mut proposals = snapshot.alerts.values().filter_map(|alert| alert.update.as_ref().map(|update| (
-        (alert.finding.package.path.clone(), alert.finding.package.name.clone(), update.old_version.clone(), update.fixed_version.clone(), update.base_sha.clone()), update.clone(),
-    ))).collect::<std::collections::HashMap<_, _>>();
+    let mut proposals = snapshot
+        .alerts
+        .values()
+        .filter_map(|alert| {
+            alert.update.as_ref().map(|update| {
+                (
+                    (
+                        alert.finding.package.path.clone(),
+                        alert.finding.package.name.clone(),
+                        update.old_version.clone(),
+                        update.fixed_version.clone(),
+                        update.base_sha.clone(),
+                    ),
+                    update.clone(),
+                )
+            })
+        })
+        .collect::<std::collections::HashMap<_, _>>();
     let packages = npm::Lockfile::parse(&pinned.manifest, &pinned.lock)?.packages;
     let store = repo_store(&pinned.repository, ci.cluster.as_ref());
     // The advisories without OSV records veto every candidate too, and they are read once for
@@ -294,7 +315,13 @@ pub(crate) async fn propose(
             continue;
         };
         records::check_job(pool, job, Feature::Updates).await?;
-        let target = (package.path.clone(), package.name.clone(), package.version.to_string(), version.to_string(), pinned.sha.clone());
+        let target = (
+            package.path.clone(),
+            package.name.clone(),
+            package.version.to_string(),
+            version.to_string(),
+            pinned.sha.clone(),
+        );
         if let Some(update) = proposals.get(&target) {
             let mut receipt = update.clone();
             receipt.pull_request_id = None;

@@ -2,7 +2,10 @@
 //! trees, create the commit, then move the branch only if it still points where the
 //! editor started.
 use super::{ErrorKind, RepoError};
-use crate::backend::git::{objects::Signature, repository::{process, CommitInfo}};
+use crate::backend::git::{
+    objects::Signature,
+    repository::{process, CommitInfo},
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -32,19 +35,50 @@ pub struct CommitIdentities {
 }
 impl CommitIdentities {
     pub(crate) fn validate(&self) -> Result<(), RepoError> {
-        for identity in self.author.iter().chain(self.committer.iter()) { identity.validate()?; }
+        for identity in self.author.iter().chain(self.committer.iter()) {
+            identity.validate()?;
+        }
         Ok(())
     }
 
     fn resolved(&self, name: &str, email: &str) -> (Signature, Signature) {
-        let fallback = || Signature { name: name.into(), email: email.into(), date: None };
-        (self.author.clone().unwrap_or_else(fallback), self.committer.clone().unwrap_or_else(fallback))
+        let fallback = || Signature {
+            name: name.into(),
+            email: email.into(),
+            date: None,
+        };
+        (
+            self.author.clone().unwrap_or_else(fallback),
+            self.committer.clone().unwrap_or_else(fallback),
+        )
     }
 
     pub(super) fn check_prepared(&self, commit: &CommitInfo) -> Result<(), RepoError> {
-        for (identity, name, email, timestamp) in [(&self.author, &commit.author_name, &commit.author_email, commit.timestamp), (&self.committer, &commit.committer_name, &commit.committer_email, commit.committer_timestamp)] {
-            if identity.as_ref().is_some_and(|identity| identity.name.trim() != name.as_str() || identity.email.trim() != email.as_str() || identity.date.is_some_and(|date| date.timestamp() != timestamp)) {
-                return Err(RepoError::new(ErrorKind::Unavailable, "Storage did not preserve the requested commit identities."));
+        for (identity, name, email, timestamp) in [
+            (
+                &self.author,
+                &commit.author_name,
+                &commit.author_email,
+                commit.timestamp,
+            ),
+            (
+                &self.committer,
+                &commit.committer_name,
+                &commit.committer_email,
+                commit.committer_timestamp,
+            ),
+        ] {
+            if identity.as_ref().is_some_and(|identity| {
+                identity.name.trim() != name.as_str()
+                    || identity.email.trim() != email.as_str()
+                    || identity
+                        .date
+                        .is_some_and(|date| date.timestamp() != timestamp)
+            }) {
+                return Err(RepoError::new(
+                    ErrorKind::Unavailable,
+                    "Storage did not preserve the requested commit identities.",
+                ));
             }
         }
         Ok(())
@@ -175,9 +209,7 @@ fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoErro
     if branch.is_empty() || crate::backend::git::branch_ref(branch).is_none() {
         return Err(invalid("Invalid branch name."));
     }
-    if expected_revision != "unborn"
-        && !crate::git_ids::is_full_commit_id(expected_revision)
-    {
+    if expected_revision != "unborn" && !crate::git_ids::is_full_commit_id(expected_revision) {
         return Err(invalid("A complete expected branch revision is required."));
     }
     Ok(())
@@ -204,7 +236,9 @@ pub(super) struct StagedFile {
     _permit: tokio::sync::OwnedSemaphorePermit,
 }
 impl StagedFile {
-    pub(super) fn path(&self) -> &Path { self.temporary.path() }
+    pub(super) fn path(&self) -> &Path {
+        self.temporary.path()
+    }
 }
 static STAGED: LazyLock<Mutex<std::collections::HashMap<String, Arc<StagedFile>>>> =
     LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
@@ -213,11 +247,20 @@ static STAGING_SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
 
 /// The staged objects of `prepared`. They stay staged until a publication succeeds, so a refused
 /// one can be tried again until the preparation expires.
-pub(super) fn claim_staged(path: &Path, prepared: &PreparedFile) -> Result<Option<Arc<StagedFile>>, RepoError> {
-    let Some(key) = &prepared.staging else { return Ok(None); };
+pub(super) fn claim_staged(
+    path: &Path,
+    prepared: &PreparedFile,
+) -> Result<Option<Arc<StagedFile>>, RepoError> {
+    let Some(key) = &prepared.staging else {
+        return Ok(None);
+    };
     let staged = STAGED.lock().map_err(|_| unavailable())?;
-    let entry = staged.get(key).ok_or_else(|| invalid("The prepared file expired; reopen the editor."))?;
-    if entry.destination != path { return Err(invalid("Invalid prepared file publication.")); }
+    let entry = staged
+        .get(key)
+        .ok_or_else(|| invalid("The prepared file expired; reopen the editor."))?;
+    if entry.destination != path {
+        return Err(invalid("Invalid prepared file publication."));
+    }
     Ok(Some(entry.clone()))
 }
 
@@ -241,8 +284,16 @@ impl Repo<'_> {
         command.arg("--git-dir").arg(self.0).args(args);
         if let Some((author, committer)) = identity {
             for (role, identity) in [("AUTHOR", author), ("COMMITTER", committer)] {
-                command.env(format!("GIT_{role}_NAME"), &identity.name).env(format!("GIT_{role}_EMAIL"), &identity.email).env_remove(format!("GIT_{role}_DATE"));
-                if let Some(date) = identity.date { command.env(format!("GIT_{role}_DATE"), date.format("@%s %z").to_string()); }
+                command
+                    .env(format!("GIT_{role}_NAME"), &identity.name)
+                    .env(format!("GIT_{role}_EMAIL"), &identity.email)
+                    .env_remove(format!("GIT_{role}_DATE"));
+                if let Some(date) = identity.date {
+                    command.env(
+                        format!("GIT_{role}_DATE"),
+                        date.format("@%s %z").to_string(),
+                    );
+                }
             }
         }
         process::buffered(command, input, MAX_OUTPUT, TIMEOUT)
@@ -456,16 +507,30 @@ async fn prepare_commit(
         }
         return Err(conflict());
     }
-    let permit = STAGING_SLOTS.clone().try_acquire_owned().map_err(|_| unavailable())?;
+    let permit = STAGING_SLOTS
+        .clone()
+        .try_acquire_owned()
+        .map_err(|_| unavailable())?;
     let temporary = tempfile::tempdir().map_err(|_| unavailable())?;
     crate::backend::git::repository::initialize_repository(temporary.path(), None, branch)
-        .await.map_err(RepoError::from)?;
+        .await
+        .map_err(RepoError::from)?;
     let objects = std::fs::canonicalize(path.join("objects")).map_err(|_| unavailable())?;
-    let objects = objects.to_str().filter(|path| !path.contains(['\r', '\n']))
+    let objects = objects
+        .to_str()
+        .filter(|path| !path.contains(['\r', '\n']))
         .ok_or_else(unavailable)?;
-    tokio::fs::write(temporary.path().join("objects/info/alternates"), format!("{objects}\n"))
-        .await.map_err(|_| unavailable())?;
-    let staged = Arc::new(StagedFile { temporary, destination: path.to_owned(), _permit: permit });
+    tokio::fs::write(
+        temporary.path().join("objects/info/alternates"),
+        format!("{objects}\n"),
+    )
+    .await
+    .map_err(|_| unavailable())?;
+    let staged = Arc::new(StagedFile {
+        temporary,
+        destination: path.to_owned(),
+        _permit: permit,
+    });
     let storage = Repo(staged.path());
     let tree = match &current {
         Some(parent) => Some(oid(&storage
@@ -499,11 +564,16 @@ async fn prepare_commit(
         return Err(unavailable());
     }
     let key = uuid::Uuid::new_v4().to_string();
-    STAGED.lock().map_err(|_| unavailable())?.insert(key.clone(), staged);
+    STAGED
+        .lock()
+        .map_err(|_| unavailable())?
+        .insert(key.clone(), staged);
     let expires = key.clone();
     tokio::spawn(async move {
         tokio::time::sleep(Duration::from_secs(15 * 60)).await;
-        if let Ok(mut staged) = STAGED.lock() { staged.remove(&expires); }
+        if let Ok(mut staged) = STAGED.lock() {
+            staged.remove(&expires);
+        }
     });
     Ok(PreparedFile {
         staging: Some(key),
@@ -525,10 +595,25 @@ pub(super) async fn prepare(
     author: &str,
     email: &str,
 ) -> Result<PreparedFile, RepoError> {
-    prepare_with_identities(path, input, content, author, email, &CommitIdentities::default()).await
+    prepare_with_identities(
+        path,
+        input,
+        content,
+        author,
+        email,
+        &CommitIdentities::default(),
+    )
+    .await
 }
 
-pub(super) async fn prepare_with_identities(path: &Path, input: &FileWrite, content: &[u8], author: &str, email: &str, identities: &CommitIdentities) -> Result<PreparedFile, RepoError> {
+pub(super) async fn prepare_with_identities(
+    path: &Path,
+    input: &FileWrite,
+    content: &[u8],
+    author: &str,
+    email: &str,
+    identities: &CommitIdentities,
+) -> Result<PreparedFile, RepoError> {
     input.validate()?;
     identities.validate()?;
     let (author, committer) = identities.resolved(author, email);
@@ -580,7 +665,11 @@ pub(super) async fn prepare_upload(
         });
         offset = end;
     }
-    let identity = Signature { name: author.into(), email: email.into(), date: None };
+    let identity = Signature {
+        name: author.into(),
+        email: email.into(),
+        date: None,
+    };
     prepare_commit(
         path,
         &write.branch,
@@ -592,7 +681,11 @@ pub(super) async fn prepare_upload(
     .await
 }
 
-pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged: Option<&StagedFile>) -> Result<CommitInfo, RepoError> {
+pub(super) async fn publish_staged(
+    path: &Path,
+    prepared: &PreparedFile,
+    staged: Option<&StagedFile>,
+) -> Result<CommitInfo, RepoError> {
     let repo = Repo(path);
     let objects = Repo(staged.map_or(path, StagedFile::path));
     if crate::backend::git::branch_ref(&prepared.branch).as_deref()
@@ -606,13 +699,26 @@ pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged:
         return Err(invalid("Invalid prepared file publication."));
     }
     if prepared.expected.is_none() {
-        let references = repo.checked(&["for-each-ref", "--format=%(refname)", "refs/heads"], b"", None).await?;
+        let references = repo
+            .checked(
+                &["for-each-ref", "--format=%(refname)", "refs/heads"],
+                b"",
+                None,
+            )
+            .await?;
         let references = std::str::from_utf8(&references).map_err(|_| unavailable())?;
         if references.lines().any(|reference| {
-            reference.strip_prefix(&prepared.reference).is_some_and(|tail| tail.starts_with('/'))
-                || prepared.reference.strip_prefix(reference).is_some_and(|tail| tail.starts_with('/'))
+            reference
+                .strip_prefix(&prepared.reference)
+                .is_some_and(|tail| tail.starts_with('/'))
+                || prepared
+                    .reference
+                    .strip_prefix(reference)
+                    .is_some_and(|tail| tail.starts_with('/'))
         }) {
-            return Err(invalid("The branch name conflicts with an existing branch namespace."));
+            return Err(invalid(
+                "The branch name conflicts with an existing branch namespace.",
+            ));
         }
     }
     let bytes = objects
@@ -636,12 +742,31 @@ pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged:
     let result = if staged.is_some() {
         let destination = std::path::absolute(path).map_err(|_| unavailable())?;
         let destination = destination.to_str().ok_or_else(unavailable)?;
-        let lease = format!("--force-with-lease={}:{}", prepared.reference, prepared.expected.as_deref().unwrap_or_default());
+        let lease = format!(
+            "--force-with-lease={}:{}",
+            prepared.reference,
+            prepared.expected.as_deref().unwrap_or_default()
+        );
         let refspec = format!("{}:{}", prepared.commit.sha, prepared.reference);
         // receive-pack quarantines incoming objects until the destination CAS accepts them.
-        objects.command(&["push", "--porcelain", "--no-verify", &lease, "--", destination, &refspec], b"", None).await
+        objects
+            .command(
+                &[
+                    "push",
+                    "--porcelain",
+                    "--no-verify",
+                    &lease,
+                    "--",
+                    destination,
+                    &refspec,
+                ],
+                b"",
+                None,
+            )
+            .await
     } else {
-        repo.command(&["update-ref", "--stdin"], transaction.as_bytes(), None).await
+        repo.command(&["update-ref", "--stdin"], transaction.as_bytes(), None)
+            .await
     };
     if result.as_ref().is_ok_and(|(status, _)| status.success()) {
         return Ok(prepared.commit.clone());
@@ -651,7 +776,9 @@ pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged:
     if current.as_deref() == Some(prepared.commit.sha.as_str()) {
         return Ok(prepared.commit.clone());
     }
-    if current != prepared.expected { return Err(conflict()); }
+    if current != prepared.expected {
+        return Err(conflict());
+    }
     Err(unavailable())
 }
 
@@ -718,7 +845,8 @@ fn decode_commit(bytes: &[u8], sha: &str) -> Result<CommitInfo, RepoError> {
             parents.push(oid(value.as_bytes())?);
         }
     }
-    let (author_name, author_email, timestamp, author_offset_minutes) = author.ok_or_else(unavailable)?;
+    let (author_name, author_email, timestamp, author_offset_minutes) =
+        author.ok_or_else(unavailable)?;
     let (committer_name, committer_email, committer_timestamp, committer_offset_minutes) =
         committer.ok_or_else(unavailable)?;
     Ok(CommitInfo {
@@ -750,7 +878,9 @@ fn signature(value: &str) -> Result<(String, String, i64, i32), RepoError> {
     }
     let hours: i32 = zone[1..3].parse().map_err(|_| unavailable())?;
     let minutes: i32 = zone[3..5].parse().map_err(|_| unavailable())?;
-    if hours > 23 || minutes > 59 { return Err(unavailable()); }
+    if hours > 23 || minutes > 59 {
+        return Err(unavailable());
+    }
     let offset = (hours * 60 + minutes) * if zone.starts_with('-') { -1 } else { 1 };
     Ok((
         name.into(),

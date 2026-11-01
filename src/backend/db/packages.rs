@@ -34,7 +34,13 @@ pub(crate) struct Actor {
 }
 
 impl Actor {
-    pub const ANONYMOUS: Self = Self { id: None, repo: None, owner: None, selected: None, classic: false };
+    pub const ANONYMOUS: Self = Self {
+        id: None,
+        repo: None,
+        owner: None,
+        selected: None,
+        classic: false,
+    };
 
     pub fn for_owner(self, kind: &str, id: Option<i64>) -> Self {
         match self.owner {
@@ -46,7 +52,11 @@ impl Actor {
     /// Scope applies to grants, not the anonymous public-read baseline.
     pub fn scope_condition(&self) -> String {
         let selection = self.selected.map_or_else(|| "TRUE".to_owned(), |token| format!("EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id={token} AND s.repo_id=p.repo_id)"));
-        let policy = if self.classic { "NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id=p.owner_org_id AND NOT policy.classic_allowed)" } else { "TRUE" };
+        let policy = if self.classic {
+            "NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id=p.owner_org_id AND NOT policy.classic_allowed)"
+        } else {
+            "TRUE"
+        };
         format!("({selection} AND {policy})")
     }
 }

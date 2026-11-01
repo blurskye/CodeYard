@@ -11,7 +11,10 @@ pub(crate) fn NotificationsView(model: NotificationsPage) -> Element {
         #[cfg(target_arch = "wasm32")]
         loop {
             gloo_timers::future::TimeoutFuture::new(15000).await;
-            if web_sys::window().and_then(|window| window.document()).is_some_and(|document| !document.hidden()) {
+            if web_sys::window()
+                .and_then(|window| window.document())
+                .is_some_and(|document| !document.hidden())
+            {
                 crate::webui::navigation::refresh_page();
             }
         }

@@ -336,7 +336,13 @@ impl Parser<'_> {
             if matches!(op, Op::And | Op::Or) {
                 let (mut children, mut depth) = match left.kind {
                     Kind::Logical(previous, nested) if previous == op => (nested, left.depth - 1),
-                    kind => (vec![Node { kind, depth: left.depth }], left.depth),
+                    kind => (
+                        vec![Node {
+                            kind,
+                            depth: left.depth,
+                        }],
+                        left.depth,
+                    ),
                 };
                 match right.kind {
                     Kind::Logical(previous, nested) if previous == op => {
@@ -345,7 +351,10 @@ impl Parser<'_> {
                     }
                     kind => {
                         depth = depth.max(right.depth);
-                        children.push(Node { kind, depth: right.depth });
+                        children.push(Node {
+                            kind,
+                            depth: right.depth,
+                        });
                     }
                 }
                 let depth = depth + 1;

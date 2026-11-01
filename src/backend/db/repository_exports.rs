@@ -38,7 +38,9 @@ pub struct RepositoryExport {
 
 impl RepositoryExport {
     pub fn archive_available(&self) -> bool {
-        self.state == "exported" && !self.archive_deleted && self.updated_at.saturating_add(7 * 24 * 60 * 60) > chrono::Utc::now().timestamp()
+        self.state == "exported"
+            && !self.archive_deleted
+            && self.updated_at.saturating_add(7 * 24 * 60 * 60) > chrono::Utc::now().timestamp()
     }
 
     pub fn object_key(&self) -> String {

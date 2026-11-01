@@ -30,7 +30,9 @@ async fn check(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    let enabled = security::enabled(&state.pool, repo.id).await.map_err(failure)?;
+    let enabled = security::enabled(&state.pool, repo.id)
+        .await
+        .map_err(failure)?;
     Ok(Json(serde_json::json!({"enabled": enabled})))
 }
 async fn set(

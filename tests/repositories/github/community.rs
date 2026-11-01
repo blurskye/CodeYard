@@ -20,13 +20,22 @@ async fn community_contract(pg: bool) {
         templates.insert("config.yml", config, 0o100644).unwrap();
         let templates = templates.write().unwrap();
         let mut github = git.treebuilder(None).unwrap();
-        github.insert("ISSUE_TEMPLATE", templates, 0o040000).unwrap();
+        github
+            .insert("ISSUE_TEMPLATE", templates, 0o040000)
+            .unwrap();
         let github = github.write().unwrap();
         let mut root = git.treebuilder(Some(&head.tree().unwrap())).unwrap();
         root.insert(".github", github, 0o040000).unwrap();
         let tree = git.find_tree(root.write().unwrap()).unwrap();
-        git.commit(Some("HEAD"), &signature, &signature, "Template settings", &tree, &[&head])
-            .unwrap();
+        git.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "Template settings",
+            &tree,
+            &[&head],
+        )
+        .unwrap();
     }
     let endpoint = "/api/v3/repos/alice/health/community/profile";
     let (_, profile) = checked(

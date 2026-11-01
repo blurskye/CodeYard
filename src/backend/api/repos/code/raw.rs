@@ -31,17 +31,17 @@ pub(crate) fn download_limit() -> (u64, String) {
 }
 
 fn limit_message() -> String {
-    format!("Raw responses are limited to {}; request a byte range.", download_limit().1)
+    format!(
+        "Raw responses are limited to {}; request a byte range.",
+        download_limit().1
+    )
 }
 
 fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
     if error.is_response_too_large() {
         return (
             StatusCode::PAYLOAD_TOO_LARGE,
-            Json(ApiError::new(
-                "payload_too_large",
-                &limit_message(),
-            )),
+            Json(ApiError::new("payload_too_large", &limit_message())),
         );
     }
     if error.is_range_not_satisfiable() {
@@ -68,7 +68,18 @@ pub async fn get_raw_blob(
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
     let head = method == Method::HEAD;
-    let (range, partial) = (if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) }).map_err(|_| {
+    let (range, partial) = (if head {
+        Ok((
+            BlobRange::Window {
+                offset: 0,
+                length: 0,
+            },
+            false,
+        ))
+    } else {
+        crate::backend::api::http::range::requested(&headers, None)
+    })
+    .map_err(|_| {
         (
             StatusCode::RANGE_NOT_SATISFIABLE,
             Json(ApiError::new(
@@ -77,14 +88,20 @@ pub async fn get_raw_blob(
             )),
         )
     })?;
-    let permit = if head { None } else { Some(crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
-        .await
-        .ok_or_else(|| {
-            (
-                StatusCode::SERVICE_UNAVAILABLE,
-                Json(ApiError::new("downloads_busy", "Repository downloads busy")),
-            )
-        })?) };
+    let permit = if head {
+        None
+    } else {
+        Some(
+            crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+                .await
+                .ok_or_else(|| {
+                    (
+                        StatusCode::SERVICE_UNAVAILABLE,
+                        Json(ApiError::new("downloads_busy", "Repository downloads busy")),
+                    )
+                })?,
+        )
+    };
     let blob = repo_store(&repository, state.cluster.as_ref())
         .blob_range(&git_ref, &path, range)
         .await
@@ -112,7 +129,9 @@ pub(crate) fn raw_response(
     } = blob;
     let length = if head { size } else { bytes.len() as u64 };
     let mut response = Response::new(match permit {
-        Some(permit) => crate::backend::api::http::middleware::buffered_download_body(bytes, permit),
+        Some(permit) => {
+            crate::backend::api::http::middleware::buffered_download_body(bytes, permit)
+        }
         None => axum::body::Body::empty(),
     });
     *response.status_mut() = if partial {
@@ -175,7 +194,17 @@ pub async fn raw_page(
         return token_raw_page(state, headers, method, &params).await;
     }
     let head = method == Method::HEAD;
-    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) } {
+    let (range, partial) = match if head {
+        Ok((
+            BlobRange::Window {
+                offset: 0,
+                length: 0,
+            },
+            false,
+        ))
+    } else {
+        crate::backend::api::http::range::requested(&headers, None)
+    } {
         Ok(range) => range,
         Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
     };
@@ -193,9 +222,17 @@ pub async fn raw_page(
         Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let permit = if head { None } else {
-        let Some(permit) = crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await else {
-            return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Repository downloads busy.");
+    let permit = if head {
+        None
+    } else {
+        let Some(permit) =
+            crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads)
+                .await
+        else {
+            return ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Repository downloads busy.",
+            );
         };
         Some(permit)
     };
@@ -204,17 +241,16 @@ pub async fn raw_page(
         .await;
     match blob {
         Ok(blob) => {
-            if let Err((status, _)) = check_repo_read_access(
-                &ctx.state.pool, &loaded.repository, &ctx.headers,
-            ).await {
+            if let Err((status, _)) =
+                check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers).await
+            {
                 return ctx.error(status, "Unable to download this repository file.");
             }
             ctx.with_cookie(raw_response(&resolved.path, blob, partial, permit))
         }
-        Err(error) if error.is_response_too_large() => ctx.error(
-            StatusCode::PAYLOAD_TOO_LARGE,
-            &limit_message(),
-        ),
+        Err(error) if error.is_response_too_large() => {
+            ctx.error(StatusCode::PAYLOAD_TOO_LARGE, &limit_message())
+        }
         Err(error) if error.is_range_not_satisfiable() => ctx.error(
             StatusCode::RANGE_NOT_SATISFIABLE,
             "Byte range is not satisfiable.",
@@ -227,16 +263,35 @@ pub async fn raw_page(
 
 /// REST contents documents advertise this same native URL. Bearer clients retain their
 /// repository-scoped token instead of being downgraded to anonymous browser visitors.
-async fn token_raw_page(state: Arc<AppState>, headers: HeaderMap, method: Method, params: &HashMap<String, String>) -> Response {
+async fn token_raw_page(
+    state: Arc<AppState>,
+    headers: HeaderMap,
+    method: Method,
+    params: &HashMap<String, String>,
+) -> Response {
     let (repository, authentication) = match crate::backend::api::github::repository(
-        &state, &headers, &params["owner"], &params["repo"], false,
-    ).await {
+        &state,
+        &headers,
+        &params["owner"],
+        &params["repo"],
+        false,
+    )
+    .await
+    {
         Ok(value) => value,
         Err(error) => return error.into_response(),
     };
-    let Some(authentication) = authentication else { return StatusCode::UNAUTHORIZED.into_response(); };
-    let credential = crate::backend::repositories::git_sessions::ReceiveCredential::Token(authentication.token.id);
-    if credential.authorize(&state.pool, &repository, false).await.is_err() {
+    let Some(authentication) = authentication else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
+    let credential = crate::backend::repositories::git_sessions::ReceiveCredential::Token(
+        authentication.token.id,
+    );
+    if credential
+        .authorize(&state.pool, &repository, false)
+        .await
+        .is_err()
+    {
         return StatusCode::NOT_FOUND.into_response();
     }
     let store = repo_store(&repository, state.cluster.as_ref());
@@ -244,34 +299,64 @@ async fn token_raw_page(state: Arc<AppState>, headers: HeaderMap, method: Method
         Ok(refs) => refs,
         Err(error) => return raw_store_error(error).into_response(),
     };
-    let names = refs.keys().flat_map(|name| {
-        let short = name.strip_prefix("refs/heads/").or_else(|| name.strip_prefix("refs/tags/"));
-        std::iter::once(name.clone()).chain(short.map(str::to_owned))
-    }).collect::<Vec<_>>();
+    let names = refs
+        .keys()
+        .flat_map(|name| {
+            let short = name
+                .strip_prefix("refs/heads/")
+                .or_else(|| name.strip_prefix("refs/tags/"));
+            std::iter::once(name.clone()).chain(short.map(str::to_owned))
+        })
+        .collect::<Vec<_>>();
     use crate::webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
-    let Some(resolved) = resolve_repo_ref_path(&split_path(&params["ref_path"]), &names, true) else {
+    let Some(resolved) = resolve_repo_ref_path(&split_path(&params["ref_path"]), &names, true)
+    else {
         return StatusCode::NOT_FOUND.into_response();
     };
     let head = method == Method::HEAD;
-    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) } {
+    let (range, partial) = match if head {
+        Ok((
+            BlobRange::Window {
+                offset: 0,
+                length: 0,
+            },
+            false,
+        ))
+    } else {
+        crate::backend::api::http::range::requested(&headers, None)
+    } {
         Ok(range) => range,
         Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
     };
-    let permit = if head { None } else {
-        let Some(permit) = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads).await else {
+    let permit = if head {
+        None
+    } else {
+        let Some(permit) =
+            crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads).await
+        else {
             return StatusCode::SERVICE_UNAVAILABLE.into_response();
         };
         Some(permit)
     };
-    let blob = match store.blob_range(&resolved.reference, &resolved.path, range).await {
+    let blob = match store
+        .blob_range(&resolved.reference, &resolved.path, range)
+        .await
+    {
         Ok(blob) => blob,
         Err(error) => return raw_store_error(error).into_response(),
     };
-    let current = match crate::backend::repositories::access::current_repository(&state.pool, repository.id).await {
-        Ok(current) => current,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
-    if credential.authorize(&state.pool, &current, false).await.is_err() {
+    let current =
+        match crate::backend::repositories::access::current_repository(&state.pool, repository.id)
+            .await
+        {
+            Ok(current) => current,
+            Err(_) => return StatusCode::NOT_FOUND.into_response(),
+        };
+    if credential
+        .authorize(&state.pool, &current, false)
+        .await
+        .is_err()
+    {
         return StatusCode::NOT_FOUND.into_response();
     }
     raw_response(&resolved.path, blob, partial, permit)

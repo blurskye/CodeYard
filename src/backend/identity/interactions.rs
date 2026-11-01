@@ -46,10 +46,19 @@ pub async fn prepare(
     let store = repo_store(repository, state.cluster.as_ref());
     let deadline = Instant::now() + crate::backend::git::COMMIT_WALK_TIMEOUT;
     // The tip comes from the primary, so a stale replica cannot record a proof for an old head.
-    let head = store.refs_from_primary().await?.remove(&format!("refs/heads/{}", source.default_branch));
+    let head = store
+        .refs_from_primary()
+        .await?
+        .remove(&format!("refs/heads/{}", source.default_branch));
     let contributed = if let Some(head) = head.filter(|_| !emails.is_empty()) {
-        let filter = CommitFilter { author_emails: emails.clone(), ..CommitFilter::default() };
-        !store.commits_until(&head, 0, 1, &filter, deadline).await?.is_empty()
+        let filter = CommitFilter {
+            author_emails: emails.clone(),
+            ..CommitFilter::default()
+        };
+        !store
+            .commits_until(&head, 0, 1, &filter, deadline)
+            .await?
+            .is_empty()
     } else {
         false
     };

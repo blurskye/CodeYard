@@ -31,7 +31,12 @@ struct SigningKey {
 }
 
 impl SigningKeys {
-    pub fn new(pool: DbPool) -> Self { Self { pool, key: tokio::sync::OnceCell::new() } }
+    pub fn new(pool: DbPool) -> Self {
+        Self {
+            pool,
+            key: tokio::sync::OnceCell::new(),
+        }
+    }
 
     async fn key(&self) -> Result<std::sync::Arc<SigningKey>> {
         self.key.get_or_try_init(|| async {
@@ -218,7 +223,8 @@ pub async fn issue(
     let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
     let message = format!("{header}.{payload}");
     let signing_message = message.clone();
-    let signature = tokio::task::spawn_blocking(move || key.signer.sign(signing_message.as_bytes())).await?;
+    let signature =
+        tokio::task::spawn_blocking(move || key.signer.sign(signing_message.as_bytes())).await?;
     Ok(Some(format!(
         "{message}.{}",
         URL_SAFE_NO_PAD.encode(signature.to_bytes())

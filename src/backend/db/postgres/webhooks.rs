@@ -3,8 +3,7 @@ use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::db::postgres::discussions::lock_policy_authority;
 use crate::backend::db::postgres::organizations::authority::authority;
 use crate::backend::db::webhooks::{
-    DeliveryWindow, HookOwner, NewDelivery, SealedSecret, WebhookFields,
-    WebhookPatch,
+    DeliveryWindow, HookOwner, NewDelivery, SealedSecret, WebhookFields, WebhookPatch,
 };
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
@@ -12,7 +11,10 @@ use sqlx::{PgPool, Postgres, Transaction};
 const COLUMNS: &str = "id, repo_id, org_id, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, created_at, updated_at, username, encrypted_password, password_nonce";
 const DELIVERY_COLUMNS: &str = "id, webhook_id, guid, event, action, status_code, duration_ms, error, request_headers, request_body, response_headers, response_body, delivered_at, redelivery";
 
-#[expect(clippy::too_many_arguments, reason = "Each argument is one filter or page bound of the settings read.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one filter or page bound of the settings read."
+)]
 pub async fn read_settings(
     pool: &PgPool,
     owner: HookOwner,
@@ -136,10 +138,16 @@ async fn may_manage_hooks(
 }
 
 /// The account half of `may_manage_hooks`, for a queued send that kept only its actor.
-async fn account_manages_hooks(tx: &mut Transaction<'_, Postgres>, owner: HookOwner, actor_id: i64) -> Result<bool> {
+async fn account_manages_hooks(
+    tx: &mut Transaction<'_, Postgres>,
+    owner: HookOwner,
+    actor_id: i64,
+) -> Result<bool> {
     Ok(match owner {
         // Hooks stay manageable on archived repositories, like other settings.
-        HookOwner::Repository(repo_id) => lock_policy_authority(tx, actor_id, repo_id, false).await?,
+        HookOwner::Repository(repo_id) => {
+            lock_policy_authority(tx, actor_id, repo_id, false).await?
+        }
         HookOwner::Organization(org) => matches!(
             authority(tx, actor_id, org).await?,
             OrganizationOutcome::Applied(OrgRole::Owner)
@@ -147,9 +155,16 @@ async fn account_manages_hooks(tx: &mut Transaction<'_, Postgres>, owner: HookOw
     })
 }
 
-pub async fn managed_webhook(pool: &PgPool, owner: HookOwner, actor: i64, id: i64) -> Result<Option<Webhook>> {
+pub async fn managed_webhook(
+    pool: &PgPool,
+    owner: HookOwner,
+    actor: i64,
+    id: i64,
+) -> Result<Option<Webhook>> {
     let mut tx = pool.begin().await?;
-    if !account_manages_hooks(&mut tx, owner, actor).await? { return Ok(None); }
+    if !account_manages_hooks(&mut tx, owner, actor).await? {
+        return Ok(None);
+    }
     let hook = get_webhook(&mut *tx, owner, id).await?;
     tx.commit().await?;
     Ok(hook)
@@ -164,7 +179,17 @@ pub async fn latest_push_for_hook(
     max_bytes: i64,
 ) -> Result<Option<String>> {
     let mut tx = pool.begin().await?;
-    anyhow::ensure!(may_manage_hooks(&mut tx, HookOwner::Repository(repo), actor, credential, false).await?, crate::backend::db::webhooks::HookAuthorityDenied);
+    anyhow::ensure!(
+        may_manage_hooks(
+            &mut tx,
+            HookOwner::Repository(repo),
+            actor,
+            credential,
+            false
+        )
+        .await?,
+        crate::backend::db::webhooks::HookAuthorityDenied
+    );
     let payload: Option<String> = sqlx::query_scalar::<_, Option<String>>("SELECT CASE WHEN octet_length(payload::text)<=$3 THEN payload::text END FROM events WHERE repo_id=$1 AND kind='PushEvent' AND EXISTS(SELECT 1 FROM webhooks WHERE id=$2 AND repo_id=$1) ORDER BY id DESC LIMIT 1")
         .bind(repo).bind(hook).bind(max_bytes).fetch_optional(&mut *tx).await?.flatten();
     tx.commit().await?;
@@ -186,10 +211,22 @@ pub async fn insert_webhook(
     }
     // Serialize only hook creation for this owner; authorization's shared locks stay held.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-        .bind(format!("webhooks:{}:{}", owner.column(), owner.id())).execute(&mut *tx).await?;
+        .bind(format!("webhooks:{}:{}", owner.column(), owner.id()))
+        .execute(&mut *tx)
+        .await?;
     let hooks = list_webhooks(&mut *tx, owner).await?;
-    anyhow::ensure!(hooks.len() < crate::backend::db::webhooks::MAX_HOOKS_PER_OWNER, crate::backend::db::webhooks::HookLimit);
-    crate::backend::db::webhooks::ensure_distinct(&hooks, None, &fields.payload_url, &fields.content_type, fields.ssl_verify, &fields.events)?;
+    anyhow::ensure!(
+        hooks.len() < crate::backend::db::webhooks::MAX_HOOKS_PER_OWNER,
+        crate::backend::db::webhooks::HookLimit
+    );
+    crate::backend::db::webhooks::ensure_distinct(
+        &hooks,
+        None,
+        &fields.payload_url,
+        &fields.content_type,
+        fields.ssl_verify,
+        &fields.events,
+    )?;
     let sql = format!(
         "INSERT INTO webhooks ({}, payload_url, content_type, encrypted_secret, secret_nonce, events, active, ssl_verify, created_by_id, username, encrypted_password, password_nonce) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12) RETURNING id",
         owner.column()
@@ -251,12 +288,26 @@ pub async fn patch_webhook(
     }
     // The same lock as hook creation, so two writes cannot both pass the duplicate check.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended($1,0))")
-        .bind(format!("webhooks:{}:{}", owner.column(), owner.id())).execute(&mut *tx).await?;
-    let current: Option<String> = sqlx::query_scalar(&format!("SELECT events FROM webhooks WHERE id=$1 AND {}=$2 FOR UPDATE", owner.column()))
-        .bind(id).bind(owner.id()).fetch_optional(&mut *tx).await?;
-    let Some(current) = current else { return Ok(Some(false)); };
+        .bind(format!("webhooks:{}:{}", owner.column(), owner.id()))
+        .execute(&mut *tx)
+        .await?;
+    let current: Option<String> = sqlx::query_scalar(&format!(
+        "SELECT events FROM webhooks WHERE id=$1 AND {}=$2 FOR UPDATE",
+        owner.column()
+    ))
+    .bind(id)
+    .bind(owner.id())
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(current) = current else {
+        return Ok(Some(false));
+    };
     let events = fields.changed_events(&current)?;
-    if !fields.check_distinct(&list_webhooks(&mut *tx, owner).await?, id, events.as_deref())? {
+    if !fields.check_distinct(
+        &list_webhooks(&mut *tx, owner).await?,
+        id,
+        events.as_deref(),
+    )? {
         return Ok(Some(false));
     }
     let sql = format!(

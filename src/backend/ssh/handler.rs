@@ -155,20 +155,43 @@ impl GitSshHandler {
 
     /// Charge explicit authentication failures, not key exchange, key scans or database delays.
     async fn reject_key(&mut self) -> Result<Auth, anyhow::Error> {
-        if let Some(ip) = self.client_ip { self.rate_limiter.record_failure(ip).await; }
+        if let Some(ip) = self.client_ip {
+            self.rate_limiter.record_failure(ip).await;
+        }
         Ok(Auth::reject())
     }
 
     async fn key_identity(&self, public_key: &PublicKey) -> Result<Option<KeyIdentity>> {
-        if public_key.algorithm().to_string().starts_with("sk-") { return Ok(None); }
-        if let Some(ip) = self.client_ip { if self.rate_limiter.is_blocked(ip).await { return Ok(None); } }
+        if public_key.algorithm().to_string().starts_with("sk-") {
+            return Ok(None);
+        }
+        if let Some(ip) = self.client_ip {
+            if self.rate_limiter.is_blocked(ip).await {
+                return Ok(None);
+            }
+        }
         let key = public_key.to_openssh()?;
         let fingerprint = crate::backend::db::users::ssh_keys::calculate_fingerprint(&key)?;
         let account = get_user_by_key_fingerprint(&self.pool, &fingerprint).await?;
-        let deploy = crate::backend::db::deploy_keys::get_deploy_key_by_fingerprint(&self.pool, &fingerprint).await?;
+        let deploy = crate::backend::db::deploy_keys::get_deploy_key_by_fingerprint(
+            &self.pool,
+            &fingerprint,
+        )
+        .await?;
         match (account, deploy) {
-            (Some(account), None) if !account.user.is_banned && !account.user.must_change_password => Ok(Some(KeyIdentity::Account(Box::new(account.user), account.key.id))),
-            (None, Some(key)) => Ok(crate::backend::db::deploy_keys::usable_deploy_key(&self.pool, key.id).await?.map(|key| KeyIdentity::Deploy(key.id))),
+            (Some(account), None)
+                if !account.user.is_banned && !account.user.must_change_password =>
+            {
+                Ok(Some(KeyIdentity::Account(
+                    Box::new(account.user),
+                    account.key.id,
+                )))
+            }
+            (None, Some(key)) => Ok(crate::backend::db::deploy_keys::usable_deploy_key(
+                &self.pool, key.id,
+            )
+            .await?
+            .map(|key| KeyIdentity::Deploy(key.id))),
             _ => Ok(None),
         }
     }
@@ -187,19 +210,35 @@ impl GitSshHandler {
         let credential = if let Some(key) = self.deploy_key {
             ReceiveCredential::DeployKey(key)
         } else if self.user.is_some() {
-            ReceiveCredential::SshKey(self.key_id.ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?)
+            ReceiveCredential::SshKey(
+                self.key_id
+                    .ok_or_else(|| anyhow::anyhow!("SSH key unavailable"))?,
+            )
         } else {
             let _ = session.channel_failure(channel);
             return Ok(None);
         };
         let authorized = credential.authorize(&self.pool, repo, write).await;
         let message = match authorized {
-            Ok((actor, _)) if self.deploy_key.is_some() || self.user.as_ref().is_some_and(|user| user.id == actor.id) => return Ok(Some(credential)),
+            Ok((actor, _))
+                if self.deploy_key.is_some()
+                    || self.user.as_ref().is_some_and(|user| user.id == actor.id) =>
+            {
+                return Ok(Some(credential))
+            }
             Ok(_) => Self::repository_denial_message(None, write),
             Err(_) if self.deploy_key.is_some() => Self::deploy_key_denial_message(write),
             Err(error) => match error.downcast_ref::<CredentialRefusal>() {
-                Some(CredentialRefusal::Missing | CredentialRefusal::Credential) => Self::repository_denial_message(Some((repo.is_private, AccessLevel::None)), write),
-                Some(_) => Self::repository_denial_message(Some((repo.is_private, AccessLevel::Read)), write),
+                Some(CredentialRefusal::Missing | CredentialRefusal::Credential) => {
+                    Self::repository_denial_message(
+                        Some((repo.is_private, AccessLevel::None)),
+                        write,
+                    )
+                }
+                Some(_) => Self::repository_denial_message(
+                    Some((repo.is_private, AccessLevel::Read)),
+                    write,
+                ),
                 None => return Err(error),
             },
         };
@@ -276,35 +315,62 @@ impl russh::server::Handler for GitSshHandler {
         self.reject_key().await
     }
 
-    async fn auth_publickey_offered(&mut self, _user: &str, public_key: &PublicKey) -> Result<Auth, Self::Error> {
-        match tokio::time::timeout(std::time::Duration::from_secs(5), self.key_identity(public_key)).await {
+    async fn auth_publickey_offered(
+        &mut self,
+        _user: &str,
+        public_key: &PublicKey,
+    ) -> Result<Auth, Self::Error> {
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.key_identity(public_key),
+        )
+        .await
+        {
             Ok(Ok(Some(_))) => Ok(Auth::Accept),
             Ok(Ok(None)) => Ok(Auth::reject()),
             _ => {
-                if let Some(signal) = self.authenticated.take() { let _ = signal.send(AuthOutcome::Unavailable); }
+                if let Some(signal) = self.authenticated.take() {
+                    let _ = signal.send(AuthOutcome::Unavailable);
+                }
                 Err(anyhow::anyhow!("SSH identity lookup unavailable"))
             }
         }
     }
 
-    async fn auth_publickey(&mut self, _user: &str, public_key: &PublicKey) -> Result<Auth, Self::Error> {
+    async fn auth_publickey(
+        &mut self,
+        _user: &str,
+        public_key: &PublicKey,
+    ) -> Result<Auth, Self::Error> {
         self.user = None;
         self.key_id = None;
         self.deploy_key = None;
         // Re-read after signature verification; an unsigned offer is never authority.
-        let identity = match tokio::time::timeout(std::time::Duration::from_secs(5), self.key_identity(public_key)).await {
+        let identity = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.key_identity(public_key),
+        )
+        .await
+        {
             Ok(Ok(Some(identity))) => identity,
             Ok(Ok(None)) => return self.reject_key().await,
             _ => {
-                if let Some(signal) = self.authenticated.take() { let _ = signal.send(AuthOutcome::Unavailable); }
+                if let Some(signal) = self.authenticated.take() {
+                    let _ = signal.send(AuthOutcome::Unavailable);
+                }
                 return Err(anyhow::anyhow!("SSH identity lookup unavailable"));
             }
         };
         match identity {
-            KeyIdentity::Account(user, id) => { self.user = Some(*user); self.key_id = Some(id); }
+            KeyIdentity::Account(user, id) => {
+                self.user = Some(*user);
+                self.key_id = Some(id);
+            }
             KeyIdentity::Deploy(id) => self.deploy_key = Some(id),
         }
-        if let Some(signal) = self.authenticated.take() { let _ = signal.send(AuthOutcome::Accepted); }
+        if let Some(signal) = self.authenticated.take() {
+            let _ = signal.send(AuthOutcome::Accepted);
+        }
         Ok(Auth::Accept)
     }
 
@@ -315,7 +381,12 @@ impl russh::server::Handler for GitSshHandler {
         _session: &mut Session,
     ) -> Result<(), Self::Error> {
         debug!("Channel opened: {:?}", channel.id());
-        self.channels.retain(|_, state| !state.queued.as_ref().is_some_and(|token| token.is_cancelled()));
+        self.channels.retain(|_, state| {
+            !state
+                .queued
+                .as_ref()
+                .is_some_and(|token| token.is_cancelled())
+        });
         if self.channels.len() >= MAX_ACTIVE_GIT_CHANNELS {
             reply
                 .reject(russh::ChannelOpenFailure::ResourceShortage)
@@ -464,20 +535,40 @@ impl russh::server::Handler for GitSshHandler {
         );
 
         // Check if repo exists and user has access
-        let repo = match tokio::time::timeout(std::time::Duration::from_secs(5), get_git_repository(&self.pool, &git_cmd.owner, &git_cmd.repo)).await {
+        let repo = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            get_git_repository(&self.pool, &git_cmd.owner, &git_cmd.repo),
+        )
+        .await
+        {
             Ok(Ok(Some(repo))) => repo,
             Ok(Ok(None)) => {
-                let msg = if self.deploy_key.is_some() { Self::deploy_key_denial_message(git_cmd.write) } else { Self::repository_denial_message(None, git_cmd.write) };
+                let msg = if self.deploy_key.is_some() {
+                    Self::deploy_key_denial_message(git_cmd.write)
+                } else {
+                    Self::repository_denial_message(None, git_cmd.write)
+                };
                 self.refuse_command(channel, session, msg.trim_end());
                 return Ok(());
             }
-            _ => { self.refuse_command(channel, session, "Git authorization unavailable"); return Ok(()); }
+            _ => {
+                self.refuse_command(channel, session, "Git authorization unavailable");
+                return Ok(());
+            }
         };
         // Admission errors fail this channel, not unrelated multiplexed commands.
-        let credential = match tokio::time::timeout(std::time::Duration::from_secs(5), self.git_credential(channel, session, &repo, git_cmd.write)).await {
+        let credential = match tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            self.git_credential(channel, session, &repo, git_cmd.write),
+        )
+        .await
+        {
             Ok(Ok(Some(credential))) => credential,
             Ok(Ok(None)) => return Ok(()),
-            _ => { self.refuse_command(channel, session, "Git authorization unavailable"); return Ok(()); }
+            _ => {
+                self.refuse_command(channel, session, "Git authorization unavailable");
+                return Ok(());
+            }
         };
         info!(
             "Access granted: {:?} for {}/{}",
@@ -815,7 +906,10 @@ mod tests {
         handler.set_client_ip(ip);
         for _ in 0..6 {
             assert!(matches!(
-                handler.auth_publickey_offered("git", &unknown).await.unwrap(),
+                handler
+                    .auth_publickey_offered("git", &unknown)
+                    .await
+                    .unwrap(),
                 Auth::Reject { .. }
             ));
         }
@@ -830,7 +924,10 @@ mod tests {
             let mut failed = GitSshHandler::new(pool.clone(), limiter.clone(), ci.clone());
             failed.set_client_ip(ip);
             assert!(matches!(
-                failed.auth_publickey_offered("git", &unknown).await.unwrap(),
+                failed
+                    .auth_publickey_offered("git", &unknown)
+                    .await
+                    .unwrap(),
                 Auth::Reject { .. }
             ));
         }

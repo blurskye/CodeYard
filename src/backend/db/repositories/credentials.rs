@@ -16,13 +16,22 @@ impl<'a> Reader<'a> {
         }
     }
     pub(crate) fn token(&self) -> Option<i64> {
-        match &self.credential { Some(AccountCredential::Token(id, _)) => Some(*id), _ => None }
+        match &self.credential {
+            Some(AccountCredential::Token(id, _)) => Some(*id),
+            _ => None,
+        }
     }
     pub(crate) fn hash(&self) -> Option<&str> {
-        match &self.credential { Some(AccountCredential::Token(_, hash)) => Some(*hash), _ => None }
+        match &self.credential {
+            Some(AccountCredential::Token(_, hash)) => Some(*hash),
+            _ => None,
+        }
     }
     pub(crate) fn session(&self) -> Option<&str> {
-        match &self.credential { Some(AccountCredential::Session(session)) => Some(*session), _ => None }
+        match &self.credential {
+            Some(AccountCredential::Session(session)) => Some(*session),
+            _ => None,
+        }
     }
 }
 
@@ -36,19 +45,48 @@ pub(crate) enum Access {
 }
 
 /// `r` and `u` are the repository and viewer. Placeholders, never caller text, name the credential.
-pub(crate) fn repository_condition(postgres: bool, scope: &str, access: Access, token: &str, session: &str, hash: &str) -> String {
+pub(crate) fn repository_condition(
+    postgres: bool,
+    scope: &str,
+    access: Access,
+    token: &str,
+    session: &str,
+    hash: &str,
+) -> String {
     let write = matches!(access, Access::Write);
     let public_read = matches!(access, Access::PublicRead);
-    let levels = if write { "'write','admin'" } else { "'read','write','admin'" };
-    let public = if public_read { "NOT r.is_private" } else { "FALSE" };
-    let token_scope = if write { "t.scope='write'" } else { "TRUE" };
-    let now = if postgres { "clock_timestamp()" } else { "strftime('%Y-%m-%dT%H:%M:%fZ','now')" };
-    let epoch = if postgres { "FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint" } else { "CAST(strftime('%s','now') AS BIGINT)" };
-    let recent = if postgres { "clock_timestamp()-INTERVAL '1 minute'" } else { "strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 minute')" };
-    let permission = |document: &str, key: &str| if postgres {
-        format!("({document})::jsonb->>'{key}' IN ({levels})")
+    let levels = if write {
+        "'write','admin'"
     } else {
-        format!("json_extract({document},'$.{key}') IN ({levels})")
+        "'read','write','admin'"
+    };
+    let public = if public_read {
+        "NOT r.is_private"
+    } else {
+        "FALSE"
+    };
+    let token_scope = if write { "t.scope='write'" } else { "TRUE" };
+    let now = if postgres {
+        "clock_timestamp()"
+    } else {
+        "strftime('%Y-%m-%dT%H:%M:%fZ','now')"
+    };
+    let epoch = if postgres {
+        "FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint"
+    } else {
+        "CAST(strftime('%s','now') AS BIGINT)"
+    };
+    let recent = if postgres {
+        "clock_timestamp()-INTERVAL '1 minute'"
+    } else {
+        "strftime('%Y-%m-%dT%H:%M:%fZ','now','-1 minute')"
+    };
+    let permission = |document: &str, key: &str| {
+        if postgres {
+            format!("({document})::jsonb->>'{key}' IN ({levels})")
+        } else {
+            format!("json_extract({document},'$.{key}') IN ({levels})")
+        }
     };
     let app_permission = permission("a.permissions", scope);
     let installation_permission = permission("g.permissions", scope);

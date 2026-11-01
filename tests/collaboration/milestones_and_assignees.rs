@@ -371,12 +371,30 @@ async fn contract(pg: bool) {
         .await,
         Vec::<i32>::new()
     );
-    db::issues::add_issue_comment(pool, second.repo_id, second.id, owner, "one", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner).await))
-        .await
-        .unwrap();
-    db::issues::add_issue_comment(pool, second.repo_id, second.id, owner, "two", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner).await))
-        .await
-        .unwrap();
+    db::issues::add_issue_comment(
+        pool,
+        second.repo_id,
+        second.id,
+        owner,
+        "one",
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, owner).await,
+        ),
+    )
+    .await
+    .unwrap();
+    db::issues::add_issue_comment(
+        pool,
+        second.repo_id,
+        second.id,
+        owner,
+        "two",
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, owner).await,
+        ),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         issue_numbers(
             pool,

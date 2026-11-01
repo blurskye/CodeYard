@@ -49,11 +49,7 @@ pub(crate) async fn comparison(
             if error.kind == ErrorKind::NotFound {
                 ctx.error(StatusCode::BAD_REQUEST, "Base branch not found.")
             } else {
-                crate::backend::api::repos::chrome::store_error(
-                    ctx,
-                    Some(&repo.view.chrome),
-                    error,
-                )
+                crate::backend::api::repos::chrome::store_error(ctx, Some(&repo.view.chrome), error)
             }
         })?
         .sha;

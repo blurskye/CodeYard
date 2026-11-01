@@ -149,7 +149,8 @@ async fn update_branch(
         .ok_or_else(Error::missing)?;
     auth.repository_scope(
         &state.pool,
-        pull.head_repo_id.ok_or_else(|| Error::invalid("Head branch is unavailable"))?,
+        pull.head_repo_id
+            .ok_or_else(|| Error::invalid("Head branch is unavailable"))?,
         "contents",
         true,
     )
@@ -160,8 +161,7 @@ async fn update_branch(
     let input: Option<UpdateBranch> = if body.is_empty() {
         None
     } else {
-        serde_json::from_slice(&body)
-            .map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
     };
     let input = input.unwrap_or_default();
     pull_requests::update_branch::update_branch(

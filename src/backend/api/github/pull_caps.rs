@@ -110,8 +110,7 @@ async fn update(
     input: std::result::Result<Json<CapUpdate>, JsonRejection>,
 ) -> Result<Json<PullCap>> {
     let (actor, scope) = actor_scope(&state, &headers, scope, true).await?;
-    let Json(input) =
-        input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(super::json_error)?;
     Ok(Json(
         db::pull_caps::update_cap(
             &state.pool,
@@ -180,8 +179,7 @@ async fn change_bypass(
 ) -> Result<StatusCode> {
     let (actor, scope) =
         actor_scope(&state, &headers, ScopeName::Repository(owner, repo), true).await?;
-    let Json(input) =
-        input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(super::json_error)?;
     db::pull_caps::change_bypass(
         &state.pool,
         actor.user.id,

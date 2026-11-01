@@ -16,36 +16,67 @@ pub(super) async fn checks(
     head: &str,
     base: &str,
 ) -> ResultPage<Vec<view::Check>> {
-    let Some(user) = &ctx.user else { return Ok(Vec::new()); };
+    let Some(user) = &ctx.user else {
+        return Ok(Vec::new());
+    };
     let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
         return Ok(Vec::new());
     };
     let pool = &ctx.state.pool;
     let branch = (pull.head_repo_id == Some(repo.record.id))
         .then(|| format!("refs/heads/{}", pull.head_branch));
-    let candidates = records::pull_merge_candidates(pool, user.id, &session, repo.record.id, pull.number)
-        .await.map_err(|_| unavailable(ctx))?;
+    let candidates =
+        records::pull_merge_candidates(pool, user.id, &session, repo.record.id, pull.number)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     let mut more = candidates.len() > 100;
-    let store = crate::backend::repositories::store::repo_store(&repo.record, ctx.state.cluster.as_ref());
+    let store =
+        crate::backend::repositories::store::repo_store(&repo.record, ctx.state.cluster.as_ref());
     let mut merges = Vec::new();
     let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
     for candidate in candidates.into_iter().take(100) {
         let result = match tokio::time::timeout_at(deadline, store.commit(&candidate)).await {
             Ok(result) => result,
-            Err(_) => { more = true; break; },
+            Err(_) => {
+                more = true;
+                break;
+            }
         };
         match result {
-            Ok(commit) if commit.parents.len()==2 && commit.parents[0]==base && commit.parents[1]==head => merges.push(commit.sha),
-            Ok(_) => {},
-            Err(error) if matches!(error.kind, crate::backend::repositories::store::ErrorKind::NotFound | crate::backend::repositories::store::ErrorKind::Invalid) => {},
+            Ok(commit)
+                if commit.parents.len() == 2
+                    && commit.parents[0] == base
+                    && commit.parents[1] == head =>
+            {
+                merges.push(commit.sha)
+            }
+            Ok(_) => {}
+            Err(error)
+                if matches!(
+                    error.kind,
+                    crate::backend::repositories::store::ErrorKind::NotFound
+                        | crate::backend::repositories::store::ErrorKind::Invalid
+                ) => {}
             Err(_) => more = true,
         }
     }
     let baseline_ref = format!("refs/heads/{}", pull.base_branch);
-    let snapshot = records::pull_snapshot(pool, user.id, &session, &records::PullSelection {
-        repo: repo.record.id, head, base, number: pull.number,
-        branch: branch.as_deref(), base_branch: &baseline_ref, merge_commits: &merges,
-    }).await.map_err(|_| unavailable(ctx))?;
+    let snapshot = records::pull_snapshot(
+        pool,
+        user.id,
+        &session,
+        &records::PullSelection {
+            repo: repo.record.id,
+            head,
+            base,
+            number: pull.number,
+            branch: branch.as_deref(),
+            base_branch: &baseline_ref,
+            merge_commits: &merges,
+        },
+    )
+    .await
+    .map_err(|_| unavailable(ctx))?;
     more |= snapshot.more;
     let mut checks = Vec::new();
     let root = format!("{}/security/code-scanning", repo.view.url());

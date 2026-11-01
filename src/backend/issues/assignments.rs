@@ -25,14 +25,9 @@ pub async fn assign(
     users: &[db::models::User],
 ) -> anyhow::Result<Vec<i64>> {
     let ids: Vec<i64> = users.iter().map(|user| user.id).collect();
-    let added = db::assignees::assign_users(
-        pool,
-        authority,
-        target.repository.id,
-        target.item,
-        &ids,
-    )
-    .await?;
+    let added =
+        db::assignees::assign_users(pool, authority, target.repository.id, target.item, &ids)
+            .await?;
     let added_users: Vec<&db::models::User> = users
         .iter()
         .filter(|user| added.contains(&user.id))

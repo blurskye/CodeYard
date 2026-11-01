@@ -301,7 +301,12 @@ impl Cluster {
             self.tcp_advertised.clone(),
             self.storage_path.clone(),
         ));
-        drop(self.heartbeat.lock().unwrap_or_else(|e| e.into_inner()).replace(AbortOnDropHandle::new(heartbeat)));
+        drop(
+            self.heartbeat
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .replace(AbortOnDropHandle::new(heartbeat)),
+        );
         info!(
             key = %self.public_key(),
             listening = ?self.endpoint().map(|endpoint| endpoint.bound_sockets()),
@@ -359,8 +364,17 @@ impl Cluster {
             }
         }
         self.context.iroh.close().await;
-        drop(self.repository_lock.lock().unwrap_or_else(|e| e.into_inner()).take());
-        let identity = self.identity_lock.lock().unwrap_or_else(|e| e.into_inner()).take();
+        drop(
+            self.repository_lock
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .take(),
+        );
+        let identity = self
+            .identity_lock
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .take();
         if let Some(identity) = identity {
             identity.release().await;
         }
@@ -425,8 +439,10 @@ pub async fn start(
         _ => {}
     }
     let storage = roles.contains(NodeRole::Storage);
-    ensure!(storage || !db::cluster::has_storage_assignments(pool, node.id).await?,
-        "move this node's primaries and replica assignments before removing its storage service");
+    ensure!(
+        storage || !db::cluster::has_storage_assignments(pool, node.id).await?,
+        "move this node's primaries and replica assignments before removing its storage service"
+    );
     let repos_path = if storage {
         std::fs::create_dir_all(repos_path)?;
         repos_path.canonicalize()?
@@ -434,7 +450,9 @@ pub async fn start(
         std::path::absolute(repos_path)?
     };
     let repository_lock = if storage {
-        Some(crate::backend::locks::exclusive_file(&repos_path.join("storage.lock"))?)
+        Some(crate::backend::locks::exclusive_file(
+            &repos_path.join("storage.lock"),
+        )?)
     } else {
         None
     };
@@ -516,7 +534,10 @@ pub async fn start(
         }
         None => (None, Vec::new()),
     };
-    ensure!(!storage || router.is_some() || !tcp_advertised.is_empty(), "TCP-only storage needs CLUSTER_TCP_ADVERTISE when CLUSTER_TCP_BIND is unspecified");
+    ensure!(
+        !storage || router.is_some() || !tcp_advertised.is_empty(),
+        "TCP-only storage needs CLUSTER_TCP_ADVERTISE when CLUSTER_TCP_BIND is unspecified"
+    );
     Ok(Cluster {
         identity_lock: std::sync::Mutex::new(Some(identity_lock)),
         repository_lock: std::sync::Mutex::new(repository_lock),
@@ -560,7 +581,8 @@ pub async fn client_context(
     );
     Ok(Some(NodeContext {
         pool: Some(pool.clone()),
-        iroh: IrohDialer::new(settings.relay.clone(), key.clone()).with_identity_lock(identity_lock),
+        iroh: IrohDialer::new(settings.relay.clone(), key.clone())
+            .with_identity_lock(identity_lock),
         key,
         node_id: node.id,
         repos_path: std::path::absolute(repos_path)?,
@@ -629,22 +651,40 @@ pub async fn report_alive(
     hint: NodeAddress,
     storage_path: Option<&Path>,
 ) -> Result<bool> {
-    ensure!(storage_path.is_none() || !hint.is_empty(), "storage node has no advertised address; configure CLUSTER_TCP_ADVERTISE or IROH_ADVERTISE");
+    ensure!(
+        storage_path.is_none() || !hint.is_empty(),
+        "storage node has no advertised address; configure CLUSTER_TCP_ADVERTISE or IROH_ADVERTISE"
+    );
     let hint = serde_json::to_string(&hint)?;
     let free = if let Some(path) = storage_path {
-        static PROBES: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> = std::sync::OnceLock::new();
-        let permit = PROBES.get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
-            .clone().try_acquire_owned().context("disk probe is still running")?;
+        static PROBES: std::sync::OnceLock<std::sync::Arc<tokio::sync::Semaphore>> =
+            std::sync::OnceLock::new();
+        let permit = PROBES
+            .get_or_init(|| std::sync::Arc::new(tokio::sync::Semaphore::new(1)))
+            .clone()
+            .try_acquire_owned()
+            .context("disk probe is still running")?;
         let path = path.to_owned();
-        Some(tokio::time::timeout(Duration::from_secs(3), tokio::task::spawn_blocking(move || {
-            let _permit = permit;
-            disk_free(&path)
-        })).await.context("disk probe timed out")??? )
+        Some(
+            tokio::time::timeout(
+                Duration::from_secs(3),
+                tokio::task::spawn_blocking(move || {
+                    let _permit = permit;
+                    disk_free(&path)
+                }),
+            )
+            .await
+            .context("disk probe timed out")???,
+        )
     } else {
         None
     };
-    tokio::time::timeout(Duration::from_secs(5), db::cluster::record_node_heartbeat(pool, &key.to_string(), VERSION, &hint, free))
-        .await.context("heartbeat database update timed out")?
+    tokio::time::timeout(
+        Duration::from_secs(5),
+        db::cluster::record_node_heartbeat(pool, &key.to_string(), VERSION, &hint, free),
+    )
+    .await
+    .context("heartbeat database update timed out")?
 }
 
 /// The addresses a node reports for peers to dial: iroh's, when it runs iroh, and the TCP
@@ -689,8 +729,9 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
             .await?
             .into_iter()
             .filter(|(_, disk_path)| {
-                rpc::repository_uuid(disk_path)
-                    .is_ok_and(|uuid| crate::backend::repositories::store::primary_path(repos_path, uuid).exists())
+                rpc::repository_uuid(disk_path).is_ok_and(|uuid| {
+                    crate::backend::repositories::store::primary_path(repos_path, uuid).exists()
+                })
             })
             .map(|(id, _)| id)
             .collect();
@@ -698,7 +739,12 @@ pub async fn adopt_repositories(pool: &DbPool, node_id: i64, repos_path: &Path) 
         let mut attempted = std::collections::HashSet::new();
         for &id in &local {
             if attempted.insert(id) {
-                attempted.extend(db::cluster::list_fork_family(pool, id).await?.into_iter().map(|(member, _, _)| member));
+                attempted.extend(
+                    db::cluster::list_fork_family(pool, id)
+                        .await?
+                        .into_iter()
+                        .map(|(member, _, _)| member),
+                );
                 placed.extend(db::cluster::place_fork_family(pool, id, node_id, &local).await?);
             }
         }
@@ -881,7 +927,8 @@ mod tests {
                 addrs: vec!["127.0.0.1:7444".parse().unwrap()],
                 ..Default::default()
             },
-        ).unwrap();
+        )
+        .unwrap();
         let found = settings(&[
             ("NODE_NAME", "w1"),
             ("CLUSTER_NODES_FILE", file.to_str().unwrap()),

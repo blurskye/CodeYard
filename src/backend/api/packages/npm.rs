@@ -34,10 +34,15 @@ async fn handle(
     request: Request,
 ) -> Response {
     let anonymous = !request.headers().contains_key(header::AUTHORIZATION);
-    super::finish(tokio::time::timeout(
-        Duration::from_secs(120),
-        dispatch(&state, &owner, &path, request),
-    ).await, anonymous, super::RegistryFormat::Npm)
+    super::finish(
+        tokio::time::timeout(
+            Duration::from_secs(120),
+            dispatch(&state, &owner, &path, request),
+        )
+        .await,
+        anonymous,
+        super::RegistryFormat::Npm,
+    )
 }
 
 /// Packages are scoped to their owner, as on GitHub: `@owner/name`. An unscoped name would
@@ -93,8 +98,11 @@ fn valid_version(version: &str) -> bool {
 }
 
 fn valid_tag(tag: &str) -> bool {
-    !tag.is_empty() && tag.len() <= 128
-        && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+    !tag.is_empty()
+        && tag.len() <= 128
+        && tag
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
         && semver::VersionReq::parse(tag.trim_start_matches('v')).is_err()
 }
 
@@ -102,7 +110,8 @@ fn version_metadata(namespace: &str, slug: &str, version: &db::packages::Version
     if version.manifest.len() > db::packages::MAX_LISTED_METADATA_BYTES {
         return Err(Error::unavailable());
     }
-    let mut metadata: Value = serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
+    let mut metadata: Value =
+        serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
     metadata["dist"]["tarball"] = json!(format!(
         "{}/api/packages/{}/npm/@{}/{}/-/{}-{}.tgz",
         crate::backend::api::http::config::link_origin(),
@@ -150,7 +159,10 @@ async fn dispatch(
     .await?;
     let token = auth.as_ref().map(|auth| auth.token.id.into());
     if read {
-        let _slot = state.storage.try_acquire_download().ok_or_else(Error::unavailable)?;
+        let _slot = state
+            .storage
+            .try_acquire_download()
+            .ok_or_else(Error::unavailable)?;
         if rest.is_empty() {
             // Versions and tags are separate reads. A publish between them can move
             // `latest` to a version this read missed, so read again when it is absent.
@@ -167,7 +179,8 @@ async fn dispatch(
                     let count = rows.len();
                     for version in rows {
                         before = version.id;
-                        bytes = bytes.saturating_add(version.manifest.len() + version.name.len() + 1024);
+                        bytes = bytes
+                            .saturating_add(version.manifest.len() + version.name.len() + 1024);
                         if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
                             return Err(Error::unavailable());
                         }
@@ -303,9 +316,9 @@ async fn dispatch(
     }
     let tags = input["dist-tags"].as_object().ok_or_else(Error::invalid)?;
     if tags.len() > 100
-        || tags.iter().any(|(tag, target)| {
-            !valid_tag(tag) || target != version.as_str()
-        })
+        || tags
+            .iter()
+            .any(|(tag, target)| !valid_tag(tag) || target != version.as_str())
     {
         return Err(Error::invalid());
     }
@@ -318,8 +331,8 @@ async fn dispatch(
         tarball,
         db::packages::Charge::Upload,
     )
-        .await
-        .map_err(Error::db)?;
+    .await
+    .map_err(Error::db)?;
     let mut metadata = metadata.clone();
     let base = format!(
         "/api/packages/{}/npm/{}",

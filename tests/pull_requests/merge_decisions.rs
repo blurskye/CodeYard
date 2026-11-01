@@ -482,22 +482,34 @@ async fn contract(pg: bool) {
                 enqueue(f.pool(), repository.id, owner, &head, pipeline_a, path_a).await;
             blocked(&alice, number, "pending").await;
             assert_eq!(
-                db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .id,
+                db::ci::claim_ci_run(
+                    f.pool(),
+                    "worker",
+                    "local",
+                    &[owner],
+                    &codeyard::backend::ci::CiConfig::default().platform_labels()
+                )
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
                 old_retry.id
             );
             let retry = enqueue(f.pool(), repository.id, owner, &head, pipeline_a, path_a).await;
             blocked(&alice, number, "pending").await;
             // Another slot takes the retry, since the first one still holds its run.
             assert_eq!(
-                db::ci::claim_ci_run(f.pool(), "worker-2", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
-                    .await
-                    .unwrap()
-                    .unwrap()
-                    .id,
+                db::ci::claim_ci_run(
+                    f.pool(),
+                    "worker-2",
+                    "local",
+                    &[owner],
+                    &codeyard::backend::ci::CiConfig::default().platform_labels()
+                )
+                .await
+                .unwrap()
+                .unwrap()
+                .id,
                 retry.id
             );
             db::ci::finish_ci_run(f.pool(), retry.id, "worker-2", "success", None)
@@ -804,9 +816,18 @@ async fn protection_contract(pg: bool) {
         .await;
     assert!(saved["sha"].is_string(), "{saved}");
     // The editor save is a branch update in the owner's activity, next to pushes.
-    let activity = db::activity::list_user_activity(f.pool(), owner, Some(db::activity::ActivityViewer { user: owner, session: &alice.session }), 50, 0)
-        .await
-        .unwrap();
+    let activity = db::activity::list_user_activity(
+        f.pool(),
+        owner,
+        Some(db::activity::ActivityViewer {
+            user: owner,
+            session: &alice.session,
+        }),
+        50,
+        0,
+    )
+    .await
+    .unwrap();
     assert!(
         activity.rows.iter().any(|row| row.kind == "push"
             && row.branch.as_deref() == Some("main")
@@ -1202,10 +1223,16 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[owner],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.id, failed.id);
     db::ci::finish_ci_run(f.pool(), failed.id, "worker", "failed", None)
         .await
@@ -1223,10 +1250,16 @@ async fn runs_of_another_pull_request_do_not_satisfy_a_check(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[owner],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.id, passed.id);
     db::ci::finish_ci_run(f.pool(), passed.id, "worker", "success", None)
         .await
@@ -1293,10 +1326,16 @@ async fn pull_request_checks_show_failures_and_the_head_branch(pg: bool) {
         &head,
     )
     .await;
-    let claimed = db::ci::claim_ci_run(f.pool(), "worker", "local", &[owner], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[owner],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.id, run.id);
     db::ci::finish_ci_run(f.pool(), run.id, "worker", "failed", None)
         .await

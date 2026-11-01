@@ -124,7 +124,11 @@ pub(super) async fn target(state: &AppState, name: &str) -> Result<Organization>
         .ok_or_else(Error::missing)
 }
 
-async fn owner_actor(state: &AppState, headers: &HeaderMap, name: &str) -> Result<(Organization, auth::Authentication)> {
+async fn owner_actor(
+    state: &AppState,
+    headers: &HeaderMap,
+    name: &str,
+) -> Result<(Organization, auth::Authentication)> {
     let actor = auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(auth::required)?;
@@ -151,9 +155,14 @@ async fn get_org(
     let actor = auth::authenticate(&state, &headers, false).await?;
     let org = target(&state, &name).await?;
     if let Some(actor) = actor {
-        if let OrganizationOutcome::Applied(owned) = organizations::settings::owned(&state.pool, actor.user.id, org.id)
-            .await.map_err(Error::unavailable)? {
-            return settings::document(&state, &owned.organization, &owned.settings, true).await.map(Json);
+        if let OrganizationOutcome::Applied(owned) =
+            organizations::settings::owned(&state.pool, actor.user.id, org.id)
+                .await
+                .map_err(Error::unavailable)?
+        {
+            return settings::document(&state, &owned.organization, &owned.settings, true)
+                .await
+                .map(Json);
         }
     }
     let configuration = organizations::settings::get(&state.pool, org.id)
@@ -613,9 +622,14 @@ async fn accept(
     }
     let org = target(&state, &name).await?;
     let member = outcome(
-        organizations::accept_organization_invitation(&state.pool, actor.database_actor(), org.id, None)
-            .await
-            .map_err(Error::unavailable)?,
+        organizations::accept_organization_invitation(
+            &state.pool,
+            actor.database_actor(),
+            org.id,
+            None,
+        )
+        .await
+        .map_err(Error::unavailable)?,
     )?;
     Ok(Json(membership_document(
         &org,

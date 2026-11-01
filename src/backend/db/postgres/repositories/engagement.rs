@@ -1,4 +1,6 @@
-use super::access::{lock_readable_repository_in_transaction, readable_condition, RepositoryRowLock};
+use super::access::{
+    lock_readable_repository_in_transaction, readable_condition, RepositoryRowLock,
+};
 use crate::backend::db::discussions::contains_pattern;
 use crate::backend::db::models::{Repository, Star, User, Watch};
 use crate::backend::db::repositories::engagement::StarSort;
@@ -34,10 +36,15 @@ async fn lock_repository(tx: &mut Transaction<'_, Postgres>, repo_id: i64) -> Re
 }
 
 /// Removing one's own star or watch needs a live credential, not read access or interaction rights.
-async fn begin_removal(pool: &PgPool, actor: crate::backend::db::credentials::Actor, repo_id: i64) -> Result<Option<(Transaction<'_, Postgres>, i64)>> {
+async fn begin_removal(
+    pool: &PgPool,
+    actor: crate::backend::db::credentials::Actor,
+    repo_id: i64,
+) -> Result<Option<(Transaction<'_, Postgres>, i64)>> {
     let mut tx = pool.begin().await?;
     if let Some(credential) = actor.credential() {
-        super::super::users::transitions::require_account(&mut tx, actor.user_id, &credential).await?;
+        super::super::users::transitions::require_account(&mut tx, actor.user_id, &credential)
+            .await?;
     }
     if !lock_repository(&mut tx, repo_id).await? {
         return Ok(None);
@@ -45,7 +52,11 @@ async fn begin_removal(pool: &PgPool, actor: crate::backend::db::credentials::Ac
     Ok(Some((tx, actor.user_id)))
 }
 
-async fn begin_change(pool: &PgPool, actor: crate::backend::db::credentials::Actor, repo_id: i64) -> Result<(Transaction<'_, Postgres>, i64)> {
+async fn begin_change(
+    pool: &PgPool,
+    actor: crate::backend::db::credentials::Actor,
+    repo_id: i64,
+) -> Result<(Transaction<'_, Postgres>, i64)> {
     let mut tx = pool.begin().await?;
     let user_id = actor.user_id;
     super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
@@ -111,7 +122,11 @@ pub async fn list_watched_repositories(
         .await?)
 }
 
-pub async fn watch_repo(pool: &PgPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<bool> {
+pub async fn watch_repo(
+    pool: &PgPool,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<bool> {
     let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     let result = sqlx::query(
         r#"
@@ -131,8 +146,14 @@ pub async fn watch_repo(pool: &PgPool, user_id: impl Into<crate::backend::db::cr
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn unwatch_repo(pool: &PgPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<bool> {
-    let Some((mut tx, user_id)) = begin_removal(pool, user_id.into(), repo_id).await? else { return Ok(false) };
+pub async fn unwatch_repo(
+    pool: &PgPool,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<bool> {
+    let Some((mut tx, user_id)) = begin_removal(pool, user_id.into(), repo_id).await? else {
+        return Ok(false);
+    };
     let result = sqlx::query("DELETE FROM watches WHERE user_id = $1 AND repo_id = $2")
         .bind(user_id)
         .bind(repo_id)
@@ -155,7 +176,11 @@ pub async fn is_repo_watched(pool: &PgPool, user_id: i64, repo_id: i64) -> Resul
     Ok(watch.is_some())
 }
 
-pub async fn star_repo(pool: &PgPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<bool> {
+pub async fn star_repo(
+    pool: &PgPool,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<bool> {
     let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     let result =
         sqlx::query("INSERT INTO stars (user_id, repo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
@@ -167,8 +192,14 @@ pub async fn star_repo(pool: &PgPool, user_id: impl Into<crate::backend::db::cre
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn unstar_repo(pool: &PgPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<bool> {
-    let Some((mut tx, user_id)) = begin_removal(pool, user_id.into(), repo_id).await? else { return Ok(false) };
+pub async fn unstar_repo(
+    pool: &PgPool,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<bool> {
+    let Some((mut tx, user_id)) = begin_removal(pool, user_id.into(), repo_id).await? else {
+        return Ok(false);
+    };
     let result = sqlx::query("DELETE FROM stars WHERE user_id = $1 AND repo_id = $2")
         .bind(user_id)
         .bind(repo_id)

@@ -252,23 +252,48 @@ pub(crate) fn hydrate(
     let mut threads: HashMap<_, _> = threads.into_iter().map(|t| (t.id, t)).collect();
     let mut notifications: HashMap<_, _> = notifications.into_iter().map(|n| (n.id, n)).collect();
     let repositories: HashMap<_, _> = repositories.into_iter().map(|r| (r.id, r)).collect();
-    let mut projections: HashMap<_, _> = projections.into_iter().map(|p| (p.thread_id, p)).collect();
-    summaries.into_iter().filter_map(|summary| {
-        let thread = threads.remove(&summary.thread_id)?;
-        let notification = notifications.remove(&summary.latest_id)?;
-        let repository = repositories.get(&summary.scope_repository_id)?.clone();
-        let p = projections.remove(&thread.id)?;
-        let target = match (p.title, p.author) {
-            (Some(title), Some(author)) => {
-                if let Some(number) = p.pull_number { ThreadTarget::Pull { number, title, author } }
-                else if let Some(number) = p.issue_number { ThreadTarget::Issue { number, title, author } }
-                else if let Some(id) = p.release_id { ThreadTarget::Release { id, title, author } }
-                else { ThreadTarget::Other }
-            }
-            _ => ThreadTarget::Other,
-        };
-        Some(ThreadView::new(thread, notification, repository, p.owner?, summary, target, p.comment_id.zip(p.inline)))
-    }).collect()
+    let mut projections: HashMap<_, _> =
+        projections.into_iter().map(|p| (p.thread_id, p)).collect();
+    summaries
+        .into_iter()
+        .filter_map(|summary| {
+            let thread = threads.remove(&summary.thread_id)?;
+            let notification = notifications.remove(&summary.latest_id)?;
+            let repository = repositories.get(&summary.scope_repository_id)?.clone();
+            let p = projections.remove(&thread.id)?;
+            let target = match (p.title, p.author) {
+                (Some(title), Some(author)) => {
+                    if let Some(number) = p.pull_number {
+                        ThreadTarget::Pull {
+                            number,
+                            title,
+                            author,
+                        }
+                    } else if let Some(number) = p.issue_number {
+                        ThreadTarget::Issue {
+                            number,
+                            title,
+                            author,
+                        }
+                    } else if let Some(id) = p.release_id {
+                        ThreadTarget::Release { id, title, author }
+                    } else {
+                        ThreadTarget::Other
+                    }
+                }
+                _ => ThreadTarget::Other,
+            };
+            Some(ThreadView::new(
+                thread,
+                notification,
+                repository,
+                p.owner?,
+                summary,
+                target,
+                p.comment_id.zip(p.inline),
+            ))
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, FromRow)]

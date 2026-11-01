@@ -111,8 +111,13 @@ pub async fn change(
     }
     let repositories = "SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1";
     for table in ["stars", "watches", "repo_access"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE user_id=?2 AND repo_id IN ({repositories})"))
-            .bind(org).bind(target).execute(&mut *tx).await?;
+        sqlx::query(&format!(
+            "DELETE FROM {table} WHERE user_id=?2 AND repo_id IN ({repositories})"
+        ))
+        .bind(org)
+        .bind(target)
+        .execute(&mut *tx)
+        .await?;
     }
     sqlx::query(&format!("DELETE FROM issue_assignees WHERE user_id=?2 AND issue_id IN (SELECT id FROM issues WHERE repo_id IN ({repositories}))"))
         .bind(org).bind(target).execute(&mut *tx).await?;

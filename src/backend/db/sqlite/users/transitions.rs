@@ -13,15 +13,19 @@ pub(crate) async fn organization_name_exists(
 ) -> Result<bool> {
     // Call only inside BEGIN IMMEDIATE: serialize the reciprocal predicate and
     // insert with organization creation. Preserve spelling, reserve ASCII case variants.
-    Ok(
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organizations WHERE lower(name)=lower(?1))")
-            .bind(username)
-            .fetch_one(&mut **tx)
-            .await?,
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT EXISTS(SELECT 1 FROM organizations WHERE lower(name)=lower(?1))",
     )
+    .bind(username)
+    .fetch_one(&mut **tx)
+    .await?)
 }
 
-pub(crate) async fn email_owned(tx: &mut Transaction<'_, Sqlite>, email: Option<&str>, except: i64) -> Result<bool> {
+pub(crate) async fn email_owned(
+    tx: &mut Transaction<'_, Sqlite>,
+    email: Option<&str>,
+    except: i64,
+) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower(?1) AND id<>?2) OR EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower(?1) AND user_id<>?2)")
         .bind(email).bind(except).fetch_one(&mut **tx).await?)
 }
@@ -46,16 +50,30 @@ pub(crate) async fn live_session(
 }
 
 /// Call within the operation's transaction to retain one authority snapshot.
-pub(crate) async fn active_account(connection: &mut sqlx::SqliteConnection, actor: i64) -> Result<bool> {
+pub(crate) async fn active_account(
+    connection: &mut sqlx::SqliteConnection,
+    actor: i64,
+) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
         .bind(actor).fetch_one(connection).await?)
 }
 
-pub(crate) async fn active_session(connection: &mut sqlx::SqliteConnection, actor: i64, session: &str) -> Result<bool> {
-    Ok(active_account(connection, actor).await? && live_session(connection, actor, session).await?)
+pub(crate) async fn active_session(
+    connection: &mut sqlx::SqliteConnection,
+    actor: i64,
+    session: &str,
+) -> Result<bool> {
+    Ok(
+        active_account(connection, actor).await?
+            && live_session(connection, actor, session).await?,
+    )
 }
 
-pub(crate) async fn active_session_read(connection: &mut sqlx::SqliteConnection, actor: i64, session: &str) -> Result<bool> {
+pub(crate) async fn active_session_read(
+    connection: &mut sqlx::SqliteConnection,
+    actor: i64,
+    session: &str,
+) -> Result<bool> {
     active_session(connection, actor, session).await
 }
 
@@ -83,13 +101,18 @@ async fn require_account_with_mode(
 ) -> Result<()> {
     use crate::backend::db::users::accounts::AccountRestricted;
     anyhow::ensure!(active_account(tx, actor).await?, AccountRestricted);
-    anyhow::ensure!(credential_live(tx, actor, credential, write).await?, AccountRestricted);
+    anyhow::ensure!(
+        credential_live(tx, actor, credential, write).await?,
+        AccountRestricted
+    );
     Ok(())
 }
 
 pub(crate) async fn credential_live(
-    tx: &mut sqlx::SqliteConnection, actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>, write: bool,
+    tx: &mut sqlx::SqliteConnection,
+    actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+    write: bool,
 ) -> Result<bool> {
     use crate::backend::db::users::accounts::AccountCredential;
     Ok(match credential {
@@ -257,10 +280,12 @@ pub async fn bootstrap_admin(
         return Ok(SetupClaim::AlreadyCompleted);
     }
     if organization_name_exists(&mut tx, username).await?
-        || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower(?1))")
-            .bind(username)
-            .fetch_one(&mut *tx)
-            .await?
+        || sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower(?1))",
+        )
+        .bind(username)
+        .fetch_one(&mut *tx)
+        .await?
     {
         return Ok(SetupClaim::ExistingAccounts);
     }
@@ -353,14 +378,23 @@ pub async fn change_email(
         return Ok(EmailChange::Taken);
     }
     let changed: bool = sqlx::query_scalar("SELECT email IS NOT ?2 FROM users WHERE id=?1")
-        .bind(user_id).bind(email).fetch_one(&mut *tx).await?;
+        .bind(user_id)
+        .bind(email)
+        .fetch_one(&mut *tx)
+        .await?;
     let verified: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_emails WHERE user_id=?1 AND lower(email)=lower(?2) AND verified)")
         .bind(user_id).bind(email).fetch_one(&mut *tx).await?;
     if changed {
-        sqlx::query("DELETE FROM email_tokens WHERE user_id=?1").bind(user_id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM email_tokens WHERE user_id=?1")
+            .bind(user_id)
+            .execute(&mut *tx)
+            .await?;
     }
     sqlx::query("DELETE FROM user_emails WHERE user_id=?1 AND lower(email)=lower(?2)")
-        .bind(user_id).bind(email).execute(&mut *tx).await?;
+        .bind(user_id)
+        .bind(email)
+        .execute(&mut *tx)
+        .await?;
     let user = sqlx::query_as::<_, User>(
         "UPDATE users SET email_verified=CASE WHEN email IS NOT ?2 THEN ?3 ELSE email_verified END,email=?2,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 RETURNING *",
     )
@@ -439,8 +473,14 @@ pub async fn register_password(
     if organization_name_exists(&mut tx, username).await? {
         return Ok(AccountAdmission::Conflict);
     }
-    if email_owned(&mut tx, email, -1).await? || sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower(?1))")
-        .bind(username).fetch_one(&mut *tx).await? {
+    if email_owned(&mut tx, email, -1).await?
+        || sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS(SELECT 1 FROM users WHERE lower(username)=lower(?1))",
+        )
+        .bind(username)
+        .fetch_one(&mut *tx)
+        .await?
+    {
         return Ok(AccountAdmission::Conflict);
     }
     if config.node_mode == "private" && administrator.is_none() {
@@ -501,10 +541,7 @@ pub async fn admit_oauth_account(
     // After the numbered names, a few random ones, so taken numbers cannot block the sign-in.
     for suffix in 0..36 {
         if suffix >= 32 {
-            name = format!(
-                "{base}_{}",
-                &crate::backend::crypto::random_hex()[..8]
-            );
+            name = format!("{base}_{}", &crate::backend::crypto::random_hex()[..8]);
         } else if suffix > 0 {
             name = format!("{base}_{suffix}");
         }

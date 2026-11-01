@@ -52,7 +52,10 @@ async fn repository_document(
         .await
         .map_err(Error::unavailable)?;
     let mut value = payloads::repository(repo, owner);
-    payloads::set_fork_counts(&mut value, super::repos::public_fork_count(state, repo.id).await?);
+    payloads::set_fork_counts(
+        &mut value,
+        super::repos::public_fork_count(state, repo.id).await?,
+    );
     value["open_issues"] = json!(facts.open_items);
     value["open_issues_count"] = json!(facts.open_items);
     value["pushed_at"] = json!(facts.pushed_at);

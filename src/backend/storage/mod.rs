@@ -88,7 +88,9 @@ impl ObjectStore {
         })
     }
 
-    pub(crate) fn state_directory(&self) -> &Path { &self.state_dir }
+    pub(crate) fn state_directory(&self) -> &Path {
+        &self.state_dir
+    }
 
     /// Start-up check for S3: waits for the store to answer (compose starts it in parallel)
     /// and creates the bucket on first start. Local storage has nothing to prepare.
@@ -168,7 +170,10 @@ impl ObjectStore {
                 let signed = store
                     .presigned_put(upload, expires_in)
                     .await
-                    .map_err(|error| { tracing::warn!(%error, "S3 upload signing failed"); StorageError::Unavailable })?;
+                    .map_err(|error| {
+                        tracing::warn!(%error, "S3 upload signing failed");
+                        StorageError::Unavailable
+                    })?;
                 Ok(UploadTarget {
                     url: signed.url,
                     headers: signed.headers,
@@ -243,16 +248,25 @@ impl ObjectStore {
 
     /// Reads exactly the declared object length through one bounded response.
     pub async fn read_object(&self, key: &str, length: usize) -> Result<Vec<u8>, StorageError> {
-        if !valid_key(key) || length > MAX_OBJECT_BYTES as usize { return Err(StorageError::Invalid); }
+        if !valid_key(key) || length > MAX_OBJECT_BYTES as usize {
+            return Err(StorageError::Invalid);
+        }
         match &self.backend {
-            Backend::S3(store) => store.read_object(key, length).await.map_err(|_| StorageError::Unavailable),
+            Backend::S3(store) => store
+                .read_object(key, length)
+                .await
+                .map_err(|_| StorageError::Unavailable),
             Backend::Local(store) => {
                 use tokio::io::AsyncReadExt;
                 let (file, actual) = store.open_file(key).await?;
-                if actual != length as u64 { return Err(StorageError::Rejected); }
+                if actual != length as u64 {
+                    return Err(StorageError::Rejected);
+                }
                 let mut bytes = Vec::with_capacity(length.min(64 * 1024));
                 file.take(length as u64 + 1).read_to_end(&mut bytes).await?;
-                if bytes.len() != length { return Err(StorageError::Rejected); }
+                if bytes.len() != length {
+                    return Err(StorageError::Rejected);
+                }
                 Ok(bytes)
             }
         }
@@ -260,7 +274,10 @@ impl ObjectStore {
 
     /// Opens one object range; callers retain the reader and bound each read and send.
     pub async fn open_range(
-        &self, key: &str, offset: u64, length: u64,
+        &self,
+        key: &str,
+        offset: u64,
+        length: u64,
     ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError> {
         use tokio::io::{AsyncReadExt, AsyncSeekExt};
         if !valid_key(key) || length == 0 || offset.checked_add(length).is_none() {
@@ -269,11 +286,15 @@ impl ObjectStore {
         match &self.backend {
             Backend::Local(store) => {
                 let (mut file, size) = store.open_file(key).await?;
-                if offset + length > size { return Err(StorageError::Rejected); }
+                if offset + length > size {
+                    return Err(StorageError::Rejected);
+                }
                 file.seek(std::io::SeekFrom::Start(offset)).await?;
                 Ok(Box::new(file.take(length)))
             }
-            Backend::S3(store) => store.open_range(key, offset, length).await
+            Backend::S3(store) => store
+                .open_range(key, offset, length)
+                .await
                 .map_err(|_| StorageError::Unavailable),
         }
     }
@@ -328,7 +349,11 @@ impl ObjectStore {
 }
 
 pub(crate) fn valid_basename(name: &str, limit: usize) -> bool {
-    !name.is_empty() && name.len() <= limit && !matches!(name, "." | "..") && !name.contains(['/', '\\']) && !name.chars().any(char::is_control)
+    !name.is_empty()
+        && name.len() <= limit
+        && !matches!(name, "." | "..")
+        && !name.contains(['/', '\\'])
+        && !name.chars().any(char::is_control)
 }
 
 pub(crate) fn attachment_disposition(filename: &str) -> String {
@@ -352,7 +377,16 @@ pub(crate) fn attachment_disposition(filename: &str) -> String {
             }
         })
         .collect();
-    let fallback: String = name.chars().map(|character| if character.is_ascii_alphanumeric() || " ._-".contains(character) { character } else { '_' }).collect();
+    let fallback: String = name
+        .chars()
+        .map(|character| {
+            if character.is_ascii_alphanumeric() || " ._-".contains(character) {
+                character
+            } else {
+                '_'
+            }
+        })
+        .collect();
     format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
 }
 

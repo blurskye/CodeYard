@@ -48,9 +48,10 @@ impl SecretKind {
     }
 }
 
-pub use codeyard_actions::values::{MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES,
-    MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES, MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS,
-    MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES};
+pub use codeyard_actions::values::{
+    MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES, MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS,
+    MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES, MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum SecretsError {
@@ -86,7 +87,9 @@ pub enum SecretsError {
 
 impl SecretsError {
     pub(crate) fn authority(error: anyhow::Error) -> Self {
-        if error.is::<super::users::accounts::AccountRestricted>() { return Self::Denied; }
+        if error.is::<super::users::accounts::AccountRestricted>() {
+            return Self::Denied;
+        }
         // Anyhow downcasts also recognize contextual errors; retain typed denial
         // and driver sources without displaying SQL, keys or helper context.
         let error = match error.downcast::<Self>() {
@@ -132,8 +135,12 @@ pub fn validate_workflow_secrets(secrets: &[(String, String)]) -> Result<(), Sec
 }
 
 pub(crate) fn ensure_workflow_budget(count: i64, bytes: i64) -> Result<(), SecretsError> {
-    if count > (MAX_REPOSITORY_SECRETS * 2) as i64 { return Err(SecretsError::TooManySecrets); }
-    if bytes > MAX_REPOSITORY_SECRETS_BYTES as i64 { return Err(SecretsError::TotalTooLarge); }
+    if count > (MAX_REPOSITORY_SECRETS * 2) as i64 {
+        return Err(SecretsError::TooManySecrets);
+    }
+    if bytes > MAX_REPOSITORY_SECRETS_BYTES as i64 {
+        return Err(SecretsError::TotalTooLarge);
+    }
     Ok(())
 }
 
@@ -251,11 +258,25 @@ pub async fn delete_secret(
     // An upgrade keeps an old lowercase name whose uppercase form was taken, so the exact name
     // is deleted first.
     let upper = name.to_ascii_uppercase();
-    Ok(
-        delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, name, credential).await?
-            || (upper != name
-                && delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, &upper, credential).await?),
+    Ok(delete_secret_for(
+        pool,
+        SecretKind::Actions,
+        actor_id,
+        repo_id,
+        name,
+        credential,
     )
+    .await?
+        || (upper != name
+            && delete_secret_for(
+                pool,
+                SecretKind::Actions,
+                actor_id,
+                repo_id,
+                &upper,
+                credential,
+            )
+            .await?))
 }
 
 native_operation!(crate::backend::db::postgres::secrets::repository_secret_key,

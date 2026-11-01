@@ -330,8 +330,15 @@ pub struct MergeMethodUpdate {
 }
 impl MergeMethodUpdate {
     pub fn resolve(self, current: (bool, bool, bool)) -> Result<(bool, bool, bool)> {
-        let methods = (self.merge.unwrap_or(current.0), self.squash.unwrap_or(current.1), self.rebase.unwrap_or(current.2));
-        anyhow::ensure!(methods.0 || methods.1 || methods.2, RepositorySettingsRefusal::NoMergeMethod);
+        let methods = (
+            self.merge.unwrap_or(current.0),
+            self.squash.unwrap_or(current.1),
+            self.rebase.unwrap_or(current.2),
+        );
+        anyhow::ensure!(
+            methods.0 || methods.1 || methods.2,
+            RepositorySettingsRefusal::NoMergeMethod
+        );
         Ok(methods)
     }
 }

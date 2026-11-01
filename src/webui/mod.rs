@@ -10,21 +10,42 @@ pub mod pages;
 
 /// Non-executable raw media types shared by response headers and inline previews.
 pub fn raw_content_type(path: &str, is_binary: bool) -> &'static str {
-    let extension = std::path::Path::new(path).extension().and_then(|extension| extension.to_str()).unwrap_or_default().to_ascii_lowercase();
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
     match extension.as_str() {
-        "png" => "image/png", "jpg" | "jpeg" => "image/jpeg", "gif" => "image/gif",
-        "webp" => "image/webp", "avif" => "image/avif", "bmp" => "image/bmp", "ico" => "image/x-icon",
-        "mp4" => "video/mp4", "webm" => "video/webm", "mov" => "video/quicktime",
-        "mp3" => "audio/mpeg", "wav" => "audio/wav", "ogg" => "audio/ogg", "pdf" => "application/pdf",
-        "woff2" => "font/woff2", "woff" => "font/woff", "ttf" => "font/ttf", "otf" => "font/otf",
-        _ if is_binary => "application/octet-stream", _ => "text/plain; charset=utf-8",
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "pdf" => "application/pdf",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        _ if is_binary => "application/octet-stream",
+        _ => "text/plain; charset=utf-8",
     }
 }
 
 /// Display one workflow filename, removing exactly one final YAML extension.
 pub fn workflow_filename(path: &str) -> String {
     let name = path.rsplit('/').next().unwrap_or(path);
-    name.strip_suffix(".yml").or_else(|| name.strip_suffix(".yaml")).unwrap_or(name).to_owned()
+    name.strip_suffix(".yml")
+        .or_else(|| name.strip_suffix(".yaml"))
+        .unwrap_or(name)
+        .to_owned()
 }
 
 /// The first `limit` characters of `text`, with an ellipsis when more follow.

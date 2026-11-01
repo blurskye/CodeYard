@@ -1,5 +1,7 @@
 //! Replays the commits of one history onto another, one at a time, the way a rebase does.
-use super::checked::{command, commit_tree_bytes, merge_tree_with_base, tree_of, Person, UnsupportedMerge};
+use super::checked::{
+    command, commit_tree_bytes, merge_tree_with_base, tree_of, Person, UnsupportedMerge,
+};
 use super::validate_merge_revision;
 use super::MAX_COMMIT_OBJECT_BYTES;
 use anyhow::{bail, ensure, Context, Result};
@@ -67,7 +69,17 @@ async fn replay(
         }
         let original = original_commit(path, &commit.id).await?;
         let parents = [tip.as_str()];
-        tip = commit_tree_bytes(path, &tree, &parents, &original.message, &original.name, &original.email, Some(&original.date), committer).await?;
+        tip = commit_tree_bytes(
+            path,
+            &tree,
+            &parents,
+            &original.message,
+            &original.name,
+            &original.email,
+            Some(&original.date),
+            committer,
+        )
+        .await?;
         ensure_commit_fits(path, &tip).await?;
         tip_tree = tree;
         replayed += 1;

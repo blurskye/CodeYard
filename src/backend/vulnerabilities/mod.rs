@@ -149,7 +149,10 @@ pub struct PreparedAdvisory {
 impl Advisory {
     pub fn prepare(self) -> Result<PreparedAdvisory> {
         let document = self.global_document()?;
-        Ok(PreparedAdvisory { advisory: self, document })
+        Ok(PreparedAdvisory {
+            advisory: self,
+            document,
+        })
     }
 
     pub fn parse(bytes: &[u8]) -> Result<Self> {
@@ -163,7 +166,11 @@ impl Advisory {
                 && record.id.len() <= 256
                 && !record.id.chars().any(char::is_control)
                 && record.affected.len() <= MAX_AFFECTED_PACKAGES
-                && record.affected.iter().all(|affected| !affected.package.name.contains('\0') && !affected.package.ecosystem.contains('\0')),
+                && record
+                    .affected
+                    .iter()
+                    .all(|affected| !affected.package.name.contains('\0')
+                        && !affected.package.ecosystem.contains('\0')),
             "Invalid OSV record"
         );
         Ok(record)
@@ -193,7 +200,11 @@ impl Advisory {
                 .iter()
                 .filter(|r| matches!(r.r#type.as_str(), "SEMVER" | "ECOSYSTEM"))
                 .any(|range| {
-                    let ecosystem = if range.r#type == "SEMVER" { "SEMVER" } else { ecosystem };
+                    let ecosystem = if range.r#type == "SEMVER" {
+                        "SEMVER"
+                    } else {
+                        ecosystem
+                    };
                     let mut introduced = None;
                     for event in &range.events {
                         if let Some(start) = event["introduced"].as_str() {
@@ -275,12 +286,20 @@ impl Advisory {
     }
     pub fn catalogue_id(&self) -> String {
         use sha2::{Digest, Sha256};
-        if let Some(id) = self.aliases.iter().chain(std::iter::once(&self.id)).find(|id| id.starts_with("GHSA-")) {
+        if let Some(id) = self
+            .aliases
+            .iter()
+            .chain(std::iter::once(&self.id))
+            .find(|id| id.starts_with("GHSA-"))
+        {
             return id.clone();
         }
         let hash = Sha256::digest(self.id.as_bytes());
         let alphabet = b"23456789cfghjmpqrvwx";
-        let id: String = hash[..12].iter().map(|b| alphabet[*b as usize % alphabet.len()] as char).collect();
+        let id: String = hash[..12]
+            .iter()
+            .map(|b| alphabet[*b as usize % alphabet.len()] as char)
+            .collect();
         format!("GHSA-{}-{}-{}", &id[..4], &id[4..8], &id[8..])
     }
 
@@ -292,7 +311,9 @@ impl Advisory {
         }
         let bounded = |text: &str, limit: usize| {
             let mut end = text.len().min(limit);
-            while !text.is_char_boundary(end) { end -= 1; }
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
             text[..end].to_owned()
         };
         value["summary"] = json!(bounded(value["summary"].as_str().unwrap_or(&self.id), 1024));
@@ -309,9 +330,16 @@ impl Advisory {
         let mut vulnerabilities = Vec::new();
         for affected in &self.affected {
             let ecosystem = match affected.package.ecosystem.as_str() {
-                "crates.io" => "rust", "PyPI" => "pip", "Go" => "go",
-                "RubyGems" => "rubygems", "Packagist" => "composer", "Maven" => "maven",
-                "NuGet" => "nuget", "Pub" => "pub", "Hex" => "hex", other => other,
+                "crates.io" => "rust",
+                "PyPI" => "pip",
+                "Go" => "go",
+                "RubyGems" => "rubygems",
+                "Packagist" => "composer",
+                "Maven" => "maven",
+                "NuGet" => "nuget",
+                "Pub" => "pub",
+                "Hex" => "hex",
+                other => other,
             };
             let mut entry = |range: String, patched: Option<&str>, kind: &str| {
                 vulnerabilities.push(json!({"package":{"ecosystem":ecosystem,"name":affected.package.name},"vulnerable_version_range":range,"first_patched_version":patched,"vulnerable_functions":[],"osv_range_type":kind}));
@@ -320,20 +348,30 @@ impl Advisory {
                 entry(format!("= {version}"), None, "ECOSYSTEM");
             }
             for range in &affected.ranges {
-                if !matches!(range.r#type.as_str(), "SEMVER" | "ECOSYSTEM") { continue; }
+                if !matches!(range.r#type.as_str(), "SEMVER" | "ECOSYSTEM") {
+                    continue;
+                }
                 let mut lower = None;
                 for event in &range.events {
                     if let Some(start) = event["introduced"].as_str() {
                         lower = Some(format!(">= {start}"));
                     } else if let Some(start) = lower.take() {
-                        if let Some(end) = event["fixed"].as_str().or_else(|| event["limit"].as_str()) {
-                            entry(format!("{start}, < {end}"), event["fixed"].as_str(), &range.r#type);
+                        if let Some(end) =
+                            event["fixed"].as_str().or_else(|| event["limit"].as_str())
+                        {
+                            entry(
+                                format!("{start}, < {end}"),
+                                event["fixed"].as_str(),
+                                &range.r#type,
+                            );
                         } else if let Some(end) = event["last_affected"].as_str() {
                             entry(format!("{start}, <= {end}"), None, &range.r#type);
                         }
                     }
                 }
-                if let Some(start) = lower { entry(start, None, &range.r#type); }
+                if let Some(start) = lower {
+                    entry(start, None, &range.r#type);
+                }
             }
         }
         value["vulnerabilities"] = json!(vulnerabilities);
@@ -391,13 +429,14 @@ pub async fn findings(pool: &db::DbPool, package: &Package) -> Result<Vec<Adviso
 pub async fn scan(state: &AppState, repo: &db::models::Repository, generation: i64) -> Result<()> {
     let reader = db::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
-    let (sha, packages) = match dependency_graph::native_inventory(state, &reader, repo, &reference).await {
-        Ok(result) => result,
-        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
-            return Ok(())
-        }
-        Err(error) => return Err(error.into()),
-    };
+    let (sha, packages) =
+        match dependency_graph::native_inventory(state, &reader, repo, &reference).await {
+            Ok(result) => result,
+            Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
+                return Ok(())
+            }
+            Err(error) => return Err(error.into()),
+        };
     let snapshot = dependency_graph::snapshot(sha, reference, packages);
     db::vulnerabilities::save_snapshot(&state.pool, repo.id, generation, &snapshot).await
 }
@@ -418,74 +457,87 @@ pub async fn synchronize(
     let mut failures = Vec::new();
     for ecosystem in enabled {
         let result = async {
-        ensure!(
-            ECOSYSTEMS.contains(&ecosystem.as_str()),
-            "Unknown OSV ecosystem"
-        );
-        let url = format!(
-            "{}/{}/all.zip",
-            settings.base_url.trim_end_matches('/'),
-            ecosystem
-        );
-        let mut response = client.get(url).send().await?.error_for_status()?;
-        let mut bytes = Vec::new();
-        while let Some(chunk) = response.chunk().await? {
             ensure!(
-                bytes.len() + chunk.len() <= 256 * 1024 * 1024,
-                "OSV archive exceeds its limit"
+                ECOSYSTEMS.contains(&ecosystem.as_str()),
+                "Unknown OSV ecosystem"
             );
-            bytes.extend_from_slice(&chunk);
-        }
-        let records = tokio::task::spawn_blocking(move || -> Result<Vec<PreparedAdvisory>> {
-            let mut archive = crate::backend::zip_archives::open(bytes, 1_000_000)?;
-            let mut records = Vec::new();
-            let mut expanded = 0u64;
-            for i in 0..archive.len() {
-                let mut entry = archive.by_index(i)?;
-                if entry.is_dir() || !entry.name().ends_with(".json") {
-                    continue;
-                }
+            let url = format!(
+                "{}/{}/all.zip",
+                settings.base_url.trim_end_matches('/'),
+                ecosystem
+            );
+            let mut response = client.get(url).send().await?.error_for_status()?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = response.chunk().await? {
                 ensure!(
-                    entry.size() <= 4 * 1024 * 1024,
-                    "OSV record exceeds its limit"
+                    bytes.len() + chunk.len() <= 256 * 1024 * 1024,
+                    "OSV archive exceeds its limit"
                 );
-                let declared = entry.size();
-                let mut bytes = Vec::new();
-                let remaining = (2u64 * 1024 * 1024 * 1024).saturating_sub(expanded);
-                entry
-                    .by_ref()
-                    .take((4 * 1024 * 1024 + 1).min(remaining.saturating_add(1)))
-                    .read_to_end(&mut bytes)?;
-                expanded = expanded.checked_add(bytes.len() as u64).ok_or_else(|| anyhow::anyhow!("Expanded OSV archive exceeds its limit"))?;
-                ensure!(expanded <= 2 * 1024 * 1024 * 1024, "Expanded OSV archive exceeds its limit");
-                ensure!(bytes.len() as u64 == declared, "OSV archive entry size mismatch");
-                // One record the catalogue cannot hold must not stop the rest of the archive.
-                match Advisory::parse(&bytes).and_then(Advisory::prepare) {
-                    Ok(record) => records.push(record),
-                    Err(error) => {
-                        tracing::warn!(entry = entry.name(), %error, "OSV record was skipped")
+                bytes.extend_from_slice(&chunk);
+            }
+            let records = tokio::task::spawn_blocking(move || -> Result<Vec<PreparedAdvisory>> {
+                let mut archive = crate::backend::zip_archives::open(bytes, 1_000_000)?;
+                let mut records = Vec::new();
+                let mut expanded = 0u64;
+                for i in 0..archive.len() {
+                    let mut entry = archive.by_index(i)?;
+                    if entry.is_dir() || !entry.name().ends_with(".json") {
+                        continue;
+                    }
+                    ensure!(
+                        entry.size() <= 4 * 1024 * 1024,
+                        "OSV record exceeds its limit"
+                    );
+                    let declared = entry.size();
+                    let mut bytes = Vec::new();
+                    let remaining = (2u64 * 1024 * 1024 * 1024).saturating_sub(expanded);
+                    entry
+                        .by_ref()
+                        .take((4 * 1024 * 1024 + 1).min(remaining.saturating_add(1)))
+                        .read_to_end(&mut bytes)?;
+                    expanded = expanded
+                        .checked_add(bytes.len() as u64)
+                        .ok_or_else(|| anyhow::anyhow!("Expanded OSV archive exceeds its limit"))?;
+                    ensure!(
+                        expanded <= 2 * 1024 * 1024 * 1024,
+                        "Expanded OSV archive exceeds its limit"
+                    );
+                    ensure!(
+                        bytes.len() as u64 == declared,
+                        "OSV archive entry size mismatch"
+                    );
+                    // One record the catalogue cannot hold must not stop the rest of the archive.
+                    match Advisory::parse(&bytes).and_then(Advisory::prepare) {
+                        Ok(record) => records.push(record),
+                        Err(error) => {
+                            tracing::warn!(entry = entry.name(), %error, "OSV record was skipped")
+                        }
                     }
                 }
+                Ok(records)
+            })
+            .await??;
+            // Repositories are rescanned once per archive, not once per changed record.
+            let mut changed = false;
+            for record in records {
+                changed |= db::vulnerabilities::upsert(pool, &record).await?;
             }
-            Ok(records)
-        })
-        .await??;
-        // Repositories are rescanned once per archive, not once per changed record.
-        let mut changed = false;
-        for record in records {
-            changed |= db::vulnerabilities::upsert(pool, &record).await?;
+            if changed {
+                db::vulnerabilities::rescan_all(pool).await?;
+            }
+            Ok::<_, anyhow::Error>(())
         }
-        if changed {
-            db::vulnerabilities::rescan_all(pool).await?;
-        }
-        Ok::<_, anyhow::Error>(())
-        }.await;
+        .await;
         if let Err(error) = result {
             tracing::warn!(%ecosystem, %error, "OSV ecosystem synchronization failed");
             failures.push(ecosystem);
         }
     }
-    ensure!(failures.is_empty(), "OSV synchronization failed for {}", failures.join(", "));
+    ensure!(
+        failures.is_empty(),
+        "OSV synchronization failed for {}",
+        failures.join(", ")
+    );
     Ok(())
 }
 pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bool>) {
@@ -512,10 +564,20 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
                 if let Some(repo) =
                     db::repositories::records::get_repository_by_id(&state.pool, repo).await?
                 {
-                    match tokio::time::timeout(Duration::from_secs(540), scan(&state, &repo, generation)).await {
+                    match tokio::time::timeout(
+                        Duration::from_secs(540),
+                        scan(&state, &repo, generation),
+                    )
+                    .await
+                    {
                         Ok(Ok(())) => {}
-                        Ok(Err(error)) => tracing::warn!(repo_id=repo.id,%error,"Dependency vulnerability scan failed"),
-                        Err(_) => tracing::warn!(repo_id=repo.id,"Dependency vulnerability scan exceeded its lease budget"),
+                        Ok(Err(error)) => {
+                            tracing::warn!(repo_id=repo.id,%error,"Dependency vulnerability scan failed")
+                        }
+                        Err(_) => tracing::warn!(
+                            repo_id = repo.id,
+                            "Dependency vulnerability scan exceeded its lease budget"
+                        ),
                     }
                 }
             }
@@ -574,11 +636,16 @@ mod tests {
             std::slice::from_ref(&snapshot),
             std::slice::from_ref(&document),
             &osv,
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0.version, "1.0rc1");
         osv.values_mut().next().unwrap().withdrawn = Some(chrono::Utc::now());
-        assert!(db::dependabot_alerts::matches(&[snapshot], &[document], &osv).unwrap().is_empty());
+        assert!(
+            db::dependabot_alerts::matches(&[snapshot], &[document], &osv)
+                .unwrap()
+                .is_empty()
+        );
     }
     #[test]
     fn local_maven_advisories_match_namespaced_package_urls() {
@@ -599,7 +666,8 @@ mod tests {
             &[snapshot],
             &[document],
             &std::collections::BTreeMap::new(),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(matches.len(), 1);
     }
     #[test]

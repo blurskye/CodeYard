@@ -83,13 +83,15 @@ pub(super) async fn document(state: &AppState, user: &User, token: Option<i64>) 
     // Eligibility and the private aggregates are one statement snapshot, shared by GET and PATCH.
     let statistics = match token {
         Some(token) => db::users::profiles::account_statistics(&state.pool, user.id, token)
-            .await.map_err(Error::unavailable)?,
+            .await
+            .map_err(Error::unavailable)?,
         None => None,
     };
     let public_gists = match &statistics {
         Some(statistics) => statistics.public_gists,
         None => db::gists::count_owned(&state.pool, user.id, false, None)
-            .await.map_err(Error::unavailable)?,
+            .await
+            .map_err(Error::unavailable)?,
     };
     Ok(payloads::public_user(
         user,
@@ -109,7 +111,9 @@ async fn authenticated(
     let actor = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
-    Ok(Json(document(&state, &actor.user, Some(actor.token.id)).await?))
+    Ok(Json(
+        document(&state, &actor.user, Some(actor.token.id)).await?,
+    ))
 }
 
 async fn update(
@@ -477,7 +481,13 @@ async fn hovercard(
     let subject = match (query.subject_type.as_deref(), query.subject_id.as_deref()) {
         (None, None) => None,
         (Some(kind @ ("organization" | "repository" | "issue" | "pull_request")), Some(id)) => {
-            Some((kind, id.parse::<i64>().ok().filter(|id| *id > 0).ok_or_else(|| Error::validation("Hovercard", "subject_id", "invalid"))?))
+            Some((
+                kind,
+                id.parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| Error::validation("Hovercard", "subject_id", "invalid"))?,
+            ))
         }
         _ => return Err(Error::validation("Hovercard", "subject_type", "invalid")),
     };
@@ -490,41 +500,119 @@ async fn hovercard(
         Vec::new()
     };
     if let Some((kind, id)) = subject {
-        if let Some(context) = hovercard_subject(&state, &actor, user.id, kind, id).await? { contexts.push(context); }
+        if let Some(context) = hovercard_subject(&state, &actor, user.id, kind, id).await? {
+            contexts.push(context);
+        }
     }
-    if db::users::tokens::token_user(&state.pool, actor.token.id, false).await.map_err(Error::unavailable)?.is_none_or(|user| user.id != actor.user.id) { return Err(auth::required()); }
+    if db::users::tokens::token_user(&state.pool, actor.token.id, false)
+        .await
+        .map_err(Error::unavailable)?
+        .is_none_or(|user| user.id != actor.user.id)
+    {
+        return Err(auth::required());
+    }
     Ok(Json(json!({"contexts":contexts})))
 }
 
-async fn hovercard_subject(state: &AppState, auth: &auth::Authentication, user: i64, kind: &str, id: i64) -> Result<Option<Value>> {
+async fn hovercard_subject(
+    state: &AppState,
+    auth: &auth::Authentication,
+    user: i64,
+    kind: &str,
+    id: i64,
+) -> Result<Option<Value>> {
     let pool = &state.pool;
     let (related, message, icon) = match kind {
         "repository" => {
-            let repo = db::repositories::records::get_repository_by_id(pool, id).await.map_err(Error::unavailable)?.filter(|repo| !repo.is_gist).ok_or_else(Error::missing)?;
-            if !auth::readable_repositories(state, Some(auth), &[id], "metadata").await?.contains(&id) { return Err(Error::missing()); }
-            (repo.owner_user_id == Some(user), "Owns this repository", "repo")
+            let repo = db::repositories::records::get_repository_by_id(pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .filter(|repo| !repo.is_gist)
+                .ok_or_else(Error::missing)?;
+            if !auth::readable_repositories(state, Some(auth), &[id], "metadata")
+                .await?
+                .contains(&id)
+            {
+                return Err(Error::missing());
+            }
+            (
+                repo.owner_user_id == Some(user),
+                "Owns this repository",
+                "repo",
+            )
         }
         "organization" => {
-            db::organizations::profiles::get_public_organization_by_id(pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+            db::organizations::profiles::get_public_organization_by_id(pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
             auth::refuse_classic(state, auth.token.id, id).await?;
             // Hovercards may reveal public membership, not a profile token's owner's private roster.
-            let rows = db::organizations::discovery::list_organizations(pool, Some(user), false, id - 1, 0, 1).await.map_err(Error::unavailable)?;
-            (rows.iter().any(|org| org.id == id), "Member of this organization", "organization")
+            let rows = db::organizations::discovery::list_organizations(
+                pool,
+                Some(user),
+                false,
+                id - 1,
+                0,
+                1,
+            )
+            .await
+            .map_err(Error::unavailable)?;
+            (
+                rows.iter().any(|org| org.id == id),
+                "Member of this organization",
+                "organization",
+            )
         }
         "issue" | "pull_request" => {
-            let scope = if kind == "issue" { "issues" } else { "pull-requests" };
+            let scope = if kind == "issue" {
+                "issues"
+            } else {
+                "pull-requests"
+            };
             let code = if kind == "issue" { "I" } else { "PR" };
-            let repo = db::graphql::node_repository(pool, code, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
-            if !auth::readable_repositories(state, Some(auth), &[repo], scope).await?.contains(&repo) { return Err(Error::missing()); }
+            let repo = db::graphql::node_repository(pool, code, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+            if !auth::readable_repositories(state, Some(auth), &[repo], scope)
+                .await?
+                .contains(&repo)
+            {
+                return Err(Error::missing());
+            }
             let (repo, author) = if kind == "issue" {
-                let row = db::issues::get_issue_by_id(pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+                let row = db::issues::get_issue_by_id(pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
                 (row.repo_id, row.author_id)
             } else {
-                let row = db::pull_requests::records::get_pull_request_by_id(pool, id).await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
+                let row = db::pull_requests::records::get_pull_request_by_id(pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .ok_or_else(Error::missing)?;
                 (row.repo_id, row.author_id)
             };
-            if !auth::readable_repositories(state, Some(auth), &[repo], scope).await?.contains(&repo) { return Err(Error::missing()); }
-            (author == user, if kind == "issue" { "Author of this issue" } else { "Author of this pull request" }, if kind == "issue" { "issue-opened" } else { "git-pull-request" })
+            if !auth::readable_repositories(state, Some(auth), &[repo], scope)
+                .await?
+                .contains(&repo)
+            {
+                return Err(Error::missing());
+            }
+            (
+                author == user,
+                if kind == "issue" {
+                    "Author of this issue"
+                } else {
+                    "Author of this pull request"
+                },
+                if kind == "issue" {
+                    "issue-opened"
+                } else {
+                    "git-pull-request"
+                },
+            )
         }
         _ => return Err(Error::validation("Hovercard", "subject_type", "invalid")),
     };
@@ -654,17 +742,22 @@ async fn delete_key(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let deleted =
-        ssh_keys::delete_user_ssh_key_for_token(&state.pool, actor.user.id, actor.token.id, &actor.token.token_hash, id)
-            .await
-            .map_err(
-                |error| match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {
-                    Some(ssh_keys::SshKeyWriteRefusal::AccountRestricted) => {
-                        Error::new(StatusCode::FORBIDDEN, "Account is restricted")
-                    }
-                    _ => Error::unavailable(error),
-                },
-            )?;
+    let deleted = ssh_keys::delete_user_ssh_key_for_token(
+        &state.pool,
+        actor.user.id,
+        actor.token.id,
+        &actor.token.token_hash,
+        id,
+    )
+    .await
+    .map_err(
+        |error| match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {
+            Some(ssh_keys::SshKeyWriteRefusal::AccountRestricted) => {
+                Error::new(StatusCode::FORBIDDEN, "Account is restricted")
+            }
+            _ => Error::unavailable(error),
+        },
+    )?;
     if !deleted {
         return Err(Error::missing());
     }

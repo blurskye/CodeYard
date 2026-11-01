@@ -6,21 +6,35 @@ use crate::backend::db::{
 use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
-async fn write<'a>(pool: &'a SqlitePool, actor: &crate::backend::db::credentials::Actor, org: i64) -> Result<Transaction<'a, Sqlite>> {
+async fn write<'a>(
+    pool: &'a SqlitePool,
+    actor: &crate::backend::db::credentials::Actor,
+    org: i64,
+) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
-        OrganizationOutcome::Applied(OrgRole::Member) if super::organizations::roles::manages_security(&mut tx, actor.user_id, org).await? => {}
+        OrganizationOutcome::Applied(OrgRole::Member)
+            if super::organizations::roles::manages_security(&mut tx, actor.user_id, org)
+                .await? => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
-    ensure!(super::credentials::organization(&mut tx, actor, org, "organization_administration", true).await?, Refusal::Denied);
+    ensure!(
+        super::credentials::organization(&mut tx, actor, org, "organization_administration", true)
+            .await?,
+        Refusal::Denied
+    );
     Ok(tx)
 }
 async fn readable(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<()> {
     match super::organizations::authority::read_authority(connection, actor, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(()),
-        OrganizationOutcome::Applied(OrgRole::Member) if super::organizations::roles::holds_security_role(connection, actor, org).await? => Ok(()),
+        OrganizationOutcome::Applied(OrgRole::Member)
+            if super::organizations::roles::holds_security_role(connection, actor, org).await? =>
+        {
+            Ok(())
+        }
         OrganizationOutcome::Missing => Err(Refusal::Missing.into()),
         _ => Err(Refusal::Denied.into()),
     }
@@ -70,7 +84,10 @@ async fn apply_repository(
             connection,
             actor,
             repo,
-            &scanning_settings(&apply(None, &config.settings)?, previous.unwrap_or_default())?,
+            &scanning_settings(
+                &apply(None, &config.settings)?,
+                previous.unwrap_or_default(),
+            )?,
         )
         .await?;
         // Private vulnerability reporting lives in its own table and is offered on public
@@ -104,7 +121,13 @@ pub async fn list(pool: &SqlitePool, actor: i64, org: i64) -> Result<Vec<Configu
     tx.commit().await?;
     Ok(rows)
 }
-pub async fn settings_page(pool: &SqlitePool, actor: i64, session: &str, org: i64, before: Option<i64>) -> Result<SettingsPage> {
+pub async fn settings_page(
+    pool: &SqlitePool,
+    actor: i64,
+    session: &str,
+    org: i64,
+    before: Option<i64>,
+) -> Result<SettingsPage> {
     let mut tx = pool.begin().await?;
     readable(&mut tx, actor, org).await?;
     ensure!(before.is_none_or(|id| id > 0), Refusal::Invalid);
@@ -179,7 +202,12 @@ pub async fn save(
     tx.commit().await?;
     Ok(row)
 }
-pub async fn delete(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, org: i64, id: i64) -> Result<()> {
+pub async fn delete(
+    pool: &SqlitePool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    org: i64,
+    id: i64,
+) -> Result<()> {
     let actor = actor.into();
     let mut tx = write(pool, &actor, org).await?;
     configuration(&mut tx, org, id).await?;
@@ -270,7 +298,10 @@ pub async fn attach(
     };
     let rows: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r WHERE r.owner_org_id=?1 AND (?2='all' OR (?2='selected' AND r.id IN (SELECT value FROM json_each(?3))) OR (?2='public' AND NOT r.is_private) OR (?2='private_or_internal' AND r.is_private) OR (?2='all_without_configurations' AND NOT EXISTS(SELECT 1 FROM repository_security_settings s WHERE s.repo_id=r.id AND s.configuration_id IS NOT NULL))) ORDER BY r.id")
         .bind(org).bind(scope).bind(serde_json::to_string(selected)?).fetch_all(&mut *tx).await?;
-    ensure!(selected.iter().all(|id| rows.contains(id)), Refusal::Missing);
+    ensure!(
+        selected.iter().all(|id| rows.contains(id)),
+        Refusal::Missing
+    );
     for repo in rows {
         apply_repository(&mut tx, repo, Some(actor_id), config.as_ref()).await?;
     }

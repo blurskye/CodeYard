@@ -1,7 +1,7 @@
 //! The core binds job IDs to environment scopes; engines never infer scope from global values.
 use super::{Contexts, Masker, Value};
-use anyhow::{ensure, Result};
 use crate::values;
+use anyhow::{ensure, Result};
 use serde::Deserialize;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -25,8 +25,7 @@ fn valid(values: &BTreeMap<String, String>, budget: usize) -> bool {
     let mut names = BTreeSet::new();
     values.len() <= values::MAX_SCOPE_VALUES
         && values.iter().all(|(name, value)| {
-            crate::values::validate(name, value).is_ok()
-                && names.insert(name.to_ascii_uppercase())
+            crate::values::validate(name, value).is_ok() && names.insert(name.to_ascii_uppercase())
         })
         && values
             .iter()

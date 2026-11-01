@@ -37,7 +37,11 @@ pub enum Refusal {
 
 impl Setting {
     pub(crate) fn organization_permission(self) -> &'static str {
-        if matches!(self, Self::Runners) { "organization_self_hosted_runners" } else { "organization_administration" }
+        if matches!(self, Self::Runners) {
+            "organization_self_hosted_runners"
+        } else {
+            "organization_administration"
+        }
     }
 
     pub fn key(self) -> &'static str {
@@ -103,10 +107,9 @@ impl Setting {
                 (Self::Retention, "days") => value
                     .as_i64()
                     .is_some_and(|days| (1..=maximum).contains(&days)),
-                (Self::ContributorApproval, "approval_policy") => enumeration(
-                    value,
-                    &["all_external_contributors"],
-                ),
+                (Self::ContributorApproval, "approval_policy") => {
+                    enumeration(value, &["all_external_contributors"])
+                }
                 (Self::Workflow, "default_workflow_permissions") => {
                     enumeration(value, &["read", "write"])
                 }
@@ -140,10 +143,13 @@ impl Setting {
             required.is_none_or(|key| fields.contains_key(key)),
             Refusal::Invalid
         );
-        let mut value = stored
-            .get(self.key())
-            .cloned()
-            .unwrap_or_else(|| if matches!(self, Self::Workflow) { json!({}) } else { self.defaults() });
+        let mut value = stored.get(self.key()).cloned().unwrap_or_else(|| {
+            if matches!(self, Self::Workflow) {
+                json!({})
+            } else {
+                self.defaults()
+            }
+        });
         for (key, field) in fields {
             value[key] = field.clone();
         }
@@ -231,17 +237,33 @@ pub fn retention(repo: &Value, org: &Value, site: Option<i32>, private: bool) ->
 }
 
 /// Response defaults must not become persisted overrides of inherited settings.
-pub(crate) fn resolved(mut stored: Value, parent: &Value, site: &super::actions::ActionsSettings, private: bool, maximum: i64) -> Value {
+pub(crate) fn resolved(
+    mut stored: Value,
+    parent: &Value,
+    site: &super::actions::ActionsSettings,
+    private: bool,
+    maximum: i64,
+) -> Value {
     let days = retention(&stored, parent, site.artifact_retention_days, private);
-    let write = workflow_write(&stored, parent, site.default_workflow_permissions == "permissive");
+    let write = workflow_write(
+        &stored,
+        parent,
+        site.default_workflow_permissions == "permissive",
+    );
     let approve = can_approve_reviews(&stored, parent);
     stored[Setting::Retention.key()] = json!({"days":days,"maximum_allowed_days":maximum});
-    if stored.get(Setting::Workflow.key()).is_none() { stored[Setting::Workflow.key()] = json!({}); }
-    stored[Setting::Workflow.key()]["default_workflow_permissions"] = json!(if write { "write" } else { "read" });
+    if stored.get(Setting::Workflow.key()).is_none() {
+        stored[Setting::Workflow.key()] = json!({});
+    }
+    stored[Setting::Workflow.key()]["default_workflow_permissions"] =
+        json!(if write { "write" } else { "read" });
     stored[Setting::Workflow.key()]["can_approve_pull_request_reviews"] = json!(approve);
     // Older unsupported contributor policies have always executed conservatively. Report
     // that actual behavior, and reject new attempts to select an unenforced policy.
-    if stored[Setting::ContributorApproval.key()]["approval_policy"].as_str().is_some_and(|policy| policy != "all_external_contributors") {
+    if stored[Setting::ContributorApproval.key()]["approval_policy"]
+        .as_str()
+        .is_some_and(|policy| policy != "all_external_contributors")
+    {
         stored[Setting::ContributorApproval.key()] = Setting::ContributorApproval.defaults();
     }
     stored
@@ -266,19 +288,43 @@ pub enum SelectionChange {
     Remove(i64),
 }
 
-pub(crate) fn change_selection(stored: &mut Value, setting: Setting, change: &SelectionChange) -> Result<Vec<i64>> {
-    ensure!(matches!(setting, Setting::Permissions | Setting::Runners), Refusal::Invalid);
-    ensure!(stored[setting.key()]["enabled_repositories"] == "selected", Refusal::Invalid);
-    let mut ids: Vec<i64> = stored[setting.key()]["selected_repository_ids"].as_array()
-        .map(|ids| ids.iter().filter_map(Value::as_i64).collect()).unwrap_or_default();
+pub(crate) fn change_selection(
+    stored: &mut Value,
+    setting: Setting,
+    change: &SelectionChange,
+) -> Result<Vec<i64>> {
+    ensure!(
+        matches!(setting, Setting::Permissions | Setting::Runners),
+        Refusal::Invalid
+    );
+    ensure!(
+        stored[setting.key()]["enabled_repositories"] == "selected",
+        Refusal::Invalid
+    );
+    let mut ids: Vec<i64> = stored[setting.key()]["selected_repository_ids"]
+        .as_array()
+        .map(|ids| ids.iter().filter_map(Value::as_i64).collect())
+        .unwrap_or_default();
     let added = match change {
-        SelectionChange::Set(next) => { ids = next.clone(); next.clone() }
-        SelectionChange::Add(id) => { ids.push(*id); vec![*id] }
-        SelectionChange::Remove(id) => { ids.retain(|value| value != id); Vec::new() }
+        SelectionChange::Set(next) => {
+            ids = next.clone();
+            next.clone()
+        }
+        SelectionChange::Add(id) => {
+            ids.push(*id);
+            vec![*id]
+        }
+        SelectionChange::Remove(id) => {
+            ids.retain(|value| value != id);
+            Vec::new()
+        }
     };
     ids.sort_unstable();
     ids.dedup();
-    ensure!(ids.len() <= 10_000 && ids.iter().all(|id| *id > 0), Refusal::Invalid);
+    ensure!(
+        ids.len() <= 10_000 && ids.iter().all(|id| *id > 0),
+        Refusal::Invalid
+    );
     stored[setting.key()]["selected_repository_ids"] = json!(ids);
     Ok(added)
 }
@@ -309,8 +355,14 @@ pub(crate) struct PolicySelector {
 }
 
 impl PolicySelector {
-    pub(crate) fn applies(&self, repository: &super::rulesets::RepositoryContext<'_>, budget: &mut crate::backend::ci::workflows::WorkflowMatchBudget) -> Result<bool> {
-        if self.own { return Ok(true); }
+    pub(crate) fn applies(
+        &self,
+        repository: &super::rulesets::RepositoryContext<'_>,
+        budget: &mut crate::backend::ci::workflows::WorkflowMatchBudget,
+    ) -> Result<bool> {
+        if self.own {
+            return Ok(true);
+        }
         match policy_conditions(self.conditions.as_deref())? {
             Some(conditions) => Ok(conditions.matches_repository(repository, budget)?),
             None => Ok(true),
@@ -318,15 +370,31 @@ impl PolicySelector {
     }
 }
 
-pub(crate) fn policy_conditions(stored: Option<&str>) -> Result<Option<super::rulesets::Conditions>> {
-    let Some(stored) = stored else { return Ok(None); };
+pub(crate) fn policy_conditions(
+    stored: Option<&str>,
+) -> Result<Option<super::rulesets::Conditions>> {
+    let Some(stored) = stored else {
+        return Ok(None);
+    };
     let mut value: Value = serde_json::from_str(stored)?;
-    if value.is_null() { return Ok(None); }
+    if value.is_null() {
+        return Ok(None);
+    }
     let fields = value.as_object_mut().ok_or(Refusal::Invalid)?;
     fields.remove("workflow_path");
-    if fields.is_empty() { return Ok(None); }
-    let conditions: super::rulesets::Conditions = serde_json::from_value(value).map_err(|_| Refusal::Invalid)?;
-    ensure!(conditions.ref_name.is_none() && usize::from(conditions.repository_name.is_some()) + usize::from(conditions.repository_id.is_some()) + usize::from(conditions.repository_property.is_some()) == 1, Refusal::Invalid);
+    if fields.is_empty() {
+        return Ok(None);
+    }
+    let conditions: super::rulesets::Conditions =
+        serde_json::from_value(value).map_err(|_| Refusal::Invalid)?;
+    ensure!(
+        conditions.ref_name.is_none()
+            && usize::from(conditions.repository_name.is_some())
+                + usize::from(conditions.repository_id.is_some())
+                + usize::from(conditions.repository_property.is_some())
+                == 1,
+        Refusal::Invalid
+    );
     Ok(Some(conditions))
 }
 

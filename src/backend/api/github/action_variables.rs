@@ -141,9 +141,17 @@ async fn update(
         .name
         .unwrap_or_else(|| previous.clone())
         .to_ascii_uppercase();
-    db::variables::save(&state.pool, actor.user.id, &actor.credential(), repo, Some(&previous), &name, value)
-        .await
-        .map_err(error)?;
+    db::variables::save(
+        &state.pool,
+        actor.user.id,
+        &actor.credential(),
+        repo,
+        Some(&previous),
+        &name,
+        value,
+    )
+    .await
+    .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -153,8 +161,14 @@ async fn remove(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
-    db::variables::delete(&state.pool, actor.user.id, &actor.credential(), repo, &name.to_ascii_uppercase())
-        .await
-        .map_err(error)?;
+    db::variables::delete(
+        &state.pool,
+        actor.user.id,
+        &actor.credential(),
+        repo,
+        &name.to_ascii_uppercase(),
+    )
+    .await
+    .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -58,7 +58,12 @@ async fn document(
     )
 }
 
-async fn readable(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<(i64, db::credentials::Actor)> {
+async fn readable(
+    state: &AppState,
+    headers: &HeaderMap,
+    owner: &str,
+    name: &str,
+) -> Result<(i64, db::credentials::Actor)> {
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
     let auth = auth.ok_or_else(auth::required)?;
     Ok((repo.id, auth.database_actor()))
@@ -70,7 +75,9 @@ pub(super) async fn list(
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<axum::Json<Value>> {
     let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
-    let rows = codeql::list(&state.pool, actor, repo).await.map_err(failure)?;
+    let rows = codeql::list(&state.pool, actor, repo)
+        .await
+        .map_err(failure)?;
     let mut values = Vec::new();
     for row in rows {
         values.push(document(&state, &row, &owner, &name).await?);
@@ -101,7 +108,19 @@ pub(super) async fn get(
         return Ok(axum::Json(document(&state, &row, &owner, &name).await?).into_response());
     }
     if method == axum::http::Method::HEAD {
-        return Ok(([(header::CONTENT_TYPE, "application/zip".to_owned()), (header::CONTENT_LENGTH, row.size.to_string()), (header::CONTENT_DISPOSITION, attachment_disposition(&row.name)), (header::CACHE_CONTROL, "private, no-store".to_owned())], axum::body::Body::empty()).into_response());
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "application/zip".to_owned()),
+                (header::CONTENT_LENGTH, row.size.to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    attachment_disposition(&row.name),
+                ),
+                (header::CACHE_CONTROL, "private, no-store".to_owned()),
+            ],
+            axum::body::Body::empty(),
+        )
+            .into_response());
     }
     let permit = state
         .storage

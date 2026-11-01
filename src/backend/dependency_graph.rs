@@ -67,11 +67,16 @@ impl Snapshot {
         self.validate_with_limit(1024 * 1024)
     }
 
-    pub(crate) fn validate_native(&self) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
+    pub(crate) fn validate_native(
+        &self,
+    ) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
         self.validate_with_limit(128 * 1024 * 1024)
     }
 
-    fn validate_with_limit(&self, max_bytes: usize) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
+    fn validate_with_limit(
+        &self,
+        max_bytes: usize,
+    ) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
         let valid_metadata = |metadata: &Option<BTreeMap<String, Value>>| {
             metadata.as_ref().is_none_or(|values| {
                 values
@@ -254,11 +259,20 @@ pub fn sbom(name: &str, snapshots: &[Snapshot]) -> Value {
                     .and_then(package)
                     .unwrap_or_else(|| (String::new(), key.to_owned(), String::new()));
                 let local_manifest = dependency.package_url.is_none().then(|| {
-                    manifest.file.as_ref().and_then(|file| file.source_location.as_ref())
-                        .unwrap_or(&manifest.name).clone()
+                    manifest
+                        .file
+                        .as_ref()
+                        .and_then(|file| file.source_location.as_ref())
+                        .unwrap_or(&manifest.name)
+                        .clone()
                 });
-                ids.get(&(dependency.package_url.clone(), name, version, local_manifest))
-                    .cloned()
+                ids.get(&(
+                    dependency.package_url.clone(),
+                    name,
+                    version,
+                    local_manifest,
+                ))
+                .cloned()
             };
             for (key, dependency) in &manifest.resolved {
                 let Some(id) = id_for(key, dependency) else {

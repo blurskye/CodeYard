@@ -8,8 +8,8 @@
 pub mod command_codec;
 pub mod expressions;
 pub mod fs;
-pub mod progress;
 pub mod process;
+pub mod progress;
 pub mod runner;
 pub mod values;
 pub mod vm;

@@ -74,7 +74,8 @@ async fn list(
         "all" => false,
         _ => return Err(Error::invalid("Invalid job filter")),
     };
-    if !all && run.started_at.is_some()
+    if !all
+        && run.started_at.is_some()
         && !jobs::observed(&state.pool, repo.id, run.id)
             .await
             .map_err(Error::unavailable)?
@@ -124,9 +125,10 @@ pub(in crate::backend::api::github) async fn annotations(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let (offset, limit) = page.window()?;
-    let (total, annotations) = jobs::annotations(&state.pool, repo.id, id, offset as i64, limit as i64)
-        .await
-        .map_err(Error::unavailable)?;
+    let (total, annotations) =
+        jobs::annotations(&state.pool, repo.id, id, offset as i64, limit as i64)
+            .await
+            .map_err(Error::unavailable)?;
     let values: Vec<_> = annotations
         .into_iter()
         .map(|row| {

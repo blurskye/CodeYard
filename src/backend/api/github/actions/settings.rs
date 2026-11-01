@@ -91,15 +91,9 @@ async fn settings(
     } else {
         None
     };
-    let stored = db::action_settings::settings(
-        &state.pool,
-        actor,
-        &scope,
-        setting,
-        body.as_ref(),
-    )
-    .await
-    .map_err(failure)?;
+    let stored = db::action_settings::settings(&state.pool, actor, &scope, setting, body.as_ref())
+        .await
+        .map_err(failure)?;
     if write {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -201,48 +195,74 @@ async fn organization_repositories(
         None
     } else if params.contains_key("repository_id") {
         let id = super::id(&params, "repository_id")?;
-        Some(if method == axum::http::Method::DELETE { SelectionChange::Remove(id) } else { SelectionChange::Add(id) })
+        Some(if method == axum::http::Method::DELETE {
+            SelectionChange::Remove(id)
+        } else {
+            SelectionChange::Add(id)
+        })
     } else {
         let body = input(request).await?;
-        let ids = body["selected_repository_ids"].as_array()
+        let ids = body["selected_repository_ids"]
+            .as_array()
             .ok_or_else(|| Error::validation("Actions", "selected_repository_ids", "missing"))?
-            .iter().map(|id| id.as_i64().ok_or_else(|| Error::validation("Actions", "selected_repository_ids", "invalid")))
+            .iter()
+            .map(|id| {
+                id.as_i64().ok_or_else(|| {
+                    Error::validation("Actions", "selected_repository_ids", "invalid")
+                })
+            })
             .collect::<Result<Vec<_>>>()?;
         Some(SelectionChange::Set(ids))
     };
     let (offset, limit) = page.window()?;
-    let (total, rows) = db::action_settings::repositories(&state.pool, actor, &scope, setting, change.as_ref(), (offset as i64, limit as i64))
-        .await.map_err(failure)?;
+    let (total, rows) = db::action_settings::repositories(
+        &state.pool,
+        actor,
+        &scope,
+        setting,
+        change.as_ref(),
+        (offset as i64, limit as i64),
+    )
+    .await
+    .map_err(failure)?;
     if write {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let values: Vec<_> = rows.iter().map(|repo| crate::backend::webhooks::payloads::repository(repo, &params["org"])).collect();
-    Ok((page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?, Json(json!({"total_count":total,"repositories":values}))).into_response())
+    let values: Vec<_> = rows
+        .iter()
+        .map(|repo| crate::backend::webhooks::payloads::repository(repo, &params["org"]))
+        .collect();
+    Ok((
+        page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,
+        Json(json!({"total_count":total,"repositories":values})),
+    )
+        .into_response())
 }
 
 fn document(policy: &Policy, params: &Params, organization: Option<&str>) -> Result<Value> {
     let mut value: Value = serde_json::from_str(&policy.data).map_err(Error::unavailable)?;
-    let (source_type, source, url) = if let Some(org) = organization.or_else(|| params.get("org").map(String::as_str)) {
-        (
-            "Organization",
-            org.to_owned(),
-            api_url(&format!(
-                "/orgs/{}/actions/policies/{}",
-                crate::webui::encode_component(org),
-                policy.id
-            )),
-        )
-    } else {
-        (
-            "Repository",
-            format!("{}/{}", params["owner"], params["repo"]),
-            format!(
-                "{}/actions/policies/{}",
-                repo_url(&params["owner"], &params["repo"]),
-                policy.id
-            ),
-        )
-    };
+    let (source_type, source, url) =
+        if let Some(org) = organization.or_else(|| params.get("org").map(String::as_str)) {
+            (
+                "Organization",
+                org.to_owned(),
+                api_url(&format!(
+                    "/orgs/{}/actions/policies/{}",
+                    crate::webui::encode_component(org),
+                    policy.id
+                )),
+            )
+        } else {
+            (
+                "Repository",
+                format!("{}/{}", params["owner"], params["repo"]),
+                format!(
+                    "{}/actions/policies/{}",
+                    repo_url(&params["owner"], &params["repo"]),
+                    policy.id
+                ),
+            )
+        };
     value["id"] = json!(policy.id);
     value["node_id"] = json!(node_id::encode("AP", policy.id));
     value["target"] = json!("actions");
@@ -255,7 +275,9 @@ fn document(policy: &Policy, params: &Params, organization: Option<&str>) -> Res
 }
 
 #[derive(serde::Deserialize)]
-struct PolicyQuery { has_parents: Option<bool> }
+struct PolicyQuery {
+    has_parents: Option<bool>,
+}
 
 async fn policies(
     State(state): State<Arc<AppState>>,
@@ -276,9 +298,25 @@ async fn policies(
         .transpose()?;
     if !write && id.is_none() {
         let (offset, limit) = page.window()?;
-        let (total, rows) = db::action_settings::policies_page(&state.pool, actor, &scope, query.has_parents.unwrap_or(true), offset as i64, limit as i64).await.map_err(failure)?;
-        let values = rows.iter().map(|row| document(&row.policy, &params, row.organization.as_deref())).collect::<Result<Vec<_>>>()?;
-        return Ok((page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?, Json(json!({"total_count":total,"policies":values}))).into_response());
+        let (total, rows) = db::action_settings::policies_page(
+            &state.pool,
+            actor,
+            &scope,
+            query.has_parents.unwrap_or(true),
+            offset as i64,
+            limit as i64,
+        )
+        .await
+        .map_err(failure)?;
+        let values = rows
+            .iter()
+            .map(|row| document(&row.policy, &params, row.organization.as_deref()))
+            .collect::<Result<Vec<_>>>()?;
+        return Ok((
+            page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,
+            Json(json!({"total_count":total,"policies":values})),
+        )
+            .into_response());
     }
     let body = if write && method != axum::http::Method::DELETE {
         Some(input(request).await?)
@@ -293,7 +331,15 @@ async fn policies(
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
     let value = document(rows.first().ok_or_else(Error::missing)?, &params, None)?;
-    Ok((if id.is_none() { StatusCode::CREATED } else { StatusCode::OK }, Json(value)).into_response())
+    Ok((
+        if id.is_none() {
+            StatusCode::CREATED
+        } else {
+            StatusCode::OK
+        },
+        Json(value),
+    )
+        .into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

@@ -158,10 +158,15 @@ async fn refuse_unreadable_objects() -> Result<()> {
                 Some(("commit" | "tag", size)) => size.parse::<usize>().unwrap_or(usize::MAX),
                 _ => continue,
             };
-            ensure!(size <= MAX_COMMIT_OBJECT_BYTES, "this push contains a commit or tag larger than {} KiB", MAX_COMMIT_OBJECT_BYTES / 1024);
+            ensure!(
+                size <= MAX_COMMIT_OBJECT_BYTES,
+                "this push contains a commit or tag larger than {} KiB",
+                MAX_COMMIT_OBJECT_BYTES / 1024
+            );
         }
         Ok(process::ReadEnd::Complete(()))
-    }).await?;
+    })
+    .await?;
     Ok(())
 }
 

@@ -37,8 +37,10 @@ pub async fn create(
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo)
+            .await?
+            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
+                .await?,
         Refusal::Denied
     );
     let exists: bool = sqlx::query_scalar(
@@ -82,8 +84,10 @@ pub async fn disable(
     let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo)
+            .await?
+            && super::credentials::repository(&mut tx, &actor, repo, "administration", true)
+                .await?,
         Refusal::Denied
     );
     let changed = sqlx::query("UPDATE deployment_protection_rules SET enabled=FALSE WHERE id=$1 AND environment_id=$2 AND EXISTS(SELECT 1 FROM deployment_environments WHERE id=$2 AND repo_id=$3)")
@@ -160,8 +164,13 @@ async fn native_state(tx: &mut PgConnection, run: &CiRun) -> Result<Option<Strin
     }
     let pull: Option<i64> = if run.event == "pull_request" {
         sqlx::query_scalar("SELECT number FROM pull_requests WHERE id=$1 AND repo_id=$2")
-            .bind(run.pull_request_id).bind(run.repo_id).fetch_optional(&mut *tx).await?
-    } else { None };
+            .bind(run.pull_request_id)
+            .bind(run.repo_id)
+            .fetch_optional(&mut *tx)
+            .await?
+    } else {
+        None
+    };
     let reference = match run.workflow_reference(pull) {
         Some(reference) => reference,
         None if branch_policy.is_none() => String::new(),
@@ -189,9 +198,10 @@ async fn native_state(tx: &mut PgConnection, run: &CiRun) -> Result<Option<Strin
                     .bind(run.repo_id)
                     .fetch_all(&mut *tx)
                     .await?;
-            patterns.is_empty() || patterns
-                .iter()
-                .any(|pattern| github_glob_matches(pattern, name))
+            patterns.is_empty()
+                || patterns
+                    .iter()
+                    .any(|pattern| github_glob_matches(pattern, name))
         }
         Some(_) => false,
     };

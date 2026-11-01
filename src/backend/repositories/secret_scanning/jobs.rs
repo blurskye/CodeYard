@@ -8,7 +8,11 @@ use crate::backend::{
 };
 use anyhow::{ensure, Context, Result};
 use serde_json::{json, Value};
-use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+    time::Duration,
+};
 
 const HEARTBEAT_INTERVAL: Duration = Duration::from_secs(60);
 
@@ -19,7 +23,9 @@ pub async fn document(
     repo: &str,
     hide_secret: bool,
 ) -> Result<Value> {
-    Documents::load(state, std::slice::from_ref(alert)).await?.document(state, alert, owner, repo, hide_secret)
+    Documents::load(state, std::slice::from_ref(alert))
+        .await?
+        .document(state, alert, owner, repo, hide_secret)
 }
 
 /// Page enrichment has one bounded database read per related record kind.
@@ -30,24 +36,71 @@ pub struct Documents {
 impl Documents {
     pub async fn load(state: &AppState, alerts: &[records::Alert]) -> Result<Self> {
         ensure!(alerts.len() <= 100, "Too many alert enrichments");
-        let keys = alerts.iter().map(|alert| (alert.repo_id, alert.secret_hash.clone())).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
+        let keys = alerts
+            .iter()
+            .map(|alert| (alert.repo_id, alert.secret_hash.clone()))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
         let bypasses = records::alert_bypasses(&state.pool, &keys).await?;
-        let ids = alerts.iter().flat_map(|alert| [alert.resolved_by, alert.assigned_to]).flatten()
-            .chain(bypasses.iter().map(|bypass| bypass.actor_id)).collect::<HashSet<_>>().into_iter().collect::<Vec<_>>();
-        let users = db::users::accounts::get_users_by_ids(&state.pool, &ids).await?.into_iter().map(|user| (user.id, user)).collect();
-        Ok(Self { users, bypasses: bypasses.into_iter().map(|bypass| ((bypass.repo_id, bypass.secret_hash.clone()), bypass)).collect() })
+        let ids = alerts
+            .iter()
+            .flat_map(|alert| [alert.resolved_by, alert.assigned_to])
+            .flatten()
+            .chain(bypasses.iter().map(|bypass| bypass.actor_id))
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        let users = db::users::accounts::get_users_by_ids(&state.pool, &ids)
+            .await?
+            .into_iter()
+            .map(|user| (user.id, user))
+            .collect();
+        Ok(Self {
+            users,
+            bypasses: bypasses
+                .into_iter()
+                .map(|bypass| ((bypass.repo_id, bypass.secret_hash.clone()), bypass))
+                .collect(),
+        })
     }
 
-    pub fn document(&self, state: &AppState, alert: &records::Alert, owner: &str, repo: &str, hide_secret: bool) -> Result<Value> {
-        let secret = if hide_secret { String::new() } else {
-            let encryptor = state.secret_encryptor.as_ref().context("Secret encryption is unavailable")?;
+    pub fn document(
+        &self,
+        state: &AppState,
+        alert: &records::Alert,
+        owner: &str,
+        repo: &str,
+        hide_secret: bool,
+    ) -> Result<Value> {
+        let secret = if hide_secret {
+            String::new()
+        } else {
+            let encryptor = state
+                .secret_encryptor
+                .as_ref()
+                .context("Secret encryption is unavailable")?;
             String::from_utf8(encryptor.decrypt(&alert.encrypted_secret, &alert.nonce)?)?
         };
         let resolved_by = alert.resolved_by.and_then(|id| self.users.get(&id));
-        let bypass = self.bypasses.get(&(alert.repo_id, alert.secret_hash.clone()));
+        let bypass = self
+            .bypasses
+            .get(&(alert.repo_id, alert.secret_hash.clone()));
         let bypassed_by = bypass.and_then(|bypass| self.users.get(&bypass.actor_id));
-        let mut document = payloads::secret_scanning_alert(alert, &secret, owner, repo, resolved_by, bypass, bypassed_by);
-        document["assigned_to"] = alert.assigned_to.and_then(|id| self.users.get(&id)).map(payloads::user).unwrap_or(Value::Null);
+        let mut document = payloads::secret_scanning_alert(
+            alert,
+            &secret,
+            owner,
+            repo,
+            resolved_by,
+            bypass,
+            bypassed_by,
+        );
+        document["assigned_to"] = alert
+            .assigned_to
+            .and_then(|id| self.users.get(&id))
+            .map(payloads::user)
+            .unwrap_or(Value::Null);
         Ok(document)
     }
 }
@@ -76,11 +129,17 @@ pub async fn emit_alert(
     Ok(())
 }
 
-async fn commit_target(store: &crate::backend::repositories::store::RepoStore, sha: &str) -> Result<Option<String>> {
+async fn commit_target(
+    store: &crate::backend::repositories::store::RepoStore,
+    sha: &str,
+) -> Result<Option<String>> {
     let mut object = sha.to_owned();
     let mut seen = HashSet::new();
     loop {
-        ensure!(seen.len() < 32 && seen.insert(object.clone()), "Secret scan tag chain exceeds its limit");
+        ensure!(
+            seen.len() < 32 && seen.insert(object.clone()),
+            "Secret scan tag chain exceeds its limit"
+        );
         match store.git_object_kind(&object).await?.as_str() {
             "commit" => return Ok(Some(object)),
             "tree" | "blob" => return Ok(None),
@@ -106,15 +165,21 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
         None => {
             let mut heads = Vec::new();
             for sha in store.refs_from_primary().await?.into_values() {
-                if let Some(commit) = commit_target(&store, &sha).await? { heads.push(commit); }
+                if let Some(commit) = commit_target(&store, &sha).await? {
+                    heads.push(commit);
+                }
             }
             heads
         }
     };
-    let mut pending = heads.into_iter().map(|sha| (sha, false)).collect::<Vec<_>>();
+    let mut pending = heads
+        .into_iter()
+        .map(|sha| (sha, false))
+        .collect::<Vec<_>>();
     let mut visited = HashSet::new();
     let cacheable = super::scanner::cache_across_commits()?;
-    let mut cache = std::collections::HashMap::<(String, String), Arc<Vec<super::Detection>>>::new();
+    let mut cache =
+        std::collections::HashMap::<(String, String), Arc<Vec<super::Detection>>>::new();
     let mut cache_bytes = 0usize;
     // The claim lapses after five minutes without a heartbeat, so a long commit or a long run of
     // scanned commits renews it on the way.
@@ -128,7 +193,10 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
     };
     while let Some((sha, finishing)) = pending.pop() {
         if finishing {
-            ensure!(records::heartbeat(&state.pool, repo.id, job.id, job.attempt, Some(&sha)).await?, "Another worker took over this secret scan");
+            ensure!(
+                records::heartbeat(&state.pool, repo.id, job.id, job.attempt, Some(&sha)).await?,
+                "Another worker took over this secret scan"
+            );
             beat = std::time::Instant::now();
             continue;
         }
@@ -151,75 +219,89 @@ async fn scan_job(state: &AppState, job: &records::ScanJob) -> Result<()> {
         // First-parent changes introduce a blob once; root commits introduce the whole tree.
         // The ancestry walk still visits every parent, including side branches of merges.
         for entry in store.introduced_blobs(&sha).await? {
-                if entry.kind != "blob" || entry.size.is_some_and(|size| size > MAX_BLOB_BYTES) {
-                    continue;
-                }
-                if renew(&mut beat) {
-                    ensure!(
-                        records::heartbeat(&state.pool, repo.id, job.id, job.attempt, None).await?,
-                        "Another worker took over this secret scan"
-                    );
-                }
-                let key = (entry.path.clone(), entry.sha.clone());
-                let detections = if let Some(detections) = cache.get(&key) { detections.clone() } else {
-                    // Paths may be non-UTF-8; object identity, not the display path, selects bytes.
-                    let bytes = store.blob_by_id(&entry.sha).await?;
-                    let path = entry.path.clone();
-                    let commit_sha = sha.clone();
-                    let patterns = patterns.clone();
-                    let detections = Arc::new(tokio::task::spawn_blocking(move || scan_with_patterns(&path, &commit_sha, &bytes, &patterns, false)).await??);
-                    if cacheable {
-                        let bytes = detections.iter().map(|detection| detection.secret.len()).sum::<usize>() + key.0.len() + key.1.len();
-                        if cache.len() >= 1024 || cache_bytes.saturating_add(bytes) > 8 * 1024 * 1024 { cache.clear(); cache_bytes = 0; }
-                        cache_bytes += bytes;
-                        cache.insert(key, detections.clone());
+            if entry.kind != "blob" || entry.size.is_some_and(|size| size > MAX_BLOB_BYTES) {
+                continue;
+            }
+            if renew(&mut beat) {
+                ensure!(
+                    records::heartbeat(&state.pool, repo.id, job.id, job.attempt, None).await?,
+                    "Another worker took over this secret scan"
+                );
+            }
+            let key = (entry.path.clone(), entry.sha.clone());
+            let detections = if let Some(detections) = cache.get(&key) {
+                detections.clone()
+            } else {
+                // Paths may be non-UTF-8; object identity, not the display path, selects bytes.
+                let bytes = store.blob_by_id(&entry.sha).await?;
+                let path = entry.path.clone();
+                let commit_sha = sha.clone();
+                let patterns = patterns.clone();
+                let detections = Arc::new(
+                    tokio::task::spawn_blocking(move || {
+                        scan_with_patterns(&path, &commit_sha, &bytes, &patterns, false)
+                    })
+                    .await??,
+                );
+                if cacheable {
+                    let bytes = detections
+                        .iter()
+                        .map(|detection| detection.secret.len())
+                        .sum::<usize>()
+                        + key.0.len()
+                        + key.1.len();
+                    if cache.len() >= 1024 || cache_bytes.saturating_add(bytes) > 8 * 1024 * 1024 {
+                        cache.clear();
+                        cache_bytes = 0;
                     }
-                    detections
+                    cache_bytes += bytes;
+                    cache.insert(key, detections.clone());
+                }
+                detections
+            };
+            for detection in detections.iter() {
+                let location = records::Location {
+                    commit_sha: sha.clone(),
+                    blob_sha: entry.sha.clone(),
+                    path: entry.path.clone(),
+                    start_line: detection.start_line,
+                    end_line: detection.end_line,
+                    start_column: detection.start_column,
+                    end_column: detection.end_column,
                 };
-                for detection in detections.iter() {
-                    let location = records::Location {
-                        commit_sha: sha.clone(),
-                        blob_sha: entry.sha.clone(),
-                        path: entry.path.clone(),
-                        start_line: detection.start_line,
-                        end_line: detection.end_line,
-                        start_column: detection.start_column,
-                        end_column: detection.end_column,
-                    };
-                    let hash = crate::backend::identity::tokens::token_hash(&detection.secret);
-                    let (ciphertext, nonce) = encryptor.encrypt(detection.secret.as_bytes())?;
-                    let stored = records::record(
-                        &state.pool,
-                        repo.id,
-                        &records::Finding {
-                            hash: &hash,
-                            secret_type: &detection.secret_type,
-                            display_name: &detection.secret_type_display_name,
-                            encrypted_secret: &ciphertext,
-                            nonce: &nonce,
-                            location: &location,
-                        },
-                    )
-                    .await?;
-                    if let Some((alert, created, added)) = stored {
-                        if created { emit_alert(state, &repo, &alert, "created", job.actor_id).await?; }
-                        if added {
-                            let actor = job.actor_id;
-                            let owner = db::repositories::records::repository_owner_name(
-                                &state.pool,
-                                repo.id,
-                            )
-                            .await?
-                            .context("Repository owner unavailable")?;
-                            let document =
-                                document(state, &alert, &owner, &repo.name, true).await?;
-                            let repository = payloads::repository(&repo, &owner);
-                            let location =
-                                payloads::secret_scanning_location(&location, &owner, &repo.name);
-                            webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
-                        }
+                let hash = crate::backend::identity::tokens::token_hash(&detection.secret);
+                let (ciphertext, nonce) = encryptor.encrypt(detection.secret.as_bytes())?;
+                let stored = records::record(
+                    &state.pool,
+                    repo.id,
+                    &records::Finding {
+                        hash: &hash,
+                        secret_type: &detection.secret_type,
+                        display_name: &detection.secret_type_display_name,
+                        encrypted_secret: &ciphertext,
+                        nonce: &nonce,
+                        location: &location,
+                    },
+                )
+                .await?;
+                if let Some((alert, created, added)) = stored {
+                    if created {
+                        emit_alert(state, &repo, &alert, "created", job.actor_id).await?;
+                    }
+                    if added {
+                        let actor = job.actor_id;
+                        let owner =
+                            db::repositories::records::repository_owner_name(&state.pool, repo.id)
+                                .await?
+                                .context("Repository owner unavailable")?;
+                        let document = document(state, &alert, &owner, &repo.name, true).await?;
+                        let repository = payloads::repository(&repo, &owner);
+                        let location =
+                            payloads::secret_scanning_location(&location, &owner, &repo.name);
+                        webhooks::emit(&state.pool, &repo, "secret_scanning_alert_location", actor.into_iter().collect(), move |_, people| json!({"action":"created","alert":document,"location":location,"repository":repository,"sender":actor.map(|actor| payloads::person(&people.get(actor))).unwrap_or(Value::Null)})).await;
                     }
                 }
+            }
         }
         // A persistent marker means this commit AND its ancestors completed, so pruning a
         // later incremental walk cannot strand work after cancellation or a storage failure.
@@ -254,7 +336,16 @@ pub async fn run_next(state: &AppState) -> Result<bool> {
     }.await;
     let completion = match &result {
         Ok(()) => records::ScanCompletion::Completed,
-        Err(error) if error.downcast_ref::<crate::backend::repositories::store::RepoError>().is_some_and(|error| error.kind == crate::backend::repositories::store::ErrorKind::Unavailable) || error.is::<sqlx::Error>() => records::ScanCompletion::Retry,
+        Err(error)
+            if error
+                .downcast_ref::<crate::backend::repositories::store::RepoError>()
+                .is_some_and(|error| {
+                    error.kind == crate::backend::repositories::store::ErrorKind::Unavailable
+                })
+                || error.is::<sqlx::Error>() =>
+        {
+            records::ScanCompletion::Retry
+        }
         Err(_) => records::ScanCompletion::Failed,
     };
     records::finish(&state.pool, job.id, job.attempt, completion).await?;

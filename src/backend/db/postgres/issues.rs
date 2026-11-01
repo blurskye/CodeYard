@@ -5,16 +5,21 @@ use crate::backend::db::discussions::{
     contains_pattern, DiscussionWriteRefusal, ListFilter, StateCounts,
 };
 use crate::backend::db::issues::IssueCommentEntry;
+use crate::backend::db::issues::IssueListEntry;
 use crate::backend::db::issues::IssueMetadata;
+use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
 use crate::backend::db::labels::LabelTarget;
 use crate::backend::db::relationships::{Kind, Mutation};
-use crate::backend::db::issues::IssueListEntry;
-use crate::backend::db::issues::{IssueRelation, ViewerIssueEntry};
 use anyhow::Result;
 
 pub async fn issue_repositories(pool: &PgPool, ids: &[i64]) -> Result<Vec<(i64, i64)>> {
     anyhow::ensure!(ids.len() <= 101, "Issue page exceeds its limit");
-    Ok(sqlx::query_as("SELECT id,repo_id FROM issues WHERE id=ANY($1)").bind(ids).fetch_all(pool).await?)
+    Ok(
+        sqlx::query_as("SELECT id,repo_id FROM issues WHERE id=ANY($1)")
+            .bind(ids)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 use sqlx::{PgPool, Postgres, Transaction};
 
@@ -29,7 +34,10 @@ pub async fn create_issue_with_metadata(
     let authority = author_id.into();
     let author_id = authority.user_id;
     let assignees = metadata.unique_assignees()?;
-    let metadata = IssueMetadata { assignees: &assignees, ..metadata };
+    let metadata = IssueMetadata {
+        assignees: &assignees,
+        ..metadata
+    };
     super::retry_on_conflict(|| async {
         let mut tx = pool.begin().await?;
         // A milestone write locks the repository row exclusively, so that lock comes first
@@ -94,9 +102,20 @@ pub async fn create_issue_with_metadata(
                 Some(number),
             )
             .await?;
-            let title: String = sqlx::query_scalar("SELECT title FROM milestones WHERE repo_id=$1 AND number=$2")
-                .bind(repo_id).bind(number).fetch_one(&mut *tx).await?;
-            super::issue_attributes::event(&mut tx, (repo_id, issue.id, author_id), "milestoned", &title, "").await?;
+            let title: String =
+                sqlx::query_scalar("SELECT title FROM milestones WHERE repo_id=$1 AND number=$2")
+                    .bind(repo_id)
+                    .bind(number)
+                    .fetch_one(&mut *tx)
+                    .await?;
+            super::issue_attributes::event(
+                &mut tx,
+                (repo_id, issue.id, author_id),
+                "milestoned",
+                &title,
+                "",
+            )
+            .await?;
         }
         if let Some(kind) = metadata.issue_type {
             super::issue_attributes::type_in_transaction(
@@ -128,8 +147,14 @@ pub async fn create_issue_with_metadata(
             None => tx,
         };
         if let (Some(parent), Some(expected)) = (metadata.parent, metadata.parent_repository) {
-            let current: i64 = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=$1").bind(parent).fetch_one(&mut *tx).await?;
-            anyhow::ensure!(current == expected, crate::backend::db::relationships::Refusal::Missing);
+            let current: i64 = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=$1")
+                .bind(parent)
+                .fetch_one(&mut *tx)
+                .await?;
+            anyhow::ensure!(
+                current == expected,
+                crate::backend::db::relationships::Refusal::Missing
+            );
         }
         let issue = sqlx::query_as("SELECT * FROM issues WHERE id=$1")
             .bind(issue.id)
@@ -174,7 +199,12 @@ pub async fn get_issue(pool: &PgPool, repo_id: i64, number: i32) -> Result<Optio
     Ok(issue)
 }
 
-pub async fn issue_ids_by_numbers(pool: &PgPool, repo: i64, viewer: Option<i64>, numbers: &[i32]) -> Result<Vec<(i64, i32)>> {
+pub async fn issue_ids_by_numbers(
+    pool: &PgPool,
+    repo: i64,
+    viewer: Option<i64>,
+    numbers: &[i32],
+) -> Result<Vec<(i64, i32)>> {
     anyhow::ensure!(numbers.len() <= 500, "Too many issue numbers");
     Ok(sqlx::query_as(&format!("SELECT i.id,i.number FROM issues i JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=$3 WHERE i.repo_id=$1 AND i.number=ANY($2) AND {} ORDER BY i.number,i.id", super::repositories::access::readable_condition())).bind(repo).bind(numbers).bind(viewer).fetch_all(pool).await?)
 }
@@ -396,9 +426,19 @@ pub(crate) async fn update_issue_in_transaction(
     edit: crate::backend::db::discussions::DiscussionEdit<'_>,
     state_reason: Option<&str>,
 ) -> Result<Option<Issue>> {
-    anyhow::ensure!(crate::backend::db::issues::valid_state_reason(edit.state.unwrap_or(edit.expected_state), state_reason), "Invalid state reason");
-    let old: Option<Issue> = sqlx::query_as("SELECT * FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
-        .bind(issue_id).bind(repo).fetch_optional(&mut **tx).await?;
+    anyhow::ensure!(
+        crate::backend::db::issues::valid_state_reason(
+            edit.state.unwrap_or(edit.expected_state),
+            state_reason
+        ),
+        "Invalid state reason"
+    );
+    let old: Option<Issue> =
+        sqlx::query_as("SELECT * FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
+            .bind(issue_id)
+            .bind(repo)
+            .fetch_optional(&mut **tx)
+            .await?;
     let issue = sqlx::query_as::<_, Issue>(
         r#"UPDATE issues SET
             title = COALESCE($2, title), body = COALESCE($3, body),
@@ -414,8 +454,23 @@ pub(crate) async fn update_issue_in_transaction(
         .bind(edit.expected_state).bind(edit.expected_updated).bind(edit.actor_id).bind(repo).bind(state_reason)
         .fetch_optional(&mut **tx).await?;
     if let (Some(old), Some(issue)) = (old, issue.as_ref()) {
-        for (kind, detail, previous) in crate::backend::db::timeline::edit_events(&old.title, &old.state, &issue.title, &issue.state) {
-            super::timeline::append(tx, repo, "issue", issue_id, edit.actor_id, kind, detail, previous).await?;
+        for (kind, detail, previous) in crate::backend::db::timeline::edit_events(
+            &old.title,
+            &old.state,
+            &issue.title,
+            &issue.state,
+        ) {
+            super::timeline::append(
+                tx,
+                repo,
+                "issue",
+                issue_id,
+                edit.actor_id,
+                kind,
+                detail,
+                previous,
+            )
+            .await?;
         }
     }
     Ok(issue)
@@ -454,11 +509,23 @@ pub async fn add_issue_comment(
     Ok(comment)
 }
 
-pub async fn list_issue_comments(pool: &PgPool, issue_id: i64, limit: i64, offset: i64) -> Result<Vec<IssueCommentEntry>> {
+pub async fn list_issue_comments(
+    pool: &PgPool,
+    issue_id: i64,
+    limit: i64,
+    offset: i64,
+) -> Result<Vec<IssueCommentEntry>> {
     list_issue_comments_ordered(pool, issue_id, limit, offset, false, false).await
 }
 
-pub async fn list_issue_comments_ordered(pool: &PgPool, issue_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<IssueCommentEntry>> {
+pub async fn list_issue_comments_ordered(
+    pool: &PgPool,
+    issue_id: i64,
+    limit: i64,
+    offset: i64,
+    updated: bool,
+    descending: bool,
+) -> Result<Vec<IssueCommentEntry>> {
     let order = if updated { "updated_at" } else { "created_at" };
     let direction = if descending { "DESC" } else { "ASC" };
     let columns = crate::backend::db::postgres::users::accounts::AUTHOR_DISPLAY_COLUMNS;
@@ -521,7 +588,10 @@ pub async fn list_viewer_issues(
     open: bool,
     limit: i64,
 ) -> Result<Vec<ViewerIssueEntry>> {
-    anyhow::ensure!((0..=500).contains(&limit), "Result limit must be between 0 and 500");
+    anyhow::ensure!(
+        (0..=500).contains(&limit),
+        "Result limit must be between 0 and 500"
+    );
     let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_issue_sql(relation);
     // One snapshot for the rows, their comment counts and their labels: an issue transferred
@@ -552,9 +622,13 @@ pub async fn list_viewer_issues(
     let ids = issues.iter().map(|issue| issue.id).collect::<Vec<_>>();
     if !ids.is_empty() {
         let mut labels = std::collections::BTreeMap::<i64, Vec<super::models::Label>>::new();
-        for row in
-            crate::backend::db::postgres::labels::get_items_labels(&mut tx, LabelTarget::Issue, None, &ids)
-                .await?
+        for row in crate::backend::db::postgres::labels::get_items_labels(
+            &mut tx,
+            LabelTarget::Issue,
+            None,
+            &ids,
+        )
+        .await?
         {
             labels.entry(row.item_id).or_default().push(row.label);
         }
@@ -608,7 +682,10 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for IssueCommentEntry {
 }
 
 /// The author or a live repository writer may edit. Only writers may change locked threads.
-#[expect(clippy::too_many_arguments, reason = "Each argument is one ID, body or check of the edit.")]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one ID, body or check of the edit."
+)]
 pub async fn edit_issue_comment(
     pool: &PgPool,
     actor_id: i64,
@@ -706,10 +783,11 @@ pub async fn delete_issue_comment(
         .bind(comment_id)
         .execute(&mut *tx)
         .await?;
-    let removed = sqlx::query_as::<_, IssueComment>("DELETE FROM issue_comments WHERE id = $1 RETURNING *")
-        .bind(comment_id)
-        .fetch_optional(&mut *tx)
-        .await?;
+    let removed =
+        sqlx::query_as::<_, IssueComment>("DELETE FROM issue_comments WHERE id = $1 RETURNING *")
+            .bind(comment_id)
+            .fetch_optional(&mut *tx)
+            .await?;
     if removed.is_some() {
         super::issue_attributes::touch(&mut tx, issue_id).await?;
     }
@@ -722,7 +800,10 @@ pub async fn list_repository_comments(
     repo_id: i64,
     filter: &crate::backend::db::issues::CommentFilter,
 ) -> Result<Vec<crate::backend::db::issues::ConversationComment>> {
-    anyhow::ensure!(filter.offset >= 0 && (1..=101).contains(&filter.limit), "Invalid conversation comment page");
+    anyhow::ensure!(
+        filter.offset >= 0 && (1..=101).contains(&filter.limit),
+        "Invalid conversation comment page"
+    );
     let order = crate::backend::db::issues::repository_item_order(filter.sort);
     Ok(sqlx::query_as(&format!(r"WITH comments AS (
         SELECT c.id,false AS pull_request,i.id AS item_id,i.number,c.author_id,c.created_at,c.updated_at FROM issue_comments c JOIN issues i ON i.id=c.issue_id WHERE i.repo_id=$1

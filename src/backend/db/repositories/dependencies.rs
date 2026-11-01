@@ -413,8 +413,14 @@ pub(crate) fn project(
     use serde_json::Value;
     let receipts: BTreeMap<String, Receipt> = serde_json::from_str(raw)?;
     let mut snapshot = Snapshot::default();
-    let sha = inventory.iter().find(|snapshot| snapshot.detector.name == "Codeyard" && snapshot.job.correlator == "lockfiles")
-        .or_else(|| inventory.first()).map(|snapshot| snapshot.sha.clone()).unwrap_or_else(|| "0".repeat(40));
+    let sha = inventory
+        .iter()
+        .find(|snapshot| {
+            snapshot.detector.name == "Codeyard" && snapshot.job.correlator == "lockfiles"
+        })
+        .or_else(|| inventory.first())
+        .map(|snapshot| snapshot.sha.clone())
+        .unwrap_or_else(|| "0".repeat(40));
     snapshot.packages = crate::backend::dependency_graph::packages(&inventory)
         .into_iter()
         .map(|package| InstalledPackage {

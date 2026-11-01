@@ -27,11 +27,18 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 pub(super) fn failure(error: anyhow::Error) -> Error {
-    if let Some(graph @ (db::dependency_graph::GraphError::Limit | db::dependency_graph::GraphError::Disabled)) = error.downcast_ref::<db::dependency_graph::GraphError>() {
+    if let Some(
+        graph @ (db::dependency_graph::GraphError::Limit
+        | db::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+    {
         return Error::new(StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
     if error.is::<db::users::accounts::AccountRestricted>() {
-        return Error::new(StatusCode::FORBIDDEN, "A live unrestricted credential is required");
+        return Error::new(
+            StatusCode::FORBIDDEN,
+            "A live unrestricted credential is required",
+        );
     }
     match error.downcast_ref::<advisories::Refusal>() {
         Some(advisories::Refusal::Denied) => {
@@ -307,9 +314,7 @@ async fn get_advisory(
     .await
     .map_err(failure)?
     .ok_or_else(Error::missing)?;
-    Ok(Json(
-        document(&state, &row, actor.as_ref()).await?,
-    ))
+    Ok(Json(document(&state, &row, actor.as_ref()).await?))
 }
 async fn create(
     State(state): State<Arc<AppState>>,
@@ -328,7 +333,11 @@ async fn create(
     if value["start_private_fork"] == true {
         match workflow::private_fork(&state, actor.database_actor(), &repo, &row.ghsa_id).await {
             Ok(_) => {
-                if let Some(fresh) = advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id).await.map_err(failure)? {
+                if let Some(fresh) =
+                    advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id)
+                        .await
+                        .map_err(failure)?
+                {
                     row = fresh;
                 } else if !report {
                     return Err(Error::missing());
@@ -336,18 +345,32 @@ async fn create(
             }
             Err(error) if report => {
                 // The report is already committed; optional remediation cannot reject it.
-                let denied = matches!(error.downcast_ref::<advisories::Refusal>(), Some(advisories::Refusal::Denied))
-                    || error.downcast_ref::<StorageError>().is_some_and(|error| matches!(error.kind, LifecycleFailure::Denied));
-                if !denied { tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Optional vulnerability-report fork was not created"); }
+                let denied = matches!(
+                    error.downcast_ref::<advisories::Refusal>(),
+                    Some(advisories::Refusal::Denied)
+                ) || error
+                    .downcast_ref::<StorageError>()
+                    .is_some_and(|error| matches!(error.kind, LifecycleFailure::Denied));
+                if !denied {
+                    tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Optional vulnerability-report fork was not created");
+                }
             }
             Err(error) => {
                 match advisories::discard_created(&state.pool, actor.user.id, &row).await {
                     Ok(true) => return Err(failure(error)),
                     Ok(false) => {}
-                    Err(cleanup) => tracing::error!(ghsa_id=%row.ghsa_id,%cleanup,"Failed advisory provisioning left a draft requiring cleanup"),
+                    Err(cleanup) => {
+                        tracing::error!(ghsa_id=%row.ghsa_id,%cleanup,"Failed advisory provisioning left a draft requiring cleanup")
+                    }
                 }
                 tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Private-fork provisioning failed; retained advisory is reported to the caller");
-                return Err(Error::new(StatusCode::SERVICE_UNAVAILABLE, format!("Advisory {} was created but its private fork could not be provisioned", row.ghsa_id)));
+                return Err(Error::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!(
+                        "Advisory {} was created but its private fork could not be provisioned",
+                        row.ghsa_id
+                    ),
+                ));
             }
         }
     }
@@ -386,7 +409,10 @@ async fn cve(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     advisories::request_cve(
         &state.pool,
-        { let actor = actor.ok_or_else(auth::required)?; actor.database_actor() },
+        {
+            let actor = actor.ok_or_else(auth::required)?;
+            actor.database_actor()
+        },
         repo.id,
         &params["ghsa_id"],
     )

@@ -735,7 +735,14 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     code_scanning,
                     check_page,
                     more_checks,
-                } => checks_page(repository, item, runs, statuses, code_scanning, (*check_page, *more_checks)),
+                } => checks_page(
+                    repository,
+                    item,
+                    runs,
+                    statuses,
+                    code_scanning,
+                    (*check_page, *more_checks),
+                ),
             };
             let html = dioxus_ssr::render_element(render(decoded));
             assert_eq!(html, dioxus_ssr::render_element(plain));
@@ -1395,21 +1402,23 @@ fn files_html(
     review: Option<&ReviewDraft>,
     pending: usize,
 ) -> String {
-    crate::webui::tests::in_scope(|| dioxus_ssr::render_element(diff_page(
-        repo,
-        entry,
-        &files_diff(),
-        &[],
-        false,
-        None,
-        review,
-        pending,
-        (pending > 0).then_some(41),
-        None,
-        &Default::default(),
-        false,
-        &[],
-    )))
+    crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(diff_page(
+            repo,
+            entry,
+            &files_diff(),
+            &[],
+            false,
+            None,
+            review,
+            pending,
+            (pending > 0).then_some(41),
+            None,
+            &Default::default(),
+            false,
+            &[],
+        ))
+    })
 }
 
 #[test]
@@ -1777,17 +1786,19 @@ fn markdown_preview_does_not_execute_html_or_unsafe_links() {
 fn merged_pull_does_not_offer_reopen_or_a_second_merge() {
     let mut merged = item();
     merged.state = "merged".into();
-    let html = crate::webui::tests::in_scope(|| dioxus_ssr::render_element(detail(
-        &repository(),
-        Kind::Pull,
-        &merged,
-        &CommentPage::default(),
-        &[],
-        &DetailDraft::default(),
-        None,
-        &Default::default(),
-        &[],
-    )));
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(detail(
+            &repository(),
+            Kind::Pull,
+            &merged,
+            &CommentPage::default(),
+            &[],
+            &DetailDraft::default(),
+            None,
+            &Default::default(),
+            &[],
+        ))
+    });
     assert!(!html.contains("action=\"/alice/repo/pulls/7/state\""));
     assert!(!html.contains("action=\"/alice/repo/pulls/7/merge\""));
     assert!(html.contains("/alice/repo/pulls/7/comments"));
@@ -2474,7 +2485,8 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
         .replace("&#x26;", "&")
         .replace("&amp;", "&");
     assert!(
-        unescaped.contains("action=\"/alice/repo/issues/7/comments/31/edit?page=1&review_comments=0\""),
+        unescaped
+            .contains("action=\"/alice/repo/issues/7/comments/31/edit?page=1&review_comments=0\""),
         "{html}"
     );
     assert!(

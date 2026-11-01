@@ -595,7 +595,11 @@ pub(super) async fn user_repositories(
     if let Some(org) = installation.org_id {
         auth::refuse_classic(&state, auth.token.id, org).await?;
     }
-    let selected = token.as_ref().map(selection).transpose()?.unwrap_or_default();
+    let selected = token
+        .as_ref()
+        .map(selection)
+        .transpose()?
+        .unwrap_or_default();
     repository_list(
         &state,
         &installation,
@@ -666,12 +670,19 @@ async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result
     let id = body
         .get("target_id")
         .or_else(|| body.get("account_id"))
-        .map(|id| id.as_i64().ok_or_else(|| Error::invalid("Invalid target ID")))
+        .map(|id| {
+            id.as_i64()
+                .ok_or_else(|| Error::invalid("Invalid target ID"))
+        })
         .transpose()?;
     let login = body
         .get("target")
         .or_else(|| body.get("account"))
-        .map(|login| login.as_str().ok_or_else(|| Error::invalid("Invalid target")))
+        .map(|login| {
+            login
+                .as_str()
+                .ok_or_else(|| Error::invalid("Invalid target"))
+        })
         .transpose()?;
     let user = match (login, id) {
         (Some(login), _) => db::users::accounts::get_user_by_username(&state.pool, login).await,

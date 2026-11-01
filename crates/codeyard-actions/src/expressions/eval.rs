@@ -130,8 +130,16 @@ impl Evaluator<'_> {
         match &node.kind {
             Kind::Literal(v) => Ok(Data::from_value(v)),
             Kind::Wildcard => Ok(text("*".into())),
-            Kind::Context(name) => Ok(self.cache.borrow_mut().entry(name.clone())
-                .or_insert_with(|| lookup(self.contexts, name).map(Data::from_value).unwrap_or_else(null)).clone()),
+            Kind::Context(name) => Ok(self
+                .cache
+                .borrow_mut()
+                .entry(name.clone())
+                .or_insert_with(|| {
+                    lookup(self.contexts, name)
+                        .map(Data::from_value)
+                        .unwrap_or_else(null)
+                })
+                .clone()),
             Kind::Not(child) => Ok(boolean(!self.eval(child)?.truthy())),
             Kind::Binary(op, a, b) => {
                 let a = self.eval(a)?;

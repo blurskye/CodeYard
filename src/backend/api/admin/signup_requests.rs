@@ -19,16 +19,29 @@ pub(crate) async fn load_requests(
     page: usize,
 ) -> Result<(Vec<Signup>, usize, usize), Response> {
     let admin = require_account(ctx, true)?;
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     let authority = (admin.id, session).into();
-    let snapshot = db::users::signup_requests::admin_pending_page(&ctx.state.pool, &authority, SIGNUP_REQUESTS_PER_PAGE as i64, page)
-        .await.map_err(|error| {
-            if matches!(error.downcast_ref::<db::users::signup_requests::ReviewError>(), Some(db::users::signup_requests::ReviewError::Denied)) {
-                ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
-            } else {
-                ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Unable to load signup requests.")
-            }
-        })?;
+    let snapshot = db::users::signup_requests::admin_pending_page(
+        &ctx.state.pool,
+        &authority,
+        SIGNUP_REQUESTS_PER_PAGE as i64,
+        page,
+    )
+    .await
+    .map_err(|error| {
+        if matches!(
+            error.downcast_ref::<db::users::signup_requests::ReviewError>(),
+            Some(db::users::signup_requests::ReviewError::Denied)
+        ) {
+            ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
+        } else {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load signup requests.",
+            )
+        }
+    })?;
     let (requests, total, page) = (snapshot.requests, snapshot.total as usize, snapshot.page);
     Ok((
         requests

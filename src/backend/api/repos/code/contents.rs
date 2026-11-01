@@ -65,9 +65,19 @@ fn commit_response(saved: files::FileSave) -> Json<UpdateFileResponse> {
 }
 
 fn decode_content(content: &str) -> Result<Vec<u8>, ApiFailure> {
-    crate::backend::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(|error| match error {
-        crate::backend::repositories::files::WriteFailure::TooLarge => ApiError::failure(StatusCode::PAYLOAD_TOO_LARGE, "too_large", "File writes support at most 1 MiB."),
-        _ => ApiError::failure(StatusCode::BAD_REQUEST, "validation_error", "Invalid base64 content."),
+    crate::backend::repositories::files::decode_base64(content, MAX_EDITOR_BYTES).map_err(|error| {
+        match error {
+            crate::backend::repositories::files::WriteFailure::TooLarge => ApiError::failure(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "too_large",
+                "File writes support at most 1 MiB.",
+            ),
+            _ => ApiError::failure(
+                StatusCode::BAD_REQUEST,
+                "validation_error",
+                "Invalid base64 content.",
+            ),
+        }
     })
 }
 
@@ -82,13 +92,18 @@ async fn write_file(
     let actor = crate::backend::api::http::session::get_current_user(&state.pool, headers).await?;
     let repository_id = files::ensure_readable(&state.pool, &actor, &owner, &repo)
         .await
-        .map_err(|error| ApiError::failure(write_status(&error), "file_write_rejected", &error.message))?;
+        .map_err(|error| {
+            ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
+        })?;
     let content = decode_content(&req.content)?;
     files::write_file_bytes(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            actor.id,
+            crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default(),
+        )),
         &owner,
         repository_id,
         FileWrite {
@@ -126,12 +141,17 @@ pub async fn delete_file_content(
     let actor = crate::backend::api::http::session::get_current_user(&state.pool, &headers).await?;
     let repository = files::named_repository(&state.pool, &owner, &repo)
         .await
-        .map_err(|error| ApiError::failure(write_status(&error), "file_write_rejected", &error.message))?;
+        .map_err(|error| {
+            ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
+        })?;
     let saved = files::delete_file(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        crate::backend::db::credentials::Actor::from((
+            actor.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         &owner,
         repository.id,
         FileWrite {
@@ -146,7 +166,9 @@ pub async fn delete_file_content(
         Default::default(),
     )
     .await
-    .map_err(|error| ApiError::failure(write_status(&error), "file_write_rejected", &error.message))?;
+    .map_err(|error| {
+        ApiError::failure(write_status(&error), "file_write_rejected", &error.message)
+    })?;
     Ok(commit_response(saved))
 }
 
@@ -211,7 +233,10 @@ fn new_branch_for(ctx: &PageContext, loaded: &Loaded) -> String {
 
 fn check_form_path(ctx: &PageContext, path: &str) -> Result<(), Response> {
     if path.contains(['\r', '\n']) {
-        return Err(ctx.error(StatusCode::BAD_REQUEST, "Filenames containing line breaks cannot be changed through native forms."));
+        return Err(ctx.error(
+            StatusCode::BAD_REQUEST,
+            "Filenames containing line breaks cannot be changed through native forms.",
+        ));
     }
     Ok(())
 }
@@ -238,14 +263,21 @@ async fn editor_page(
     };
     if !creating {
         let blob = repo_store(&loaded.repository, ctx.state.cluster.as_ref())
-            .blob_range(&editor.expected_revision, &path, BlobRange::Window {
-                offset: 0,
-                length: MAX_EDITOR_BYTES as u64 + 1,
-            })
+            .blob_range(
+                &editor.expected_revision,
+                &path,
+                BlobRange::Window {
+                    offset: 0,
+                    length: MAX_EDITOR_BYTES as u64 + 1,
+                },
+            )
             .await
             .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
         if blob.size > MAX_EDITOR_BYTES as u64 {
-            return Err(ctx.error(StatusCode::PAYLOAD_TOO_LARGE, "The web editor supports files up to 1 MiB."));
+            return Err(ctx.error(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "The web editor supports files up to 1 MiB.",
+            ));
         }
         editor.content = files::editor_text(&blob.bytes, blob.is_binary)
             .map_err(|error| ctx.error(write_status(&error), &error.message))?
@@ -410,7 +442,12 @@ pub(in crate::backend::api::repos) async fn write_form(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
-        ctx.database_actor(ctx.user.as_ref().expect("authenticated editor submission").id),
+        ctx.database_actor(
+            ctx.user
+                .as_ref()
+                .expect("authenticated editor submission")
+                .id,
+        ),
         &loaded.chrome.owner,
         loaded.repository.id,
         input,
@@ -524,7 +561,9 @@ pub(in crate::backend::api::repos) async fn delete_form(
 ) -> Response {
     let branch = field(form, "branch");
     let path = field(form, "path");
-    if let Err(response) = check_form_path(&ctx, &path) { return response; }
+    if let Err(response) = check_form_path(&ctx, &path) {
+        return response;
+    }
     ctx.return_to = Some(branch_url(&loaded.chrome.base(), "delete", &branch, &path));
     if !loaded.chrome.can_write {
         return ctx.error(StatusCode::FORBIDDEN, "Write access is required.");
@@ -555,7 +594,12 @@ pub(in crate::backend::api::repos) async fn delete_form(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         &ctx.state.ci_runs,
-        ctx.database_actor(ctx.user.as_ref().expect("authenticated delete submission").id),
+        ctx.database_actor(
+            ctx.user
+                .as_ref()
+                .expect("authenticated delete submission")
+                .id,
+        ),
         &loaded.chrome.owner,
         loaded.repository.id,
         input,
@@ -628,7 +672,10 @@ pub(in crate::backend::api::repos) async fn page(
             Err(response) => return response,
         };
     let tail = params.get("ref_path").map(String::as_str).unwrap_or("");
-    let path = uri.path().strip_prefix(crate::backend::api::repos::LEGACY_PREFIX).unwrap_or(uri.path());
+    let path = uri
+        .path()
+        .strip_prefix(crate::backend::api::repos::LEGACY_PREFIX)
+        .unwrap_or(uri.path());
     let kind = path.split('/').nth(3);
     let page = if kind == Some("delete") {
         delete_page(&ctx, &loaded, tail).await

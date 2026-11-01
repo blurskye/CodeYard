@@ -98,12 +98,18 @@ impl FieldChanges {
     }
 }
 pub fn owner_key(user: Option<i64>, org: Option<i64>) -> String {
-    org.map_or_else(|| format!("user:{}", user.unwrap_or(0)), |id| format!("org:{id}"))
+    org.map_or_else(
+        || format!("user:{}", user.unwrap_or(0)),
+        |id| format!("org:{id}"),
+    )
 }
 
 pub fn revision(attribute: &Attribute) -> Result<String> {
     use sha2::Digest;
-    Ok(format!("{:x}", sha2::Sha256::digest(serde_json::to_vec(attribute)?)))
+    Ok(format!(
+        "{:x}",
+        sha2::Sha256::digest(serde_json::to_vec(attribute)?)
+    ))
 }
 
 pub struct Definition {
@@ -192,9 +198,13 @@ impl Definition {
 }
 impl Attribute {
     fn option_id(&self, value: &Value) -> Result<i64> {
-        self.options.iter().find(|option| {
-            value.as_i64() == Some(option.id) || value.as_str() == Some(option.name.as_str())
-        }).map(|option| option.id).ok_or_else(|| Refusal::Invalid.into())
+        self.options
+            .iter()
+            .find(|option| {
+                value.as_i64() == Some(option.id) || value.as_str() == Some(option.name.as_str())
+            })
+            .map(|option| option.id)
+            .ok_or_else(|| Refusal::Invalid.into())
     }
 
     /// Select values are stored as stable option IDs, never mutable option names.

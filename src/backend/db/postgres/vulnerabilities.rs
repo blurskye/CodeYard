@@ -1,7 +1,5 @@
 use crate::backend::{
-    db::vulnerabilities::*,
-    dependency_graph::Snapshot,
-    vulnerabilities::PreparedAdvisory,
+    db::vulnerabilities::*, dependency_graph::Snapshot, vulnerabilities::PreparedAdvisory,
 };
 use anyhow::{ensure, Result};
 use sqlx::PgPool;
@@ -73,10 +71,12 @@ pub async fn upsert(pool: &PgPool, prepared: &PreparedAdvisory) -> Result<bool> 
 }
 /// Moves every repository's scan forward after the advisory catalogue changed.
 pub async fn rescan_all(pool: &PgPool) -> Result<()> {
-    sqlx::query("UPDATE vulnerability_jobs SET generation=generation+1,lease_until=NULL,next_scan=$1")
-        .bind(chrono::Utc::now())
-        .execute(pool)
-        .await?;
+    sqlx::query(
+        "UPDATE vulnerability_jobs SET generation=generation+1,lease_until=NULL,next_scan=$1",
+    )
+    .bind(chrono::Utc::now())
+    .execute(pool)
+    .await?;
     Ok(())
 }
 pub async fn advisories(pool: &PgPool, ecosystem: &str, name: &str) -> Result<Vec<String>> {
@@ -123,9 +123,12 @@ pub async fn save_snapshot(
     snapshot.validate_native()?;
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
-    let branch: Option<String> =
-        sqlx::query_scalar("SELECT default_branch FROM repositories WHERE id=$1 AND NOT is_archived FOR NO KEY UPDATE")
-            .bind(repo).fetch_optional(&mut *tx).await?;
+    let branch: Option<String> = sqlx::query_scalar(
+        "SELECT default_branch FROM repositories WHERE id=$1 AND NOT is_archived FOR NO KEY UPDATE",
+    )
+    .bind(repo)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some(branch) = branch else { return Ok(()) };
     let current: Option<i64> =
         sqlx::query_scalar("SELECT generation FROM vulnerability_jobs WHERE repo_id=$1 FOR UPDATE")
@@ -135,12 +138,20 @@ pub async fn save_snapshot(
     if current != Some(generation) || snapshot.reference != format!("refs/heads/{branch}") {
         return Ok(());
     }
-    if !super::dependency_graph::enabled_in(&mut tx, repo).await? { return Ok(()); }
+    if !super::dependency_graph::enabled_in(&mut tx, repo).await? {
+        return Ok(());
+    }
     sqlx::query("INSERT INTO dependency_snapshots(repo_id,sha,reference,correlator,detector,scanned,body) VALUES($1,$2,$3,$4,$5,$6,$7)")
         .bind(repo).bind(snapshot.sha.to_ascii_lowercase()).bind(&snapshot.reference).bind(&snapshot.job.correlator)
         .bind(&snapshot.detector.name).bind(snapshot.scanned).bind(serde_json::to_string(snapshot)?).execute(&mut *tx).await?;
     super::dependency_graph::drop_replaced_snapshots(&mut tx, repo, snapshot).await?;
-    let _ = super::dependency_graph::bounded_snapshot_ids(&mut tx, repo, Some(&snapshot.reference), Some(&snapshot.sha.to_ascii_lowercase())).await?;
+    let _ = super::dependency_graph::bounded_snapshot_ids(
+        &mut tx,
+        repo,
+        Some(&snapshot.reference),
+        Some(&snapshot.sha.to_ascii_lowercase()),
+    )
+    .await?;
     super::dependabot_alerts::refresh(&mut tx, repo, Some(&snapshot.sha)).await?;
     sqlx::query("UPDATE vulnerability_jobs SET lease_until=NULL,next_scan=$3 WHERE repo_id=$1 AND generation=$2")
         .bind(repo).bind(generation).bind(chrono::Utc::now()+chrono::Duration::minutes(5)).execute(&mut *tx).await?;

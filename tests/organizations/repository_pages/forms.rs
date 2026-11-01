@@ -716,15 +716,47 @@ pub async fn stale_settings_forms(f: &Fixture) {
     // A reader without admin or write access is refused before the form is checked, so a
     // wrong repository ID or confirmation tells them nothing.
     for (action, fields) in [
-        ("delete", vec![("repository_id", "0"), ("confirmation", "personal_owner/settings_new")]),
-        ("delete", vec![("repository_id", id.as_str()), ("confirmation", "wrong")]),
-        ("rename", vec![("repository_id", "0"), ("name", "taken"), ("confirm", "yes")]),
-        ("rename", vec![("repository_id", id.as_str()), ("name", "taken")]),
-        ("delete-branch", vec![("repository_id", "0"), ("branch", "main")]),
-        ("delete-branch", vec![("repository_id", id.as_str()), ("branch", "main")]),
+        (
+            "delete",
+            vec![
+                ("repository_id", "0"),
+                ("confirmation", "personal_owner/settings_new"),
+            ],
+        ),
+        (
+            "delete",
+            vec![("repository_id", id.as_str()), ("confirmation", "wrong")],
+        ),
+        (
+            "rename",
+            vec![
+                ("repository_id", "0"),
+                ("name", "taken"),
+                ("confirm", "yes"),
+            ],
+        ),
+        (
+            "rename",
+            vec![("repository_id", id.as_str()), ("name", "taken")],
+        ),
+        (
+            "delete-branch",
+            vec![("repository_id", "0"), ("branch", "main")],
+        ),
+        (
+            "delete-branch",
+            vec![("repository_id", id.as_str()), ("branch", "main")],
+        ),
     ] {
-        let refused = f.form(&f.member, &format!("{new}/_forms/{action}"), &fields, false).await;
-        assert_eq!(refused.status, StatusCode::FORBIDDEN, "{action} {fields:?}: {}", refused.body);
+        let refused = f
+            .form(&f.member, &format!("{new}/_forms/{action}"), &fields, false)
+            .await;
+        assert_eq!(
+            refused.status,
+            StatusCode::FORBIDDEN,
+            "{action} {fields:?}: {}",
+            refused.body
+        );
     }
     // The same delete, sent to the original's current address, still deletes the original.
     let delete = [
@@ -981,7 +1013,12 @@ pub async fn repository_pages(f: &Fixture) {
     let star = "/personal_owner/offline_store/_forms/star";
     let offline_id = offline.id.to_string();
     let starred = f
-        .form(&f.owner, star, &[("repository_id", offline_id.as_str())], false)
+        .form(
+            &f.owner,
+            star,
+            &[("repository_id", offline_id.as_str())],
+            false,
+        )
         .await;
     starred.redirect("/personal_owner/offline_store");
     let stars = db::repositories::engagement::is_repo_starred(pool, f.owner.id, offline.id);

@@ -85,9 +85,17 @@ impl Search {
     }
     pub fn git_licenses(&self) -> std::collections::HashMap<i64, Option<String>> {
         #[derive(serde::Deserialize)]
-        struct Fact { repo_id: i64, license: Option<String> }
-        self.git.as_deref().and_then(|facts| serde_json::from_str::<Vec<Fact>>(facts).ok())
-            .unwrap_or_default().into_iter().map(|fact| (fact.repo_id, fact.license)).collect()
+        struct Fact {
+            repo_id: i64,
+            license: Option<String>,
+        }
+        self.git
+            .as_deref()
+            .and_then(|facts| serde_json::from_str::<Vec<Fact>>(facts).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|fact| (fact.repo_id, fact.license))
+            .collect()
     }
     pub fn git_candidates(&self) -> Self {
         fn broader(expr: &Expr, readme: bool, negative: bool) -> Expr {

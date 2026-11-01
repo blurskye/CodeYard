@@ -110,7 +110,8 @@ pub(crate) async fn repository_cards(
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
     let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids)
-        .await.map_err(|_| DiscoveryReadError::Unavailable)?;
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?;
     let topics = db::repositories::topics::repository_topics(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
@@ -152,7 +153,8 @@ pub(crate) async fn dashboard_cards(
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
     let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids)
-        .await.map_err(|_| DiscoveryReadError::Unavailable)?;
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?;
     card_list(repos, &owners, BTreeMap::new(), HashMap::new(), forks)
 }
 

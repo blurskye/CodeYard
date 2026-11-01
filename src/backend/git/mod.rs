@@ -22,6 +22,8 @@ pub(crate) use publications::{
     PublicationUpdate,
 };
 pub use publications::{BranchPublication, PublicationActor, PublicationRecord};
-pub(crate) use ref_names::{branch_ref, is_canonical_ref, is_full_commit_id, is_public_ref, tag_ref};
+pub(crate) use ref_names::{
+    branch_ref, is_canonical_ref, is_full_commit_id, is_public_ref, tag_ref,
+};
 pub use repository::*;
 pub use stats::*;

@@ -113,7 +113,10 @@ impl CiWorkers {
         }
         // The node name, as the rest of the node setup reads it. An empty value counts
         // as unset, because compose passes an unset variable on as an empty one.
-        let node = match std::env::var("NODE_NAME").ok().filter(|name| !name.trim().is_empty()) {
+        let node = match std::env::var("NODE_NAME")
+            .ok()
+            .filter(|name| !name.trim().is_empty())
+        {
             Some(name) => name,
             None => crate::backend::cluster::hostname()?,
         };

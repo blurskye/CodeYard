@@ -12,7 +12,9 @@ use uuid::Uuid;
 // Enforced when the repository opts in or its organization enforces it for all or selected
 // repositories. A repository setting never removes an organization's enforcement.
 const OWNER_ENFORCED_SQL: &str = "EXISTS(SELECT 1 FROM repositories r JOIN organization_immutable_releases o ON o.org_id=r.owner_org_id WHERE r.id=$1 AND (o.enforced_repositories='all' OR (o.enforced_repositories='selected' AND EXISTS(SELECT 1 FROM organization_immutable_release_repositories s WHERE s.org_id=o.org_id AND s.repo_id=r.id))))";
-fn enforced_sql() -> String { format!("(EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1) OR {OWNER_ENFORCED_SQL})") }
+fn enforced_sql() -> String {
+    format!("(EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1) OR {OWNER_ENFORCED_SQL})")
+}
 /// Whether the repository opts in, and whether its owner enforces immutable releases.
 pub async fn policy(pool: &PgPool, repo: i64) -> Result<(bool, bool)> {
     Ok(sqlx::query_as(&format!("SELECT EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=$1), {OWNER_ENFORCED_SQL}")).bind(repo).fetch_one(pool).await?)
@@ -23,7 +25,12 @@ pub async fn enabled(pool: &PgPool, repo: i64) -> Result<bool> {
         .fetch_one(pool)
         .await?)
 }
-pub async fn set_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo: i64,
+    enabled: bool,
+) -> Result<()> {
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
@@ -32,7 +39,17 @@ pub async fn set_enabled(pool: &PgPool, actor: impl Into<crate::backend::db::cre
             .await?,
         Refusal::Denied
     );
-    ensure!(crate::backend::db::postgres::credentials::writes(&mut tx, &credential, Some(repo), None, "administration").await?, Refusal::Denied);
+    ensure!(
+        crate::backend::db::postgres::credentials::writes(
+            &mut tx,
+            &credential,
+            Some(repo),
+            None,
+            "administration"
+        )
+        .await?,
+        Refusal::Denied
+    );
     let archived: bool = sqlx::query_scalar("SELECT is_archived FROM repositories WHERE id=$1")
         .bind(repo)
         .fetch_one(&mut *tx)
@@ -102,13 +119,21 @@ pub(crate) async fn freeze(
     let publication = publication.ok_or(ReleaseRefusal::Conflict)?;
     // Serialize the first permanent alias with owner rename and its capture trigger.
     let owner:String=sqlx::query_scalar("SELECT COALESCE((SELECT username FROM users WHERE id=(SELECT owner_user_id FROM repositories WHERE id=$1) FOR SHARE),(SELECT name FROM organizations WHERE id=(SELECT owner_org_id FROM repositories WHERE id=$1) FOR SHARE))").bind(release.repo_id).fetch_one(&mut **tx).await?;
-    let name:String=sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1 FOR SHARE").bind(release.repo_id).fetch_one(&mut **tx).await?;
+    let name: String = sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1 FOR SHARE")
+        .bind(release.repo_id)
+        .fetch_one(&mut **tx)
+        .await?;
     // Generic file deletion has a separate lock. The referenced-asset guard
     // protects linked files after publication.
     let _:Vec<Uuid>=sqlx::query_scalar("SELECT f.id FROM files f JOIN release_assets a ON a.file_id=f.id WHERE a.release_id=$1 ORDER BY f.id LIMIT 1001 FOR UPDATE OF f").bind(release.id).fetch_all(&mut **tx).await?;
     let mut assets:Vec<Artifact>=sqlx::query_as("SELECT a.name,a.size,f.sha256_hex AS sha256 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=$1 LIMIT 1001").bind(release.id).fetch_all(&mut **tx).await?;
     assets.sort_by(|a, b| a.name.cmp(&b.name));
-    publication.matches(release.repo_id, &release.tag_name, &assets, &crate::backend::repositories::releases::immutable::namespace_url(&owner, &name))?;
+    publication.matches(
+        release.repo_id,
+        &release.tag_name,
+        &assets,
+        &crate::backend::repositories::releases::immutable::namespace_url(&owner, &name),
+    )?;
     let inactive:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=$1 AND NOT f.is_active)").bind(release.id).fetch_one(&mut **tx).await?;
     ensure!(!inactive, ReleaseRefusal::Conflict);
     sqlx::query("UPDATE releases SET is_immutable=TRUE,target_commitish=$2 WHERE id=$1")

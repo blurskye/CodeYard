@@ -80,11 +80,14 @@ pub async fn change_block(
         tx.commit().await?;
         return Ok(());
     }
-    let inserted = sqlx::query("INSERT INTO user_blocks(user_id,blocked_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
-        .bind(user)
-        .bind(target)
-        .execute(&mut *tx)
-        .await?.rows_affected();
+    let inserted = sqlx::query(
+        "INSERT INTO user_blocks(user_id,blocked_id) VALUES(?1,?2) ON CONFLICT DO NOTHING",
+    )
+    .bind(user)
+    .bind(target)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
     if inserted == 0 {
         tx.commit().await?;
         return Ok(());
@@ -93,8 +96,13 @@ pub async fn change_block(
     let repositories = "SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=?1";
     for (owner, actor) in [(user, target), (target, user)] {
         for table in ["stars", "watches", "repo_access", "gist_stars"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE user_id=?2 AND repo_id IN ({repositories})"))
-                .bind(owner).bind(actor).execute(&mut *tx).await?;
+            sqlx::query(&format!(
+                "DELETE FROM {table} WHERE user_id=?2 AND repo_id IN ({repositories})"
+            ))
+            .bind(owner)
+            .bind(actor)
+            .execute(&mut *tx)
+            .await?;
         }
         sqlx::query(&format!("DELETE FROM issue_assignees WHERE user_id=?2 AND issue_id IN (SELECT id FROM issues WHERE repo_id IN ({repositories}))"))
             .bind(owner).bind(actor).execute(&mut *tx).await?;

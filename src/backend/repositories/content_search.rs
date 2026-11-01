@@ -81,14 +81,21 @@ impl Query {
             return Err("Invalid code search field");
         }
         let (scope, _) = repository_scope(&expr);
-        let scope = Search::from_expression(Kind::Repositories, scope.unwrap_or(Expr::And(Vec::new())))?
-            .with_default_fork_filter();
+        let scope =
+            Search::from_expression(Kind::Repositories, scope.unwrap_or(Expr::And(Vec::new())))?
+                .with_default_fork_filter();
         let mut words = Vec::new();
         discussion_search::positive_text(&expr, false, &mut words);
         let words: HashSet<_> = words.into_iter().map(str::to_lowercase).collect();
-        let highlights = words.into_iter().map(|word| {
-            regex::RegexBuilder::new(&regex::escape(&word)).case_insensitive(true).build()
-        }).collect::<std::result::Result<Vec<_>, _>>().map_err(|_| "Invalid search terms")?;
+        let highlights = words
+            .into_iter()
+            .map(|word| {
+                regex::RegexBuilder::new(&regex::escape(&word))
+                    .case_insensitive(true)
+                    .build()
+            })
+            .collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| "Invalid search terms")?;
         let query = Self {
             kind,
             expr,

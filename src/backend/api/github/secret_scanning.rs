@@ -132,13 +132,31 @@ impl Filters {
                 values.split(',').any(|value| {
                     !matches!(
                         value,
-                        "false_positive" | "wont_fix" | "revoked" | "used_in_tests" | "pattern_deleted" | "pattern_edited"
+                        "false_positive"
+                            | "wont_fix"
+                            | "revoked"
+                            | "used_in_tests"
+                            | "pattern_deleted"
+                            | "pattern_edited"
                     )
                 })
             })
             || self.secret_type.is_some() && self.exclude_secret_types.is_some()
             || self.providers.is_some() && self.exclude_providers.is_some()
-            || [&self.providers, &self.exclude_providers].iter().any(|value| value.as_deref().is_some_and(|values| values.split(',').any(|provider| provider.is_empty() || !provider.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))))
+            || [&self.providers, &self.exclude_providers]
+                .iter()
+                .any(|value| {
+                    value.as_deref().is_some_and(|values| {
+                        values.split(',').any(|provider| {
+                            provider.is_empty()
+                                || !provider.bytes().all(|byte| {
+                                    byte.is_ascii_lowercase()
+                                        || byte.is_ascii_digit()
+                                        || byte == b'_'
+                                })
+                        })
+                    })
+                })
         {
             return Err(Error::validation(
                 "SecretScanningAlert",
@@ -193,16 +211,25 @@ async fn list_org(
     let has_next = alerts.len() > limit;
     let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
     let ids = alerts.iter().map(|alert| alert.repo_id).collect::<Vec<_>>();
-    let repositories = db::repositories::records::get_repositories_by_ids(&state.pool, &ids).await.map_err(Error::unavailable)?
-        .into_iter().map(|repo| (repo.id, repo)).collect::<HashMap<_, _>>();
-    let documents = jobs::Documents::load(&state, &alerts).await.map_err(Error::unavailable)?;
+    let repositories = db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
+        .await
+        .map_err(Error::unavailable)?
+        .into_iter()
+        .map(|repo| (repo.id, repo))
+        .collect::<HashMap<_, _>>();
+    let documents = jobs::Documents::load(&state, &alerts)
+        .await
+        .map_err(Error::unavailable)?;
     let mut items = Vec::new();
     for alert in &alerts {
-        let repo = repositories.get(&alert.repo_id).ok_or_else(Error::missing)?;
+        let repo = repositories
+            .get(&alert.repo_id)
+            .ok_or_else(Error::missing)?;
         if repo.owner_org_id != Some(org.id) {
             continue;
         }
-        let mut document = documents.document(&state, alert, &org.name, &repo.name, query.hide_secret)
+        let mut document = documents
+            .document(&state, alert, &org.name, &repo.name, query.hide_secret)
             .map_err(Error::unavailable)?;
         document["repository"] = payloads::repository(repo, &org.name);
         items.push(document);
@@ -240,8 +267,17 @@ async fn list(
     .map_err(error)?;
     let has_next = alerts.len() > limit;
     let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
-    let documents = jobs::Documents::load(&state, &alerts).await.map_err(Error::unavailable)?;
-    let items = alerts.iter().map(|alert| documents.document(&state, alert, &owner, &name, query.hide_secret).map_err(Error::unavailable)).collect::<Result<Vec<_>>>()?;
+    let documents = jobs::Documents::load(&state, &alerts)
+        .await
+        .map_err(Error::unavailable)?;
+    let items = alerts
+        .iter()
+        .map(|alert| {
+            documents
+                .document(&state, alert, &owner, &name, query.hide_secret)
+                .map_err(Error::unavailable)
+        })
+        .collect::<Result<Vec<_>>>()?;
     pagination.response(&uri, items, has_next)
 }
 

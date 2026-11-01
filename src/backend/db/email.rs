@@ -11,12 +11,20 @@ use anyhow::Result;
 pub(in crate::backend::db) const RESEND_SECONDS: i64 = 60;
 
 pub(in crate::backend::db) fn primary_link_condition(pg: bool) -> String {
-    let now = if pg { "clock_timestamp()" } else { "strftime('%Y-%m-%dT%H:%M:%f000Z','now')" };
+    let now = if pg {
+        "clock_timestamp()"
+    } else {
+        "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
+    };
     format!("u.email=t.email AND NOT u.is_banned AND t.expires_at>{now}")
 }
 
 pub(in crate::backend::db) fn secondary_link_condition(pg: bool) -> String {
-    let now = if pg { "clock_timestamp()" } else { "strftime('%Y-%m-%dT%H:%M:%f000Z','now')" };
+    let now = if pg {
+        "clock_timestamp()"
+    } else {
+        "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
+    };
     format!("NOT u.is_banned AND NOT e.verified AND e.verification_expires_at>{now}")
 }
 

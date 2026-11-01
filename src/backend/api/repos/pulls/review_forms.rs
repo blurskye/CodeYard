@@ -480,7 +480,10 @@ pub(crate) async fn native_review(
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
         user,
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
         review_rules::ReviewTarget {
             owner: owner.clone(),
             name: name.clone(),
@@ -645,16 +648,26 @@ pub(crate) async fn native_remove_requested_reviewer(
     }
 }
 
-fn require_reviewer_repository(ctx: &PageContext, form: &HashMap<String, String>, id: i64) -> ResultPage<()> {
+fn require_reviewer_repository(
+    ctx: &PageContext,
+    form: &HashMap<String, String>,
+    id: i64,
+) -> ResultPage<()> {
     if field(form, "repository_id").parse::<i64>().ok() != Some(id) {
-        return Err(ctx.error(StatusCode::CONFLICT, "The repository changed. Reload before changing reviewers."));
+        return Err(ctx.error(
+            StatusCode::CONFLICT,
+            "The repository changed. Reload before changing reviewers.",
+        ));
     }
     Ok(())
 }
 
 fn submitted_path(ctx: &PageContext, form: &HashMap<String, String>) -> ResultPage<String> {
-    form.get("path_json").map(|value| serde_json::from_str::<String>(value)
-        .map_err(|_| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid file path.")))
+    form.get("path_json")
+        .map(|value| {
+            serde_json::from_str::<String>(value)
+                .map_err(|_| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid file path."))
+        })
         .unwrap_or_else(|| Ok(field(form, "path")))
 }
 

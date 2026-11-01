@@ -34,7 +34,13 @@ pub(super) async fn side(
     let source = if source_owner == owner {
         base.clone()
     } else {
-        let mut candidates = crate::backend::db::repositories::discovery::comparison_forks(&state.pool, base.id, source_owner).await.map_err(Error::unavailable)?;
+        let mut candidates = crate::backend::db::repositories::discovery::comparison_forks(
+            &state.pool,
+            base.id,
+            source_owner,
+        )
+        .await
+        .map_err(Error::unavailable)?;
         if candidates.is_empty() || (candidates.len() > 1 && candidates[0].name != base.name) {
             return Err(Error::missing());
         }
@@ -67,7 +73,13 @@ async fn compare(
     let base_store = repo_store(&base_repo, state.cluster.as_ref());
     let head_store = repo_store(&head_repo, state.cluster.as_ref());
     let mut comparison = base_store
-        .comparison_from(&head_store, &base, &head, offset, if paginated { limit } else { 0 })
+        .comparison_from(
+            &head_store,
+            &base,
+            &head,
+            offset,
+            if paginated { limit } else { 0 },
+        )
         .await
         .map_err(store_error)?;
     if !paginated {
@@ -159,7 +171,11 @@ async fn compare(
             &head_owner,
             &head_repo.name,
             &comparison.head_sha,
-            Some((&base_owner, &base_repo.name, &comparison.merge_base_commit.sha))
+            Some((
+                &base_owner,
+                &base_repo.name,
+                &comparison.merge_base_commit.sha
+            ))
         ));
     }
     let response_headers = if paginated {

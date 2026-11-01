@@ -69,16 +69,28 @@ async fn contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    let run = db::ci::claim_ci_run(f.pool(), "jobs", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .unwrap();
+    let run = db::ci::claim_ci_run(
+        f.pool(),
+        "jobs",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(dispatch["workflow_run_id"], run.id);
     let workflow = ".github/workflows/ci.yml";
     let generation = runtime::token_hash("private-runtime");
-    db::action_objects::issue_token(f.pool(), run.id, run.worker.as_deref().unwrap_or(""), &generation, &run.run_id.to_string())
-        .await
-        .unwrap();
+    db::action_objects::issue_token(
+        f.pool(),
+        run.id,
+        run.worker.as_deref().unwrap_or(""),
+        &generation,
+        &run.run_id.to_string(),
+    )
+    .await
+    .unwrap();
     super::actions_objects::job_credentials(&f, &run, &["build"]).await;
     db::action_jobs::save_state(
         f.pool(),
@@ -123,7 +135,8 @@ async fn contract(pg: bool) {
     .is_err());
     let job = db::action_jobs::apply(f.pool(), "jobs", run.id, &generation, workflow, &queued)
         .await
-        .unwrap().id;
+        .unwrap()
+        .id;
     assert!(db::action_jobs::get(f.pool(), repo.id, job, false)
         .await
         .unwrap()
@@ -156,7 +169,8 @@ async fn contract(pg: bool) {
                 &event(0, update)
             )
             .await
-            .unwrap().id,
+            .unwrap()
+            .id,
             job
         );
     }
@@ -252,7 +266,8 @@ async fn contract(pg: bool) {
         ),
     )
     .await
-    .unwrap().id;
+    .unwrap()
+    .id;
     db::action_jobs::apply(
         f.pool(),
         "jobs",
@@ -319,7 +334,10 @@ async fn contract(pg: bool) {
     assert_eq!(active["status"], "in_progress");
     assert_eq!(active["steps"][0]["conclusion"], "success");
     assert_eq!(active["runner_id"], Value::Null);
-    assert!(active["check_run_url"].as_str().unwrap().contains("/check-runs/"));
+    assert!(active["check_run_url"]
+        .as_str()
+        .unwrap()
+        .contains("/check-runs/"));
     assert!(!active.to_string().contains(&generation));
     assert!(!active.to_string().contains("private-runtime"));
     for (path, token) in [
@@ -580,13 +598,23 @@ async fn summaries(f: &Database, (run, job, repo, other): (i64, i64, i64, i64), 
     assert!(send("unowned", 1, "### Stolen").await.is_err());
     assert!(send("jobs", 0, "### Zero").await.is_err());
     assert!(send("jobs", 1, "### Nul\0").await.is_err());
-    assert!(send("jobs", 1, "x".repeat(codeyard_actions::progress::MAX_STEP_SUMMARY_BYTES + 1).as_str())
-        .await
-        .is_err());
+    assert!(send(
+        "jobs",
+        1,
+        "x".repeat(codeyard_actions::progress::MAX_STEP_SUMMARY_BYTES + 1)
+            .as_str()
+    )
+    .await
+    .is_err());
     assert_eq!(send("jobs", 1, "### First").await.unwrap().id, job);
     // A later report for the same step replaces the earlier one.
-    assert_eq!(send("jobs", 1, "### Build\nall green").await.unwrap().id, job);
-    let stored = db::action_jobs::summaries(f.pool(), repo, run).await.unwrap();
+    assert_eq!(
+        send("jobs", 1, "### Build\nall green").await.unwrap().id,
+        job
+    );
+    let stored = db::action_jobs::summaries(f.pool(), repo, run)
+        .await
+        .unwrap();
     assert_eq!(stored.len(), 1);
     assert_eq!(stored[0].number, 1);
     assert_eq!(stored[0].markdown, "### Build\nall green");
@@ -649,8 +677,11 @@ async fn annotations(
     assert!(db::action_jobs::annotations(f.pool(), other, job, 0, 100)
         .await
         .unwrap()
-        .1.is_empty());
-    let check = f.scalar("SELECT check_run_id FROM actions_jobs WHERE id=$1", &[job]).await;
+        .1
+        .is_empty());
+    let check = f
+        .scalar("SELECT check_run_id FROM actions_jobs WHERE id=$1", &[job])
+        .await;
     let path = format!("/api/v3/repos/alice/project/check-runs/{check}/annotations");
     let (_, body) = checked(
         api,
