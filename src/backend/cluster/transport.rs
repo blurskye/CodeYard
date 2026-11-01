@@ -303,9 +303,10 @@ pub const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// How long all TCP attempts to one node may take together: two `DIAL_TIMEOUT`s.
 const TCP_DIAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Opens a request stream to a node. The TCP addresses are tried first, in order. They share
-/// `TCP_DIAL_BUDGET`: each attempt takes at most what is left of it, and once that is spent no
-/// more TCP addresses are tried. iroh comes next, and only when the node also has iroh addresses
+/// Opens a request stream to a node. The TCP addresses are tried first, side by side: each
+/// starts 200 ms after the one before it, at most a second after the first, and gets one
+/// `DIAL_TIMEOUT`. The first to connect is used, and all of them stop at `TCP_DIAL_BUDGET`.
+/// iroh comes next, and only when the node also has iroh addresses
 /// or relays. Opening the iroh endpoint and dialing over iroh share one `DIAL_TIMEOUT`. A call
 /// takes at most 15 seconds, so callers must not wrap it in a shorter timeout: that would cut
 /// off the later addresses. Closing the returned link ends the connection.

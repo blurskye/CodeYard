@@ -1001,10 +1001,10 @@ async fn many_silent_tcp_addresses_share_one_dial_budget() {
     .await;
     let elapsed = started.elapsed();
     assert!(outcome.is_err(), "a dial to silent addresses connected");
-    // The TCP addresses share two DIAL_TIMEOUTs. Trying each in turn would take over two
-    // minutes.
+    // The TCP attempts run side by side, each for one DIAL_TIMEOUT (5 seconds), so the dial
+    // gives up after about six. Trying each in turn would take over two minutes.
     assert!(
-        elapsed >= Duration::from_secs(9) && elapsed < Duration::from_secs(60),
+        elapsed >= Duration::from_secs(5) && elapsed < Duration::from_secs(60),
         "the dial took {elapsed:?}"
     );
 }
@@ -1034,9 +1034,10 @@ async fn a_dial_reaches_iroh_after_many_silent_tcp_addresses() {
         .await
         .expect("iroh answers once the TCP budget is spent");
     let elapsed = started.elapsed();
-    // TCP is tried first, so the dial waits out the shared budget before iroh answers.
+    // TCP is tried first, so the dial waits until every TCP attempt has timed out before iroh
+    // answers.
     assert!(
-        elapsed >= Duration::from_secs(9) && elapsed < Duration::from_secs(60),
+        elapsed >= Duration::from_secs(5) && elapsed < Duration::from_secs(60),
         "the dial took {elapsed:?}"
     );
 }
