@@ -40,17 +40,23 @@ pub async fn spawn_on_free_ports<Ready: Future<Output = bool>>(
             .stderr(output)
             .spawn()
             .unwrap();
-        let mut taken = false;
         let deadline = Instant::now() + STARTUP_WATCHDOG;
-        while let Some(left) = deadline.checked_duration_since(Instant::now()) {
+        loop {
             if let Some(status) = child.try_wait().unwrap() {
                 let text = std::fs::read_to_string(log).unwrap();
                 if text.contains("in use") && attempt < ATTEMPTS {
-                    taken = true;
                     break;
                 }
                 panic!("server exited with {status}: {text}");
             }
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "server did not start within {STARTUP_WATCHDOG:?}: {}",
+                    std::fs::read_to_string(log).unwrap()
+                );
+            };
             if matches!(
                 tokio::time::timeout(left, ready(addresses.clone())).await,
                 Ok(true)
@@ -58,14 +64,6 @@ pub async fn spawn_on_free_ports<Ready: Future<Output = bool>>(
                 return (child, addresses);
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        if !taken {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!(
-                "server did not start within {STARTUP_WATCHDOG:?}: {}",
-                std::fs::read_to_string(log).unwrap()
-            );
         }
     }
     unreachable!("the last attempt returns or panics")
