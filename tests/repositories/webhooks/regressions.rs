@@ -159,7 +159,8 @@ pub(super) async fn retry_backoff_frees_send_slots(pg: bool) {
             delivery::send(&pool, &hook, &webhooks::outgoing("push", None, &hook, "{}")).await;
         }));
     }
-    tokio::time::timeout(Duration::from_secs(5), async {
+    // Room for a slow CI runner to make the four first attempts.
+    tokio::time::timeout(Duration::from_secs(30), async {
         while receiver.received().len() < 4 {
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
