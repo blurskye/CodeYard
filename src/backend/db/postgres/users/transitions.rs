@@ -11,7 +11,7 @@ pub(crate) async fn lock_membership(tx: &mut Transaction<'_, Postgres>) -> Resul
     // Lock order: account membership 37002 -> (for inserts) namespace 37003 ->
     // configuration/actor/request rows -> name predicates. Organization creation
     // takes both transaction locks before the actor row too.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), 37002)")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), 37002)")
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -22,7 +22,7 @@ pub(crate) async fn lock_membership(tx: &mut Transaction<'_, Postgres>) -> Resul
 /// and an acknowledgement locks an account before organizations. Without the shared form,
 /// those two orders could each wait for a row the other holds.
 pub(crate) async fn lock_membership_shared(connection: &mut PgConnection) -> Result<()> {
-    sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtext(current_schema()), 37002)")
+    sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtext(COALESCE(current_schema(),'')), 37002)")
         .execute(connection)
         .await?;
     Ok(())
@@ -30,7 +30,7 @@ pub(crate) async fn lock_membership_shared(connection: &mut PgConnection) -> Res
 
 pub(crate) async fn lock_namespace(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
     // Must follow lock_membership, before any actor/name examination. Held to commit.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), 37003)")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), 37003)")
         .execute(&mut **tx)
         .await?;
     Ok(())
@@ -50,7 +50,7 @@ pub(crate) async fn organization_name_exists(
 }
 
 pub(crate) async fn email_owned(tx: &mut Transaction<'_, Postgres>, email: Option<&str>, except: i64) -> Result<bool> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37004)").execute(&mut **tx).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')),37004)").execute(&mut **tx).await?;
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(email)=lower($1) AND id<>$2) OR EXISTS(SELECT 1 FROM user_emails WHERE lower(email)=lower($1) AND user_id<>$2)")
         .bind(email).bind(except).fetch_one(&mut **tx).await?)
 }

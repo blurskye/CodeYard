@@ -21,7 +21,7 @@ pub async fn create_notification(
     let mut tx = pool.begin().await?;
     lock_membership_shared(&mut tx).await?;
     if matches!(input.kind, "user_followed" | "repository_starred" | "repository_watched") {
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':notification:' || ($1::bigint)::text,0))")
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'') || ':notification:' || ($1::bigint)::text,0))")
             .bind(input.user_id).execute(&mut *tx).await?;
     }
     if input.kind == "repository_forked" {

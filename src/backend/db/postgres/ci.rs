@@ -566,7 +566,7 @@ async fn claim_queued_run(
     loop {
         let mut tx = pool.begin().await?;
         // Serialize retries of this worker's claim across cores, before any authority locks.
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('ci-worker:' || $1))")
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), hashtext('ci-worker:' || $1))")
             .bind(worker)
             .execute(&mut *tx)
             .await?;

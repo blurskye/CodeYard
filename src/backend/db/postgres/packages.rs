@@ -1068,7 +1068,7 @@ pub async fn registry_source(
 pub async fn collector_lock(pool: &PgPool) -> Result<Option<sqlx::pool::PoolConnection<Postgres>>> {
     let mut connection = pool.acquire().await?;
     connection.close_on_drop();
-    let taken: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext(current_schema()), 723947123)")
+    let taken: bool = sqlx::query_scalar("SELECT pg_try_advisory_lock(hashtext(COALESCE(current_schema(),'')), 723947123)")
         .fetch_one(&mut *connection)
         .await?;
     Ok(taken.then_some(connection))

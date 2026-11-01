@@ -161,7 +161,7 @@ async fn lock_browser_session(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
     id: &str,
 ) -> Result<()> {
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), hashtext('browser-session:' || $1))")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), hashtext('browser-session:' || $1))")
         .bind(id).execute(&mut **tx).await?;
     Ok(())
 }

@@ -34,7 +34,7 @@ pub async fn change_emails(
     let mut tx = pool.begin().await?;
     super::transitions::require_account_exclusive(&mut tx, user, credential).await?;
     // Primary writes take this same lock in their trigger, after locking their account row.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37004)")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')),37004)")
         .execute(&mut *tx)
         .await?;
     let primary: Option<String> = sqlx::query_scalar("SELECT email FROM users WHERE id=$1")
