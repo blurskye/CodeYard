@@ -368,11 +368,14 @@ async fn a_store_opened_before_adoption_cannot_publish_after_placement() {
             .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
             .await,
     );
+    // The prepared commit stays staged until it is published, so the branch names a stored
+    // commit: only the placement can refuse it.
     assert_write_denied(
         opened
-            .create_branch_as(&a.pool, a.repo_id, a.actor, "late", &prepared.commit.sha)
+            .create_branch_as(&a.pool, a.repo_id, a.actor, "late", &f.second.to_string())
             .await,
     );
+    assert!(f.repo.find_reference("refs/heads/late").is_err());
     assert!(
         !db::cluster::bump_write_version(&a.pool, a.repo_id, Some(None))
             .await
