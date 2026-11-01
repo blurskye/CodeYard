@@ -118,10 +118,12 @@ impl Stdout {
         let fd = std::os::fd::OwnedFd::from(file);
         // SAFETY: `fd` is a live owned descriptor, and F_GETFL takes no argument.
         let flags = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_GETFL) };
+        if flags < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
         // SAFETY: `fd` is still live, and F_SETFL takes a scalar argument.
-        if flags < 0
-            || unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0
-        {
+        let set = unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFL, flags | libc::O_NONBLOCK) };
+        if set < 0 {
             return Err(std::io::Error::last_os_error().into());
         }
         Ok(Self::Pipe(tokio::io::unix::AsyncFd::new(fd)?))

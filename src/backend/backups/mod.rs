@@ -393,8 +393,9 @@ fn lock_destination(dir: &Path) -> Result<std::fs::File> {
         .write(true)
         .open(path)?;
     // SAFETY: the owned descriptor remains open for the whole backup or restore.
+    let locked = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
     ensure!(
-        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0,
+        locked == 0,
         "another backup or restore is using {}",
         dir.display()
     );
