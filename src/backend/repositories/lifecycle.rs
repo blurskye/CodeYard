@@ -10,6 +10,7 @@ use crate::backend::{
 };
 use chrono::{Datelike, Utc};
 use std::path::Path;
+use tracing::instrument::{Instrument, WithSubscriber};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -395,7 +396,8 @@ async fn provision_stored(
         None => false,
     };
     // Once the row is inserted, initialization or conservative cleanup must outlive the
-    // caller. Otherwise cancellation leaves a discoverable but unusable reservation.
+    // caller. Otherwise cancellation leaves a discoverable but unusable reservation. The task
+    // keeps the request's span and log subscriber, so its errors are logged with the request.
     tokio::spawn(async move {
         let creation_source = source.as_ref().map(|repository| if template {
             CreationSource::Template { repository, all_branches: branch_option }
@@ -412,7 +414,7 @@ async fn provision_stored(
             }, &name, description.as_deref(),
             ProvisionOptions { private, creation_source, gist },
         ).await
-    }).await.map_err(|_| unavailable())?
+    }.in_current_span().with_current_subscriber()).await.map_err(|_| unavailable())?
 }
 
 async fn provision_stored_owned(

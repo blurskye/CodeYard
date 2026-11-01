@@ -3158,7 +3158,7 @@ async fn remote_web_contract() {
         let line = logged
             .lines()
             .find(|line| line.contains(message))
-            .expect("cleanup failure was logged");
+            .unwrap_or_else(|| panic!("{message:?} was not logged:\n{logged}"));
         assert!(
             line.contains(&format!(
                 "storage_node_id=Some({})",
