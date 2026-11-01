@@ -222,8 +222,8 @@ pub(crate) fn hostname() -> Result<String> {
 }
 
 /// A running cluster node: the listener, and once published, the heartbeat. Dropping it
-/// stops both abruptly; [`Cluster::shutdown`] withdraws the node and closes connections
-/// cleanly.
+/// stops both abruptly; [`Cluster::shutdown`] withdraws the node, closes connections cleanly
+/// and releases the node's identity and storage locks.
 pub struct Cluster {
     /// The iroh listener. `None` on a node that runs without iroh.
     router: Option<iroh::protocol::Router>,
@@ -238,8 +238,9 @@ pub struct Cluster {
     sessions: Option<rpc::SessionGate>,
     events: ci::CiHandler,
     pub context: NodeContext,
-    _identity_lock: db::cluster::ServingLock,
-    _repository_lock: Option<std::fs::File>,
+    /// Held until [`Cluster::shutdown`], so a node with the same identity can start after it.
+    identity_lock: std::sync::Mutex<Option<db::cluster::ServingLock>>,
+    repository_lock: std::sync::Mutex<Option<std::fs::File>>,
 }
 
 /// The TCP address peers dial when `CLUSTER_TCP_ADVERTISE` is not set: the bound address,
@@ -358,6 +359,11 @@ impl Cluster {
             }
         }
         self.context.iroh.close().await;
+        drop(self.repository_lock.lock().unwrap_or_else(|e| e.into_inner()).take());
+        let identity = self.identity_lock.lock().unwrap_or_else(|e| e.into_inner()).take();
+        if let Some(identity) = identity {
+            identity.release().await;
+        }
     }
 }
 
@@ -512,8 +518,8 @@ pub async fn start(
     };
     ensure!(!storage || router.is_some() || !tcp_advertised.is_empty(), "TCP-only storage needs CLUSTER_TCP_ADVERTISE when CLUSTER_TCP_BIND is unspecified");
     Ok(Cluster {
-        _identity_lock: identity_lock,
-        _repository_lock: repository_lock,
+        identity_lock: std::sync::Mutex::new(Some(identity_lock)),
+        repository_lock: std::sync::Mutex::new(repository_lock),
         router,
         tcp_listener,
         heartbeat: std::sync::Mutex::new(None),

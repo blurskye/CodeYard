@@ -354,6 +354,16 @@ pub async fn serving_lock(pool: &PgPool, identity: &str) -> Result<sqlx::PgConne
     Ok(connection.detach())
 }
 
+/// Unlocks the lease taken by `serving_lock` and closes its connection. The unlock is bounded,
+/// and a lease it could not end still ends when the closed connection is noticed.
+pub async fn release_serving_lock(mut connection: PgConnection) {
+    use sqlx::Connection;
+    let unlock = sqlx::query("SELECT pg_advisory_unlock_all()").execute(&mut connection);
+    if tokio::time::timeout(std::time::Duration::from_secs(3), unlock).await.is_ok() {
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(3), connection.close()).await;
+    }
+}
+
 pub async fn has_storage_assignments(pool: &PgPool, node: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE storage_node_id=$1) OR EXISTS(SELECT 1 FROM repository_replicas WHERE node_id=$1)")
         .bind(node).fetch_one(pool).await?)

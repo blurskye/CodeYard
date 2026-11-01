@@ -8,20 +8,31 @@ use anyhow::Result;
 
 /// Retains a serving lease on a dedicated connection; closing it releases the advisory lock.
 pub struct ServingLock {
-    _postgres: Option<sqlx::PgConnection>,
+    postgres: Option<sqlx::PgConnection>,
     _file: Option<std::fs::File>,
+}
+
+impl ServingLock {
+    /// Ends the lease before it returns, so a server started next with the same identity can
+    /// take it. Dropping the lock also ends it, but only once PostgreSQL notices the closed
+    /// connection.
+    pub async fn release(self) {
+        if let Some(connection) = self.postgres {
+            super::postgres::cluster::release_serving_lock(connection).await;
+        }
+    }
 }
 
 pub async fn serving_lock(pool: &DbPool, identity: &str) -> Result<ServingLock> {
     match pool {
         DbPool::Postgres(pool) => Ok(ServingLock {
-            _postgres: Some(super::postgres::cluster::serving_lock(pool, identity).await?),
+            postgres: Some(super::postgres::cluster::serving_lock(pool, identity).await?),
             _file: None,
         }),
         DbPool::Sqlite(pool) => {
             let mut path = pool.connect_options().get_filename().as_os_str().to_owned();
             path.push(".serve.lock");
-            Ok(ServingLock { _postgres: None, _file: Some(crate::backend::locks::exclusive_file(std::path::Path::new(&path))?) })
+            Ok(ServingLock { postgres: None, _file: Some(crate::backend::locks::exclusive_file(std::path::Path::new(&path))?) })
         }
     }
 }
