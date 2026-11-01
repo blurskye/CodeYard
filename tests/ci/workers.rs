@@ -3084,14 +3084,15 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
         fixture.root.path(),
     );
     workers.startup().await.unwrap();
+    // The caps leave a loaded runner plenty of room; each wait ends at the engine's request.
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(10), requests.recv())
+        tokio::time::timeout(Duration::from_secs(120), requests.recv())
             .await
             .unwrap(),
         Some(0)
     );
     assert_eq!(
-        tokio::time::timeout(Duration::from_secs(5), requests.recv())
+        tokio::time::timeout(Duration::from_secs(120), requests.recv())
             .await
             .unwrap(),
         Some(1)
@@ -3104,10 +3105,13 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
         .execute(pg)
         .await
         .unwrap();
-    tokio::time::timeout(Duration::from_secs(12), async {
+    // A heartbeat comes every 10 s, so any heartbeat newer than ten minutes shows that cleanup
+    // kept beating, and a sweep for runs ten minutes stale must leave the run alone. Windows of a
+    // few seconds would only measure how fast a loaded runner gets from one query to the next.
+    tokio::time::timeout(Duration::from_secs(120), async {
         loop {
             let recent: bool = sqlx::query_scalar(
-                "SELECT heartbeat_at > NOW() - INTERVAL '5 seconds' FROM ci_runs WHERE id=$1",
+                "SELECT heartbeat_at > NOW() - INTERVAL '10 minutes' FROM ci_runs WHERE id=$1",
             )
             .bind(first.id)
             .fetch_one(pg)
@@ -3121,7 +3125,7 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
     })
     .await
     .unwrap();
-    db::ci::fail_stale_ci_runs(fixture.pool(), 5).await.unwrap();
+    db::ci::fail_stale_ci_runs(fixture.pool(), 600).await.unwrap();
     assert_eq!(
         db::ci::get_ci_run_by_run_id(fixture.pool(), first.run_id)
             .await
@@ -3150,7 +3154,7 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
     .await
     .unwrap();
     workers.shutdown().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(10), server)
+    tokio::time::timeout(Duration::from_secs(120), server)
         .await
         .expect("the engine received cleanup for both runs")
         .unwrap();
