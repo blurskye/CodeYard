@@ -1113,7 +1113,14 @@ async fn slow_ci_admission_contract(restack: bool) {
         .execute(&mut *lock)
         .await
         .unwrap();
+    let locker: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+        .fetch_one(&mut *lock)
+        .await
+        .unwrap();
+    // Count the six seconds from when admission is stuck on the table lock, not from setup, so
+    // slow work before admission cannot shorten its wait below five seconds.
     let release = async {
+        database::wait_until_blocked(pool, locker, 1).await;
         tokio::time::sleep(std::time::Duration::from_secs(6)).await;
         lock.commit().await.unwrap();
     };
