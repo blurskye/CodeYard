@@ -3067,7 +3067,8 @@ async fn cleanup_keeps_heartbeating_and_a_recovered_slot_claims_more_work() {
         "running"
     );
     release.notify_one();
-    tokio::time::timeout(Duration::from_secs(10), async {
+    // Both runs take about 13 s alone on the builder; a shared CI runner is slower.
+    tokio::time::timeout(Duration::from_secs(60), async {
         for run in [first, second] {
             loop {
                 let current = db::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
