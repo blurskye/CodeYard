@@ -37,6 +37,13 @@ pub fn may_be_private_key(value: &str) -> bool {
     value.contains("PRIVATE KEY") || value.contains("PuTTY-User-Key-File")
 }
 
+/// Whether a refused key may be echoed back for correction: it starts with an OpenSSH public
+/// key type. Anything else, such as a private key body pasted without its header, is dropped.
+fn keeps_key_draft(value: &str) -> bool {
+    let value = value.trim_start();
+    ["ssh-", "ecdsa-", "sk-"].iter().any(|kind| value.starts_with(kind)) && !may_be_private_key(value)
+}
+
 /// Only explicitly non-secret values may survive a failed submission.
 pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
     let get = |name: &str| form.get(name).cloned().unwrap_or_default();
@@ -56,9 +63,9 @@ pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
         scope: get("scope"),
         expiry: get("expiry"),
         expires_at: get("expires_at"),
-        // A malformed public key stays in the draft so it can be corrected; a private one never.
+        // A malformed public key stays in the draft so it can be corrected; anything else never.
         public_key: Some(get("public_key"))
-            .filter(|key| !may_be_private_key(key))
+            .filter(|key| keeps_key_draft(key))
             .unwrap_or_default(),
         redirect: get("redirect"),
         mode: get("mode"),
