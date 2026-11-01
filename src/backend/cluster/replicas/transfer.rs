@@ -196,6 +196,7 @@ async fn remove_aside_copies(mirror: &Path) {
 mod tests {
     use super::*;
     use crate::backend::cluster::{rpc, CorePeer, IrohDialer, NodeAddress, NodeKey, Relay};
+    use crate::backend::db;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
         Arc,
@@ -222,19 +223,46 @@ mod tests {
         }
         let key = NodeKey::generate();
         let server_key = NodeKey::generate();
+        // The copy reads its repository row and its retained commits, and marks the copy
+        // incomplete before it installs the pack.
+        let pool = db::init_db(&format!("sqlite://{}", root.path().join("test.db").display()))
+            .await
+            .unwrap();
+        db::run_migrations(&pool).await.unwrap();
+        let mut nodes = Vec::new();
+        for (node_key, name) in [(key.public_hex(), "copy"), (server_key.public_hex(), "primary")] {
+            let roles = ["storage".to_owned()];
+            let node = db::cluster::register_own_node(&pool, &node_key, name, &roles, "test").await;
+            nodes.push(node.unwrap().id);
+        }
+        let (copy_node, primary) = (nodes[0], nodes[1]);
+        let owner = db::users::accounts::create_user(&pool, "owner", None).await.unwrap();
+        let repository = Uuid::new_v4();
+        let row = db::repositories::records::create_repository(
+            &pool,
+            owner.id,
+            "copied",
+            None,
+            false,
+            &format!("/repos/{repository}.git"),
+        )
+        .await
+        .unwrap();
+        assert!(db::cluster::place_repository(&pool, row.id, primary).await.unwrap());
+        assert!(db::cluster::insert_replica(&pool, row.id, copy_node, primary).await.unwrap());
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let context = NodeContext {
-            pool: None,
+            pool: Some(pool),
             iroh: IrohDialer::new(Relay::Off, key.clone()),
             key,
-            node_id: 1,
+            node_id: copy_node,
             repos_path: root.path().to_owned(),
             peers: Default::default(),
             unreachable: Default::default(),
             ci_replicas: Default::default(),
         };
         context.remember_peer(
-            2,
+            primary,
             CorePeer {
                 target: None,
                 public_key: server_key.public_hex(),
@@ -285,7 +313,7 @@ mod tests {
                 stream.shutdown().await.unwrap();
             }
         });
-        assert!(copy(&context, 2, Uuid::new_v4(), &mirror, &CancellationToken::new()).await.is_err());
+        assert!(copy(&context, primary, repository, &mirror, &CancellationToken::new()).await.is_err());
         let calls = calls.load(Ordering::SeqCst);
         server.abort();
         let _ = server.await;
