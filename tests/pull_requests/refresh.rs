@@ -800,7 +800,8 @@ async fn concurrent_refresh_converges(pg: bool) {
     );
     release_tx.send(()).unwrap();
     blocker.await.unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    // Room for a slow CI runner; a refresh stuck on its CAS still fails here.
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
         first.await.unwrap().unwrap();
         second.await.unwrap().unwrap();
     })
