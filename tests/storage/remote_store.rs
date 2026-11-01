@@ -3123,15 +3123,7 @@ async fn remote_web_contract() {
     .await
     .unwrap();
     use tracing::instrument::WithSubscriber;
-    let log = tempfile::NamedTempFile::new().unwrap();
-    let writer = log.reopen().unwrap();
-    let dispatch = tracing::Dispatch::new(
-        tracing_subscriber::fmt()
-            .without_time()
-            .with_ansi(false)
-            .with_writer(move || writer.try_clone().unwrap())
-            .finish(),
-    );
+    let log = crate::support::logs::Log::capture();
     client
         .expect(
             "POST",
@@ -3139,7 +3131,7 @@ async fn remote_web_contract() {
             json!({"name":"failed_creation", "is_private":false}),
             StatusCode::SERVICE_UNAVAILABLE,
         )
-        .with_subscriber(dispatch.clone())
+        .with_subscriber(log.dispatch.clone())
         .await;
     client
         .expect(
@@ -3148,7 +3140,7 @@ async fn remote_web_contract() {
             Value::Null,
             StatusCode::SERVICE_UNAVAILABLE,
         )
-        .with_subscriber(dispatch)
+        .with_subscriber(log.dispatch.clone())
         .await;
     assert!(
         db::repositories::records::get_repository_by_id(&database.pool, outage.id)
@@ -3156,7 +3148,7 @@ async fn remote_web_contract() {
             .unwrap()
             .is_none()
     );
-    let logged = std::fs::read_to_string(log.path()).unwrap();
+    let logged = log.text();
     for message in [
         "failed repository initialization storage cleanup",
         "deleted repository storage remains",
