@@ -237,10 +237,25 @@ pub enum PromoteOutcome {
 /// What a whole-family promotion did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FamilyOutcome {
-    /// Every member is on `to` now: their ids, lowest first.
+    /// The members that moved to `to`: their ids, lowest first.
     Promoted(Vec<i64>),
     /// A member is no longer on `from`, or `to` lacks a current copy of one. Nothing changed.
     Refused,
+}
+
+/// The rows of a fork family (id, primary, write version) that promoting `repository` off
+/// `from` moves: those on `from`. A take-over moves a family only when all of it is on the
+/// offline primary; a manual promotion leaves members on other primaries where they are.
+/// `None` when `repository` itself is no longer on `from`, or a take-over finds the family split.
+pub(crate) fn members_to_move(
+    family: &[(i64, Option<i64>, i64)],
+    repository: i64,
+    from: i64,
+    automatic: bool,
+) -> Option<Vec<(i64, Option<i64>, i64)>> {
+    let members: Vec<_> = family.iter().filter(|(_, primary, _)| *primary == Some(from)).copied().collect();
+    let whole = members.len() == family.len();
+    (members.iter().any(|(id, _, _)| *id == repository) && (whole || !automatic)).then_some(members)
 }
 
 native_operation!(crate::backend::db::postgres::cluster::get_replicas,

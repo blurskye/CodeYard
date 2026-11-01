@@ -754,13 +754,13 @@ async fn promote_family(pool: &SqlitePool, repo_id: i64, from: i64, to: i64, aut
     // BEGIN IMMEDIATE: one writer at a time, so the family read and the moves see the same
     // state. Every early return drops the transaction, which rolls it back.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+    let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
         .bind(repo_id)
         .fetch_all(&mut *tx)
         .await?;
-    if members.is_empty() || members.iter().any(|(_, primary, _)| *primary != Some(from)) {
+    let Some(members) = crate::backend::db::cluster::members_to_move(&family, repo_id, from, automatic) else {
         return Ok(FamilyOutcome::Refused);
-    }
+    };
     let primary = node_at_db_time(&mut tx, from).await?;
     if automatic && primary.is_none_or(|node| node.status != "active" || node.is_online()) {
         return Ok(FamilyOutcome::Refused);
