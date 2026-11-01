@@ -318,8 +318,10 @@ async fn refresh_one(
         let mut head_ready = true;
         let mut head_failed = false;
         if head.is_none() {
-            // With the fork deleted, the pull ref the server last published from it is the pull
-            // request's head, as on GitHub; the row takes it when the update after a push was lost.
+            // The one exception to the rule below that a pull ref never advances the row: with
+            // the head repository deleted there is no branch left to observe, so the pull ref
+            // the server last published from it is the head, as on GitHub. The row takes it
+            // when the update after that publication was lost.
             match base_store.commit_from_primary(&format!("refs/pull/{}/head", pull.number)).await {
                 Ok(commit) if commit.sha != pull.head_sha => {
                     if move_head(pool, ci, &base, pull.id, &pull.head_sha, &commit.sha, pull.head_repo_id, &pull.head_branch, actor_id, ci_access).await? {
@@ -343,8 +345,9 @@ async fn refresh_one(
                 return Ok(changed);
             }
             // A retained ref has no branch provenance: it may come from a publication
-            // whose row CAS lost to a rename. Use it only as the storage CAS input,
-            // never as evidence for advancing the row. Only the live branch observation
+            // whose row CAS lost to a rename. While the head repository exists, use it only
+            // as the storage CAS input, never as evidence for advancing the row; a deleted
+            // head repository, above, is the one exception. Only the live branch observation
             // below may advance SQL, under the complete recorded-identity CAS.
             let expected_head = match base_store
                 .commit_from_primary(&format!("refs/pull/{}/head", pull.number))

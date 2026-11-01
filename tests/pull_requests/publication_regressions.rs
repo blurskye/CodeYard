@@ -866,6 +866,49 @@ async fn head_capacity_reports_opened(pg: bool) {
     w.database.finish().await;
 }
 
+/// A pull ref has no branch provenance, so it never moves a pull request whose head repository
+/// exists. With the head repository deleted there is no branch left, and the pull ref the server
+/// last published is the head, as on GitHub, even when the row update after it was lost.
+async fn deleted_head_takes_the_pull_ref(pg: bool) {
+    let mut w = World::new(pg).await;
+    let git = git2::Repository::open_bare(&w.repository.disk_path).unwrap();
+    let parent = git
+        .find_commit(git2::Oid::from_str(&w.head).unwrap())
+        .unwrap();
+    let signature = git2::Signature::now("Alice", "alice@example.invalid").unwrap();
+    let published = git
+        .commit(None, &signature, &signature, "Published", &parent.tree().unwrap(), &[&parent])
+        .unwrap();
+    let ci = ci(&w);
+    for deleted in [false, true] {
+        git.reference("refs/pull/1/head", published, true, "row update lost")
+            .unwrap();
+        if deleted {
+            w.database
+                .execute(
+                    "UPDATE pull_requests SET head_repo_id = NULL WHERE id = $1",
+                    &[w.pull.id],
+                )
+                .await;
+        }
+        pulls::refresh_open_pull_request(
+            w.database.pool(),
+            &w.repository,
+            &ci,
+            w.alice_id,
+            w.pull.id,
+            Some(db::models::AccessLevel::Owner),
+        )
+        .await
+        .unwrap();
+        let expected = if deleted { published.to_string() } else { w.head.clone() };
+        assert_eq!(row(&w, 1).await.head_sha, expected, "deleted head: {deleted}");
+    }
+    drop(parent);
+    drop(git);
+    w.database.finish().await;
+}
+
 macro_rules! contracts {
     ($($sqlite:ident, $postgres:ident => $contract:ident;)*) => {$ (
         #[tokio::test] async fn $sqlite() { $contract(false).await; }
@@ -885,4 +928,5 @@ contracts! {
     sqlite_path_failure_keeps_unfiltered, postgres_path_failure_keeps_unfiltered => path_failure_keeps_unfiltered;
     sqlite_nested_comment_notification_links, postgres_nested_comment_notification_links => nested_comment_links;
     sqlite_head_capacity_partial_creation, postgres_head_capacity_partial_creation => head_capacity_reports_opened;
+    sqlite_deleted_head_takes_the_pull_ref, postgres_deleted_head_takes_the_pull_ref => deleted_head_takes_the_pull_ref;
 }
