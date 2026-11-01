@@ -3739,14 +3739,17 @@ async fn writes_are_refused_while_the_primary_is_down() {
         .unwrap()
         .is_storage_node_unavailable());
 
-    // The copy refuses a write sent to it directly, so nothing moves on the copy.
+    // The copy refuses a write sent to it directly as a node that does not serve it, so
+    // nothing moves on the copy.
     let (reply, _) = web
         .context
         .call(copy_id, create_branch(), b"")
         .await
         .unwrap();
     assert!(
-        matches!(reply.result, Err(Failure::Repository(error)) if error.kind == ErrorKind::Invalid)
+        matches!(&reply.result, Err(Failure::Repository(error)) if error.is_storage_node_unavailable()),
+        "{:?}",
+        reply.result
     );
     let copied = RepoStore::from_disk_path(copy_path(&copy, uuid).to_str().unwrap());
     assert!(!copied
@@ -3777,7 +3780,8 @@ async fn a_node_without_a_copy_row_refuses_reads() {
     assert_eq!(applied_on(&database.pool, repo.id(), &outsider).await, None);
     primary.shutdown().await;
 
-    // The primary is down, and the outsider holds no copy, so it refuses the read.
+    // The primary is down, and the outsider holds no copy, so it refuses the read as a node
+    // that does not serve the repository, and a reader goes on to the next copy.
     let (reply, _) = web
         .context
         .call(
@@ -3788,7 +3792,9 @@ async fn a_node_without_a_copy_row_refuses_reads() {
         .await
         .unwrap();
     assert!(
-        matches!(reply.result, Err(Failure::Repository(error)) if error.kind == ErrorKind::Invalid)
+        matches!(&reply.result, Err(Failure::Repository(error)) if error.is_storage_node_unavailable()),
+        "{:?}",
+        reply.result
     );
 
     web.shutdown().await;
