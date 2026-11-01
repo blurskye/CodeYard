@@ -461,6 +461,20 @@ pub(super) async fn run(
         json!({"label":"main","ref":"main","sha":foreign_sha,"user":null,"repo":null})
     );
     assert!(!redacted.to_string().contains("bob/proj"), "{redacted}");
+    // The pull request itself is shown with the same redacted head, as GitHub shows a pull
+    // request whose head repository is gone, so `gh pr view` works where `gh pr list` does.
+    let (status, _, pull) = request(
+        router,
+        "GET",
+        &format!("{base}/pulls/{}", foreign["number"]),
+        Some(reader),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status.as_u16(), 200, "{pull}");
+    assert_eq!(pull["number"], foreign["number"]);
+    assert_eq!(pull["head"], redacted[0]["head"]);
+    assert!(!pull.to_string().contains("bob/proj"), "{pull}");
     assert!(session
         .page_ok(&format!("/alice/proj/commit/{foreign_sha}"))
         .await
