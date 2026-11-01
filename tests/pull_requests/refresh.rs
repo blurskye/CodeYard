@@ -689,12 +689,16 @@ async fn concurrent_refresh_converges(pg: bool) {
             let raw = database.raw.clone();
             tokio::spawn(async move {
                 let mut tx = raw.begin().await.unwrap();
+                let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .unwrap();
                 sqlx::query("SELECT id FROM pull_requests WHERE id=$1 FOR UPDATE")
                     .bind(pull_id)
                     .fetch_one(&mut *tx)
                     .await
                     .unwrap();
-                locked_tx.send(()).unwrap();
+                locked_tx.send(Some(pid)).unwrap();
                 release_rx.await.unwrap();
                 sqlx::query("UPDATE pull_requests SET head_sha=$2,base_sha=$3 WHERE id=$1")
                     .bind(pull_id)
@@ -715,7 +719,7 @@ async fn concurrent_refresh_converges(pg: bool) {
                     .fetch_one(&mut *tx)
                     .await
                     .unwrap();
-                locked_tx.send(()).unwrap();
+                locked_tx.send(None).unwrap();
                 release_rx.await.unwrap();
                 sqlx::query("UPDATE pull_requests SET head_sha=?2,base_sha=?3 WHERE id=?1")
                     .bind(pull_id)
@@ -728,7 +732,11 @@ async fn concurrent_refresh_converges(pg: bool) {
             })
         }
     };
-    locked_rx.await.unwrap();
+    let blocker_pid: Option<i32> = locked_rx.await.unwrap();
+    let lock_graph = match (&f, blocker_pid) {
+        (Database::Postgres(database), Some(pid)) => Some((database.raw.clone(), pid)),
+        _ => None,
+    };
     let spawn_refresh = || {
         let pool = f.pool().clone();
         let repository = repository.clone();
@@ -745,8 +753,9 @@ async fn concurrent_refresh_converges(pg: bool) {
             .await
         })
     };
+    let before = refreshes_waiting(&lock_graph).await;
     let first = spawn_refresh();
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    until_refresh_waits(&lock_graph, before, 500).await;
     assert!(
         !first.is_finished(),
         "first refresh must be waiting on its CAS"
@@ -797,8 +806,9 @@ async fn concurrent_refresh_converges(pg: bool) {
             }
         }
     }
+    let before = refreshes_waiting(&lock_graph).await;
     let second = spawn_refresh();
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    until_refresh_waits(&lock_graph, before, 100).await;
     assert!(
         !second.is_finished(),
         "second refresh must be waiting on its CAS"
@@ -820,6 +830,23 @@ async fn concurrent_refresh_converges(pg: bool) {
     assert_eq!(stored.head_sha, moved[0]);
     assert_eq!(stored.base_sha, moved[1]);
     f.finish().await;
+}
+
+/// How many backends wait behind the blocker on PostgreSQL; SQLite cannot tell.
+async fn refreshes_waiting(lock_graph: &Option<(sqlx::PgPool, i32)>) -> i64 {
+    match lock_graph {
+        Some((raw, pid)) => database::blocked_count(raw, *pid).await,
+        None => 0,
+    }
+}
+
+/// Waits until one more refresh waits on its CAS. PostgreSQL shows it in the lock graph behind
+/// the blocker; SQLite has no such view, so there the refresh gets `pause_ms` to reach its write.
+async fn until_refresh_waits(lock_graph: &Option<(sqlx::PgPool, i32)>, before: i64, pause_ms: u64) {
+    match lock_graph {
+        Some((raw, pid)) => database::wait_until_blocked(raw, *pid, before + 1).await,
+        None => tokio::time::sleep(std::time::Duration::from_millis(pause_ms)).await,
+    }
 }
 
 /// A moved branch refreshes only the open pull requests that use it. A pull request on
