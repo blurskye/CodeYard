@@ -316,8 +316,9 @@ async fn postgres_credential_enrollment_holds_the_original_session_until_commit(
                 .await
                 .unwrap()
         });
-        // The DELETE must wait on enrollment's session-row lock, not finish behind its back.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        // The DELETE must wait on enrollment's session-row lock, not finish behind its back:
+        // both enrollment and the DELETE show up in the lock graph behind the gate.
+        wait_until_blocked(raw, blocker, 2).await;
         assert!(!revocation.is_finished());
         gate.commit().await.unwrap();
         enrollment.await.unwrap();

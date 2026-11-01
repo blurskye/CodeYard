@@ -419,7 +419,8 @@ async fn postgres_accept_and_decline_have_one_winner() {
             .await
             .unwrap()
     });
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // The decline must wait in the lock graph behind the gate, beside the acceptance.
+    wait_until_blocked(raw, blocker, 2).await;
     assert!(!decline.is_finished());
     gate.commit().await.unwrap();
     applied(acceptance.await.unwrap());
