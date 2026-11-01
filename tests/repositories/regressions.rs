@@ -378,7 +378,9 @@ async fn contract(pg: bool) {
     .unwrap();
     assert!(fork.size_bytes > 0);
     assert_eq!(f.repository(fork.id).await.size_bytes, fork.size_bytes);
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    // Languages are stored in the background. A refresh round may take up to the product's own
+    // 60-second bound, which a loaded runner can need.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
         if !db::repository_stats::get_repo_languages(f.pool(), fork.id)
             .await
