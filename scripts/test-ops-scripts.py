@@ -65,10 +65,13 @@ done
         self.env["DX"] = str(self.executable(self.work / "bin/dx", '''#!/usr/bin/env bash
 set -eu
 if [[ $1 == --version ]]; then echo 0.7.10; exit; fi
-while (($#)); do
-    if [[ $1 == --out-dir ]]; then out=$2; break; fi
-    shift
+# The real dx writes below the cargo target directory; only dx bundle takes --out-dir.
+mode=debug
+for argument; do
+    [[ $argument == --out-dir ]] && { echo "error: unexpected argument '--out-dir' found" >&2; exit 2; }
+    [[ $argument == --release ]] && mode=release
 done
+out=$CARGO_TARGET_DIR/dx/codeyard/$mode/web/public
 mkdir -p "$out"
 printf bundle >"$out/index.html"
 '''))

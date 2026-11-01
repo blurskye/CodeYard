@@ -112,7 +112,7 @@ cargo tree --locked -p codeyard --target wasm32-unknown-unknown --no-default-fea
 
 echo "== dx build ($MODE)"
 staging=$(mktemp -d "$(dirname "$PUBLIC")/.webui.XXXXXX")
-args=(build --out-dir "$staging/bundle" --platform web --package codeyard --bin codeyard --no-default-features --features web
+args=(build --platform web --package codeyard --bin codeyard --no-default-features --features web
     --cargo-args=--locked --force-sequential)
 if [[ $MODE == release ]]; then
     args+=(--release --debug-symbols false)
@@ -121,7 +121,11 @@ fi
 dx_pid=$!
 wait "$dx_pid"
 dx_pid=
-[[ -f $staging/bundle/index.html ]] || { echo "dx did not produce index.html" >&2; exit 1; }
+[[ -f $PUBLIC/index.html ]] || { echo "dx did not produce $PUBLIC/index.html" >&2; exit 1; }
+# dx writes into its own output directory; take a copy to publish from.
+touch "$PUBLIC/.codeyard-webui-bundle"
+mkdir "$staging/bundle"
+cp -R "$PUBLIC/." "$staging/bundle/"
 
 # Retain immutable hashed assets: a serving process may still have cached the old loader.
 # Publish assets first and replace only the index atomically, never move into a directory.
