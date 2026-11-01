@@ -534,6 +534,12 @@ fn copy_path(node: &cluster::Cluster, uuid: Uuid) -> PathBuf {
         .join(format!("{uuid}.git"))
 }
 
+/// Where a node keeps the unusable copies it moved aside: one directory per copy, holding
+/// each moved copy under a random UUID.
+fn quarantines(mirror: &Path) -> PathBuf {
+    mirror.parent().unwrap().join(".quarantines")
+}
+
 /// The copy's applied version on `node`, or `None` when the node has no copy row.
 async fn applied_on(pool: &DbPool, repository: i64, node: &cluster::Cluster) -> Option<i64> {
     db::cluster::list_replicas(pool, repository)
@@ -2401,18 +2407,9 @@ async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
         head
     );
     // Each rebuild removes the damaged directory it replaced.
-    let leftovers = std::fs::read_dir(copy.context.repos_path.join("mirrors"))
-        .unwrap()
-        .filter(|entry| {
-            entry
-                .as_ref()
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains(".unusable-")
-        })
-        .count();
-    assert_eq!(leftovers, 0);
+    let aside = quarantines(&mirror).join(format!("{uuid}.git"));
+    let leftovers = std::fs::read_dir(&aside).map_or(0, |entries| entries.count());
+    assert_eq!(leftovers, 0, "{}", aside.display());
     copy.shutdown().await;
     primary.shutdown().await;
 }
@@ -2438,20 +2435,21 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
 
     // The copy is damaged, and its failed rebuild moved it aside before it stopped.
     let mirror = copy_path(&copy, uuid);
-    let mirrors = mirror.parent().unwrap().to_path_buf();
-    let failed = mirrors.join(format!("{uuid}.git.unusable-1000"));
+    let quarantines = quarantines(&mirror);
+    let aside = quarantines.join(format!("{uuid}.git"));
+    std::fs::create_dir_all(&aside).unwrap();
+    let failed = aside.join(Uuid::new_v4().to_string());
     std::fs::rename(&mirror, &failed).unwrap();
     std::fs::write(failed.join("HEAD"), b"").unwrap();
-    let stale = mirrors.join(format!("{uuid}.git.unusable-2000"));
+    let stale = aside.join(Uuid::new_v4().to_string());
     std::fs::create_dir(&stale).unwrap();
     std::fs::write(stale.join("config"), b"[broken").unwrap();
     // These are not the copy's own leftovers.
-    let other_suffix = mirrors.join(format!("{uuid}.git.unusable-abc"));
-    let other_copy = mirrors.join("other.git.unusable-1");
-    let empty_stamp = mirrors.join(format!("{uuid}.git.unusable-"));
-    let regular_file = mirrors.join(format!("{uuid}.git.unusable-3000"));
-    for directory in [&other_suffix, &other_copy, &empty_stamp] {
-        std::fs::create_dir(directory).unwrap();
+    let other_name = aside.join("abc");
+    let other_copy = quarantines.join("other.git").join(Uuid::new_v4().to_string());
+    let regular_file = aside.join(Uuid::new_v4().to_string());
+    for directory in [&other_name, &other_copy] {
+        std::fs::create_dir_all(directory).unwrap();
         std::fs::write(directory.join("keep"), b"x").unwrap();
     }
     std::fs::write(&regular_file, b"x").unwrap();
@@ -2471,7 +2469,7 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
         "the aside directory of the failed rebuild"
     );
     assert!(!stale.exists(), "the second stale directory");
-    for kept in [&other_suffix, &other_copy, &empty_stamp] {
+    for kept in [&other_name, &other_copy] {
         assert!(kept.join("keep").exists(), "{} must stay", kept.display());
     }
     assert!(regular_file.is_file());
@@ -2494,14 +2492,15 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
     let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
     let first = repo.save("main", "README.md", "unborn", b"one").await;
     assert_current(&primary, &copy, &repo).await;
-    let mirrors = copy_path(&copy, uuid).parent().unwrap().to_path_buf();
-    let stale = mirrors.join(format!("{uuid}.git.unusable-1000"));
-    std::fs::create_dir(&stale).unwrap();
+    let quarantines = quarantines(&copy_path(&copy, uuid));
+    let aside = quarantines.join(format!("{uuid}.git"));
+    let stale = aside.join(Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&stale).unwrap();
     std::fs::write(stale.join("config"), b"[broken").unwrap();
-    let decoy = mirrors.join(format!("{uuid}.git.unusable-abc"));
-    let other_copy = mirrors.join("other.git.unusable-1");
+    let decoy = aside.join("abc");
+    let other_copy = quarantines.join("other.git").join(Uuid::new_v4().to_string());
     for directory in [&decoy, &other_copy] {
-        std::fs::create_dir(directory).unwrap();
+        std::fs::create_dir_all(directory).unwrap();
         std::fs::write(directory.join("keep"), b"x").unwrap();
     }
 
