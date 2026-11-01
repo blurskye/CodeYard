@@ -15,7 +15,12 @@ pub struct WebConfig {
     pub cors_origins: Vec<String>,
     /// Reverse proxies whose `X-Forwarded-For` header names the real client.
     pub trusted_proxies: HashSet<IpAddr>,
+    /// Pages that may wait at once for a render slot; more are answered busy at once.
+    pub page_render_waiters: usize,
 }
+
+/// `PAGE_RENDER_WAITERS` when it is unset or not a number.
+pub const DEFAULT_PAGE_RENDER_WAITERS: usize = 64;
 
 impl WebConfig {
     pub fn from_env() -> Self {
@@ -32,6 +37,10 @@ impl WebConfig {
                 .filter_map(|address| address.trim().parse::<IpAddr>().ok())
                 .map(|address| address.to_canonical())
                 .collect(),
+            page_render_waiters: std::env::var("PAGE_RENDER_WAITERS")
+                .ok()
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or(DEFAULT_PAGE_RENDER_WAITERS),
         }
     }
 }
