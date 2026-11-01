@@ -238,7 +238,32 @@ async fn first_language_reader_retries_when_the_default_changes_during_publicati
         .await
         .unwrap()
     });
-    tokio::time::sleep(Duration::from_millis(200)).await;
+    // Move the default only once the reader holds the publication lease, which it takes after
+    // computing `main` and before writing it. A reader that started late would otherwise see the
+    // new default before publishing and never meet the race.
+    let lease = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(disk.join("codeyard-publication.lock"))
+        .unwrap();
+    use std::os::fd::AsRawFd;
+    tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            // SAFETY: the lease file stays open for the call, and flock keeps no pointers.
+            let status = unsafe { libc::flock(lease.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) };
+            if status != 0 {
+                break;
+            }
+            // The probe lets go before it awaits, so it never holds the lease against the reader.
+            // SAFETY: as above.
+            unsafe { libc::flock(lease.as_raw_fd(), libc::LOCK_UN) };
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .expect("the first reader never began publishing");
     assert!(
         !task.is_finished(),
         "publication waits for the database writer"
