@@ -195,7 +195,7 @@ async fn remove_aside_copies(mirror: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backend::cluster::{rpc, CorePeer, IrohDialer, NodeAddress, NodeKey, Relay};
+    use crate::backend::cluster::{rpc, IrohDialer, NodeAddress, NodeKey, Relay};
     use crate::backend::db;
     use std::sync::{
         atomic::{AtomicUsize, Ordering},
@@ -261,17 +261,16 @@ mod tests {
             unreachable: Default::default(),
             ci_replicas: Default::default(),
         };
-        context.remember_peer(
-            primary,
-            CorePeer {
-                target: None,
-                public_key: server_key.public_hex(),
-                address: NodeAddress {
-                    tcp: vec![listener.local_addr().unwrap()],
-                    ..Default::default()
-                },
-            },
-        );
+        // With a database, the copy dials the address in the primary's node row.
+        let address = NodeAddress {
+            tcp: vec![listener.local_addr().unwrap()],
+            ..Default::default()
+        };
+        let hint = serde_json::to_string(&address).unwrap();
+        let pool = context.database().unwrap();
+        assert!(db::cluster::record_node_heartbeat(pool, &server_key.public_hex(), "test", &hint, Some(1 << 40))
+            .await
+            .unwrap());
         let acceptor = tokio_rustls::TlsAcceptor::from(
             crate::backend::cluster::tls::server_config(&server_key).unwrap(),
         );
