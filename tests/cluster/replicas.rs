@@ -3774,7 +3774,7 @@ async fn a_node_without_a_copy_row_refuses_reads() {
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "outside").await;
     let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
-    repo.save("main", "a.txt", "unborn", b"a").await;
+    let head = repo.save("main", "a.txt", "unborn", b"a").await;
     // Assign the copy while there is only one eligible holder.
     assert_current(&primary, &copy, &repo).await;
     let outsider = start_storage(&database.pool, root.path(), "store-c").await;
@@ -3792,6 +3792,23 @@ async fn a_node_without_a_copy_row_refuses_reads() {
         )
         .await
         .unwrap();
+    assert_eq!(
+        reply.result.as_ref().ok().and_then(|refs| refs.get("refs/heads/main")),
+        Some(&serde_json::Value::String(head)),
+        "{:?}",
+        reply.result
+    );
+    // With the copy down too, the outsider's own refusal is the answer.
+    copy.shutdown().await;
+    let (reply, _) = web
+        .context
+        .call(
+            outsider.context.node_id,
+            request(uuid, Operation::Refs),
+            b"",
+        )
+        .await
+        .unwrap();
     assert!(
         matches!(&reply.result, Err(Failure::Repository(error)) if error.is_storage_node_unavailable()),
         "{:?}",
@@ -3800,7 +3817,6 @@ async fn a_node_without_a_copy_row_refuses_reads() {
 
     web.shutdown().await;
     outsider.shutdown().await;
-    copy.shutdown().await;
 }
 
 #[tokio::test]
