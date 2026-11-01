@@ -3,7 +3,6 @@ use codeyard::backend::{
     db,
     repositories::{languages, lifecycle, store::repo_store},
 };
-use std::time::Duration;
 
 async fn empty_language_results_are_cached_by_revision(pg: bool) {
     let mut f = Database::new(pg).await;
@@ -49,17 +48,14 @@ async fn empty_language_results_are_cached_by_revision(pg: bool) {
             .unwrap(),
         Some(tip.to_string())
     );
-    // A cache hit must not attempt another replacement transaction.
+    // A cache hit must not attempt another replacement transaction. The lock held here makes one
+    // fail: SQLite reports busy, and PostgreSQL waits until the computation's own timeout.
     match &f {
         Database::Sqlite(database) => {
             let tx = database.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
-            let cached = tokio::time::timeout(
-                Duration::from_secs(2),
-                languages::compute_and_store(f.pool(), &store, &repository, "main"),
-            )
-            .await
-            .unwrap()
-            .unwrap();
+            let cached = languages::compute_and_store(f.pool(), &store, &repository, "main")
+                .await
+                .unwrap();
             assert!(cached.is_empty());
             tx.rollback().await.unwrap();
         }
@@ -70,13 +66,9 @@ async fn empty_language_results_are_cached_by_revision(pg: bool) {
                 .execute(&mut *tx)
                 .await
                 .unwrap();
-            let cached = tokio::time::timeout(
-                Duration::from_secs(2),
-                languages::compute_and_store(f.pool(), &store, &repository, "main"),
-            )
-            .await
-            .unwrap()
-            .unwrap();
+            let cached = languages::compute_and_store(f.pool(), &store, &repository, "main")
+                .await
+                .unwrap();
             assert!(cached.is_empty());
             tx.rollback().await.unwrap();
         }
