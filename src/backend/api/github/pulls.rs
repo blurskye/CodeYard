@@ -72,6 +72,26 @@ pub(super) async fn readable_head(
     }
 }
 
+/// The head of a pull request whose head repository the viewer cannot read: GitHub still
+/// names the head owner, but not the repository.
+pub(super) async fn hidden_head(state: &AppState, pull: &db::models::PullRequest) -> Result<Value> {
+    let head = match pull.head_repo_id {
+        Some(id) => db::repositories::records::get_repository_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?,
+        None => None,
+    };
+    let owner = match &head {
+        Some(head) => db::repositories::records::repository_owner_name(&state.pool, head.id)
+            .await
+            .map_err(Error::unavailable)?
+            .map(|name| (payloads::repository_owner(head, &name), format!("{name}:{}", pull.head_branch))),
+        None => None,
+    };
+    let (user, label) = owner.unwrap_or((Value::Null, pull.head_branch.clone()));
+    Ok(json!({"label": label, "ref": pull.head_branch, "sha": pull.head_sha, "user": user, "repo": null}))
+}
+
 pub(super) async fn document(
     state: &AppState,
     headers: &HeaderMap,
@@ -95,22 +115,17 @@ pub(super) async fn document(
         value["base"]["user"] = value["base"]["repo"]["owner"].clone();
     }
     // The base shares the retained revision, not authority over the source repository.
-    let (head_label, head_user, head_repo) = if let Some(head) = readable_head(state, viewer.as_ref(), pull).await? {
+    value["head"] = if let Some(head) = readable_head(state, viewer.as_ref(), pull).await? {
         let head_owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
         let mut head_value = payloads::repository(&head, &head_owner);
         payloads::set_fork_counts(&mut head_value, super::repos::public_fork_count(state, head.id).await?);
-        (
-            format!("{head_owner}:{}", pull.head_branch),
-            head_value["owner"].clone(),
-            head_value,
-        )
+        json!({"label": format!("{head_owner}:{}", pull.head_branch), "ref": pull.head_branch, "sha": pull.head_sha, "user": head_value["owner"], "repo": head_value})
     } else {
-        (pull.head_branch.clone(), Value::Null, Value::Null)
+        hidden_head(state, pull).await?
     };
-    value["head"] = json!({"label": head_label, "ref": pull.head_branch, "sha": pull.head_sha, "user": head_user, "repo": head_repo});
     let labels = db::labels::get_pull_request_labels(&state.pool, pull.repo_id, pull.id)
         .await
         .map_err(Error::unavailable)?;
@@ -277,14 +292,8 @@ async fn get_pull(
     headers: HeaderMap,
     Path((owner, name, number)): Path<(String, String, i32)>,
 ) -> Result<Response> {
+    // A head repository the viewer cannot read is left out of the document; its owner is not.
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
-    // A head the viewer cannot read hides the whole pull request, as it does for an update.
-    if pull.head_repo_id.is_some() {
-        let viewer = super::auth::authenticate(&state, &headers, false).await?;
-        if readable_head(&state, viewer.as_ref(), &pull).await?.is_none() {
-            return Err(Error::missing());
-        }
-    }
     if let Some(media) = super::diff_media::requested(&headers) {
         return diff_response(&state, &repo, &pull, media).await;
     }

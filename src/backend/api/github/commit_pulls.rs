@@ -119,7 +119,7 @@ async fn document(
         let head = repository_document(state, &head, &head_owner, documents).await?;
         json!({"label":format!("{head_owner}:{}",pull.head_branch),"ref":pull.head_branch,"sha":pull.head_sha,"user":head["owner"],"repo":head})
     } else {
-        json!({"label":pull.head_branch,"ref":pull.head_branch,"sha":pull.head_sha,"user":null,"repo":null})
+        super::pulls::hidden_head(state, pull).await?
     };
     let labels = db::labels::get_pull_request_labels(&state.pool, repo.id, pull.id)
         .await

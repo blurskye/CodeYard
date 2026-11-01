@@ -453,14 +453,29 @@ pub(super) async fn run(
     assert_eq!(values[0]["head"]["repo"]["private"], true);
     assert_eq!(values[0]["author_association"], "COLLABORATOR");
     // The pull request is alice's to see, but its private source repository is not: the head
-    // is redacted as the pulls API does, and nothing names the fork.
+    // names its owner and leaves the repository out, as GitHub does, and nothing names the fork.
     let redacted = list(router, base, reader, foreign_sha, "").await;
     assert_eq!(redacted[0]["number"], foreign["number"]);
     assert_eq!(
         redacted[0]["head"],
-        json!({"label":"main","ref":"main","sha":foreign_sha,"user":null,"repo":null})
+        json!({"label":"bob:main","ref":"main","sha":foreign_sha,"user":values[0]["head"]["user"],"repo":null})
     );
+    assert_eq!(redacted[0]["head"]["user"]["login"], "bob");
     assert!(!redacted.to_string().contains("bob/proj"), "{redacted}");
+    // The pull request itself is shown with the same head, so `gh pr view` works where
+    // `gh pr list` does.
+    let (status, _, pull) = request(
+        router,
+        "GET",
+        &format!("{base}/pulls/{}", foreign["number"]),
+        Some(reader),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status.as_u16(), 200, "{pull}");
+    assert_eq!(pull["number"], foreign["number"]);
+    assert_eq!(pull["head"], redacted[0]["head"]);
+    assert!(!pull.to_string().contains("bob/proj"), "{pull}");
     assert!(session
         .page_ok(&format!("/alice/proj/commit/{foreign_sha}"))
         .await

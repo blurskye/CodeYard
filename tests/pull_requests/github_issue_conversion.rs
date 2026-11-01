@@ -697,16 +697,23 @@ async fn contract(pg: bool) {
     assert_eq!(updated.head_sha, next["sha"].as_str().unwrap());
     assert_eq!(updated.author_id, carol_id);
     let private_url = format!("{collection}/{}", private_source.number);
-    call(
+    // The base owner sees the pull request with its head owner but not the private fork,
+    // as GitHub shows a head repository the viewer cannot read.
+    let opaque = call(
         &router,
         "pulls/get",
         "GET",
         &private_url,
         owner,
         Value::Null,
-        StatusCode::NOT_FOUND,
+        StatusCode::OK,
     )
     .await;
+    assert_eq!(opaque["head"]["label"], "bob:main");
+    assert_eq!(opaque["head"]["user"]["login"], "bob");
+    assert_eq!(opaque["head"]["repo"], Value::Null);
+    assert_eq!(opaque["head"]["sha"], next["sha"]);
+    assert!(!opaque.to_string().contains("private-fork"), "{opaque}");
     call(
         &router,
         "pulls/update",
@@ -778,16 +785,19 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     assert_ne!(delegated.head_sha, next["sha"].as_str().unwrap());
-    call(
+    let opaque = call(
         &router,
         "pulls/get",
         "GET",
         &private_url,
         owner,
         Value::Null,
-        StatusCode::NOT_FOUND,
+        StatusCode::OK,
     )
     .await;
+    assert_eq!(opaque["head"]["sha"], delegated.head_sha.as_str());
+    assert_eq!(opaque["head"]["repo"], Value::Null);
+    assert!(!opaque.to_string().contains("private-fork"), "{opaque}");
     // Revoking the real contributor's source access freezes that snapshot even
     // when its historical author and the current source writer can still read it.
     for (repository, actor, name, level) in [
