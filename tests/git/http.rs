@@ -1520,6 +1520,9 @@ async fn exercise(pool: &DbPool, url: &str) {
         .url()
         .as_str()
         .ends_with("/settings?tab=tokens&saved=token-deleted"));
+    // Read the page before the next request: an unread response stays on its pooled
+    // connection, and the next request on this client can stall behind it.
+    deleted.text().await.unwrap();
     refused(&client, &refs, Some(read_value)).await;
     db::users::accounts::update_user_password(pool, owner.id, "unused-hash", true)
         .await
