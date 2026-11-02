@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "commands": {
+    "agent-task create": {
+      "kind": "interactive_only",
+      "reason": "gh 2.102 rejects a GHES host before submitting a cloud agent task. The harness's rc/contains class records this client-side refusal, not an invented HTTP 404. Inline/file/stdin, agent, branch, follow, missing and private repositories all remain behind this guard; successful cloud sessions cannot be provisioned on Codeyard.",
+      "expected": {"rc": 1, "contains": "agent tasks are not supported on this host"}
+    },
+    "agent-task list": {
+      "kind": "interactive_only",
+      "reason": "The CLI rejects GHES before listing cloud agent tasks, including formatted output. This is a tested client-side host refusal, not a skipped command or a claim that the server returned HTTP 404. Browser mode is waived separately.",
+      "expected": {"rc": 1, "contains": "agent tasks are not supported on this host"}
+    },
+    "agent-task view": {
+      "kind": "interactive_only",
+      "reason": "The CLI refuses GHES before looking up an agent session or following logs. The rc/contains classification describes that client guard; a successful session, authorization decision or log stream requires GitHub's cloud service.",
+      "expected": {"rc": 1, "contains": "agent tasks are not supported on this host"}
+    },
+    "attestation download": {
+      "kind": "interactive_only",
+      "reason": "gh attestation rejects GHES at host validation, before digest lookup. Test this clean refusal for the download flags. Codeyard actually implements repository attestation REST reads: adjacent real-gh api assertions separately check empty success, missing/private 404 and malformed digest 422, rather than wrongly expecting all attestation routes to be unsupported.",
+      "expected": {"rc": 1, "contains": "gh attestation does not currently support GHES"}
+    },
+    "attestation trusted-root": {
+      "kind": "interactive_only",
+      "reason": "The CLI's GHES host guard prevents default and custom TUF retrieval. No public Sigstore/TUF mirror is contacted and no fake trust root is accepted as verified. The custom mirror argument points only at the disposable test host.",
+      "expected": {"rc": 1, "contains": "gh attestation does not currently support GHES"}
+    },
+    "attestation verify": {
+      "kind": "interactive_only",
+      "reason": "gh refuses GHES before verification, even for local bundle/trust-root arguments. Test independent policy/output flags against that refusal and reject a local-file/OCI-only combination without contacting a registry. Successful cryptographic verification and OCI registry authentication cannot be supplied by the harness's forge fixtures.",
+      "expected": {"rc": 1, "contains": "gh attestation does not currently support GHES"}
+    },
+    "codespace code": {
+      "kind": "interactive_only",
+      "reason": "Codespaces requires a github.com codespace OAuth login, not the GHES PAT provisioned by this harness. Assert the noninteractive auth refusal for selectors/insiders, then use real gh api to assert the live GHES route's 404. Supplying cloud credentials would target the wrong server.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace cp": {
+      "kind": "interactive_only",
+      "reason": "The CLI requires cloud Codespaces authentication before copying or opening SSH. Check the guard with real local source files, copy directions, recursive/expand/profile modes and selectors; separately check the live GHES HTTP boundary. No remote shell is started.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace create": {
+      "kind": "interactive_only",
+      "reason": "No github.com Codespaces OAuth identity is provisioned: creation flags and missing repository selection stop at the client auth guard. An adjacent real-gh POST checks Codeyard's clean GHES HTTP 404. Successful machines cannot exist on GHES.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace delete": {
+      "kind": "interactive_only",
+      "reason": "Cloud OAuth is required before named, bulk, age, owner or organization deletion. Test that refusal (including a second-account organization selection) and the live GHES DELETE 404; do not create or delete real cloud workspaces.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace edit": {
+      "kind": "interactive_only",
+      "reason": "Name/machine edits and selection modes require cloud OAuth before reaching a service. Assert the auth refusal plus Codeyard's actual GHES PATCH 404. Rename and resize success cannot be provisioned on this host.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace jupyter": {
+      "kind": "interactive_only",
+      "reason": "Jupyter requires a running cloud codespace and github.com OAuth; the CLI refuses the harness's GHES-only login first. Exercise all selectors and the live GHES GET 404 without launching a browser or Jupyter process.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace list": {
+      "kind": "interactive_only",
+      "reason": "User/repository/org listing and output modes encounter the cloud OAuth guard before HTTP. Test the refusal and separately assert live user/org Codespaces REST 404s. The organization/user selection uses a second harness account, not a cloud subscription.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace logs": {
+      "kind": "interactive_only",
+      "reason": "Snapshot/follow and selector modes require cloud OAuth. Assert a bounded immediate auth failure and a live GHES GET 404, not an invented successful log stream.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace ports forward": {
+      "kind": "interactive_only",
+      "reason": "Forwarding requires cloud OAuth and a cloud tunnel. Test auth refusal with loopback/all-interface flags and selectors plus the actual GHES 404. Port zero avoids reserving a fixed local port if selection ever proceeds; no successful tunnel can be hosted by GHES.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace ports visibility": {
+      "kind": "interactive_only",
+      "reason": "Public/private/org visibility modes and selectors require cloud OAuth. Assert the CLI refusal and live GHES GET 404. The forge has no forwarded Codespaces ports whose visibility can be changed.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace rebuild": {
+      "kind": "interactive_only",
+      "reason": "Incremental/full rebuild and selectors stop at the cloud auth guard. Assert that clean failure and the live GHES HTTP boundary; no rebuild RPC is available on GHES.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace ssh": {
+      "kind": "interactive_only",
+      "reason": "SSH, config generation, debug/profile/port and selectors all require a github.com Codespaces login. Assert the auth refusal and live GHES GET 404; a successful SSH connection requires an external cloud machine and is deliberately not emulated.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace stop": {
+      "kind": "interactive_only",
+      "reason": "Named/filtered and organization second-user stops require cloud OAuth. Assert the client refusal and actual GHES POST 404; Codeyard cannot own a running cloud codespace.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "codespace view": {
+      "kind": "interactive_only",
+      "reason": "Details, output modes and selectors stop at cloud OAuth validation. Assert the refusal and the live GHES GET 404 instead of treating a nonexistent cloud machine as a successful details fixture.",
+      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+    },
+    "copilot": {
+      "kind": "local_only",
+      "reason": "--remove manages the per-account downloaded CLI on disk; test removal when absent. Bare copilot would execute an arbitrary PATH binary or offer to download and execute cloud-distributed software, not call Codeyard. No such binary, cloud license or interactive installation is provisioned. Never launch it in the sweep."
+    },
+    "extension browse": {
+      "kind": "interactive_only",
+      "reason": "The browse TUI needs a controlling terminal, while ctx.gh deliberately uses pipes. Assert the clean terminal refusal in default, accessible-column and debug modes; do not fabricate keystrokes or a TTY transport.",
+      "expected": {"rc": 1, "contains": "terminal"}
+    },
+    "extension create": {
+      "kind": "covered",
+      "reason": "Create uniquely named script, Go and other precompiled scaffolds and inspect generated files; reject an invalid precompiled type. A live authenticated account is available for scaffold owner resolution."
+    },
+    "extension exec": {
+      "kind": "local_only",
+      "reason": "Execute only a test-owned local shell extension, assert argument forwarding and missing-extension failure, and remove its registration in finally. No downloaded extension code is executed."
+    },
+    "extension install": {
+      "kind": "covered",
+      "reason": "Install a local test-owned executable, check duplicate/force behavior, then request unique missing GHES repositories with normal, pinned and forced modes and assert actual HTTP 404."
+    },
+    "extension list": {
+      "kind": "local_only",
+      "reason": "Listing reads per-account local extension registrations. Assert presence/path after installing a unique local extension and absence after removing it, without relying on an empty shared account."
+    },
+    "extension remove": {
+      "kind": "local_only",
+      "reason": "Remove a unique local extension registration, assert its source remains and the listing loses it, then check repeated removal's diagnostic. No forge HTTP operation exists for this command."
+    },
+    "extension search": {
+      "kind": "covered",
+      "reason": "A fresh live repository tagged gh-extension must appear in JSON, jq and template searches; absent queries exercise license, sort, order and limit modes. Browser launching is waived."
+    },
+    "extension upgrade": {
+      "kind": "local_only",
+      "reason": "Local symlink extensions cannot be remotely upgraded. Assert that diagnostic for named dry-run/force and all dry-run/force, and reject an absent name. Successful remote upgrades need a separately published executable/release and would download code; no installed third-party extensions are modified."
+    },
+    "preview prompter": {
+      "kind": "interactive_only",
+      "reason": "This is a local interactive prompt demonstration, not an HTTP command. Request an input prompt with closed piped stdin and assert a clean prompt/EOF refusal under a short deadline; no TTY is fabricated.",
+      "expected": {"rc": 1, "contains": "EOF"}
+    },
+    "skill install": {
+      "kind": "covered",
+      "reason": "Remote GHES repositories, including missing/private repositories owned by another account, encounter the explicit Skills host guard. Also exercise real local copying, forced replacement and hidden directory discovery into invocation-owned custom paths. Successful GitHub cloud skill retrieval is not available on GHES."
+    },
+    "skill list": {
+      "kind": "local_only",
+      "reason": "Enumerate real local SKILL.md fixtures and assert name/path/pinned JSON, jq and template results, empty user-scope agent results and invalid scope rejection. The command scans local files, not forge routes."
+    },
+    "skill preview": {
+      "kind": "interactive_only",
+      "reason": "GitHub Skills explicitly rejects GHES before remote discovery/content fetching, including hidden-directory and missing-repository modes. Assert that guard, not a network/proxy failure or a made-up preview.",
+      "expected": {"rc": 1, "contains": "GitHub Skills does not currently support GitHub Enterprise Server"}
+    },
+    "skill publish": {
+      "kind": "covered",
+      "reason": "Validate a local skill tree with dry-run (including a tag), run fix and reject invalid frontmatter; actual tagged publishing is checked for the explicit GHES Skills refusal. A cloud release is not fabricated and no local git commit is made."
+    },
+    "skill search": {
+      "kind": "interactive_only",
+      "reason": "The Skills GHES guard prevents code-search requests; assert it for normal, owner/paged/limited and JSON/jq/template modes. A GitHub cloud code-search index cannot be substituted for the live Codeyard server.",
+      "expected": {"rc": 1, "contains": "GitHub Skills does not currently support GitHub Enterprise Server"}
+    },
+    "skill update": {
+      "kind": "local_only",
+      "reason": "Assert scanning an invocation-owned empty directory is a read-only no-op in normal, all, dry-run, force and unpin combinations. Also check metadata-free local skills are not silently rewritten. Successful remote updating requires GitHub cloud source metadata/host support, not supplied by GHES or by fabricated cloud credentials."
+    }
+  }
+}

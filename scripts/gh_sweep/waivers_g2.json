@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "flags": {
+    "pr checks": {"--web": "Opens an external browser rather than rendering checks. The harness deliberately sets GH_BROWSER/BROWSER=false; browser navigation cannot be verified by this noninteractive CLI sweep."},
+    "pr comment": {"--web": "Opens a browser comment form requiring browser interaction. The harness disables browser launching; body/file and comment mutation paths are tested directly."},
+    "pr create": {"--web": "Hands creation to a browser form and does not submit a pull request through gh. Browser launching is deliberately disabled by the harness."},
+    "pr diff": {"--web": "Opens the web diff in a browser; the harness disables browser launching. Diff, patch, and filename responses are asserted via the CLI instead."},
+    "pr list": {"--web": "Opens the pull request listing in an external browser, which the noninteractive harness deliberately disables."},
+    "pr view": {"--web": "Opens the pull request page in an external browser, which the noninteractive harness deliberately disables."}
+  }
+}

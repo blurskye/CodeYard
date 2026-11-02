@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "flags": {
+    "auth login": {
+      "--clipboard": "Copies an OAuth device code into the desktop clipboard; there is no clipboard or human device authorization in the harness.",
+      "--web": "Successful use opens a browser and requires human OAuth approval. Only its incompatibility with --with-token is tested; PAT login is exercised live instead.",
+      "--scopes": "Requesting additional scopes requires the browser/device OAuth approval flow, not a supplied PAT. The --with-token incompatibility is tested, but successful interactive scope approval is not automated."
+    },
+    "auth refresh": {
+      "--clipboard": "Copies a one-time device code to a desktop clipboard and requires manual OAuth approval; neither is available in this noninteractive harness.",
+      "--insecure-storage": "Controls persistence of the newly approved OAuth credential; cannot exercise that persistence without completing human device/browser authorization.",
+      "--remove-scopes": "Scope removal obtains a replacement OAuth credential after human authorization; the harness has PATs and no unattended device approver.",
+      "--reset-scopes": "Resetting scopes requires replacement OAuth authorization in a browser/device flow; cannot safely finish it noninteractively.",
+      "--scopes": "Expanding PAT scopes is not possible. A successful refresh requires a human-approved replacement OAuth credential, so only the clean missing-login failure is run."
+    },
+    "search code": {"--web": "Opens the search in a browser instead of querying the API. The harness intentionally disables browsers; no-browser REST search and output formatting are exercised."},
+    "search commits": {"--web": "Opens a browser search page rather than running API search; desktop browser interaction is outside the noninteractive harness."},
+    "search issues": {"--web": "Opens a browser search page rather than running API search; desktop browser interaction is outside the noninteractive harness."},
+    "search prs": {"--web": "Opens a browser search page rather than running API search; desktop browser interaction is outside the noninteractive harness."},
+    "search repos": {"--web": "Opens a browser search page rather than running API search; desktop browser interaction is outside the noninteractive harness."}
+  }
+}

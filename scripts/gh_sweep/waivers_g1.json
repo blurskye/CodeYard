@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "flags": {
+    "repo autolink list": {
+      "--web": "Opens repository autolink settings in a browser instead of listing via HTTP. The harness deliberately sets GH_BROWSER=false and cannot verify browser navigation. REST listing is exercised separately."
+    },
+    "repo license view": {
+      "--web": "Opens the external choosealicense.com website in a browser, not the test-owned GHES server; the sweep must not access that network origin. License text and catalog paths are exercised without a browser."
+    },
+    "repo view": {
+      "--web": "Launches a browser rather than rendering the repository. GH_BROWSER=false intentionally prevents this external side effect; text, branch and JSON paths are covered."
+    },
+    "ruleset check": {
+      "--web": "Opens the branch rules web page in a browser; GH_BROWSER=false prevents browser side effects. Explicit/default branch API behavior is exercised without this flag."
+    },
+    "ruleset list": {
+      "--web": "Opens the ruleset settings page in a browser rather than printing the API results. No browser is available in the headless harness; repo/org and inherited API paths are covered."
+    },
+    "ruleset view": {
+      "--web": "Launches the ruleset web page in a browser, which the harness disables. Repository, organization and inherited ruleset details are asserted through the real gh API path."
+    }
+  }
+}

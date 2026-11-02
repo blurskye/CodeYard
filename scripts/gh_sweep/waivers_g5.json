@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "flags": {
+    "gist create": {
+      "--web": "Opens a browser after creation. The harness deliberately sets GH_BROWSER/BROWSER=false and has no browser-observation fixture; creation itself is covered through normal and stdin invocations."
+    },
+    "gist view": {
+      "--web": "Browser-only view is not observable in this headless harness (GH_BROWSER/BROWSER=false); REST-backed rendered, raw, filename and file-list views are exercised instead."
+    },
+    "release view": {
+      "--web": "Launches an external browser, intentionally disabled by GH_BROWSER/BROWSER=false in the harness. Terminal, JSON, jq, template and latest-release views are exercised."
+    }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "flags": {
+    "run view": {
+      "--web": "Opens an external browser, not an API/output behavior. The harness deliberately sets GH_BROWSER=false; summary, JSON and log paths are exercised instead."
+    },
+    "workflow view": {
+      "--web": "Opens an external browser, not an API/output behavior. The harness deliberately sets GH_BROWSER=false; summary and YAML/ref paths are exercised instead."
+    }
+  }
+}

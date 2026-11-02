@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "flags": {
+    "discussion list": {
+      "--web": "Opens the system browser instead of listing through the API; the harness intentionally sets GH_BROWSER=false and cannot assert browser navigation."
+    },
+    "discussion view": {
+      "--web": "Opens the system browser; browser rendering/navigation is outside the noninteractive real-gh harness (GH_BROWSER=false)."
+    },
+    "issue comment": {
+      "--editor": "Launches an interactive external text editor. The harness fixes GH_EDITOR=false and provides no TTY; --body and --body-file exercise submitted comment contents.",
+      "--web": "Opens the browser's comment composer rather than submitting a comment through gh; the harness disables browser launches."
+    },
+    "issue create": {
+      "--editor": "Launches an interactive external editor for title/body. GH_EDITOR=false and the non-TTY harness cannot author or accept its buffer.",
+      "--template": "Template starting-body selection is part of the interactive issue-authoring/editor flow; supplying --title and --body noninteractively bypasses that flow. The harness disables prompts and external editors, so it cannot accept a template-prefilled buffer.",
+      "--web": "Opens an issue-creation browser form instead of submitting a gh API mutation; GH_BROWSER=false deliberately prevents browser launches."
+    },
+    "issue list": {
+      "--web": "Opens the browser's issue list; the harness disables browser launches and cannot assert browser-side filtering."
+    },
+    "issue view": {
+      "--web": "Opens the system browser instead of rendering issue output; browser navigation is not observable in this noninteractive harness."
+    },
+    "label list": {
+      "--web": "Opens the repository labels page in a browser. GH_BROWSER=false and no browser session is available for a meaningful assertion."
+    }
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "version": 1,
+  "commands": {
+    "gist clone": {"kind": "covered"},
+    "gist create": {"kind": "covered"},
+    "gist delete": {"kind": "covered"},
+    "gist edit": {"kind": "covered"},
+    "gist list": {"kind": "covered"},
+    "gist rename": {"kind": "covered"},
+    "gist view": {"kind": "covered"},
+    "release create": {"kind": "covered"},
+    "release delete": {"kind": "covered"},
+    "release delete-asset": {"kind": "covered"},
+    "release download": {"kind": "covered"},
+    "release edit": {"kind": "covered"},
+    "release list": {"kind": "covered"},
+    "release upload": {"kind": "covered"},
+    "release verify": {
+      "kind": "covered",
+      "reason": "Exercises real-gh unsigned-release rejection, missing tag/repository HTTP 404, latest selection, invalid input and all output flags. Successful cryptographic verification cannot be arranged with the harness fixtures: Codeyard's urn:codeyard:release:v1 node signature is deliberately not a GitHub/Sigstore attestation. No external trust-service traffic or fabricated trusted bundle is used."
+    },
+    "release verify-asset": {
+      "kind": "covered",
+      "reason": "Exercises real-gh unsigned-asset rejection against an uploaded live asset, missing file/tag/repository, latest selection and all output flags. Trusted-verification success is not asserted: the harness cannot issue a GitHub/Sigstore release attestation, and Codeyard's self-hosted node signature makes no such identity claim."
+    },
+    "release view": {"kind": "covered"}
+  }
+}

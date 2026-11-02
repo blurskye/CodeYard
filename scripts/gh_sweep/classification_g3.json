@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "commands": {
+    "discussion comment": {"kind": "covered"},
+    "discussion create": {"kind": "covered"},
+    "discussion edit": {"kind": "covered"},
+    "discussion list": {"kind": "covered"},
+    "discussion view": {"kind": "covered"},
+    "issue close": {"kind": "covered"},
+    "issue comment": {
+      "kind": "covered",
+      "reason": "Issue comments use the live GHES API. gh 2.102 rejects --attach on GHES before HTTP; the case asserts that specific clean client diagnostic."
+    },
+    "issue create": {
+      "kind": "covered",
+      "reason": "Issue creation and metadata use the live GHES API. gh 2.102 rejects --attach on GHES before HTTP; missing recovery files are also a client-side error. Interactive template/editor/browser paths are waived."
+    },
+    "issue delete": {"kind": "covered"},
+    "issue develop": {"kind": "covered"},
+    "issue edit": {
+      "kind": "covered",
+      "reason": "Issue edits and relationships use the live GHES API. gh 2.102 rejects --attach on GHES before HTTP; the case asserts that specific clean client diagnostic."
+    },
+    "issue list": {"kind": "covered"},
+    "issue lock": {"kind": "covered"},
+    "issue pin": {"kind": "covered"},
+    "issue reopen": {"kind": "covered"},
+    "issue status": {"kind": "covered"},
+    "issue transfer": {"kind": "covered"},
+    "issue unlock": {"kind": "covered"},
+    "issue unpin": {"kind": "covered"},
+    "issue view": {"kind": "covered"},
+    "label clone": {"kind": "covered"},
+    "label create": {"kind": "covered"},
+    "label delete": {"kind": "covered"},
+    "label edit": {"kind": "covered"},
+    "label list": {"kind": "covered"}
+  }
+}

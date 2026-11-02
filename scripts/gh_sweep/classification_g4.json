@@ -1,0 +1,24 @@
+{
+  "version": 1,
+  "commands": {
+    "project close": {"kind": "covered"},
+    "project copy": {"kind": "covered"},
+    "project create": {"kind": "covered"},
+    "project delete": {"kind": "covered"},
+    "project edit": {"kind": "covered"},
+    "project field-create": {"kind": "covered"},
+    "project field-delete": {"kind": "covered"},
+    "project field-list": {"kind": "covered"},
+    "project item-add": {"kind": "covered"},
+    "project item-archive": {"kind": "covered"},
+    "project item-create": {"kind": "covered"},
+    "project item-delete": {"kind": "covered"},
+    "project item-edit": {"kind": "covered"},
+    "project item-list": {"kind": "covered"},
+    "project link": {"kind": "covered"},
+    "project list": {"kind": "covered"},
+    "project mark-template": {"kind": "covered"},
+    "project unlink": {"kind": "covered"},
+    "project view": {"kind": "covered"}
+  }
+}
