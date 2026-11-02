@@ -1557,8 +1557,9 @@ t_pages() {
     as anon req GET /health --accept json --json-eq status=ok
     as anon req GET /ready --accept json --json-eq status=ready
     as bob req GET /admin/nodes --status 403
+    # Without PUBLIC_SSH_CLONE_BASE the SSH clone URL takes its host from PUBLIC_URL, which is $BASE.
     as anon req GET /alice/proj --contains-raw "$BASE/alice/proj.git" \
-        --contains-raw "ssh://git@localhost:$SSH_PORT/alice/proj.git"
+        --contains-raw "$SSH_URL/alice/proj.git"
     as anon req GET /no/such/page --status 404
 }
 
