@@ -378,10 +378,18 @@ configure_node() {
     fi
 }
 
-# Apply secrets with shell builtins, never external env argv.
+# Clear the inherited environment, then apply secrets with shell builtins, never external env
+# argv. `env -0` lists what a child would inherit, including an exported variable that a
+# caller's local of the same name hides, so each name is unset through every scope.
 node_exec() {
-    local variable
-    for variable in $(compgen -e); do export -n "$variable"; done
+    local _node_exec_entry
+    while IFS= read -r -d '' _node_exec_entry; do
+        # Bash sets `_` again after every command; the child gets its own.
+        [[ ${_node_exec_entry%%=*} != _ ]] || continue
+        while [[ -v ${_node_exec_entry%%=*} ]]; do
+            unset -v "${_node_exec_entry%%=*}" 2>/dev/null || break
+        done
+    done < <(env -0)
     export "${NODE_ENV[@]}"
     exec "$@"
 }
