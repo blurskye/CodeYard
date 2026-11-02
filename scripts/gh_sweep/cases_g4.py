@@ -80,8 +80,10 @@ def create(ctx):
 
 @case(command="project create", variant="missing owner, forbidden owner, invalid title")
 def create_errors(ctx):
+    # gh looks the login up as a user and as an organization at once; when both are NOT_FOUND
+    # it matches neither and says "unknown owner type", as it does against GitHub.
     _failure(ctx.gh("project", "create", "--owner", ctx.name("absent"), "--title", ctx.name(), ok=None),
-             "Could not resolve")
+             "unknown owner type")
     _failure(ctx.gh("project", "create", "--owner", _other(ctx).name, "--title", ctx.name(), ok=None),
              "Project write denied")
     _failure(ctx.gh("project", "create", "--owner", "@me", "--title", "x" * 256, ok=None),
@@ -141,7 +143,8 @@ def list_projects(ctx):
 
 @case(command="project list", variant="missing owner, empty organization, private visibility")
 def list_errors(ctx):
-    _failure(ctx.gh("project", "list", "--owner", ctx.name("absent"), ok=None), "Could not resolve")
+    # Both owner lookups are NOT_FOUND, which gh reports as "unknown owner type".
+    _failure(ctx.gh("project", "list", "--owner", ctx.name("absent"), ok=None), "unknown owner type")
     org = ctx.org()
     expect_json(ctx.gh("project", "list", "--owner", org, "--format", "json"),
                 {"projects": [], "totalCount": 0})
@@ -245,7 +248,7 @@ def copy(ctx):
     assert r.stdout == title3, r
 
 
-@case(command="project copy", variant="linked issue retained, draft omitted and field value copied", needs=("issue",))
+@case(command="project copy", variant="issue and draft not copied, custom field copied", needs=("issue",))
 def copy_linked_item(ctx):
     p = _project(ctx)
     field = _field(ctx, p)
@@ -260,12 +263,10 @@ def copy_linked_item(ctx):
                          {"id": str, "number": int, "title": title})
     assert copied["id"] != p["node_id"], copied
     rest = f"users/{ctx.account.name}/projectsV2/{copied['number']}"
-    items = ctx.api("GET", rest + "/items")
-    assert len(items) == 1 and items[0]["content"]["node_id"] == ctx.issue["node_id"], items
-    assert items[0]["node_id"] != added["id"], items
+    # GitHub copies views and fields, and drafts only with --drafts; never issues or pull requests.
+    assert ctx.api("GET", rest + "/items") == [], rest
     new_field = next(f for f in ctx.api("GET", rest + "/fields") if f["name"] == field["name"])
     assert new_field["node_id"] != field["node_id"], new_field
-    assert _value(ctx, {"_rest": rest}, items[0], new_field) == "copied-value"
 
 
 @case(command="project copy", variant="missing source, unreadable source and forbidden target")
@@ -757,8 +758,9 @@ def link_errors(ctx):
     _failure(ctx.gh("project", "link", p["_number"], "--owner", org, "--team", ctx.name("missing"), ok=None),
              "Could not resolve")
     team = ctx.team(org)
+    # A non-member cannot see the organization's teams, so gh stops at the team lookup.
     _failure(ctx.sweep.gh(_other(ctx), "project", "link", p["_number"], "--owner", org,
-                          "--team", team["slug"], ok=None), "Project write denied")
+                          "--team", team["slug"], ok=None), "Could not resolve")
 
 
 @case(command="project unlink", variant="repository unlink, idempotence and team unlink", needs=("repo",))
@@ -800,8 +802,9 @@ def unlink_errors(ctx):
              "Could not resolve")
     team = ctx.team(org)
     expect_ok(ctx.gh("project", "link", p["_number"], "--owner", org, "--team", team["slug"]))
+    # A non-member cannot see the organization's teams, so gh stops at the team lookup.
     _failure(ctx.sweep.gh(_other(ctx), "project", "unlink", p["_number"], "--owner", org,
-                          "--team", team["slug"], ok=None), "Project write denied")
+                          "--team", team["slug"], ok=None), "Could not resolve")
 
 
 @case(command="project item-edit", variant="named number/date, typed URL addressing and PR URL", needs=("pr",))
