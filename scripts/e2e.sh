@@ -360,6 +360,9 @@ configure_node() {
         "CI_EXECUTION_MODE=local" "CI_ACT_BINARY=$ACT" "CI_ACTIONS_BINARY=$ACTIONS_BIN"
         "CI_MAX_ACTIVE_RUNS=2" "CI_RUN_TIMEOUT_SECONDS=300" "WEBHOOKS_ALLOW_PRIVATE=true"
     )
+    # The gh sweep's accounts start CI runs and register after the server starts, so this
+    # disposable server trusts every account to run CI.
+    if [[ ${E2E_GH_SWEEP:-0} == 1 ]]; then NODE_ENV+=("CI_TRUSTED_ACTOR_IDS=$(seq -s, 1 500)"); fi
     if [[ -n $DATABASE_URL ]] && ! is_runner "$node"; then NODE_ENV+=("DATABASE_URL=$DATABASE_URL"); fi
     if ! is_runner "$node"; then NODE_ENV+=("SECRETS_MASTER_KEY=$(get master_key)"); fi
     # A single server opens the node connection only for runners on other processes.
