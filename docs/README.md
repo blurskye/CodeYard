@@ -32,8 +32,9 @@ Start with the [README](../README.md) for setup.
 - `scripts/e2e.sh` starts real servers on SQLite, PostgreSQL and a four-node cluster
   and drives them over HTTP, SSH and Git, including remote storage and database-free CI.
   Its SSR and served JS/WASM checks do not execute hydrated browser navigation.
-- The image requires patched `act` 0.2.89-codeyard.1, pinned in
-  [build.nix](../build.nix) with [job-scoped environment support](../patches/act-environment-values.patch).
+- The image requires patched `act` 0.2.89-codeyard.1: the pinned v0.2.89 source with
+  [job-scoped environment support](../patches/act-environment-values.patch), built as in
+  [the CI workflow](../.github/workflows/ci.yml).
   `scripts/e2e.sh` runs the workflow runner named by `E2E_ACT_BINARY`, which must be that same build.
 - `scripts/s3-tests.sh` runs the `#[ignore]`d S3 tests of `tests/storage/production_storage.rs`
   against a throwaway RustFS. It needs `GITSERV_TEST_DATABASE_URL` and `RUSTFS_BIN`.
