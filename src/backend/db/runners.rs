@@ -267,11 +267,14 @@ impl Eligibility {
         platforms: &[String],
     ) -> Result<bool> {
         let wanted: Vec<String> = serde_json::from_str(&run.runner_labels)?;
+        // The server's own and operator-invited workers are self-hosted runners too, as every
+        // runner of a GitHub Enterprise Server is. A local worker runs `self-hosted` jobs on its
+        // host; a Podman worker needs an image for every label, that one included.
         if !self.managed {
             return Ok(run.runner_group.is_none()
-                && wanted
-                    .iter()
-                    .all(|label| label != "self-hosted" && platforms.contains(label)));
+                && wanted.iter().all(|label| {
+                    platforms.contains(label) || (mode == "local" && label == "self-hosted")
+                }));
         }
         let Some(runner) = &self.runner else {
             return Ok(false);

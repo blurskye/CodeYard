@@ -803,7 +803,8 @@ def cmd_page(client, a):
     modules = [s for s in parser.scripts if s["attrs"].get("type") == "module"]
     check(len(modules) == 1, f"{where}: {len(modules)} module scripts")
     module = modules[0]["attrs"].get("src") or ""
-    check(module.startswith("/assets/") and module.endswith(".js"), f"{where}: module script {module!r}")
+    # A release bundle names a hashed /assets/ module, a debug bundle /wasm/codeyard.js.
+    check(module.startswith(("/assets/", "/wasm/")) and module.endswith(".js"), f"{where}: module script {module!r}")
     inline = [s for s in parser.scripts if "src" not in s["attrs"] and s["attrs"].get("type") != "application/json"]
     check(not inline, f"{where}: inline executable script")
     emit(client, response, a, None, {"module": module, "lane": lane})

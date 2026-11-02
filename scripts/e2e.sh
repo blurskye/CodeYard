@@ -37,6 +37,10 @@
 #                   hung step cannot hold the run open.
 #   E2E_ACT_BINARY  path to act for local CI runs. Use act 0.2.89, the version the
 #                   server image ships (see Containerfile).
+#
+# Local CI runs need a writable delegated cgroup v2 (docs/CI_LOCAL_RUNNER.md), for example
+# `systemd-run --user --scope -p Delegate=yes bash scripts/e2e.sh`. Without one, the checks
+# that need a finished run are reported as SKIP, so the run still exits non-zero.
 set -uo pipefail
 
 # Stop a hung run: run again under timeout, once.
@@ -150,6 +154,7 @@ step() {
     fi
     local log started=$SECONDS rc
     log=$LOGS/$ROUND-$(printf '%02d' "$STEP_NO").log
+    STEP_SKIP=$log.skip
     if ((inline)); then
         "$@" >"$log" 2>&1
         rc=$?
@@ -162,6 +167,12 @@ step() {
         rc=$?
     fi
     local took=$((SECONDS - started))
+    # needs_ci_runs stopped the step; it neither fails nor blocks the round.
+    if ((rc != 0)) && [[ -s $STEP_SKIP ]]; then
+        RESULTS+=("SKIP|$ROUND|$name|$took")
+        printf 'SKIP  [%s] %s (%ss; %s)\n' "$ROUND" "$name" "$took" "$(<"$STEP_SKIP")"
+        return 0
+    fi
     if ((rc == 0)); then
         RESULTS+=("PASS|$ROUND|$name|$took")
         printf 'PASS  [%s] %s (%ss)\n' "$ROUND" "$name" "$took"
@@ -173,6 +184,13 @@ step() {
         if ((fatal)); then ROUND_BLOCKED=1; fi
     fi
     return "$rc"
+}
+
+# needs_ci_runs || return: where local CI runs cannot execute, the step ends here as SKIP.
+needs_ci_runs() {
+    [[ -n $CI_RUNS_UNAVAILABLE ]] || return 0
+    printf '%s\n' "$CI_RUNS_UNAVAILABLE" | tee "$STEP_SKIP" >&2
+    return 1
 }
 
 # State handed from one step to the next (steps run in subshells).
@@ -360,10 +378,18 @@ configure_node() {
     fi
 }
 
-# Apply secrets with shell builtins, never external env argv.
+# Clear the inherited environment, then apply secrets with shell builtins, never external env
+# argv. `env -0` lists what a child would inherit, including an exported variable that a
+# caller's local of the same name hides, so each name is unset through every scope.
 node_exec() {
-    local variable
-    for variable in $(compgen -e); do export -n "$variable"; done
+    local _node_exec_entry
+    while IFS= read -r -d '' _node_exec_entry; do
+        # Bash sets `_` again after every command; the child gets its own.
+        [[ ${_node_exec_entry%%=*} != _ ]] || continue
+        while [[ -v ${_node_exec_entry%%=*} ]]; do
+            unset -v "${_node_exec_entry%%=*}" 2>/dev/null || break
+        done
+    done < <(env -0)
     export "${NODE_ENV[@]}"
     exec "$@"
 }
@@ -720,7 +746,16 @@ t_push() {
 }
 
 t_git_streaming() {
-    local source=$RUN/work/stream-source transport name url auth a b large expected node peak
+    local source=$RUN/work/stream-source transport name url auth a b large expected node peak growth
+    local nodes=(server)
+    local -A before=()
+    [[ $ROUND == cluster ]] && nodes=(web1 store1 store2)
+    # Measure what the transfers add: a debug server already holds about 240 MiB after the
+    # earlier steps. Writing 5 to clear_refs resets the peak (VmHWM) to the current size.
+    for node in "${nodes[@]}"; do
+        echo 5 >"/proc/${SERVER_PIDS[$node]}/clear_refs"
+        before[$node]=$(awk '/^VmHWM:/ {print $2}' "/proc/${SERVER_PIDS[$node]}/status")
+    done
     mkdir -p "$source"
     git_as alice -C "$source" init -q -b main
     printf 'streaming\n' >"$source/README"
@@ -762,12 +797,13 @@ PY
         [[ $(git_as alice -C "$large" rev-parse 'HEAD^{tree}') == "$expected" ]]
         find "$large/.git/objects/pack" -name '*.pack' -size +128M | grep -q .
     done
-    local nodes=(server)
-    [[ $ROUND == cluster ]] && nodes=(web1 store1 store2)
+    # Buffering one 150 MiB pack would add more than 150 MiB; streaming adds a few.
     for node in "${nodes[@]}"; do
         peak=$(awk '/^VmHWM:/ {print $2}' "/proc/${SERVER_PIDS[$node]}/status")
-        [[ -n $peak && $peak -lt 196608 ]] || { echo "$node peak memory: ${peak:-missing} KiB" >&2; return 1; }
-        echo "$node peak memory after Git transfers: $peak KiB"
+        [[ -n $peak && -n ${before[$node]} ]] || { echo "$node peak memory missing" >&2; return 1; }
+        growth=$((peak - before[$node]))
+        ((growth < 65536)) || { echo "$node memory grew $growth KiB during Git transfers, to $peak KiB" >&2; return 1; }
+        echo "$node memory grew $growth KiB during Git transfers, to $peak KiB"
     done
 }
 
@@ -1321,7 +1357,7 @@ t_pr_review_pages() {
         --submit intent=submit --set state=approved --set 'body=Approved by the end-to-end check' \
         --location "/alice/proj/pulls/$pr#review-*"
     as bob form "/alice/proj/pulls/$pr/diff?path=review-page.txt&side=RIGHT&line=1" \
-        --action "/alice/proj/pulls/$pr/comments" --has path \
+        --action "/alice/proj/pulls/$pr/comments" --has path_json \
         --set 'body=Please check this line' --location "/alice/proj/pulls/$pr/diff#thread-*"
     cid=$(as alice req GET "/api/repos/alice/proj/pulls/$pr/comments" --accept json --print json:0.id)
     as alice req GET "/alice/proj/pulls/$pr/diff" --contains 'Please check this line' \
@@ -1557,8 +1593,9 @@ t_pages() {
     as anon req GET /health --accept json --json-eq status=ok
     as anon req GET /ready --accept json --json-eq status=ready
     as bob req GET /admin/nodes --status 403
+    # Without PUBLIC_SSH_CLONE_BASE the SSH clone URL takes its host from PUBLIC_URL, which is $BASE.
     as anon req GET /alice/proj --contains-raw "$BASE/alice/proj.git" \
-        --contains-raw "ssh://git@localhost:$SSH_PORT/alice/proj.git"
+        --contains-raw "$SSH_URL/alice/proj.git"
     as anon req GET /no/such/page --status 404
 }
 
@@ -1600,6 +1637,7 @@ t_ci_result() {
     as alice req GET /alice/ci-demo/actions --no-scripts --contains "$id" --lacks refs/heads/main
     as alice req GET '/alice/ci-demo/actions?branch=main' --no-scripts --contains "$id"
     as alice req GET '/alice/ci-demo/actions?branch=other' --no-scripts --lacks "$id"
+    needs_ci_runs || return
     wait_ci_run "$id" "$deadline"
     # The claiming worker stored its mode; a queued run is still `unassigned` until then.
     as alice req GET "/api/ci/jobs/$id" --accept json --json-eq mode=local
@@ -1624,6 +1662,7 @@ t_ci_api_save() {
         sleep 1
     done
     as alice req GET "/api/ci/jobs/$id" --accept json --json-eq event=push --json-eq branch=main
+    needs_ci_runs || return
     # Let the run finish, so the restart below stops an idle server.
     wait_ci_run "$id" "$deadline"
 }
@@ -1641,11 +1680,13 @@ t_gh_sweep() {
 # The GHES TLS tunnel and webhook receiver belong to this helper and stop before it returns.
 t_github_clients() {
     local token id engine rc=0
+    local -a skip=()
     token=$(as bob form '/settings?tab=tokens' --action /settings/tokens --has name \
         --set 'name=real gh client' --set scope=write --set expiry=never --status 200 \
         --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
     put gh_bob_token "$token"
-    "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" || rc=$?
+    [[ -z $CI_RUNS_UNAVAILABLE ]] || skip=(--skip-runs "$CI_RUNS_UNAVAILABLE")
+    "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" "${skip[@]}" || rc=$?
     id=$(get gh_run_id)
     [[ $id =~ ^[0-9a-f-]{36}$ ]]
     if [[ $ROUND == sqlite ]]; then
@@ -1659,7 +1700,8 @@ PY
         engine=$(pg_query "SELECT engine FROM ci_runs WHERE run_id='$id'")
     fi
     expect_eq 'github-script ran on the native engine' "$engine" codeyard-actions
-    return "$rc"
+    ((rc == 0)) || return "$rc"
+    needs_ci_runs || return
 }
 
 t_after_restart() {
@@ -1667,7 +1709,6 @@ t_after_restart() {
     # Sessions, accounts, repositories and CI history live in the database/disk.
     as alice req GET /settings --accept model --json-eq chrome.username=alice
     as alice req GET /alice/proj --contains README.md
-    as alice req GET "/api/ci/jobs/$(get ci_run)" --accept json --json-eq status=success
     as alice req GET "/api/repos/alice/proj/pulls/$(get pr_number)" --accept json --json-eq state=merged
     # SSH works again and presents the same host key (known_hosts remembers it).
     git_as alice ls-remote "$SSH_URL/alice/proj.git" refs/heads/main | grep -q refs/heads/main
@@ -1683,6 +1724,8 @@ t_after_restart() {
     head=$(git_as alice rev-parse HEAD)
     [[ $(git_as alice ls-remote "$SSH_URL/alice/proj.git" refs/heads/main | cut -f1) == "$head" ]]
     as alice req GET /alice/proj/raw/main/after-restart.txt --body-sha256 "$(sha_of $'after restart\n')"
+    needs_ci_runs || return
+    as alice req GET "/api/ci/jobs/$(get ci_run)" --accept json --json-eq status=success
 }
 
 t_log_clean() {
@@ -1774,13 +1817,14 @@ runner_of() { # runner_of RUN: the runner node that claimed RUN
 
 t_runners_share() {
     local n run sha taken='' deadline=$((SECONDS + 120))
+    needs_ci_runs || return
     touch "$RUN/runner-latch"
     for n in 1 2 3 4; do
         read -r run sha < <(runners_push "Shared run $n")
         [[ -n $sha ]]
         put "shared_$n" "$run $sha"
     done
-    until [[ $(pg_query "SELECT count(DISTINCT worker) FROM ci_runs WHERE status='running' AND repository_id=(SELECT id FROM repositories WHERE name='runners')") == 2 ]]; do
+    until [[ $(pg_query "SELECT count(DISTINCT worker) FROM ci_runs WHERE status='running' AND repo_id=(SELECT id FROM repositories WHERE name='runners')") == 2 ]]; do
         ((SECONDS < deadline)) || { rm -f "$RUN/runner-latch"; echo 'both runners did not claim work' >&2; return 1; }
         sleep 0.2
     done
@@ -1800,6 +1844,7 @@ t_runners_share() {
 
 t_runner_revoked() {
     local n run sha first_line deadline=$((SECONDS + 60))
+    needs_ci_runs || return
     first_line=$(( $(wc -l <"$RUN/nodes/r1/server.log") + 1 ))
     server_cli cluster revoke r1
     for n in 1 2; do
@@ -1818,6 +1863,7 @@ t_runner_revoked() {
 
 t_runner_killed() { # inline: kill -9 the runner that is running a job
     local run sha node other status message started deadline=$((SECONDS + 90))
+    needs_ci_runs || return
     read -r run sha < <(runners_push 'Killed mid-job') || return 1
     [[ -n $run ]] || return 1
     until [[ $(pg_query "SELECT status FROM ci_runs WHERE run_id='$run'") == running ]] \
@@ -1938,8 +1984,9 @@ t_restored_works() {
     git_with_token read fetch -q origin "refs/pull/$(get pr_number)/head:restored-pull"
     git_as alice checkout -q restored-pull
     grep -q 'feature work' feature.txt || { echo "the pull request checkout lacks feature.txt" >&2; return 1; }
-    as alice req GET "/alice/ci-demo/actions?job=$(get ci_run)&view=logs" --contains '| hello'
     as alice req GET "/api/files/$(get note_id)/download" --accept any --body-sha256 "$(get note_sha)"
+    needs_ci_runs || return
+    as alice req GET "/alice/ci-demo/actions?job=$(get ci_run)&view=logs" --contains '| hello'
 }
 
 t_delete_kept() {
@@ -2212,6 +2259,7 @@ t_cluster_fork_ci() {
         --json "{\"expected_head\":\"$head\"}"
     id=$(pg_query "SELECT run_id FROM ci_runs WHERE head_sha='$head' AND event='pull_request' AND is_fork")
     [[ $id =~ ^[0-9a-f-]{36}$ ]]
+    needs_ci_runs || return
     wait_ci_run "$id"
     assert_ci_worker "$id"
     as alice req GET "/alice/ci-demo/actions?job=$id&view=logs" --contains 'CLUSTER_FORK_NO_SECRETS'
@@ -2387,6 +2435,7 @@ t_cluster_revoke_worker() {
 t_cluster_approve_worker() {
     local n id
     cluster_cli web1 approve ci1
+    needs_ci_runs || return
     for n in 1 2; do
         id=$(get "revoked_run_$n")
         wait_ci_run "$id"
@@ -2612,6 +2661,20 @@ preflight() {
     ((missing == 0))
 }
 
+# The server makes each run's cgroup below its own, which is this script's. Prints why local
+# CI runs cannot execute here, or nothing.
+ci_runs_unavailable() {
+    local current probe
+    current=/sys/fs/cgroup/$(sed -n 's|^0::/||p' /proc/self/cgroup)
+    if [[ $(stat -f -c %T "$current" 2>/dev/null) != cgroup2fs ]]; then
+        echo 'needs a unified cgroup v2 for local CI runs'
+    elif [[ ! -w $current/cgroup.procs ]] || ! probe=$(mktemp -d "$current/codeyard-e2e-XXXXXX" 2>/dev/null); then
+        echo "needs a writable delegated cgroup v2 for local CI runs; $current is not"
+    else
+        rmdir "$probe"
+    fi
+}
+
 summary() {
     local line status round name took pass=0 fail=0 skip=0
     echo
@@ -2626,6 +2689,8 @@ summary() {
 }
 
 preflight || { echo "e2e: tools are missing" >&2; exit 2; }
+CI_RUNS_UNAVAILABLE=$(ci_runs_unavailable)
+[[ -z $CI_RUNS_UNAVAILABLE ]] || echo "e2e: this host $CI_RUNS_UNAVAILABLE; checks that need a finished run are skipped"
 echo "e2e: temporary directory $WORK"
 
 if [[ $E2E_SKIP_BUILD == 1 ]]; then
