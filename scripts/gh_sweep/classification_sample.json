@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "commands": {
-    "repo view": {"kind": "covered"},
-    "issue create": {"kind": "covered"},
-    "api": {"kind": "covered"}
-  }
-}

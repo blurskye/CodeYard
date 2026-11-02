@@ -22,11 +22,11 @@ serial_group is a sweep-wide mutex key; use the same key for a shared repository
 Timeouts kill subprocess groups. Python case bodies must cooperate (no infinite Python
 loops): timed-out daemon bodies are abandoned, and further harness calls are rejected.
 All gh argv are recorded, including secondary commands and failed invocations.
-classification.json: {"version":1,"commands":{"repo view":{"kind":"covered"}}}.
+classification_<lane>.json (one per lane, merged): {"version":1,"commands":{"repo view":{"kind":"covered"}}}.
 Other kinds require reason; unsupported_on_ghes requires expected {status, contains};
 interactive_only requires expected {rc, contains}; local_only runs offline, not skipped.
 Every kind still needs a registered case. --check fails missing classifications/cases.
-waivers.json: {"version":1,"flags":{"repo view":{"--web":"reason"}}}; only flags
+waivers_<lane>.json (merged): {"version":1,"flags":{"repo view":{"--web":"reason"}}}; only flags
 may be waived. coverage_report(records=sweep.records) reports all inventory flags.
 """
 import argparse

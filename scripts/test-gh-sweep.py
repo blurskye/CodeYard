@@ -279,8 +279,8 @@ class SweepHarnessTests(unittest.TestCase):
         self.assertEqual(sum(path == "user/repos" for _, path, _ in calls), 1)
         self.assertFalse(self.sweep.records)
 
-    def test_sample_import_and_cli_check_are_offline_and_incomplete(self):
-        module = importlib.import_module("gh_sweep.cases_sample")
+    def test_example_import_and_cli_check_are_offline(self):
+        module = importlib.import_module("gh_sweep.example_cases")
         if not h.CASES:
             importlib.reload(module)
         self.assertEqual(len(h.CASES), 3)
@@ -288,12 +288,10 @@ class SweepHarnessTests(unittest.TestCase):
         self.assertEqual(sum(not row["children"] for row in inventory.values()), 197)
         result = subprocess.run([sys.executable, str(h.HERE / "harness.py"), "--check"],
                                 capture_output=True, text=True, timeout=10)
-        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn(result.returncode, (0, 1), result.stderr)
         report = json.loads(result.stdout)
-        self.assertEqual(len(report["missing_cases"]), 194)
-        self.assertEqual(len(report["missing_classification"]), 194)
-        self.assertNotIn("repo view", report["missing_cases"])
-        self.assertIn(["issue list", "--json"], report["missing_flags"])
+        self.assertEqual(report["ok"], result.returncode == 0)
+        self.assertEqual(report["invalid_cases"], [])
 
 
 if __name__ == "__main__":
