@@ -475,7 +475,13 @@ class Sweep:
                         definition.function(ctx)
                         ctx.check_deadline()
                     except BaseException as error:
-                        errors.append(self.redact(str(error) or type(error).__name__))
+                        # Bounded, so the last-gh note below always fits on the case's line.
+                        errors.append(self.redact(str(error) or type(error).__name__)[:1200])
+                        # Name the gh command the case ran last, so a failure points at its step.
+                        with self.lock:
+                            last = next((r["argv"] for r in reversed(self.records) if r["case"] == ctx.id), None)
+                        if last:
+                            errors.append("last gh: " + " ".join(last)[:300])
                     finally:
                         LOCAL.ctx = None
                 thread = threading.Thread(target=invoke, daemon=True)
@@ -495,8 +501,9 @@ class Sweep:
             self.results = list(pool.map(run_one, enumerate(cases)))
         print("RESULT  SECONDS  CASE")
         for row in self.results:
+            # One line per case: a multi-line error keeps its line breaks as \n.
             print(f"{'PASS' if row['passed'] else 'FAIL':6}  {row['duration']:7.2f}  {row['case']}" +
-                  (f"  {row['error']}" if row["error"] else ""), flush=True)
+                  (f"  {row['error']}".replace("\n", "\\n") if row["error"] else ""), flush=True)
         report = coverage_report(cases=cases, records=self.records)
         (self.directory / "argv.json").write_text(json.dumps(self.records, indent=2) + "\n")
         passed = sum(row["passed"] for row in self.results)
