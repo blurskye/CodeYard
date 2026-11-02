@@ -221,16 +221,17 @@ async fn merge_gate_contract(pg: bool) {
     set_rule(&world.alice, true).await;
     merge_refused(&world.alice, number, "Waiting on review from @bob").await;
 
-    // Dave owns docs/ but cannot vote, so his approval is refused and Bob's is what counts.
-    let (status, _) = world
+    // Dave owns docs/ but only reads the repository, so his approval is kept but does not count.
+    world
         .dave
-        .api(
+        .expect(
             "POST",
             &format!("/api/repos/alice/proj/pulls/{number}/reviews"),
             json!({"state": "approved"}),
+            StatusCode::CREATED,
         )
         .await;
-    assert_ne!(status, StatusCode::CREATED);
+    merge_refused(&world.alice, number, "Waiting on review from @bob").await;
     world
         .bob
         .expect(

@@ -231,6 +231,7 @@ async fn contract(pg: bool) {
         branch: "main".into(),
         head: updated.sha.clone(),
         base: upstream.clone(),
+        rebase: false,
         name: "alice".into(),
         email: "alice@example.test".into(),
         token: None,

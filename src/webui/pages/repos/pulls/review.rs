@@ -296,8 +296,6 @@ pub(in crate::webui::pages::repos) fn review_changes(
         .unwrap_or(repo.chrome.id);
     let reason = if author {
         "You opened this pull request, so you can comment but not approve or request changes."
-    } else if !vote {
-        "Approving and requesting changes needs write access to this repository."
     } else {
         ""
     };

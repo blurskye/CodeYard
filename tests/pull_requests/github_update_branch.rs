@@ -200,6 +200,35 @@ async fn contract(pg: bool) {
         conflict
     );
     assert_eq!(store.commit_from_primary("main").await.unwrap().sha, main);
+    // GraphQL's REBASE replays the head's commits onto the base instead of merging it in.
+    alice.branch("rebased", &main).await;
+    let topic = alice.save("rebased", "rebased.txt", &main).await;
+    let rebased = alice.open_pull("Rebased", "rebased", "main").await;
+    let main = alice.save("main", "rebase-base.txt", &main).await;
+    let graphql = super::github_team_reviewers::graphql;
+    let found = graphql(
+        &router,
+        owner,
+        "query($n:Int!){repository(owner:\"alice\",name:\"proj\"){pullRequest(number:$n){id}}}",
+        json!({"n": rebased["number"]}),
+    )
+    .await;
+    let id = found["data"]["repository"]["pullRequest"]["id"].clone();
+    let moved = graphql(
+        &router,
+        owner,
+        "mutation($id:ID!){updatePullRequestBranch(input:{pullRequestId:$id,updateMethod:REBASE}){pullRequest{headRefOid}}}",
+        json!({"id": id}),
+    )
+    .await;
+    assert!(moved["errors"].is_null(), "{moved}");
+    let tip = store.commit_from_primary("rebased").await.unwrap();
+    assert_ne!(tip.sha, topic);
+    assert_eq!(tip.parents, vec![main.clone()]);
+    assert_eq!(
+        moved["data"]["updatePullRequestBranch"]["pullRequest"]["headRefOid"],
+        tip.sha.as_str()
+    );
     // The fork owner may update their head without write access to the upstream repository.
     let fork = bob
         .expect(

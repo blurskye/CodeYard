@@ -273,13 +273,9 @@ async fn create_review(
         .map(str::to_lowercase)
         .unwrap_or_else(|| "commented".to_string());
 
-    // A plain comment needs read access; a vote needs write access. Access is checked before
-    // the state is validated, so a user without write access gets the same refusal as before.
-    if review_state == "commented" {
-        super::require_read(pool, &user, &repository).await?;
-    } else {
-        super::require_write(pool, &user, &repository).await?;
-    }
+    // As on GitHub, anyone who can read the repository may review; only writers' approvals
+    // count toward the merge rules (see `eligible_reviews`).
+    super::require_read(pool, &user, &repository).await?;
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await

@@ -444,14 +444,11 @@ pub(super) async fn resolve(
                 let saved = if metadata_only {
                     current
                 } else if field == "updatePullRequestBranch" {
-                    if input["updateMethod"]
-                        .as_str()
-                        .is_some_and(|method| method != "MERGE")
-                    {
-                        return Err(Error::new(
-                            "Codeyard can update a pull request branch by merge, not rebase",
-                        ));
-                    }
+                    let rebase = match input["updateMethod"].as_str() {
+                        None | Some("MERGE") => false,
+                        Some("REBASE") => true,
+                        Some(_) => return Err(Error::new("updateMethod must be MERGE or REBASE")),
+                    };
                     // The head may be a fork the actor cannot read but may update through
                     // the maintainer grant, which update_branch checks. The credential needs
                     // contents write there, as on REST.
@@ -480,6 +477,7 @@ pub(super) async fn resolve(
                         actor,
                         (&owner, &repo.name, current.number),
                         expected,
+                        rebase,
                         Some(request.auth.token.id),
                     )
                     .await

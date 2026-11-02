@@ -152,6 +152,22 @@ async fn attributes(pg: bool) {
     .await;
     assert_eq!(types.as_array().unwrap().len(), 1);
     assert_eq!(types[0]["id"], typed["id"]);
+    // `gh issue list --type` searches with the issue type's name.
+    let found = document(
+        request(
+            &router,
+            "GET",
+            "/api/v3/search/issues?q=repo%3Acollective%2Fproj+type%3Abug",
+            Some(read),
+            Value::Null,
+        )
+        .await,
+        "search/issues-and-pull-requests",
+        200,
+    )
+    .await;
+    assert_eq!(found["total_count"], 1, "{found}");
+    assert_eq!(found["items"][0]["id"], typed["id"]);
     let mentioned = document(
         request(
             &router,

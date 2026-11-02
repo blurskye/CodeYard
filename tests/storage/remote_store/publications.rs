@@ -257,6 +257,7 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
         branch: "main".into(),
         head: initial.sha.clone(),
         base: changed.sha.clone(),
+        rebase: false,
         name: "Branch updater".into(),
         email: "updater@example.invalid".into(),
         token: None,

@@ -512,6 +512,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     branch: "feature".into(),
                     head: sha.into(),
                     base: sha.into(),
+                    rebase: false,
                     name: "Tester".into(),
                     email: "tester@example.invalid".into(),
                     token: None,

@@ -36,6 +36,7 @@ pub async fn update_branch(
     actor_id: i64,
     locator: (&str, &str, i32),
     expected: Option<&str>,
+    rebase: bool,
     token: Option<i64>,
 ) -> Result<String, OperationError> {
     let actor = super::actor(pool, actor_id).await?;
@@ -113,6 +114,7 @@ pub async fn update_branch(
                 branch: pull.head_branch.clone(),
                 head: head_sha.clone(),
                 base: base_sha,
+                rebase,
                 name: actor.username.clone(),
                 email: actor.commit_email(),
                 token,

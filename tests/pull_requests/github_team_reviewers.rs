@@ -10,7 +10,12 @@ use codeyard::backend::{
 use serde_json::{json, Value};
 use tower::ServiceExt;
 
-async fn graphql(router: &axum::Router, auth: &str, query: &str, variables: Value) -> Value {
+pub(super) async fn graphql(
+    router: &axum::Router,
+    auth: &str,
+    query: &str,
+    variables: Value,
+) -> Value {
     let response = router
         .clone()
         .oneshot(

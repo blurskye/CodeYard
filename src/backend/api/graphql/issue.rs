@@ -483,6 +483,23 @@ pub(super) async fn mutation(
             .await
             .map_err(unavailable)?;
         let owner = repository::owner(&repo, request).await?;
+        // The viewer can read this repository, so a refused close or reopen of someone else's
+        // issue is GitHub's FORBIDDEN, not a missing repository.
+        let state_error = |error: issues::OperationError| match error {
+            issues::OperationError::Missing { .. } if issue.author_id != actor => super::error(
+                format!(
+                    "{} does not have the correct permissions to execute `{}`",
+                    request.auth.user.username,
+                    if field == "closeIssue" {
+                        "CloseIssue"
+                    } else {
+                        "ReopenIssue"
+                    }
+                ),
+                "FORBIDDEN",
+            ),
+            error => operation(error),
+        };
         if field == "addComment" {
             let saved = issues::comments::create_issue_comment(
                 pool,
@@ -524,7 +541,7 @@ pub(super) async fn mutation(
                     duplicate,
                 )
                 .await
-                .map_err(operation)?,
+                .map_err(state_error)?,
             );
         } else {
             let saved = issues::mutations::update_issue_latest(
@@ -557,7 +574,7 @@ pub(super) async fn mutation(
                 },
             )
             .await
-            .map_err(operation)?;
+            .map_err(state_error)?;
             payload["issue"] = object(&saved);
         }
     }

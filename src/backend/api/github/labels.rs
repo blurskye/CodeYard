@@ -20,8 +20,9 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
         Some(LabelWriteRefusal::Denied) => {
             Error::new(StatusCode::FORBIDDEN, "Label mutation denied")
         }
+        // gh falls back to an update only on this error item.
         Some(LabelWriteRefusal::DuplicateName) => {
-            Error::invalid("A label with this name already exists")
+            Error::validation("Label", "name", "already_exists")
         }
         Some(LabelWriteRefusal::InvalidLabels) => Error::invalid("Invalid labels"),
         Some(LabelWriteRefusal::Conflict) => Error::new(StatusCode::CONFLICT, "Label changed"),

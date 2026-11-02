@@ -171,7 +171,8 @@ pub enum UpstreamMergeType {
     Merge,
 }
 
-/// Merge the readable source's `base` into an existing writable head branch.
+/// Merge the readable source's `base` into an existing writable head branch, or replay the
+/// head's commits onto it when `rebase` is set.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PullBranchUpdate {
     pub pull_request_id: i64,
@@ -179,6 +180,8 @@ pub struct PullBranchUpdate {
     pub branch: String,
     pub head: String,
     pub base: String,
+    #[serde(default)]
+    pub rebase: bool,
     pub name: String,
     pub email: String,
     /// The token the request came with, for the workflows permission; `None` for a session.

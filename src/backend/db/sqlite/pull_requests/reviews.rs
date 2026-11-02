@@ -739,13 +739,10 @@ pub async fn save_review_batch(
     );
     let commit_sha = commit_sha.map(str::to_ascii_lowercase);
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    // A plain comment needs read access; a vote needs write access.
-    let (author, current_state, current_head) = if state == "commented" {
-        discussions::lock_pull_request_contribution(&mut tx, author_id, pr_id).await?;
-        discussions::read_pull_request_review_state(&mut tx, pr_id).await?
-    } else {
-        discussions::lock_pull_request_review_authority(&mut tx, author_id, pr_id).await?
-    };
+    // Any reader may review; the merge gate counts only writers' approvals.
+    discussions::lock_pull_request_contribution(&mut tx, author_id, pr_id).await?;
+    let (author, current_state, current_head) =
+        discussions::read_pull_request_review_state(&mut tx, pr_id).await?;
     anyhow::ensure!(
         super::super::users::transitions::credential_live(
             &mut tx,

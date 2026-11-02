@@ -2520,6 +2520,7 @@ impl LocalStore {
             source.1.path(),
             &request.head,
             &request.base,
+            request.rebase,
             &committer,
         )
         .await

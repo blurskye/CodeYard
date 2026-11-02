@@ -1455,19 +1455,13 @@ fn review_changes_menu_offers_each_decision_as_a_described_option_row() {
     assert!(!tag_with(&html, "value=\"approved\"").contains("disabled"));
     assert!(form.contains("Submit review</button>"));
 
-    // Someone without write access may comment, and the two decisions say why they are unavailable.
+    // As on GitHub, someone without write access may still approve or request changes.
     let mut reader = repository_at(Kind::Pull, "/7/diff");
     reader.viewer = "dave".into();
     reader.can_write = false;
-    let mut reader_item = item();
-    reader_item.comparison.as_mut().unwrap().can_vote = false;
-    let html = files_html(&reader, &reader_item, None, 0);
-    assert!(
-        html.contains("Approving and requesting changes needs write access to this repository.")
-    );
-    assert!(tag_with(&html, "value=\"approved\"").contains("disabled"));
-    assert!(tag_with(&html, "value=\"changes_requested\"").contains("disabled"));
-    assert!(!tag_with(&html, "value=\"commented\"").contains("disabled"));
+    let html = files_html(&reader, &item(), None, 0);
+    assert!(!tag_with(&html, "value=\"approved\"").contains("disabled"));
+    assert!(!tag_with(&html, "value=\"changes_requested\"").contains("disabled"));
 
     // The author of a pull request may comment on it, but not vote on it.
     let mut author = repository_at(Kind::Pull, "/7/diff");

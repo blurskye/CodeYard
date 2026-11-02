@@ -190,36 +190,10 @@ async fn contributions(d: &Database, repo: i64, actor: i64, issue: i64, pr: i64,
         );
     }
 }
-/// A plain comment review needs the same read authority as a comment. Where the actor may not
-/// comment, the review is refused and nothing is stored.
-async fn comment_review_refused(d: &Database, pr: i64, actor: i64) {
-    refusal(
-        db::pull_requests::reviews::add_pull_request_review(
-            d.pool(),
-            pr,
-            actor,
-            &db::users::accounts::AccountCredential::Session(
-                &crate::support::live_session(d.pool(), actor).await,
-            ),
-            "commented",
-            Some("Denied"),
-            Some(SHA),
-        )
-        .await,
-    );
-}
-async fn review_denied(
-    d: &Database,
-    repo: i64,
-    actor: i64,
-    issue: i64,
-    pr: i64,
-    review: i64,
-    target: i64,
-) {
-    let before = d.snapshot(repo, issue, pr).await;
-    // Votes need write authority. A plain comment review is checked by comment_review_refused.
-    for state in ["approved", "changes_requested"] {
+/// Any review, vote or comment, needs the same read authority as a comment, as on GitHub. Where
+/// the actor may not comment, the review is refused and nothing is stored.
+async fn review_refused(d: &Database, pr: i64, actor: i64) {
+    for state in ["commented", "approved", "changes_requested"] {
         refusal(
             db::pull_requests::reviews::add_pull_request_review(
                 d.pool(),
@@ -235,6 +209,19 @@ async fn review_denied(
             .await,
         );
     }
+}
+async fn review_denied(
+    d: &Database,
+    repo: i64,
+    actor: i64,
+    issue: i64,
+    pr: i64,
+    review: i64,
+    target: i64,
+) {
+    let before = d.snapshot(repo, issue, pr).await;
+    // Dismissing and requesting reviewers need write authority. Reviews are checked by
+    // review_refused, since a reader may vote.
     refusal(
         db::pull_requests::reviews::dismiss_pull_request_review(
             d.pool(),
@@ -825,7 +812,7 @@ async fn contract(pg: bool) {
     );
     contributions(&d, private.id, admin, issue.id, pr.id, false).await;
     review_denied(&d, private.id, admin, issue.id, pr.id, review.id, writer).await;
-    comment_review_refused(&d, pr.id, admin).await;
+    review_refused(&d, pr.id, admin).await;
     applied(
         orgs::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Admin)
             .await
@@ -853,7 +840,7 @@ async fn contract(pg: bool) {
         )
         .await;
         review_denied(&d, private.id, writer, issue.id, pr.id, review.id, reader).await;
-        comment_review_refused(&d, pr.id, writer).await;
+        review_refused(&d, pr.id, writer).await;
         d.execute(
             &format!("UPDATE users SET {flag}=FALSE WHERE id=$1"),
             &[writer],
@@ -874,7 +861,7 @@ async fn contract(pg: bool) {
             contributions(&d, public.id, actor, public_issue.id, public_pr.id, false).await;
             contributions(&d, private.id, actor, issue.id, pr.id, false).await;
             review_denied(&d, private.id, actor, issue.id, pr.id, review.id, reader).await;
-            comment_review_refused(&d, pr.id, actor).await;
+            review_refused(&d, pr.id, actor).await;
         }
         d.execute(
             &format!("UPDATE users SET {flag}=FALSE WHERE id=$1"),
@@ -890,7 +877,7 @@ async fn contract(pg: bool) {
     .await;
     contributions(&d, private.id, owner, issue.id, pr.id, false).await;
     review_denied(&d, private.id, writer, issue.id, pr.id, review.id, reader).await;
-    comment_review_refused(&d, pr.id, writer).await;
+    review_refused(&d, pr.id, writer).await;
     d.execute(
         "UPDATE repositories SET is_archived=FALSE WHERE id=$1",
         &[private.id],
@@ -924,7 +911,7 @@ async fn contract(pg: bool) {
     .await;
     contributions(&d, private.id, admin, issue.id, pr.id, false).await;
     review_denied(&d, private.id, admin, issue.id, pr.id, review.id, writer).await;
-    comment_review_refused(&d, pr.id, admin).await;
+    review_refused(&d, pr.id, admin).await;
     d.execute(
         "UPDATE org_memberships SET role='invalid' WHERE org_id=$1 AND user_id=$2",
         &[org, owner],

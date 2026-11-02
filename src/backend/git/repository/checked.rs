@@ -867,11 +867,16 @@ pub(crate) async fn prepare_pull_branch_update(
     source: &Path,
     head: &str,
     base: &str,
+    rebase: bool,
     committer: &Person<'_>,
 ) -> Result<PreparedPullHead> {
     let mut prepared = prepare_pull_head(path, source, base).await?;
     let result = if commit_is_ancestor(prepared.path(), base, head).await? {
         head.to_owned()
+    } else if rebase {
+        super::replay_commits(prepared.path(), base, head, base, committer)
+            .await?
+            .tip
     } else {
         prepare_merge(
             prepared.path(),

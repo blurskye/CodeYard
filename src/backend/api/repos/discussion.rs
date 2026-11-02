@@ -412,12 +412,11 @@ pub(crate) fn pull_item(
     });
     let can_run_workflows =
         repo.view.can_write && may_execute && pull.state == "open" && !pull.is_draft;
-    // Presentation only: the review handler checks the write right and the author again.
-    let can_vote = repo.view.can_write
-        && ctx
-            .user
-            .as_ref()
-            .is_some_and(|user| user.id != pull.author_id);
+    // Presentation only: the review handler checks read access and the author again.
+    let can_vote = ctx
+        .user
+        .as_ref()
+        .is_some_and(|user| user.id != pull.author_id);
     let can_edit = can_edit_entry(ctx, repo, pull.author_id);
     let can_tick = can_edit;
     Ok(view::Item {

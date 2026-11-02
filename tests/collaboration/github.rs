@@ -155,12 +155,17 @@ async fn labels(pg: bool) {
         .as_str()
         .unwrap()
         .ends_with("/api/v3/repos/alice/proj/labels/bug"));
-    document(
+    // gh label create --force falls back to an update only on GitHub's already_exists item.
+    let taken = document(
         request(&router, "POST", &labels, Some(write), json!({"name":"bug"})).await,
         "issues/create-label",
         422,
     )
     .await;
+    assert_eq!(
+        taken["errors"],
+        json!([{"resource":"Label","field":"name","code":"already_exists"}])
+    );
     document(
         request(
             &router,

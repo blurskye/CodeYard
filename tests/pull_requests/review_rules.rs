@@ -142,7 +142,7 @@ async fn permissions_and_bodies_contract(pg: bool) {
     let (number, head) = open_pull(&world.alice, "topic", &world.base).await;
     let path = reviews(number);
 
-    // A reader may leave a plain comment review, but not vote.
+    // As on GitHub, a reader may review and vote; only writers' approvals count toward a merge.
     let comment = world
         .dave
         .expect(
@@ -154,16 +154,16 @@ async fn permissions_and_bodies_contract(pg: bool) {
         .await;
     assert_eq!(comment["state"], "commented", "{comment}");
     for state in ["approved", "changes_requested"] {
-        let (status, refused) = world
+        let vote = world
             .dave
-            .api(
+            .expect(
                 "POST",
                 &path,
                 json!({"state": state, "body": "Vote", "commit_sha": head}),
+                StatusCode::CREATED,
             )
             .await;
-        assert_eq!(status, StatusCode::NOT_FOUND, "{state}: {refused}");
-        assert_eq!(refused["error"], "not_found", "{refused}");
+        assert_eq!(vote["state"], state, "{vote}");
     }
     // Outsiders of a private repository cannot review at all.
     let (status, refused) = world
@@ -227,7 +227,7 @@ async fn permissions_and_bodies_contract(pg: bool) {
         assert_eq!(text(&refused, "message"), message);
     }
 
-    // Only the three accepted reviews were stored.
+    // Only the accepted reviews were stored.
     let stored = world
         .alice
         .expect("GET", &path, Value::Null, StatusCode::OK)
@@ -238,7 +238,17 @@ async fn permissions_and_bodies_contract(pg: bool) {
         .iter()
         .map(|review| review["state"].as_str().unwrap())
         .collect();
-    assert_eq!(states, ["commented", "approved", "commented"], "{stored}");
+    assert_eq!(
+        states,
+        [
+            "commented",
+            "approved",
+            "changes_requested",
+            "approved",
+            "commented"
+        ],
+        "{stored}"
+    );
     world.database.finish().await;
 }
 

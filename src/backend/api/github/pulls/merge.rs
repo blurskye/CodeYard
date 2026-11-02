@@ -170,6 +170,7 @@ async fn update_branch(
         actor.id,
         (&owner, &name, number),
         input.expected_head_sha.as_deref(),
+        false,
         Some(token),
     )
     .await

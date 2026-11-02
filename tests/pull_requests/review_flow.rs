@@ -496,20 +496,16 @@ async fn native_votes_gate_the_merge(pg: bool) {
     world.database.finish().await;
 }
 
-async fn readers_and_authors_get_no_vote(pg: bool) {
+async fn reader_votes_do_not_count_and_authors_get_no_vote(pg: bool) {
     let mut world = World::new(pg).await;
     let (number, head) = open_pull(&world.alice, "topic", world.base.as_str()).await;
+    protect(&world.alice).await;
     let page = web(number);
 
-    let (status, reader) = world.dave.page(&page).await;
-    assert_eq!(status, StatusCode::OK);
-    assert!(!reader.contains("name=\"state\""));
-    assert!(!reader.contains("value=\"approved\""));
-    assert!(!reader.contains("value=\"changes_requested\""));
     let author = world.alice.page_ok(&page).await;
     assert!(!author.contains("value=\"approved\""));
 
-    // A reader may comment on the review box, but may not vote even when the form is forged.
+    // As on GitHub, a reader may comment and vote, but the vote does not satisfy the rule.
     let comment = world
         .dave
         .form_reply(
@@ -537,8 +533,18 @@ async fn readers_and_authors_get_no_vote(pg: bool) {
             ],
         )
         .await;
-    assert!(vote.status.is_client_error(), "{}", vote.text());
-    assert_eq!(review_count(&world.alice, number).await, 1);
+    assert!(vote.status.is_redirection(), "{}", vote.text());
+    assert_eq!(review_count(&world.alice, number).await, 2);
+    let refused = world
+        .alice
+        .expect(
+            "POST",
+            &rest(number, "/merge"),
+            json!({"expected_head": head, "expected_base": world.base}),
+            StatusCode::CONFLICT,
+        )
+        .await;
+    assert_eq!(refused["error"], "branch_protection", "{refused}");
 
     // The author cannot approve their own pull request.
     let own = world
@@ -1155,13 +1161,13 @@ async fn postgres_page_follows_the_preselected_merge_method() {
 }
 
 #[tokio::test]
-async fn sqlite_readers_and_authors_get_no_vote() {
-    readers_and_authors_get_no_vote(false).await;
+async fn sqlite_reader_votes_do_not_count_and_authors_get_no_vote() {
+    reader_votes_do_not_count_and_authors_get_no_vote(false).await;
 }
 
 #[tokio::test]
-async fn postgres_readers_and_authors_get_no_vote() {
-    readers_and_authors_get_no_vote(true).await;
+async fn postgres_reader_votes_do_not_count_and_authors_get_no_vote() {
+    reader_votes_do_not_count_and_authors_get_no_vote(true).await;
 }
 
 #[tokio::test]
