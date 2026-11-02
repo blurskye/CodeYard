@@ -92,11 +92,16 @@ pub(crate) async fn maintain(pool: DbPool, mut stop: tokio::sync::watch::Receive
     }
 }
 
+/// How long one observation may take to save. It is saved before the response ends so the
+/// counts are exact; a busy machine can stall a write for seconds, a dead database cannot
+/// hold a page longer than this.
+const OBSERVE_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The read/transfer has already happened. An analytics outage must not turn it into a
 /// fabricated Git failure; persist under a short budget and report bookkeeping failures.
 pub async fn observe(pool: &DbPool, repo: i64, identity: &Identity, metric: &Metric) {
     match tokio::time::timeout(
-        std::time::Duration::from_secs(2),
+        OBSERVE_BUDGET,
         db::repositories::traffic::record(pool, repo, identity, metric),
     )
     .await
