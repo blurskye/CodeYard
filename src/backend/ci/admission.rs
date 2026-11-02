@@ -494,6 +494,12 @@ pub(super) async fn resolve(
         } else {
             &event_ref
         };
+        // gh prints this message as is when a workflow has no manual trigger.
+        if request.event == "workflow_dispatch" && !definition.triggers.workflow_dispatch {
+            return Err(AdmissionError::Invalid(
+                "Workflow does not have 'workflow_dispatch' trigger",
+            ));
+        }
         if !definition.matches_event(&request.event, event_ref) || !activity_matches {
             return Err(AdmissionError::Invalid(
                 "CI workflow does not support requested event/ref",

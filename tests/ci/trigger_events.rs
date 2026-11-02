@@ -406,6 +406,20 @@ async fn dispatch_contract(pg: bool) {
         StatusCode::UNPROCESSABLE_ENTITY,
     )
     .await;
+    let (_, refused) = super::actions_workflows::checked(
+        &router,
+        "",
+        "POST",
+        "/api/v3/repos/alice/proj/actions/workflows/custom.yml/dispatches",
+        &token,
+        json!({"ref":"main"}),
+        StatusCode::UNPROCESSABLE_ENTITY,
+    )
+    .await;
+    assert_eq!(
+        refused["message"],
+        "Workflow does not have 'workflow_dispatch' trigger"
+    );
     super::actions_workflows::checked(
         &router,
         "actions/create-workflow-dispatch",
