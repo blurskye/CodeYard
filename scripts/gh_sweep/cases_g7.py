@@ -183,7 +183,8 @@ def alias_import(ctx):
 @case(command="alias list", variant="empty and populated YAML")
 def alias_list(ctx):
     a = isolated(ctx)
-    assert not expect_ok(ctx.sweep.gh(a, "alias", "list")).stdout.strip()
+    # A fresh config carries gh's built-in "co" alias.
+    assert expect_ok(ctx.sweep.gh(a, "alias", "list")).stdout.strip() in ("", "co: pr checkout")
     name = ctx.name("alias")
     expect_ok(ctx.sweep.gh(a, "alias", "set", name, "api user"))
     assert name + ": api user" in expect_ok(ctx.sweep.gh(a, "alias", "list")).stdout
@@ -211,7 +212,7 @@ def config_get(ctx):
     expect_ok(ctx.sweep.gh(a, "config", "set", "git_protocol", "ssh", "--host", HOST))
     assert expect_ok(ctx.sweep.gh(a, "config", "get", "git_protocol", "--host", HOST)).stdout.strip() == "ssh"
     assert expect_ok(ctx.sweep.gh(a, "config", "get", "git_protocol")).stdout.strip() == "https"
-    client_error(ctx.sweep.gh(a, "config", "get", ctx.name("absent"), ok=None), "not found")
+    client_error(ctx.sweep.gh(a, "config", "get", ctx.name("absent"), ok=None), "could not find key")
 
 
 @case(command="config set", variant="global and host isolation; invalid enum")
@@ -278,8 +279,10 @@ def auth_login(ctx):
 @case(command="auth refresh", variant="noninteractive missing login")
 def auth_refresh(ctx):
     # Successful refresh requires a human-approved OAuth device/browser flow.
+    # GH_HOST counts as a known host, so name another one; gh would otherwise start the device flow.
     a = isolated(ctx)
-    client_error(ctx.sweep.gh(a, "auth", "refresh", "--hostname", HOST, ok=None), "not logged")
+    client_error(ctx.sweep.gh(a, "auth", "refresh", "--hostname", "missing.invalid", ok=None),
+                 "not logged in to missing.invalid")
 
 
 @case(command="auth logout", variant="selected user, remaining user and unknown host")
@@ -384,7 +387,8 @@ def api_output(ctx):
     result = expect_ok(ctx.gh("api", "user", "--include"))
     assert "200" in result.stdout.splitlines()[0] and '"login"' in result.stdout, result.stdout
     result = expect_ok(ctx.gh("api", "user", "--verbose"))
-    assert ctx.account.name in result.stdout and "GET /api/v3/user" in result.stderr and "200" in result.stderr, result
+    # gh writes the request and response log to standard output with the body.
+    assert ctx.account.name in result.stdout and "GET /api/v3/user" in result.stdout and "HTTP/1.1 200" in result.stdout, result
     assert expect_ok(ctx.gh("api", "user", "--silent")).stdout == ""
     result = expect_ok(ctx.gh("api", "user", "--silent", "--include"))
     assert "200" in result.stdout and '"login"' not in result.stdout, result.stdout
@@ -446,9 +450,15 @@ def api_cache_and_escape(ctx):
     assert expect_json(ctx.gh("api", endpoint), {"id": int})["description"] == description
     ctx.api("PATCH", endpoint, {"description": "\x1b[31m" + description + "\x1b[0m"})
     safe = expect_ok(ctx.gh("api", endpoint, "--jq", ".description")).stdout
-    allowed = expect_ok(ctx.gh("api", endpoint, "--jq", ".description", "--allow-escape-sequences")).stdout
     assert description in safe and "\x1b" not in safe, repr(safe)
-    assert "\x1b[31m" in allowed and description in allowed, repr(allowed)
+    # gh's transport rewrites control characters in JSON, so the opt-in only matters for a raw body.
+    path = ctx.name("escape") + ".txt"
+    content = b"\x1b[31m" + description.encode() + b"\x1b[0m\n"
+    ctx.api("PUT", f"{endpoint}/contents/{path}", {"message": "escape", "content": base64.b64encode(content).decode()})
+    raw = ("api", f"{endpoint}/contents/{path}", "--header", "Accept: application/vnd.github.raw")
+    client_error(ctx.gh(*raw, ok=None), "terminal escape sequences")
+    allowed = expect_ok(ctx.gh(*raw, "--allow-escape-sequences")).stdout
+    assert allowed == content.decode(), repr(allowed)
 
 
 @case(command="api", variant="404, validation, invalid auth, private repo isolation and GHES cloud rejection", needs=("repo",))
@@ -471,8 +481,8 @@ def browse_destinations(ctx):
         result = expect_ok(ctx.gh("browse", "--repo", ctx.repo, "--no-browser", flag))
         assert urlsplit(result.stdout.strip()).path.rstrip("/") == root + suffix, result.stdout
     missing = ctx.account.name + "/" + ctx.name("missing")
-    # gh browse constructs a root URL locally; it does not assert the repo exists.
-    assert urlsplit(expect_ok(ctx.gh("browse", "--repo", missing, "--no-browser")).stdout.strip()).path == "/" + missing
+    # With --no-browser gh checks that the repository exists before printing its URL.
+    client_error(ctx.gh("browse", "--repo", missing, "--no-browser", ok=None), "doesn't exist")
 
 
 @case(command="browse", variant="issue, file, branch, blame, commit and invalid combinations", needs=("issue",))
@@ -483,15 +493,19 @@ def browse_content(ctx):
     sha = ctx.api("GET", f"repos/{ctx.repo}/git/ref/heads/{branch}")["object"]["sha"]
     result = expect_ok(ctx.gh("browse", str(ctx.issue["number"]), "--repo", ctx.repo, "--no-browser"))
     assert urlsplit(result.stdout.strip()).path == root + "/issues/" + str(ctx.issue["number"]), result.stdout
+    # Without a line number gh links files under tree/, which GitHub redirects to blob/.
     result = expect_ok(ctx.gh("browse", "README.md", "--branch", branch, "--repo", ctx.repo, "--no-browser"))
-    assert urlsplit(result.stdout.strip()).path == root + "/blob/" + branch + "/README.md", result.stdout
+    assert urlsplit(result.stdout.strip()).path == root + "/tree/" + branch + "/README.md", result.stdout
     result = expect_ok(ctx.gh("browse", "README.md:1", "--blame", "--branch", branch, "--repo", ctx.repo, "--no-browser"))
     assert urlsplit(result.stdout.strip()).path == root + "/blame/" + branch + "/README.md" and "L1" in result.stdout, result.stdout
-    result = expect_ok(ctx.gh("browse", "--commit", sha, "--repo", ctx.repo, "--no-browser"))
+    # A bare SHA opens the commit; --commit (optional value, so attached with "=") picks the tree.
+    result = expect_ok(ctx.gh("browse", sha, "--repo", ctx.repo, "--no-browser"))
     assert urlsplit(result.stdout.strip()).path == root + "/commit/" + sha, result.stdout
-    result = expect_ok(ctx.gh("browse", "README.md", "--commit", sha, "--repo", ctx.repo, "--no-browser"))
-    assert urlsplit(result.stdout.strip()).path == root + "/blob/" + sha + "/README.md", result.stdout
-    client_error(ctx.gh("browse", "--branch", branch, "--commit", sha, "--repo", ctx.repo, "--no-browser", ok=None), "branch", "commit")
+    result = expect_ok(ctx.gh("browse", "--commit=" + sha, "--repo", ctx.repo, "--no-browser"))
+    assert urlsplit(result.stdout.strip()).path == root + "/tree/" + sha, result.stdout
+    result = expect_ok(ctx.gh("browse", "README.md", "--commit=" + sha, "--repo", ctx.repo, "--no-browser"))
+    assert urlsplit(result.stdout.strip()).path == root + "/tree/" + sha + "/README.md", result.stdout
+    client_error(ctx.gh("browse", "--branch", branch, "--commit=" + sha, "--repo", ctx.repo, "--no-browser", ok=None), "branch", "commit")
 
 
 def read_only_account(ctx):
@@ -593,7 +607,8 @@ def gpg_key_add(ctx):
     row = next(r for r in ctx.api("GET", "user/gpg_keys") if r["key_id"] == key_id)
     assert row["name"] == title and row["can_sign"] is True, row
     assert key_id in expect_ok(ctx.gh("gpg-key", "list")).stdout
-    expect_error(ctx.gh("gpg-key", "add", "--title", ctx.name("duplicate"), input=file.read_text(), ok=None), status=422)
+    client_error(ctx.gh("gpg-key", "add", "--title", ctx.name("duplicate"), input=file.read_text(), ok=None),
+                 "the key already exists in your account")
     ctx.api("DELETE", "user/gpg_keys/" + str(row["id"]))
     file2, key_id2 = gpg_material(ctx)
     expect_ok(ctx.gh("gpg-key", "add", input=file2.read_text()))
@@ -649,7 +664,9 @@ def commit_fixture(ctx):
     message = ctx.name("commit-message")
     branch = ctx.api("GET", f"repos/{ctx.repo}")["default_branch"]
     parent = ctx.api("GET", f"repos/{ctx.repo}/git/ref/heads/{branch}")["object"]["sha"]
-    person = {"name": ctx.account.name, "email": ctx.account.name + "@example.test"}
+    # Sweep accounts have unverified emails, so the commit carries the no-reply address the
+    # server links to the account, as a verified email would be on GitHub.
+    person = {"name": ctx.account.name, "email": ctx.account.name + "@users.noreply"}
     row = ctx.api("PUT", f"repos/{ctx.repo}/contents/{ctx.name('file')}.txt", {
         "message": message, "content": base64.b64encode(b"commit search fixture\n").decode(),
         "author": person, "committer": person,
@@ -709,10 +726,10 @@ def search_commits(ctx):
     for args, wanted in (
         ((), [sha]), (("--author", ctx.account.name), [sha]),
         (("--author-name", ctx.account.name), [sha]),
-        (("--author-email", ctx.account.name + "@example.test"), [sha]),
+        (("--author-email", ctx.account.name + "@users.noreply"), [sha]),
         (("--author-date", ">=2000-01-01"), [sha]), (("--author-date", "<2000-01-01"), []),
         (("--committer", ctx.account.name), [sha]), (("--committer-name", ctx.account.name), [sha]),
-        (("--committer-email", ctx.account.name + "@example.test"), [sha]),
+        (("--committer-email", ctx.account.name + "@users.noreply"), [sha]),
         (("--committer-date", ">=2000-01-01"), [sha]), (("--committer-date", "<2000-01-01"), []),
         (("--hash", sha), [sha]), (("--hash", "0" * 40), []),
         (("--parent", parent), [sha]), (("--parent", "0" * 40), []),
@@ -730,7 +747,8 @@ def search_commits(ctx):
     assert expect_ok(ctx.gh("search", "commits", message, "--repo", ctx.repo, "--json", "sha", "--template", "{{range .}}{{.sha}}{{end}}")).stdout == sha
     assert message in expect_ok(ctx.gh("search", "commits", message, "--repo", ctx.repo)).stdout
     client_error(ctx.gh("search", "commits", message, "--sort", "invalid", ok=None), "sort")
-    expect_error(ctx.gh("search", "commits", message, "--repo", ctx.repo, "--author-date", "not-a-date", ok=None), status=422)
+    # gh turns a search 422 into "Invalid search query ...".
+    client_error(ctx.gh("search", "commits", message, "--repo", ctx.repo, "--author-date", "not-a-date", ok=None), "Invalid search query")
 
 
 @case(command="search commits", variant="private commit visibility", timeout=180)
@@ -829,9 +847,9 @@ def search_issues_team(ctx):
 @case(command="search issues", variant="GHES semantic/hybrid rejection, invalid enum/range and private visibility", timeout=180)
 def search_issues_errors(ctx):
     for search_type in ("semantic", "hybrid"):
-        client_error(ctx.gh("search", "issues", ctx.name("query"), "--search-type", search_type, ok=None), "Enterprise")
+        client_error(ctx.gh("search", "issues", ctx.name("query"), "--search-type", search_type, ok=None), "not supported on this host")
     client_error(ctx.gh("search", "issues", "--state", "invalid", ok=None), "state")
-    expect_error(ctx.gh("search", "issues", "--repo", ctx.repo, "--comments", "not-a-number", ok=None), status=422)
+    client_error(ctx.gh("search", "issues", "--repo", ctx.repo, "--comments", "not-a-number", ok=None), "Invalid search query")
     row = ctx.sweep.create_repo(ctx.account, ctx.name("private"), private=True)
     title = ctx.name("private-issue")
     issue = ctx.api("POST", "repos/" + row["full_name"] + "/issues", {"title": title})
@@ -904,7 +922,7 @@ def search_prs_output(ctx):
             numbers(ctx.gh("search", "prs", "--repo", ctx.repo, "--sort", sort, "--order", order, "--json", "number"), [number])
     numbers(ctx.gh("search", "prs", ctx.name("absent"), "--repo", ctx.repo, "--json", "number"), [])
     client_error(ctx.gh("search", "prs", "--review", "invalid", ok=None), "review")
-    expect_error(ctx.gh("search", "prs", "--repo", ctx.repo, "--comments", "not-a-number", ok=None), status=422)
+    client_error(ctx.gh("search", "prs", "--repo", ctx.repo, "--comments", "not-a-number", ok=None), "Invalid search query")
 
 
 def collaborator(ctx, account):
@@ -1060,7 +1078,7 @@ def search_repos_output(ctx):
     repository_names(ctx.gh("search", "repos", ctx.name("absent"), "--json", "fullName"), [])
     client_error(ctx.gh("search", "repos", name, "--include-forks", "invalid", ok=None), "include-forks")
     client_error(ctx.gh("search", "repos", name, "--sort", "invalid", ok=None), "sort")
-    expect_error(ctx.gh("search", "repos", name, "--stars", "not-a-number", ok=None), status=422)
+    client_error(ctx.gh("search", "repos", name, "--stars", "not-a-number", ok=None), "Invalid search query")
     private = ctx.sweep.create_repo(ctx.account, ctx.name("private"), private=True)
     repository_names(ctx.gh("search", "repos", private["name"], "--visibility", "private", "--json", "fullName"), [private["full_name"]])
     repository_names(ctx.sweep.gh(other_account(ctx), "search", "repos", private["name"], "--owner", ctx.account.name, "--json", "fullName"), [])
@@ -1085,12 +1103,13 @@ def search_repos_sort(ctx):
 def status(ctx):
     title = ctx.issue["title"]
     ctx.api("PATCH", f"repos/{ctx.repo}/issues/{ctx.issue['number']}", {"assignees": [ctx.account.name]})
+    # The two-column table wraps long titles, so look for this case's unique name prefix.
     result = expect_ok(ctx.gh("status"))
     text = result.stdout + result.stderr
-    assert "Assigned Issues" in text and title in text, text
+    assert "Assigned Issues" in text and title.startswith(ctx.id) and ctx.id in text, text
     result = expect_ok(ctx.gh("status", "--exclude", ctx.repo))
     text = result.stdout + result.stderr
-    assert "Assigned Issues" in text and title not in text, text
+    assert "Assigned Issues" in text and ctx.id not in text, text
 
 
 @case(command="status", variant="organization scoping and exclusions compose", timeout=180)
