@@ -217,15 +217,12 @@ async fn delete_artifact(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (object, auth) = artifact(&state, &headers, &owner, &name, id, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let actor = auth.workflow_actor(&state, object.repo_id).await?;
-    let credential = auth.ci_credential(&headers, "actions")?;
+    let actor = auth.ok_or_else(auth::required)?.user.id;
     if !objects::delete_artifact(
         &state.pool,
         object.id,
         object.run_id.ok_or_else(Error::missing)?,
         Some(actor),
-        Some(&credential),
     )
     .await
     .map_err(Error::unavailable)?
@@ -244,7 +241,7 @@ async fn download_artifact(
     Path((owner, name, id, format)): Path<(String, String, i64, String)>,
 ) -> Result<Response> {
     let (object, auth) = artifact(&state, &headers, &owner, &name, id, false).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor();
+    let actor = auth.ok_or_else(auth::required)?.user.id;
     if format != "zip" {
         return Err(Error::invalid("archive_format must be zip"));
     }

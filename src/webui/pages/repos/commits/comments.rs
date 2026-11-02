@@ -49,7 +49,7 @@ pub struct Draft {
 }
 
 #[component]
-fn Composer(repo: RepoChrome, sha: String, draft: Draft, references: References, split: bool, page: usize) -> Element {
+fn Composer(repo: RepoChrome, sha: String, draft: Draft, references: References) -> Element {
     // An unsent edit keeps its body and revision through unrelated page-model refreshes.
     let snapshot = use_signal(|| draft.clone());
     let draft = snapshot.read().clone();
@@ -62,7 +62,6 @@ fn Composer(repo: RepoChrome, sha: String, draft: Draft, references: References,
     let action = draft
         .id
         .map_or_else(|| base.clone(), |id| format!("{base}/{id}/edit"));
-    let action = format!("{action}?comments_page={page}{}", if split { "&view=split" } else { "" });
     let editor = draft.id.map_or_else(
         || "new-commit-comment".into(),
         |id| format!("edit-commit-comment-{id}"),
@@ -161,7 +160,7 @@ pub fn discussion(repo: &RepoChrome, sha: &str, state: &Discussion, split: bool)
                     class: "collaboration-panel collaboration-comment",
                     header { class: "collaboration-panel-header",
                         if let Some(author) = &comment.author {
-                            NavLink { href: crate::webui::profile_path(author),
+                            NavLink { href: format!("/{}", crate::webui::encode_component(author)),
                                 "{author}"
                             }
                         } else {
@@ -211,7 +210,6 @@ pub fn discussion(repo: &RepoChrome, sha: &str, state: &Discussion, split: bool)
                                     Composer {
                                         key: "edit-{comment.id}-{repo.viewer_id}",
                                         repo: repo.clone(),
-                                        split, page: state.page,
                                         sha: sha.to_owned(),
                                         references: state.references.clone(),
                                         draft: state
@@ -233,7 +231,7 @@ pub fn discussion(repo: &RepoChrome, sha: &str, state: &Discussion, split: bool)
                                     summary { class: "btn btn-danger btn-sm", "Delete" }
                                     form {
                                         method: "post",
-                                        action: format!("{base}/comments/{}/delete?comments_page={}{}", comment.id, state.page, if split { "&view=split" } else { "" }),
+                                        action: format!("{base}/comments/{}/delete", comment.id),
                                         {csrf(&repo.csrf_token)}
                                         input {
                                             r#type: "hidden",
@@ -323,7 +321,6 @@ pub fn discussion(repo: &RepoChrome, sha: &str, state: &Discussion, split: bool)
                     Composer {
                         key: "new-{repo.id}-{sha}-{repo.viewer_id}",
                         repo: repo.clone(),
-                        split, page: state.page,
                         sha: sha.to_owned(),
                         references: state.references.clone(),
                         draft: state.draft.as_ref().filter(|draft| draft.id.is_none()).cloned().unwrap_or_default(),

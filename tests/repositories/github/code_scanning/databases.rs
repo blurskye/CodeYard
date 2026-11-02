@@ -224,7 +224,7 @@ async fn contract(pg: bool) {
     assert_github_schema("code-scanning/get-codeql-database", 200, &uploaded);
     assert_eq!(uploaded["uploader"]["id"], alice);
     assert_eq!(uploaded["size"], first.len());
-    let old = db::codeql::get(f.pool(), alice, repo.id, "python")
+    let old = db::codeql::get(f.pool(), repo.id, "python")
         .await
         .unwrap()
         .unwrap();
@@ -322,7 +322,7 @@ async fn contract(pg: bool) {
     assert_eq!(replaced["id"], uploaded["id"]);
     assert_eq!(replaced["created_at"], uploaded["created_at"]);
     assert_eq!(replaced["name"], "replaced.zip");
-    let current = db::codeql::get(f.pool(), alice, repo.id, "python")
+    let current = db::codeql::get(f.pool(), repo.id, "python")
         .await
         .unwrap()
         .unwrap();
@@ -371,43 +371,6 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(list.as_array().unwrap().len(), 2);
-    // Each upload, a replacement included, counts against the uploader's quota.
-    assert_eq!(
-        f.scalar(
-            "SELECT COUNT(*) FROM upload_rate_limit WHERE reason='codeql_database' AND user_id=$1",
-            &[alice],
-        )
-        .await,
-        3
-    );
-    f.execute(
-        "UPDATE file_reason_limits SET max_uploads_per_hour=3 WHERE reason='codeql_database'",
-        &[],
-    )
-    .await;
-    let (status, _, body) = raw(
-        &router,
-        "POST",
-        &format!("{uploads}/python?name=again.zip"),
-        Some(writer),
-        "application/zip",
-        second.clone(),
-    )
-    .await;
-    assert_eq!(
-        status,
-        StatusCode::TOO_MANY_REQUESTS,
-        "{}",
-        String::from_utf8_lossy(&body)
-    );
-    assert_eq!(
-        db::codeql::get(f.pool(), alice, repo.id, "python")
-            .await
-            .unwrap()
-            .unwrap()
-            .object_key,
-        current.object_key
-    );
     call(
         &router,
         "DELETE",
@@ -439,7 +402,7 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    let java = db::codeql::get(f.pool(), alice, repo.id, "java")
+    let java = db::codeql::get(f.pool(), repo.id, "java")
         .await
         .unwrap()
         .unwrap();

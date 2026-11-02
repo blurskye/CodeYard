@@ -6,8 +6,7 @@ use chrono::{DateTime, Utc};
 /// Most events one page loads for an issue or pull request.
 pub const EVENT_LIMIT: i64 = 200;
 
-/// One change. `detail` is the label, user, milestone or new title; `previous` is the old
-/// title for a rename or the retained label color for a label change.
+/// One change. `detail` is the label, user, milestone or new title; `previous` is the old title.
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct TimelineEvent {
     pub actor: Option<String>,
@@ -82,7 +81,6 @@ native_operation!(crate::backend::db::postgres::timeline::list_events,
     crate::backend::db::sqlite::timeline::list_events,
     fn list_events(
     pool: &DbPool,
-    repo: i64,
     subject: &str,
     subject_id: i64,
     after: Option<DateTime<Utc>>,
@@ -91,29 +89,48 @@ native_operation!(crate::backend::db::postgres::timeline::list_events,
     offset: i64,
 ) -> Result<Vec<TimelineEvent>>);
 
-/// Structured issue-type snapshots must remain valid JSON; display-only details are bounded.
-pub(crate) fn event_details(kind: &str, detail: &str, previous: &str) -> Result<(String, String)> {
-    if matches!(kind, "issue_type_added" | "issue_type_removed" | "issue_type_changed") {
-        for value in [detail, previous].into_iter().filter(|value| !value.is_empty()) {
-            serde_json::from_str::<serde_json::Value>(value)?;
-        }
-        Ok((detail.to_owned(), previous.to_owned()))
-    } else {
-        Ok((detail.chars().take(255).collect(), previous.chars().take(255).collect()))
-    }
-}
-
-pub(crate) fn edit_events<'a>(old_title: &'a str, old_state: &str, title: &'a str, state: &str) -> Vec<(&'static str, &'a str, &'a str)> {
-    let mut events = Vec::new();
-    if old_title != title { events.push(("renamed", title, old_title)); }
-    if old_state != state { events.push((if state == "open" { "reopened" } else { "closed" }, "", "")); }
-    events
-}
-
-pub(crate) fn item_subject(item: crate::backend::db::assignees::AssignedItem) -> (&'static str, i64) {
+/// Records an event on an issue or pull request named by its `AssignedItem`.
+pub async fn record_for(
+    pool: &DbPool,
+    repo_id: i64,
+    item: crate::backend::db::assignees::AssignedItem,
+    actor_id: i64,
+    kind: &str,
+    detail: &str,
+) {
     use crate::backend::db::assignees::AssignedItem;
-    match item {
-        AssignedItem::Issue(id) => ("issue", id),
-        AssignedItem::PullRequest(id) => ("pull_request", id),
+    let (subject, id) = match item {
+        AssignedItem::Issue(id) => (Subject::Issue, id),
+        AssignedItem::PullRequest(id) => (Subject::PullRequest, id),
+    };
+    record(pool, repo_id, subject, id, actor_id, kind, detail, "").await;
+}
+
+/// Records an event. The change has already been saved, so a failure is logged and dropped.
+#[allow(clippy::too_many_arguments)]
+pub async fn record(
+    pool: &DbPool,
+    repo_id: i64,
+    subject: Subject,
+    subject_id: i64,
+    actor_id: i64,
+    kind: &str,
+    detail: &str,
+    previous: &str,
+) {
+    let clip = |text: &str| text.chars().take(255).collect::<String>();
+    if let Err(error) = record_event(
+        pool,
+        repo_id,
+        subject.name(),
+        subject_id,
+        actor_id,
+        kind,
+        &clip(detail),
+        &clip(previous),
+    )
+    .await
+    {
+        tracing::warn!(%error, kind, "Timeline event was not saved");
     }
 }

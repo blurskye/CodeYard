@@ -155,19 +155,17 @@ async fn list(
     filter: &Filter,
     search: bool,
 ) -> Result<Value> {
-    request.require_oauth_scope("repo")?;
     connection::validate(ctx)?;
     let pool = &request.state.pool;
-    let (count, _) = store::list(pool, request.auth.user.id, &request.auth.credential(), filter, 0, 0)
+    let (count, _) = store::list(pool, request.auth.user.id, filter, 0, 0)
         .await
         .map_err(operation)?;
     let page = connection::Page::new(ctx, if search { count.min(1000) } else { count })?;
-    let rows = if page.limit == 0 { Vec::new() } else {
-        store::list_rows(pool, request.auth.user.id, &request.auth.credential(), filter, page.offset, page.limit).await.map_err(operation)?
-    };
+    let (_, rows) = store::list(pool, request.auth.user.id, filter, page.offset, page.limit)
+        .await
+        .map_err(operation)?;
     let mut nodes = Vec::new();
     for d in rows {
-        request.charge(d.title.len().saturating_add(d.body.len()).saturating_mul(4))?;
         authorized(&d, request).await?;
         nodes.push(object(&d));
     }
@@ -197,9 +195,9 @@ pub(super) async fn resolve(
     let pool = &request.state.pool;
     match field {
         "repository" => Ok(repository::object(&repo)),
-        "author" => user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request).await,
+        "author" => user::by_id(parent["_author"].as_i64().ok_or_else(missing)?, request).await,
         "answerChosenBy" => match parent["_answerBy"].as_i64() {
-            Some(id) => user::retained_author(id, request).await,
+            Some(id) => user::by_id(id, request).await,
             None => Ok(Value::Null),
         },
         "answer" => match parent["_answer"].as_i64() {
@@ -224,9 +222,15 @@ pub(super) async fn resolve(
         "discussion" => Ok(object(
             &load(parent["_discussion"].as_i64().ok_or_else(missing)?, request).await?,
         )),
-        "labels" => repository::label_connection(ctx,
+        "labels" => connection::slice(
+            ctx,
             store::labels(pool, parent["databaseId"].as_i64().ok_or_else(missing)?)
-                .await.map_err(unavailable)?, "discussions"),
+                .await
+                .map_err(unavailable)?
+                .iter()
+                .map(repository::label)
+                .collect(),
+        ),
         "comments" | "replies" => {
             connection::validate(ctx)?;
             let (discussion, reply) = if ty == "Discussion" {
@@ -255,11 +259,11 @@ pub(super) async fn resolve(
             };
             let mut path = format!(
                 "/{}/{}/discussions/{number}",
-                crate::webui::encode_component(&repository::owner(&repo, request).await?),
-                crate::webui::encode_component(&repo.name)
+                repository::owner(&repo, request).await?,
+                repo.name
             );
             if ty == "DiscussionComment" {
-                path.push_str(&format!("?comment={0}#discussioncomment-{0}", parent["databaseId"]));
+                path.push_str(&format!("#discussioncomment-{}", parent["databaseId"]));
             }
             Ok(json!(url(&path)))
         }
@@ -332,7 +336,7 @@ pub(super) async fn mutation(
             title: string("title")?,
             body: string("body")?,
         };
-        let saved = store::write(pool, request.auth.user.id, &request.auth.credential(), repo, None, &change)
+        let saved = store::write(pool, request.auth.user.id, repo, None, &change)
             .await
             .map_err(operation)?;
         payload["discussion"] = object(&load(saved, request).await?);
@@ -363,7 +367,12 @@ pub(super) async fn mutation(
     let d = load(discussion, request).await?;
     request.authorize(d.repo_id, "discussions", true).await?;
     let comment_id = old["databaseId"].as_i64().ok_or_else(missing)?;
-    let labels = super::metadata_mutations::ids(&input["labelIds"], "L")?;
+    let labels: Vec<i64> = input["labelIds"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|v| id(v.as_str().ok_or_else(missing)?, "L"))
+        .collect::<Result<_>>()?;
     let category = input["categoryId"]
         .as_str()
         .map(|v| id(v, "DIC"))
@@ -403,7 +412,7 @@ pub(super) async fn mutation(
         },
         _ => return Err(missing()),
     };
-    let saved = store::write(pool, request.auth.user.id, &request.auth.credential(), d.repo_id, Some(d.id), &change)
+    let saved = store::write(pool, request.auth.user.id, d.repo_id, Some(d.id), &change)
         .await
         .map_err(operation)?;
     let key = if field.ends_with("AsAnswer") {

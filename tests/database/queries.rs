@@ -631,7 +631,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         .await
         .unwrap();
     assert_eq!(run.status, "queued");
-    let claimed = db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    let claimed = db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[])
         .await
         .unwrap()
         .unwrap();
@@ -639,7 +639,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     assert_eq!(claimed.status, "running");
     assert_eq!(claimed.worker.as_deref(), Some("node-a/1"));
     assert!(
-        db::ci::claim_ci_run(&pool, "node-b/1", "local", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(&pool, "node-b/1", "local", &[])
             .await
             .unwrap()
             .is_none(),
@@ -690,7 +690,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
             .unwrap()
             .is_none()
     );
-    let (finished, notifications, _) =
+    let (finished, notifications) =
         db::ci::finish_ci_run(&pool, run.id, "node-a/1", "success", None)
             .await
             .unwrap()
@@ -747,7 +747,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
     let running = db::ci::enqueue_ci_run(&pool, new_run("ci", None), &[])
         .await
         .unwrap();
-    db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    db::ci::claim_ci_run(&pool, "node-a/1", "podman", &[])
         .await
         .unwrap()
         .unwrap();
@@ -982,7 +982,7 @@ async fn token_session_revocation_contract(pool: &DbPool) {
         Err(TokenError::Denied)
     ));
     assert!(
-        codeyard::backend::db::users::tokens::list_tokens(pool, user.id, &crate::support::live_session(pool, user.id).await, 0)
+        codeyard::backend::db::users::tokens::list_tokens(pool, user.id, 0)
             .await
             .unwrap()
             .is_empty()
@@ -1380,17 +1380,6 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         ]
     );
 
-    // Consent cannot survive a head without a known base-writer publisher.
-    db::pull_requests::auto_merge::enable_auto_merge(pool, &db::pull_requests::auto_merge::AutoMergeRequest {
-        pull_request_id: first.id,
-        enabled_by: owner.id,
-        token_id: None,
-        merge_method: "merge".into(),
-        commit_title: None,
-        commit_message: None,
-        author_email: None,
-        enabled_at: chrono::Utc::now(),
-    }).await.unwrap();
     // Head and base moves use independent compare-and-swaps, so contention on
     // one revision cannot prevent the other revision from advancing.
     assert!(!db::pull_requests::records::move_open_pull_request_head(
@@ -1398,9 +1387,6 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('9'),
         &sha('6'),
-        first.head_repo_id,
-        &first.head_branch,
-        None,
     )
     .await
     .unwrap());
@@ -1409,13 +1395,9 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('1'),
         &sha('6'),
-        first.head_repo_id,
-        &first.head_branch,
-        None,
     )
     .await
     .unwrap());
-    assert!(db::pull_requests::auto_merge::get_auto_merge(pool, first.id).await.unwrap().is_none());
     assert!(db::pull_requests::records::move_open_pull_request_base(
         pool,
         first.id,
@@ -1466,9 +1448,6 @@ async fn pull_request_revision_contract(pool: &DbPool) {
         first.id,
         &sha('1'),
         &sha('8'),
-        first.head_repo_id,
-        &first.head_branch,
-        None,
     )
     .await
     .unwrap());
@@ -1507,9 +1486,6 @@ async fn pull_request_revision_contract(pool: &DbPool) {
             pull.id,
             &pull.head_sha,
             &sha('8'),
-            pull.head_repo_id,
-            &pull.head_branch,
-            None,
         )
         .await
         .unwrap());
@@ -1734,7 +1710,6 @@ async fn pull_request_merge_mark_contract(pool: &DbPool) {
             base: Some(NewBase {
                 branch: "develop",
                 sha: &"b".repeat(40),
-                automatic_reopen: false,
             }),
             maintainer_can_modify: None,
         },
@@ -2318,7 +2293,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_open
                 .iter()
-                .map(|e| e.title.as_str())
+                .map(|e| e.issue.title.as_str())
                 .collect()
         ),
         ["assigned open"]
@@ -2331,7 +2306,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             created_closed
                 .iter()
-                .map(|e| e.title.as_str())
+                .map(|e| e.issue.title.as_str())
                 .collect()
         ),
         ["opened closed"]
@@ -2357,7 +2332,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_open
                 .iter()
-                .map(|e| e.title.as_str())
+                .map(|e| e.issue.title.as_str())
                 .collect()
         ),
         ["assigned open", "private assigned"]
@@ -2454,7 +2429,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             review_open
                 .iter()
-                .map(|e| e.title.as_str())
+                .map(|e| e.pull_request.title.as_str())
                 .collect()
         ),
         ["review pr"]
@@ -2475,7 +2450,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             review_open
                 .iter()
-                .map(|e| e.title.as_str())
+                .map(|e| e.pull_request.title.as_str())
                 .collect()
         ),
         ["private review pr", "review pr"]
@@ -2493,7 +2468,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             assigned_pr_open
                 .iter()
-                .map(|e| e.title.as_str())
+                .map(|e| e.pull_request.title.as_str())
                 .collect()
         ),
         ["assigned pr"]
@@ -2511,7 +2486,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             created_closed
                 .iter()
-                .map(|e| e.title.as_str())
+                .map(|e| e.pull_request.title.as_str())
                 .collect()
         ),
         ["merged pr"]
@@ -2538,7 +2513,7 @@ async fn viewer_work_contract(pool: &DbPool) {
         sorted(
             involved_open
                 .iter()
-                .map(|e| e.title.as_str())
+                .map(|e| e.pull_request.title.as_str())
                 .collect()
         ),
         ["assigned pr", "opened pr", "private review pr", "review pr"]
@@ -2607,8 +2582,7 @@ async fn label_usage_contract(pool: &DbPool) {
     db::labels::add_pull_request_labels(pool, owner.id, repo.id, pr.id, &[bug.id])
         .await
         .unwrap();
-    let usage: std::collections::BTreeMap<i64, i64> =
-        db::labels::list_label_usage(pool, repo.id, &[bug.id, docs.id, unused.id])
+    let usage: std::collections::BTreeMap<i64, i64> = db::labels::list_label_usage(pool, repo.id)
         .await
         .unwrap()
         .into_iter()
@@ -2640,14 +2614,13 @@ async fn label_usage_contract(pool: &DbPool) {
     db::labels::add_issue_labels(pool, owner.id, other.id, other_issue.id, &[other_bug.id])
         .await
         .unwrap();
-    let usage: std::collections::BTreeMap<i64, i64> =
-        db::labels::list_label_usage(pool, repo.id, &[bug.id, docs.id, unused.id])
+    let usage: std::collections::BTreeMap<i64, i64> = db::labels::list_label_usage(pool, repo.id)
         .await
         .unwrap()
         .into_iter()
         .collect();
     assert_eq!(usage, expected);
-    let other_usage: Vec<(i64, i64)> = db::labels::list_label_usage(pool, other.id, &[other_bug.id]).await.unwrap();
+    let other_usage: Vec<(i64, i64)> = db::labels::list_label_usage(pool, other.id).await.unwrap();
     assert_eq!(other_usage, vec![(other_bug.id, 1)]);
 }
 

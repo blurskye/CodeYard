@@ -1,36 +1,12 @@
 # Trusted local Actions runner
 
-The server runs repository workflows with `codeyard-actions` by default, or the
-optional patched `act` engine. Both start job containers through a rootless Podman API. That API must be reachable **inside** the server
+The server runs repository workflows with `act`, which starts job containers
+through a rootless Podman API. That API must be reachable **inside** the server
 container. Installing Podman in the container alone is not enough.
 
 **Trusted workflows only.** Access to the Podman socket lets a workflow run code
 and mount host paths with your user's privileges. Separate storage is not a
 sandbox. Do not expose the socket over TCP and do not run untrusted workflows.
-
-## Host execution containment
-
-`CI_EXECUTION_MODE=local` requires Linux 5.14 or newer, unified cgroup v2, and a
-writable delegated cgroup parent. `CI_PROCESS_CGROUP_ROOT` selects that parent;
-when omitted, the server uses its current cgroup. A systemd service must use
-`Delegate=yes` and retain `KillMode=control-group`, so service death also cleans up
-delegated descendants. Refusal to establish containment fails the run before execution.
-This does not make trusted host execution a sandbox.
-
-The worker migrates the runner before exec, so new sessions and process groups stay in
-its run-owned subtree. It kills that subtree and waits for it to become empty before
-releasing execution ownership or removing the workspace. Recovery records include the
-cgroup path, and abandoned executions are recovered before slot reuse. Cleanup failures
-retain local ownership and the checkout; normal cleanup retries retain the heartbeat and
-run lease. Temporary runner files also live beneath the recoverable workspace.
-
-Each job runs its host steps in a cgroup of its own below the run's. Like on GitHub, a
-process a step leaves running in the background stays alive for the later steps and ends
-with the job. The step does not wait for such a process: three seconds after its command
-exits, the step stops reading output the process still holds open.
-
-Podman mode can optionally use the same delegated parent. No socket permissions or
-exposure need to change.
 
 ## Start the engine
 
@@ -63,14 +39,14 @@ In Podman mode the worker runs `act` with one job at a time. Job containers have
 memory cap unless an administrator sets one under Administration → Actions; a repository
 can set lower caps and a shorter timeout in its own settings. Every container of a run carries a per-run label.
 After act exits, the worker uses that exact label on the configured Podman socket to
-remove containers left by that run. It then removes the workspace volumes and service network that act named after each job container, found through that container; it never prunes or matches other names. act gets the run's ID through `CODEYARD_ACT_INSTANCE` and adds it to those names, so concurrent runs of one workflow never share them and `github.workflow` keeps the workflow's own name. Before act starts, the worker writes an ownership record for
+remove containers left by that run; it never prunes or matches container names. Before act starts, the worker writes an ownership record for
 the run to `ci-containers/` in the state directory and holds a lock on it while the run
 executes. When the server starts, and every 30 seconds after, it removes the containers of
 each record whose lock is free, then deletes the record. Containers left by a crashed
 server are removed once the server runs again and the Podman socket is reachable. A node
 runs up to `CI_MAX_ACTIVE_RUNS` runs at once
-(default 4). Worker-injected limits apply to explicit job and service containers too;
-workflow options cannot raise them. These are limits, not protection against hostile workflows.
+(default 4). Workflow container options can override the resource limits. They are
+limits, not protection against hostile workflows.
 
 A run waits in the queue until one of the node's slots is free. Repository maintenance
 never prunes, so the commit of a queued run stays readable after its branch moves on.
@@ -97,30 +73,6 @@ permissions and logs a warning when this restricts a job. Credentials expire one
 the run or in-house job ends. REST, GraphQL, and smart HTTP Git enforce the same repository
 and resource permissions; a bot's grants from other runs do not widen a job's credential.
 
-Native `owner/repository[/path]@ref` actions resolve against `GITHUB_SERVER_URL`
-(the Codeyard forge for managed runs), with credentials scoped to that origin.
-Their cache identity includes the source URL. GitHub fallback is disabled by default;
-set `CI_GITHUB_ACTION_FALLBACK=true`, or pass `--github-action-fallback` to the standalone
-runner, to explicitly permit github.com after a forge fetch fails. This includes missing
-or inaccessible repositories and revisions: enable fallback only when that naming policy
-is intended. Forge credentials are never sent to the fallback host. Private forge actions
-require a credential with Git read authority for their repository.
-
-Docker action metadata supports `pre-entrypoint`/`post-entrypoint`, their conditions,
-and `GITHUB_STATE` across phases. All phases reuse the selected image; metadata arguments
-and entrypoint take precedence over invocation-level overrides. Post handlers are registered
-before pre execution, including failed or interrupted pre handlers. Remote actions and Node
-runtimes are prepared during job setup, and remote pre hooks run before ordinary steps,
-including hooks nested in remote composites. Their main handlers reuse prepared state and
-runtimes without rerunning pre. Local actions retain just-in-time preparation after checkout.
-Lifecycle context/state copying has a 64 MiB per-job retention/work budget.
-
-The native dependency-ready scheduler runs independent jobs concurrently when
-`--concurrent-jobs` is greater than one (1–256). Matrix and reusable-workflow leaves share
-one run-wide permit pool; reusable parents do not occupy leaf permits. Parallel leaves
-receive independent workspaces from the same initial snapshot. Managed Podman workers
-retain their one-job setting so the configured run-wide resource caps remain unchanged.
-
 ## Workflow run history
 
 The GitHub REST API exposes repository/workflow run lists, run documents, and individual
@@ -132,17 +84,11 @@ run history; dispatch still requires a real workflow file. Native multi-workflow
 pipelines remain available natively, but do not invent comma-named GitHub workflows; a run
 document without a single workflow identity returns a metadata-unavailable error.
 
-The workflow and run timing endpoints are available at
-`/api/v3/repos/{owner}/{repo}/actions/workflows/{workflow_id}/timing` and
-`/api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/timing`. They aggregate recorded job
-milliseconds (including re-runs), without hosted-OS multipliers or rounding; workflow
-usage covers the current UTC month. These are observations, not hosted-runner charges.
-
-Custom deployment-protection integrations are available through the environment
-`deployment_protection_rules` and `deployment_protection_rules/apps` endpoints.
-An installed GitHub App reviews its pending run through
-`POST /api/v3/repos/{owner}/{repo}/actions/runs/{run_id}/deployment_protection_rule`
-using its installation token. An owner PAT cannot substitute for that provider identity.
+The deprecated workflow billing endpoints are absent: these self-hosted engines have no
+GitHub-hosted runner billing. Native elapsed times are not fabricated hosted-OS charges.
+Custom deployment-protection provider reviews are also unavailable: there is no registered
+provider integration, and an owner PAT cannot stand in for a provider's App identity. The
+endpoint returns a documented not-found error without creating approvals or deployments.
 
 ## Deliberate re-runs
 
@@ -214,8 +160,8 @@ old caches or shorten expiry atomically without rewriting repository overrides; 
 settings show the effective limits. Lookups use the run's branch, then the default branch. Pull request caches
 have their own scope; fork runs can restore caches but cannot publish base-repository caches.
 Artifacts default to 90 days of retention, configurable on the admin page. A workflow can
-request shorter retention. Repository readers download artifact ZIPs from the run page;
-repository writers can also delete them while the repository is not archived. Block requests are limited to 100 MiB, single-shot PUTs to 128 MiB,
+request shorter retention. Download artifact ZIPs or delete them with repository write access
+from the run page. Block requests are limited to 100 MiB, single-shot PUTs to 128 MiB,
 and each artifact to 10 GiB.
 Expired and deleted objects are removed by the existing upload sweep; physical deletion
 waits an hour to cover in-flight uploads. The Results protocol is run-scoped; repository-scoped

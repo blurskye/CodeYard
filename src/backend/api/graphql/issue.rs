@@ -9,19 +9,13 @@ use crate::backend::issues::{
     comments::CreateCommentRequest,
     mutations::{CreateIssueRequest, UpdateIssueRequest},
 };
-use async_graphql::Error;
-use super::mutations::issue_error as operation;
+use async_graphql::{Error, ErrorExtensions};
 use serde_json::json;
 
 mod management;
 pub(super) mod metadata;
 mod mutations;
 pub(super) use metadata::search;
-
-pub(super) async fn linked_branch_node(id: i64, request: &RequestContext) -> Result<Value> {
-    let branch = db::graphql::linked_branch(&request.state.pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
-    management::linked(branch, request).await?.ok_or_else(missing)
-}
 
 fn lock_reason(value: Option<&str>) -> Option<&str> {
     value.and_then(|value| match value {
@@ -49,6 +43,20 @@ pub(super) fn pull_object(pull: &db::models::PullRequest) -> Value {
         "headRefName":pull.head_branch,"isDraft":pull.is_draft,"merged":pull.merged,"mergedAt":pull.merged_at})
 }
 
+fn operation(error: issues::OperationError) -> Error {
+    let kind = match &error {
+        issues::OperationError::Missing { .. } => "NOT_FOUND",
+        issues::OperationError::Denied { .. } | issues::OperationError::Unauthenticated { .. } => {
+            "FORBIDDEN"
+        }
+        issues::OperationError::Unavailable { .. } => "INTERNAL",
+        _ => "UNPROCESSABLE",
+    };
+    Error::new(error.to_string()).extend_with(|_, e| {
+        e.set("type", kind);
+    })
+}
+
 pub(super) async fn resolve(
     ty: &str,
     field: &str,
@@ -73,7 +81,7 @@ pub(super) async fn resolve(
             boxed(|| metadata::resolve(ty, field, ctx, request, parent, &repo, id)).await
         }
         "author" => {
-            user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request).await
+            user::actor_by_id(parent["_author"].as_i64().ok_or_else(missing)?, request).await
         }
         "url" => Ok(json!(url(&format!(
             "/{}/{}/{}/{}",
@@ -93,18 +101,24 @@ pub(super) async fn resolve(
                 db::labels::get_pull_request_labels(pool, id).await
             }
             .map_err(unavailable)?;
-            repository::label_connection(ctx, labels, if ty == "PullRequest" { "pull-requests" } else { "issues" })
+            connection::slice(
+                ctx,
+                labels
+                    .iter()
+                    .map(|row| {
+                        let mut value = repository::label(row);
+                        value["_scope"] = json!(if ty == "PullRequest" {
+                            "pull-requests"
+                        } else {
+                            "issues"
+                        });
+                        value
+                    })
+                    .collect(),
+            )
         }
         "comments" => {
             connection::validate(ctx)?;
-            let (updated, descending) = if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
-                let order = order.object()?;
-                let updated = match order.try_get("field")?.enum_name()? {
-                    "UPDATED_AT" => true, "CREATED_AT" => false,
-                    _ => return Err(async_graphql::Error::new("Unsupported comment order")),
-                };
-                (updated, order.try_get("direction")?.enum_name()? == "DESC")
-            } else { (false, false) };
             let count = if ty == "Issue" {
                 db::issues::count_issue_comments(pool, &[id])
                     .await
@@ -120,20 +134,18 @@ pub(super) async fn resolve(
             let page = Page::new(ctx, count)?;
             let mut nodes = Vec::new();
             if ty == "Issue" {
-                for entry in db::issues::list_issue_comments_ordered(pool, id, page.limit, page.offset, updated, descending)
+                for entry in db::issues::list_issue_comments(pool, id, page.limit, page.offset)
                     .await
                     .map_err(unavailable)?
                 {
                     nodes.push(comment(&entry.comment, request).await?);
                 }
             } else {
-                for entry in db::pull_requests::reviews::list_pull_request_conversation_comments_ordered(
+                for entry in db::pull_requests::reviews::list_pull_request_conversation_comments(
                     pool,
                     id,
                     page.limit,
                     page.offset,
-                    updated,
-                    descending,
                 )
                 .await
                 .map_err(unavailable)?
@@ -159,12 +171,11 @@ pub(super) async fn comment(
         .map_err(unavailable)?
         .ok_or_else(missing)?;
     repository::by_id(issue.repo_id, request).await?;
-    request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
-        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false)),"databaseId":crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false),"_comment":comment.id,
+        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,false)),"databaseId":comment.id,
         "_repo":issue.repo_id,"_number":issue.number,"_pull":false,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
-        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::retained_author(comment.author_id,request).await?}),
+        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::actor_by_id(comment.author_id,request).await?}),
     )
 }
 
@@ -180,12 +191,11 @@ pub(super) async fn pull_comment(
     .map_err(unavailable)?
     .ok_or_else(missing)?;
     repository::by_id(pull.repo_id, request).await?;
-    request.charge(comment.body.len().saturating_mul(4))?;
     Ok(
-        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true)),"databaseId":crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true),"_comment":comment.id,
+        json!({"__typename":"IssueComment","id":node_id::encode("IC",crate::backend::webhooks::payloads::conversation_comment_id(comment.id,true)),"databaseId":comment.id,
         "_repo":pull.repo_id,"_number":pull.number,"_pull":true,"_author":comment.author_id,
         "viewerDidAuthor":comment.author_id==request.auth.user.id,"includesCreatedEdit":comment.updated_at>comment.created_at,"isMinimized":false,"minimizedReason":null,
-        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::retained_author(comment.author_id,request).await?}),
+        "body":comment.body,"createdAt":comment.created_at,"updatedAt":comment.updated_at,"author":user::actor_by_id(comment.author_id,request).await?}),
     )
 }
 
@@ -284,21 +294,15 @@ pub(super) async fn list(
             .await
             .map_err(unavailable)?
             .iter()
-            .map(|entry| {
-                request.charge(entry.issue.title.len().saturating_add(entry.issue.body.len()).saturating_mul(4))?;
-                Ok(object(&entry.issue))
-            })
-            .collect::<Result<Vec<_>>>()?
+            .map(|entry| object(&entry.issue))
+            .collect()
     } else {
         db::pull_requests::records::list_repo_pull_requests(pool, repo, &filter, page.limit)
             .await
             .map_err(unavailable)?
             .iter()
-            .map(|entry| {
-                request.charge(entry.pull_request.title.len().saturating_add(entry.pull_request.body.len()).saturating_mul(4))?;
-                Ok(pull_object(&entry.pull_request))
-            })
-            .collect::<Result<Vec<_>>>()?
+            .map(|entry| pull_object(&entry.pull_request))
+            .collect()
     };
     Ok(page.finish(nodes))
 }
@@ -373,10 +377,10 @@ pub(super) async fn mutation(
             .await
             .map_err(unavailable)?;
         let metadata = super::metadata_mutations::prepare(&input, &repo, request).await?;
-        let issue = issues::mutations::create_issue_with_metadata(
+        let issue = issues::mutations::create_issue(
             pool,
             broadcaster,
-            request.auth.database_actor(),
+            actor,
             repository::owner(&repo, request).await?,
             repo.name.clone(),
             CreateIssueRequest {
@@ -384,12 +388,23 @@ pub(super) async fn mutation(
                 body: input["body"].as_str().map(str::to_owned),
                 repository_id: Some(repo.id),
                 parent_issue_id: None,
-                parent_repository_id: None,
             },
-            metadata.creation(),
         )
         .await
         .map_err(operation)?;
+        super::metadata_mutations::apply(
+            &repo,
+            db::assignees::AssignedItem::Issue(issue.id),
+            issue.number,
+            &issue.title,
+            metadata,
+            request,
+        )
+        .await?;
+        let issue = db::issues::get_issue_by_id(pool, issue.id)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
         payload["issue"] = object(&issue);
     } else if field == "addComment" && kind == "PR" {
         let pull = db::pull_requests::records::get_pull_request_by_id(pool, id)
@@ -425,7 +440,7 @@ pub(super) async fn mutation(
                 }
             })?;
         let position =
-            db::pull_requests::reviews::conversation_comment_position(pool, saved.id)
+            db::pull_requests::reviews::count_pull_request_conversation_comments(pool, pull.id)
                 .await
                 .map_err(unavailable)?
                 - 1;
@@ -450,7 +465,6 @@ pub(super) async fn mutation(
                 pool,
                 broadcaster,
                 actor,
-                &request.auth.credential(),
                 owner,
                 repo.name.clone(),
                 issue.number,
@@ -477,16 +491,17 @@ pub(super) async fn mutation(
             repository::by_id(target.repo_id, request).await?;
             request.authorize(target.repo_id, "issues", false).await?;
             payload["issue"] = object(
-                &issues::mutations::close_duplicate(pool, broadcaster, request.actor.clone(), repo.id, issue.id, duplicate)
+                &db::issues::management::close_duplicate(pool, actor, repo.id, issue.id, duplicate)
                     .await
-                    .map_err(operation)?,
+                    .map_err(management::error)?,
             );
         } else {
             let saved = issues::mutations::update_issue_latest(
                 pool,
                 broadcaster,
                 actor,
-                repo.id,
+                owner,
+                repo.name.clone(),
                 issue.number,
                 UpdateIssueRequest {
                     expected_state: issue.state,

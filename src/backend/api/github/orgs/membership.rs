@@ -35,7 +35,7 @@ async fn set(
         json!({})
     } else {
         serde_json::from_slice(&body)
-            .map_err(super::super::json_parse_error)?
+            .map_err(|_| Error::validation("Membership", "role", "invalid"))?
     };
     let object = input
         .as_object()
@@ -69,7 +69,7 @@ async fn set(
         let invitation = outcome(
             organizations::set_organization_invitation_by_owner(
                 &state.pool,
-                actor.database_actor(),
+                actor.user.id,
                 org.id,
                 user.id,
                 role,
@@ -89,7 +89,7 @@ async fn set(
         let member = outcome(
             organizations::update_organization_member_role_by_owner(
                 &state.pool,
-                actor.database_actor(),
+                actor.user.id,
                 org.id,
                 user.id,
                 role,
@@ -118,14 +118,24 @@ async fn remove(
         .await
         .map_err(Error::unavailable)?
         .map_or(-1, |user| user.id);
-    let result = organizations::remove_member_or_invitation_by_owner(
+    let mut result = organizations::remove_organization_member_by_owner(
         &state.pool,
-        actor.database_actor(),
+        actor.user.id,
         org.id,
         user,
     )
     .await
     .map_err(Error::unavailable)?;
+    if matches!(result, OrganizationOutcome::Missing) {
+        result = organizations::cancel_organization_invitation_by_owner(
+            &state.pool,
+            actor.user.id,
+            org.id,
+            user,
+        )
+        .await
+        .map_err(Error::unavailable)?;
+    }
     if matches!(result, OrganizationOutcome::Conflict) {
         return Err(Error::new(
             StatusCode::FORBIDDEN,

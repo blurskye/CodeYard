@@ -5,7 +5,7 @@ use git2::{ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
-use super::repository::{find_commit_checked, peel_to_commit_checked, tree_entry};
+use super::repository::{find_commit_checked, is_missing_path, peel_to_commit_checked, tree_entry};
 
 pub const MAX_CI_WORKFLOW_BYTES: usize = 256 * 1024;
 pub const MAX_WORKFLOW_DIRECTORY_ENTRIES: usize = 64;
@@ -72,11 +72,7 @@ pub(crate) fn resolve_ci_commit(
         full_ref.starts_with("refs/heads/") || full_ref.starts_with("refs/tags/"),
         "invalid CI ref kind"
     );
-    let tip = match git.find_reference(&full_ref) {
-        Ok(_) => Some(peel_to_commit_checked(&git, &full_ref).map_err(|error| anyhow::anyhow!("CI reference target is unreadable: {error:#}"))?.id()),
-        Err(error) if error.code() == git2::ErrorCode::NotFound => None,
-        Err(error) => return Err(error.into()),
-    };
+    let tip = peel_to_commit_checked(&git, &full_ref).ok().map(|c| c.id());
     let oid = match sha {
         Some(sha) => {
             if !super::is_full_commit_id(sha) {
@@ -203,11 +199,12 @@ fn workflow_files_in_commit(
 }
 
 /// A workflow file directly in `.github/workflows/`. Spaces and non-ASCII letters are valid, as
-/// on GitHub. A separator, a comma or a control character is not, and neither is a colon,
+/// on GitHub. A separator, a comma, a control character or `..` is not, and neither is a colon,
 /// which job identities use to split the path from the job.
 pub(crate) fn is_ci_workflow_filename(name: &str) -> bool {
     name.len() + ".github/workflows/".len() <= 255
         && (name.ends_with(".yml") || name.ends_with(".yaml"))
+        && !name.contains("..")
         && !name
             .chars()
             .any(|c| c.is_control() || matches!(c, '/' | '\\' | ',' | ':'))
@@ -216,9 +213,6 @@ pub(crate) fn is_ci_workflow_filename(name: &str) -> bool {
 fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {
     let mut pending = std::collections::VecDeque::from([tip]);
     let mut visited = std::collections::HashSet::new();
-    let deadline = std::time::Instant::now() + super::repository::COMMIT_WALK_TIMEOUT;
-    let mut bytes = 0usize;
-    let odb = git.odb()?;
     while let Some(oid) = pending.pop_front() {
         if oid == ancestor {
             return Ok(true);
@@ -230,8 +224,6 @@ fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {
             visited.len() <= 16384,
             "CI ref ancestry exceeds admission traversal bound"
         );
-        ensure!(std::time::Instant::now() < deadline, "CI ancestry exceeded its time budget");
-        bytes = bytes.checked_add(odb.read_header(oid)?.0).filter(|bytes| *bytes <= super::repository::MAX_COMMIT_WALK_BYTES).ok_or(super::ObjectTooLarge)?;
         let commit = find_commit_checked(git, oid)?;
         ensure!(
             commit.parent_count() <= 64,
@@ -242,23 +234,43 @@ fn bounded_ancestor(git: &Repository, tip: Oid, ancestor: Oid) -> Result<bool> {
     Ok(false)
 }
 
+pub(crate) fn load_push_workflows(
+    path: &Path,
+    sha: &str,
+) -> Result<(String, Vec<(String, String)>)> {
+    let git = Repository::open_bare(path)?;
+    let commit = peel_to_commit_checked(&git, sha)?;
+    let commit_sha = commit.id().to_string();
+    let files = match workflow_files_in_commit(&git, &commit) {
+        Ok(files) => files,
+        // A commit without a workflow directory has no workflows to run.
+        Err(error)
+            if error
+                .downcast_ref::<git2::Error>()
+                .is_some_and(is_missing_path) =>
+        {
+            Vec::new()
+        }
+        Err(error) => return Err(error),
+    };
+    Ok((
+        commit_sha,
+        files
+            .into_iter()
+            .map(|file| (file.path, file.content))
+            .collect(),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn accepted_commits_with_large_messages_can_list_workflows() {
+    fn accepted_commits_with_large_messages_can_load_push_workflows() {
         let root = tempfile::tempdir().unwrap();
         let git = Repository::init_bare(root.path()).unwrap();
-        let directory = |name: &str, id: Oid, mode: i32| {
-            let mut tree = git.treebuilder(None).unwrap();
-            tree.insert(name, id, mode).unwrap();
-            tree.write().unwrap()
-        };
-        let workflow = git.blob(b"on: push\n").unwrap();
-        let workflows = directory("ci.yml", workflow, 0o100644);
-        let github = directory("workflows", workflows, 0o040000);
-        let tree_id = directory(".github", github, 0o040000);
+        let tree_id = git.treebuilder(None).unwrap().write().unwrap();
         let tree = git.find_tree(tree_id).unwrap();
         let author = git2::Signature::now("Writer", "writer@example.test").unwrap();
         let sha = git
@@ -271,8 +283,8 @@ mod tests {
                 &[],
             )
             .unwrap();
-        let workflows = list_ci_workflow_files(root.path(), &sha.to_string()).unwrap();
-        assert_eq!(workflows.len(), 1);
-        assert_eq!(workflows[0].content, "on: push\n");
+        let (loaded, workflows) = load_push_workflows(root.path(), &sha.to_string()).unwrap();
+        assert_eq!(loaded, sha.to_string());
+        assert!(workflows.is_empty());
     }
 }

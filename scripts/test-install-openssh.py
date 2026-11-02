@@ -67,10 +67,7 @@ class Fixture(unittest.TestCase):
         self.original = b"# admin policy remains unchanged\nPasswordAuthentication yes\nPermitRootLogin prohibit-password\n"
         self.put(self.o.sshd_config, self.original, 0o600)
         (self.h.proc / "77/exe").symlink_to(self.o.sshd)
-        self.invocation_id = "0123456789abcdef0123456789abcdef"
-        self.start_timestamp = "Thu 2026-10-29 12:00:00 UTC"
-        self.service_environment = f"INVOCATION_ID={self.invocation_id}\0".encode()
-        self.put(self.h.proc / "77/environ", self.service_environment + b"SSHD_OPTS=\0DATABASE_URL=must-not-leak\0", 0o600)
+        self.put(self.h.proc / "77/environ", b"SSHD_OPTS=\0DATABASE_URL=must-not-leak\0", 0o600)
         self.root.chmod(0o755)
         for path in self.root.rglob("*"):
             if path.is_dir() and not path.is_symlink():
@@ -151,10 +148,8 @@ class Fixture(unittest.TestCase):
         if args[0] == str(self.h.systemctl):
             if args[1] == "show":
                 state = "active" if args[2] == "ssh.service" else "inactive"
-                output = (f"LoadState=loaded\nActiveState={state}\nCanReload=yes\nId={args[2]}\nNeedDaemonReload=no\nMainPID=77\n"
-                          f"InvocationID={self.invocation_id}\nExecMainStartTimestamp={self.start_timestamp}\n"
-                          f"ExecStart={{ path={self.o.sshd} ; argv[]={self.exec_args} ; ignore_errors=no ; "
-                          f"pid=77 ; start_time={self.start_timestamp} ; }}\n")
+                output = (f"ActiveState={state}\nCanReload=yes\nId={args[2]}\nNeedDaemonReload=no\nMainPID=77\n"
+                          f"ExecStart={{ path={self.o.sshd} ; argv[]={self.exec_args} ; ignore_errors=no ; }}\n")
             elif args[1] == "reload":
                 self.reload_count += 1
                 if self.reload_count == 1:
@@ -472,10 +467,10 @@ class Fixture(unittest.TestCase):
     def test_safe_service_selection_and_debian_empty_sshd_opts(self):
         self.exec_args += " $SSHD_OPTS"
         self.assertEqual(installer.active_service(self.o, self.h), "ssh.service")
-        self.put(self.h.proc / "77/environ", self.service_environment + b"UNRELATED=value\0", 0o600)
+        self.put(self.h.proc / "77/environ", b"UNRELATED=value\0", 0o600)
         with self.assertRaisesRegex(installer.Refusal, "Cannot verify"):
             installer.active_service(self.o, self.h)
-        self.put(self.h.proc / "77/environ", self.service_environment + b"SSHD_OPTS=-o AuthorizedKeysCommand=/evil\0", 0o600)
+        self.put(self.h.proc / "77/environ", b"SSHD_OPTS=-o AuthorizedKeysCommand=/evil\0", 0o600)
         with self.assertRaises(installer.Refusal):
             installer.active_service(self.o, self.h)
         self.exec_args = "/bin/sh -c arbitrary"

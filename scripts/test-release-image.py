@@ -68,21 +68,21 @@ class ReleaseImageTests(unittest.TestCase):
                 try:
                     subprocess.run([
                         *podman, "build", "-f", "Containerfile", "-t", image, "."
-                    ], cwd=root, env=environment, check=True, timeout=900)
-                    config = json.loads(subprocess.check_output([*podman, "image", "inspect", image], env=environment, timeout=60))[0]["Config"]
+                    ], cwd=root, env=environment, check=True)
+                    config = json.loads(subprocess.check_output([*podman, "image", "inspect", image], env=environment))[0]["Config"]
                     self.assertEqual(config["Entrypoint"], ["/usr/bin/tini", "--"])
-                    subprocess.run([*podman, "run", "--rm", image], env=environment, check=True, timeout=60)
+                    subprocess.run([*podman, "run", "--rm", image], env=environment, check=True)
                     subprocess.run([
                         *podman, "run", "--rm", image, "/bin/sh", "-c",
                         "(sleep .2 & echo $! > /tmp/orphan) & wait; "
                         "pid=$(cat /tmp/orphan); "
                         "for i in 1 2 3 4 5 6 7 8 9 10; do "
                         "kill -0 $pid 2>/dev/null || exit 0; sleep .1; done; exit 1",
-                    ], env=environment, check=True, timeout=60)
+                    ], env=environment, check=True)
                     saved = root / "image.tar"
                     subprocess.run([
                         *podman, "save", "--format", "docker-archive", "-o", str(saved), image
-                    ], env=environment, check=True, timeout=180)
+                    ], env=environment, check=True)
                     expected = {
                         "usr/local/bin/codeyard": (release / "codeyard").read_bytes(),
                         "usr/local/bin/codeyard-actions": (release / "codeyard-actions").read_bytes(),
@@ -111,14 +111,12 @@ class ReleaseImageTests(unittest.TestCase):
                     (release / "codeyard").write_text("damaged binary")
                     refused = subprocess.run([
                         *podman, "build", "-f", "Containerfile", "."
-                    ], cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, timeout=900)
+                    ], cwd=root, env=environment, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
                     self.assertNotEqual(refused.returncode, 0, refused.stdout.decode())
                     self.assertIn(b"codeyard: FAILED", refused.stdout)
                 finally:
                     # Reset is confined to the fresh temporary store above, never host images.
-                    subprocess.run([*podman, "kill", "--all"], env=environment, check=False, timeout=30)
-                    subprocess.run([*podman, "rm", "--all", "--force"], env=environment, check=False, timeout=60)
-                    subprocess.run([*podman, "system", "reset", "--force"], env=environment, check=True, timeout=60)
+                    subprocess.run([*podman, "system", "reset", "--force"], env=environment, check=True)
 
 
 if __name__ == "__main__":

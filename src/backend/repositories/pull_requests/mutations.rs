@@ -7,7 +7,8 @@ use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::pull_requests::queue_pull_request_ci;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
+use crate::backend::repositories::store::{repo_store, RepoError};
+use crate::backend::webhooks::{self, events, payloads::Scope};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -41,9 +42,6 @@ impl TryFrom<PullRequestSourceInput> for PullRequestSource {
 
 #[derive(Deserialize)]
 pub struct CreatePullRequestRequest {
-    /// Only server-owned proposals may suppress automatic execution; clients cannot set this.
-    #[serde(skip)]
-    pub suppress_ci: bool,
     pub head_repo_id: Option<i64>,
     #[serde(flatten)]
     pub source: PullRequestSource,
@@ -100,16 +98,14 @@ fn head_publish_error(number: i32, error: RepoError) -> OperationError {
 }
 
 /// Repair a committed creation without borrowing its historical author's credentials.
-pub(crate) async fn repair_open_pull(
+async fn repair_open_pull(
     pool: &db::DbPool,
     ci: &CiRuns,
     repository: &db::models::Repository,
     head_repository: &db::models::Repository,
-    credential: crate::backend::repositories::store::PullHeadActor,
+    actor_id: i64,
     existing: &db::models::PullRequest,
-    suppress_ci: bool,
 ) -> Result<(), OperationError> {
-    let actor_id = credential.user;
     let number = existing.number;
     // Exact CAS repairs an absent initial ref, never a later publication.
     repo_store(repository, ci.cluster.as_ref())
@@ -117,7 +113,7 @@ pub(crate) async fn repair_open_pull(
             pool,
             repository.id,
             head_repository.id,
-            credential,
+            actor_id,
             &repo_store(head_repository, ci.cluster.as_ref()),
             number,
             &existing.head_sha,
@@ -131,7 +127,7 @@ pub(crate) async fn repair_open_pull(
         ci,
         actor_id,
         existing.id,
-        (!suppress_ci).then_some(db::models::AccessLevel::Owner),
+        Some(db::models::AccessLevel::Owner),
     )
     .await
     .map_err(|_| OperationError::Opened { number })?;
@@ -139,18 +135,16 @@ pub(crate) async fn repair_open_pull(
         .await
         .map_err(|_| OperationError::Opened { number })?
         .ok_or(OperationError::Opened { number })?;
-    if !suppress_ci {
-        let _ = queue_pull_request_ci(
-            pool,
-            ci,
-            repository,
-            &current,
-            actor_id,
-            false,
-            db::models::AccessLevel::Owner,
-        )
-        .await;
-    }
+    let _ = queue_pull_request_ci(
+        pool,
+        ci,
+        repository,
+        &current,
+        actor_id,
+        false,
+        db::models::AccessLevel::Owner,
+    )
+    .await;
     super::code_owners::request_code_owner_reviews(pool, ci, repository, &current, actor_id).await;
     Ok(())
 }
@@ -159,13 +153,11 @@ pub async fn create_pull_request(
     pool: &db::DbPool,
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
-    actor_id: impl Into<crate::backend::repositories::store::PullHeadActor>,
+    actor_id: i64,
     owner: String,
     repo: String,
     req: CreatePullRequestRequest,
 ) -> Result<db::models::PullRequest, OperationError> {
-    let credential = actor_id.into();
-    let actor_id = credential.user;
     let user = super::actor(pool, actor_id).await?;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
@@ -301,7 +293,7 @@ pub async fn create_pull_request(
                 db::pull_requests::records::IssueConversionRefusal::Missing.into(),
             ));
         }
-        repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing, req.suppress_ci).await?;
+        repair_open_pull(pool, ci, &repository, &head_repository, user.id, &existing).await?;
         return Err(OperationError::Conflict {
             code: "pull_request_exists",
             message: format!(
@@ -311,35 +303,28 @@ pub async fn create_pull_request(
         });
     }
 
-    // A head with nothing outside the base, or with no history in common with it, cannot carry
-    // a pull request. Checked before the insert, so a converted issue stays open. The head is
-    // only counted, without listing its commits.
+    // A head with nothing outside the base cannot carry a pull request. Checked before the
+    // insert, so a converted issue stays open. One ancestry check in the same repository; a fork
+    // head is only counted, without listing its commits.
     let base_store = repo_store(&repository, ci.cluster.as_ref());
-    let head_store = if head_repository.id == repository.id {
-        base_store.clone()
+    let merged = if head_repository.id == repository.id {
+        base_store.is_ancestor(&head_sha, &base_sha).await
     } else {
-        repo_store(&head_repository, ci.cluster.as_ref())
-    };
-    let merged = base_store
-        .comparison_from(&head_store, &base_sha, &head_sha, 0, 0)
-        .await
-        .map(|comparison| comparison.ahead_by == 0)
-        .map_err(|error| {
-            if error.kind == ErrorKind::NotFound {
-                OperationError::Invalid {
-                    code: "validation_error",
-                    message: format!(
-                        "No common ancestor between {} and {}",
-                        req.base_branch, req.head_branch
-                    ),
-                }
-            } else {
-                OperationError::Unavailable {
-                    code: "git_unavailable",
-                    message: "Repository storage is unavailable".into(),
-                }
-            }
-        })?;
+        base_store
+            .comparison_from(
+                &repo_store(&head_repository, ci.cluster.as_ref()),
+                &base_sha,
+                &head_sha,
+                0,
+                0,
+            )
+            .await
+            .map(|comparison| comparison.ahead_by == 0)
+    }
+    .map_err(|_| OperationError::Unavailable {
+        code: "git_unavailable",
+        message: "Repository storage is unavailable".into(),
+    })?;
     if merged {
         return Err(OperationError::Invalid {
             code: "no_commits",
@@ -393,7 +378,7 @@ pub async fn create_pull_request(
                     message: "Pull request state changed; retry the request".to_owned(),
                 });
             };
-            repair_open_pull(pool, ci, &repository, &head_repository, credential, &existing, req.suppress_ci).await?;
+            repair_open_pull(pool, ci, &repository, &head_repository, user.id, &existing).await?;
             return Err(OperationError::Conflict {
                 code: "pull_request_exists",
                 message: format!(
@@ -409,7 +394,7 @@ pub async fn create_pull_request(
                 pool,
                 repository.id,
                 head_repository.id,
-                credential,
+                user.id,
                 &repo_store(&head_repository, ci.cluster.as_ref()),
                 pull_request.number,
                 &pull_request.head_sha,
@@ -425,7 +410,7 @@ pub async fn create_pull_request(
         ci,
         user.id,
         pull_request.id,
-        (!req.suppress_ci).then_some(crate::backend::db::models::AccessLevel::Owner),
+        Some(crate::backend::db::models::AccessLevel::Owner),
     )
     .await
     .map_err(|_| OperationError::Opened {
@@ -518,28 +503,40 @@ pub async fn create_pull_request(
     super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
         .await;
 
-    let payload = super::emit_pull_request_event(
+    let (pull_for_hook, repository_for_hook) = (pull_request.clone(), repository.clone());
+    let (author_id, sender_id) = (pull_request.author_id, user.id);
+    let hook_store = repo_store(&repository, ci.cluster.as_ref());
+    let payload = webhooks::emit(
         pool,
-        ci.cluster.as_ref(),
         &repository,
-        &pull_request,
-        "opened",
-        user.id,
-        serde_json::Map::new(),
+        events::PULL_REQUEST,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            super::webhook_payload(
+                "opened",
+                &pull_for_hook,
+                &author,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+                &hook_store,
+            )
+        },
     )
     .await;
-    if !req.suppress_ci {
-        super::workflows::queue_pull_request_event_ci(
-            pool,
-            ci,
-            &repository,
-            &pull_request,
-            user.id,
-            db::models::AccessLevel::Owner,
-            &payload,
-        )
-        .await;
-    }
+    super::workflows::queue_pull_request_event_ci(
+        pool,
+        ci,
+        &repository,
+        &pull_request,
+        user.id,
+        db::models::AccessLevel::Owner,
+        &payload,
+    )
+    .await;
 
     Ok(pull_request)
 }
@@ -549,11 +546,16 @@ pub async fn update_pull_request(
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    (repository_id, number): (i64, i32),
+    (owner, repo, number): (String, String, i32),
     req: UpdatePullRequestRequest,
 ) -> Result<db::models::PullRequest, OperationError> {
-    let (repository, owner) = super::repository(pool, repository_id).await?;
-    let repo = repository.name.clone();
+    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+        .await
+        .map_err(database_error)?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Repository not found".to_owned(),
+        })?;
 
     let user = super::actor(pool, actor_id).await?;
     super::require_read(pool, &user, &repository).await?;
@@ -578,17 +580,22 @@ pub async fn update_pull_request(
     } else {
         None
     };
+    let policy_only = req.maintainer_can_modify.is_some()
+        && req.title.is_none()
+        && req.body.is_none()
+        && req.state.is_none()
+        && req.base.is_none();
     let head_owner = head
         .as_ref()
         .is_some_and(|head| head.is_personal_owner(user.id));
-    let ordinary = req.title.is_some() || req.body.is_some() || req.state.is_some();
-    // Without write access the author keeps ordinary edits, close and reopen, and the
-    // maintainer policy; the personal fork owner keeps the policy; only writers move the base.
-    // The database repeats this check when it saves.
-    let contributor_edit = req.base.is_none()
-        && (existing.author_id == user.id
-            || (head_owner && !ordinary && req.maintainer_can_modify.is_some()));
-    if repository.is_archived || !(writer || contributor_edit) {
+    // An author keeps ordinary edits and close or reopen; base and maintainer policy stay restricted.
+    let author_edit =
+        existing.author_id == user.id && req.base.is_none() && req.maintainer_can_modify.is_none();
+    if repository.is_archived
+        || !(writer
+            || (policy_only && (existing.author_id == user.id || head_owner))
+            || author_edit)
+    {
         return Err(OperationError::Denied {
             code: "write_denied",
             message: "Pull request edit denied".into(),
@@ -654,14 +661,23 @@ pub async fn update_pull_request(
             message: "Unstack the pull request before changing its base branch.".to_owned(),
         });
     }
-    let reopening = requested_state == Some("open") && existing.state == "closed";
-    let reopened_base = if reopening {
+    let reopened_base = if requested_state == Some("open") && existing.state == "closed" {
         if let Some(stack) = existing.stack_id {
             let members =
                 db::pull_requests::records::list_stack_members(pool, repository.id, stack)
                     .await
                     .map_err(super::write_error)?;
-            db::pull_requests::records::reopened_stack_base(&existing, &members)
+            let mut branch = existing.base_branch.clone();
+            for _ in 0..members.len() {
+                let Some(parent) = members
+                    .iter()
+                    .find(|member| member.state == "merged" && member.head_branch == branch)
+                else {
+                    break;
+                };
+                branch = parent.base_branch.clone();
+            }
+            (branch != existing.base_branch).then_some(branch)
         } else {
             None
         }
@@ -670,9 +686,8 @@ pub async fn update_pull_request(
     };
     let base_commit = match req.base.as_deref().or(reopened_base.as_deref()) {
         Some(branch) => Some((branch.to_owned(), {
-            // The base is checked as the reopened pull request will have it.
             let mut target = existing.clone();
-            if reopening {
+            if reopened_base.is_some() {
                 target.state = "open".into();
             }
             base_branch_commit(ci, &repository, &target, branch).await?
@@ -685,7 +700,6 @@ pub async fn update_pull_request(
         .map(|(branch, sha)| db::pull_requests::records::NewBase {
             branch: branch.as_str(),
             sha: sha.as_str(),
-            automatic_reopen: req.base.is_none() && reopened_base.is_some(),
         });
     let pull_request = db::pull_requests::records::update_pull_request(
         pool,
@@ -714,6 +728,38 @@ pub async fn update_pull_request(
         }
     })?.ok_or_else(|| OperationError::Conflict { code: "conflict", message: "This entry, merge operation, or your permission changed; reload and review your preserved submission".to_owned() })?;
 
+    let subject = db::timeline::Subject::PullRequest;
+    if pull_request.title != existing.title {
+        db::timeline::record(
+            pool,
+            repository.id,
+            subject,
+            existing.id,
+            user.id,
+            "renamed",
+            &pull_request.title,
+            &existing.title,
+        )
+        .await;
+    }
+    if pull_request.state != existing.state {
+        let kind = if pull_request.state == "closed" {
+            "closed"
+        } else {
+            "reopened"
+        };
+        db::timeline::record(
+            pool,
+            repository.id,
+            subject,
+            existing.id,
+            user.id,
+            kind,
+            "",
+            "",
+        )
+        .await;
+    }
     if let Some(body) = req.body.as_deref() {
         let link = format!("/{owner}/{repo}/pulls/{number}");
         notify_mentions(
@@ -777,26 +823,35 @@ pub async fn update_pull_request(
         .await;
     }
 
-    let mut extra = serde_json::Map::new();
     let action = if pull_request.state == existing.state {
-        extra.insert(
-            "changes".into(),
-            serde_json::Value::Object(edited_changes(&existing, &pull_request)),
-        );
         "edited"
     } else if pull_request.state == "closed" {
         "closed"
     } else {
         "reopened"
     };
-    let payload = super::emit_pull_request_event(
+    let (pull_for_hook, repository_for_hook) = (pull_request.clone(), repository.clone());
+    let (author_id, sender_id) = (pull_request.author_id, user.id);
+    let hook_store = repo_store(&repository, ci.cluster.as_ref());
+    let payload = webhooks::emit(
         pool,
-        ci.cluster.as_ref(),
         &repository,
-        &pull_request,
-        action,
-        user.id,
-        extra,
+        events::PULL_REQUEST,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            super::webhook_payload(
+                action,
+                &pull_for_hook,
+                &author,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+                &hook_store,
+            )
+        },
     )
     .await;
     super::workflows::queue_pull_request_event_ci(
@@ -813,27 +868,6 @@ pub async fn update_pull_request(
     Ok(pull_request)
 }
 
-/// The `changes` document of an `edited` event: the earlier value of each field that changed.
-fn edited_changes(
-    before: &db::models::PullRequest,
-    after: &db::models::PullRequest,
-) -> serde_json::Map<String, serde_json::Value> {
-    let mut changes = serde_json::Map::new();
-    if before.title != after.title {
-        changes.insert("title".into(), json!({"from": before.title}));
-    }
-    if before.body != after.body {
-        changes.insert("body".into(), json!({"from": before.body}));
-    }
-    if before.base_branch != after.base_branch {
-        changes.insert(
-            "base".into(),
-            json!({"ref": {"from": before.base_branch}, "sha": {"from": before.base_sha}}),
-        );
-    }
-    changes
-}
-
 /// Saves an edit from the GitHub API, which carries no form revision: the caller passes the
 /// state and time it just read. A concurrent change, such as gh adding labels while it saves the
 /// title, moves that time, so read the pull request again and retry instead of refusing.
@@ -842,18 +876,29 @@ pub async fn update_pull_request_latest(
     ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
-    target: (i64, i32),
+    target: (String, String, i32),
     mut req: UpdatePullRequestRequest,
 ) -> Result<db::models::PullRequest, OperationError> {
     for _ in 0..3 {
         let refused =
-            match update_pull_request(pool, ci, broadcaster, actor_id, target, req.clone()).await {
+            match update_pull_request(pool, ci, broadcaster, actor_id, target.clone(), req.clone())
+                .await
+            {
                 Err(error @ OperationError::Conflict { .. }) => error,
                 result => return result,
             };
-        let latest = db::pull_requests::records::get_pull_request(pool, target.0, target.1)
+        let (owner, repo, number) = &target;
+        let latest = match db::repositories::records::get_repository(pool, owner, repo)
             .await
-            .map_err(database_error)?;
+            .map_err(database_error)?
+        {
+            Some(repository) => {
+                db::pull_requests::records::get_pull_request(pool, repository.id, *number)
+                    .await
+                    .map_err(database_error)?
+            }
+            None => None,
+        };
         match latest {
             Some(latest)
                 if latest.state != req.expected_state
@@ -1256,33 +1301,34 @@ pub async fn set_pull_request_draft(
     };
 
     if is_draft {
-        let payload = super::emit_pull_request_event(
+        let (pull, repo) = (pull_request.clone(), repository.clone());
+        let (author_id, sender_id) = (pull_request.author_id, user.id);
+        let hook_store = repo_store(&repository, ci.cluster.as_ref());
+        webhooks::emit(
             pool,
-            ci.cluster.as_ref(),
             &repository,
-            &pull_request,
-            "converted_to_draft",
-            user.id,
-            serde_json::Map::new(),
-        )
-        .await;
-        super::workflows::queue_pull_request_event_ci(
-            pool,
-            ci,
-            &repository,
-            &pull_request,
-            user.id,
-            db::models::AccessLevel::Owner,
-            &payload,
+            events::PULL_REQUEST,
+            vec![author_id, sender_id],
+            move |owner, people| {
+                super::webhook_payload(
+                    "converted_to_draft",
+                    &pull,
+                    &people.get(author_id),
+                    Scope {
+                        repo: &repo,
+                        owner,
+                        sender: &people.get(sender_id),
+                    },
+                    &hook_store,
+                )
+            },
         )
         .await;
         return Ok(pull_request);
     }
-    // Branches may have moved while it was a draft. Catch up, then queue its workflows the way
-    // a new pull request does. The pull request is ready already, so a retry would be refused:
-    // the event and its workflows go out even when the catch-up fails, and the failure is
-    // reported after them.
-    let refreshed = super::branches::refresh_open_pull_request(
+    // Branches may have moved while it was a draft. Catch up, then queue its
+    // workflows the way a new pull request does.
+    super::branches::refresh_open_pull_request(
         pool,
         &repository,
         ci,
@@ -1290,27 +1336,37 @@ pub async fn set_pull_request_draft(
         pull_request.id,
         Some(crate::backend::db::models::AccessLevel::Owner),
     )
-    .await;
-    if let Err(error) = &refreshed {
-        tracing::warn!(pull_request_id = pull_request.id, %error, "ready pull request revisions were not refreshed");
-    }
-    let current = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
+    .await
+    .map_err(|_| OperationError::Updated { number })?;
+    let pull_request = db::pull_requests::records::get_pull_request_by_id(pool, pull_request.id)
         .await
-        .ok()
-        .flatten();
-    let complete = refreshed.is_ok() && current.is_some();
-    let pull_request = current.unwrap_or(pull_request);
+        .map_err(|_| OperationError::Updated { number })?
+        .ok_or(OperationError::Updated { number })?;
     super::code_owners::request_code_owner_reviews(pool, ci, &repository, &pull_request, user.id)
         .await;
 
-    let payload = super::emit_pull_request_event(
+    let (pull_for_hook, repository_for_hook) = (pull_request.clone(), repository.clone());
+    let (author_id, sender_id) = (pull_request.author_id, user.id);
+    let hook_store = repo_store(&repository, ci.cluster.as_ref());
+    let payload = webhooks::emit(
         pool,
-        ci.cluster.as_ref(),
         &repository,
-        &pull_request,
-        "ready_for_review",
-        user.id,
-        serde_json::Map::new(),
+        events::PULL_REQUEST,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let (author, sender) = (people.get(author_id), people.get(sender_id));
+            super::webhook_payload(
+                "ready_for_review",
+                &pull_for_hook,
+                &author,
+                Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &sender,
+                },
+                &hook_store,
+            )
+        },
     )
     .await;
     super::workflows::queue_pull_request_event_ci(
@@ -1323,9 +1379,7 @@ pub async fn set_pull_request_draft(
         &payload,
     )
     .await;
-    if !complete {
-        return Err(OperationError::Updated { number });
-    }
+
     Ok(pull_request)
 }
 
@@ -1335,6 +1389,7 @@ mod tests {
 
     #[test]
     fn all_head_publication_failures_report_the_already_opened_pull_request() {
+        use crate::backend::repositories::store::ErrorKind;
         let refused = RepoError::new(
             ErrorKind::Invalid,
             "A repository holds at most 1 pull request heads",

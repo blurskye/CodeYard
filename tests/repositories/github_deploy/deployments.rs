@@ -188,7 +188,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(
-        db::deployments::statuses(f.pool(), None, old["id"].as_i64().unwrap(), 0, 10)
+        db::deployments::statuses(f.pool(), old["id"].as_i64().unwrap(), 0, 10)
             .await
             .unwrap()
             .is_empty()

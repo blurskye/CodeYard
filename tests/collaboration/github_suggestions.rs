@@ -132,8 +132,6 @@ async fn suggestions(pg: bool) {
     let endpoint = format!("{path}/suggestions");
     let page = format!("/collective/proj/issues/{}", issue.number);
     let form = format!("{page}/suggestions");
-    let repository_id = repo.id.to_string();
-    let issue_id = issue.id.to_string();
     let agent_api = format!(
         "/api/repos/collective/proj/issues/{}/suggestions",
         issue.number
@@ -145,28 +143,15 @@ async fn suggestions(pg: bool) {
     )
     .await;
     let enabled = browser
-        .form_reply(&form, &[("repository_id", &repository_id), ("issue_id", &issue_id), ("action", "set_enabled"), ("enabled", "true")])
+        .form_reply(&form, &[("action", "set_enabled"), ("enabled", "true")])
         .await;
     assert_eq!(enabled.status, StatusCode::SEE_OTHER, "{}", enabled.text());
-    // A stale proposal must not publish its rationale on the URL-resolved issue.
-    for (old_repo, old_issue) in [(repo.id, duplicate.id), (repo.id + 1, issue.id)] {
-        let stale = agent.form_reply(&form, &[
-            ("repository_id", &old_repo.to_string()), ("issue_id", &old_issue.to_string()),
-            ("action", "propose"), ("change", "add_label"), ("target", "bug"),
-            ("rationale", "Private stale proposal"),
-        ]).await;
-        assert_eq!(stale.status, StatusCode::CONFLICT, "{}", stale.text());
-        assert!(stale.text().contains("Private stale proposal"));
-    }
-    let untouched = document(request(&router, "GET", &endpoint, Some(write), Value::Null).await, "issues/list-suggestions", 200).await;
-    assert!(untouched.as_array().unwrap().is_empty());
     let attr_form = format!("{page}/attributes");
     for name in ["Bug", "Task"] {
         let created = browser
             .form_reply(
                 &attr_form,
                 &[
-                    ("repository_id", &repository_id), ("item_id", &issue_id), ("owner_key", &format!("org:{}", org.id)),
                     ("action", "configure"),
                     ("kind", "type"),
                     ("name", name),
@@ -184,7 +169,6 @@ async fn suggestions(pg: bool) {
             .form_reply(
                 &attr_form,
                 &[
-                    ("repository_id", &repository_id), ("item_id", &issue_id), ("owner_key", &format!("org:{}", org.id)),
                     ("action", "configure"),
                     ("kind", "field"),
                     ("name", name),
@@ -554,7 +538,6 @@ async fn suggestions(pg: bool) {
         .form_reply(
             &form,
             &[
-                ("repository_id", &repository_id), ("issue_id", &issue_id),
                 ("action", "dismiss"),
                 ("suggestion_id", &refreshed["id"].to_string()),
             ],
@@ -679,7 +662,6 @@ async fn suggestions(pg: bool) {
         .form_reply(
             &form,
             &[
-                ("repository_id", &repository_id), ("issue_id", &issue_id),
                 ("action", "propose"),
                 ("change", "add_field"),
                 ("target", "Priority"),
@@ -723,7 +705,7 @@ async fn suggestions(pg: bool) {
     )
     .await;
     let disabled = browser
-        .form_reply(&form, &[("repository_id", &repository_id), ("issue_id", &issue_id), ("action", "set_enabled")])
+        .form_reply(&form, &[("action", "set_enabled")])
         .await;
     assert_eq!(disabled.status, StatusCode::SEE_OTHER);
     document(

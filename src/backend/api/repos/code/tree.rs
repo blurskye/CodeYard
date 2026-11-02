@@ -1,8 +1,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::{
-    branch_name, commit, default_ref, ref_names_under, resolve,
+    branch_name, commit, default_ref, load_refs_from_repo, ref_names_under, resolve,
     root_if_missing, store_error, Loaded,
 };
 use crate::backend::api::repos::refs::references::resolve_references;
@@ -79,7 +79,7 @@ pub async fn get_tree_root(
     tree_entries(&state, &headers, (&owner, &repo), &git_ref, "").await
 }
 
-/// The entries of the folder at `path`, resolved directly from the requested revision.
+/// The entries of the folder at `path`, or none for a repository without refs.
 async fn tree_entries(
     state: &AppState,
     headers: &HeaderMap,
@@ -88,6 +88,11 @@ async fn tree_entries(
     path: &str,
 ) -> Result<Json<Vec<TreeEntryResponse>>, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, owner, repo, headers).await?;
+
+    let refs = load_refs_from_repo(state, &repository).await?;
+    if refs.is_empty() {
+        return Ok(Json(Vec::new()));
+    }
 
     let tree = repo_store(&repository, state.cluster.as_ref())
         .tree(git_ref, path)
@@ -99,7 +104,6 @@ async fn tree_entries(
             )
         })?;
 
-    check_repo_read_access(&state.pool, &repository, headers).await?;
     Ok(Json(
         tree.into_iter().map(TreeEntryResponse::from).collect(),
     ))
@@ -266,9 +270,6 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     } else if !page.path.is_empty() {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Repository is empty."));
     }
-    check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-        .await
-        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(ctx.page_model(
         &format!("{}/{}", loaded.chrome.owner, loaded.chrome.name),
         crate::webui::app::Page::Repositories(view::page::Page::Tree {
@@ -287,12 +288,21 @@ async fn about_languages(
     store: &RepoStore,
     branch: &str,
 ) -> Vec<LanguageShare> {
-    let languages = match repo_languages::compute_and_store(&state.pool, store, &loaded.repository, branch).await {
-        Ok(languages) => languages,
-        Err(error) => {
-            tracing::warn!(repo_id = loaded.repository.id, %error, "could not compute the language bar");
-            Vec::new()
+    let stored = repo_languages::stored(&state.pool, loaded.repository.id)
+        .await
+        .unwrap_or_default();
+    let languages = if stored.is_empty() {
+        match repo_languages::compute_and_store(&state.pool, store, &loaded.repository, branch)
+            .await
+        {
+            Ok(languages) => languages,
+            Err(error) => {
+                tracing::warn!(repo_id = loaded.repository.id, %error, "could not compute the language bar");
+                Vec::new()
+            }
         }
+    } else {
+        stored
     };
     languages
         .into_iter()
@@ -310,7 +320,7 @@ pub(in crate::backend::api::repos) async fn page(
     >,
     headers: axum::http::HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    axum::extract::Path(params): axum::extract::Path<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
     let ctx =
         match crate::backend::api::http::context::PageContext::load(state, headers, &uri).await {

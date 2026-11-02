@@ -100,16 +100,8 @@ pub(super) async fn rows(
                 .owner_org_id
                 .filter(|_| repository.owner_kind == "org")
             {
-                let parents: Vec<StoredRuleset> = sqlx::query_as(
-                    "SELECT * FROM repository_rulesets WHERE owner_org_id=?1 ORDER BY id",
-                ).bind(org).fetch_all(&mut **tx).await?;
-                let parents = parents.into_iter().map(StoredRuleset::decode).collect::<Result<Vec<_>>>()?;
-                let needs_properties = parents.iter().any(|parent| parent.definition.conditions.as_ref().and_then(|conditions| conditions.repository_property.as_ref())
-                    .is_some_and(|properties| !properties.include.is_empty() || !properties.exclude.is_empty()));
-                let values = if needs_properties {
-                    let definitions = super::super::properties::definitions_on(tx, org).await?;
-                    super::super::properties::values_on(tx, repo, &definitions).await?
-                } else { Vec::new() };
+                let definitions = super::super::properties::definitions_on(tx, org).await?;
+                let values = super::super::properties::values_on(tx, repo, &definitions).await?;
                 let properties: HashMap<String, Vec<String>> = values
                     .into_iter()
                     .filter_map(|value| {
@@ -141,8 +133,15 @@ pub(super) async fn rows(
                 } else {
                     false
                 };
+                let parents: Vec<StoredRuleset> = sqlx::query_as(
+                    "SELECT * FROM repository_rulesets WHERE owner_org_id=?1 ORDER BY id",
+                )
+                .bind(org)
+                .fetch_all(&mut **tx)
+                .await?;
                 let mut budget = WorkflowMatchBudget::new();
                 for parent in parents {
+                    let parent = parent.decode()?;
                     if parent
                         .definition
                         .matches_repository(&context, &mut budget)?

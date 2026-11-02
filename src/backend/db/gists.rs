@@ -1,6 +1,6 @@
 //! Gist metadata, live account authority and durable Git-publication admission.
 use super::{
-    models::Repository,
+    models::{Repository, User},
     users::accounts::AccountCredential,
     DbPool,
 };
@@ -76,8 +76,6 @@ pub enum GistRefusal {
 
 native_operation!(crate::backend::db::postgres::gists::is_identifier,crate::backend::db::sqlite::gists::is_identifier,
     fn is_identifier(pool:&DbPool,id:&str)->Result<bool>);
-native_operation!(crate::backend::db::postgres::gists::orphaned_for_owner,crate::backend::db::sqlite::gists::orphaned_for_owner,
-    fn orphaned_for_owner(pool:&DbPool,owner:i64)->Result<Vec<i64>>);
 native_operation!(crate::backend::db::postgres::gists::unready_for_owner,crate::backend::db::sqlite::gists::unready_for_owner,
     fn unready_for_owner(pool:&DbPool,owner:i64)->Result<Vec<String>>);
 native_operation!(crate::backend::db::postgres::gists::get,crate::backend::db::sqlite::gists::get,
@@ -88,8 +86,6 @@ native_operation!(crate::backend::db::postgres::gists::git_repository,crate::bac
     fn git_repository(pool:&DbPool,id:&str) -> Result<Option<Repository>>);
 native_operation!(crate::backend::db::postgres::gists::list,crate::backend::db::sqlite::gists::list,
     fn list(pool:&DbPool,input:&GistList) -> Result<Vec<Gist>>);
-native_operation!(crate::backend::db::postgres::gists::list_for_session,crate::backend::db::sqlite::gists::list_for_session,
-    fn list_for_session(pool:&DbPool,input:&GistList,session:&str) -> Result<Vec<Gist>>);
 native_operation!(crate::backend::db::postgres::gists::count_owned,crate::backend::db::sqlite::gists::count_owned,
     fn count_owned(pool:&DbPool,owner:i64,secret:bool,privacy:Option<bool>)->Result<i64>);
 native_operation!(crate::backend::db::postgres::gists::list_created,crate::backend::db::sqlite::gists::list_created,
@@ -107,7 +103,7 @@ native_operation!(crate::backend::db::postgres::gists::pushed,crate::backend::db
 native_operation!(crate::backend::db::postgres::gists::delete,crate::backend::db::sqlite::gists::delete,
     fn delete(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,repo:i64) -> Result<Repository>);
 native_operation!(crate::backend::db::postgres::gists::discard,crate::backend::db::sqlite::gists::discard,
-    fn discard(pool:&DbPool,repo:i64,orphan_only:bool) -> Result<Option<Repository>>);
+    fn discard(pool:&DbPool,repo:i64) -> Result<Option<Repository>>);
 native_operation!(crate::backend::db::postgres::gists::starred,crate::backend::db::sqlite::gists::starred,
     fn starred(pool:&DbPool,actor:i64,repo:i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::gists::star,crate::backend::db::sqlite::gists::star,
@@ -120,9 +116,8 @@ native_operation!(crate::backend::db::postgres::gists::create_comment,crate::bac
     fn create_comment(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,repo:i64,body:&str) -> Result<Comment>);
 native_operation!(crate::backend::db::postgres::gists::change_comment,crate::backend::db::sqlite::gists::change_comment,
     fn change_comment(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,repo:i64,id:i64,body:Option<&str>) -> Result<Comment>);
-
-native_operation!(crate::backend::db::postgres::gists::comment_position,crate::backend::db::sqlite::gists::comment_position,
-    fn comment_position(pool:&DbPool,repo:i64,id:i64) -> Result<i64>);
+native_operation!(crate::backend::db::postgres::gists::commit_user,crate::backend::db::sqlite::gists::commit_user,
+    fn commit_user(pool:&DbPool,email:&str) -> Result<Option<User>>);
 
 pub fn validate_comment(body: &str) -> Result<()> {
     anyhow::ensure!(

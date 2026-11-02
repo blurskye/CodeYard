@@ -31,12 +31,10 @@ pub async fn create_issue_comment(
     Json(req): Json<CreateCommentRequest>,
 ) -> Result<(StatusCode, Json<CommentResponse>), (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let session = crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
     let comment = crate::backend::issues::comments::create_issue_comment(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
-        &db::users::accounts::AccountCredential::Session(&session),
         owner,
         repo,
         number,
@@ -109,11 +107,6 @@ pub async fn list_issue_comments(
         responses.push(CommentResponse::new(entry.comment, author));
     }
 
-    db::issues::get_issue_by_id(&state.pool, issue.id).await
-        .map_err(|_| storage_unavailable())?
-        .filter(|issue| issue.repo_id == repository.id)
-        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ApiError::new("not_found", "Issue not found"))))?;
-    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Json(responses))
 }
 
@@ -166,9 +159,6 @@ pub(crate) async fn native_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(
-            &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-        ),
         owner,
         name,
         number,
@@ -239,9 +229,6 @@ pub(crate) async fn native_edit_comment(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(
-            &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-        ),
         crate::backend::issues::comments::CommentTarget {
             owner,
             repo: name,
@@ -294,9 +281,6 @@ pub(crate) async fn native_delete_comment(
     let result = crate::backend::issues::comments::delete_issue_comment(
         &ctx.state.pool,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(
-            &crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
-        ),
         crate::backend::issues::comments::CommentTarget {
             owner,
             repo: name,

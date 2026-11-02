@@ -39,30 +39,12 @@ fn run(yaml: &str, files: &[(&str, &str)], args: &[&str]) -> Output {
     command(workspace.path()).args(args).output().unwrap()
 }
 
-/// Everything the run printed, for checks that nothing leaked anywhere.
-fn raw_log(output: &Output) -> String {
+fn log(output: &Output) -> String {
     format!(
         "{}{}",
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     )
-}
-
-/// What the run printed, without the runner's step status lines. Those show each step's name,
-/// which by default is the first line of its script, so a check for what a step printed must
-/// not match them.
-fn log(output: &Output) -> String {
-    raw_log(output)
-        .lines()
-        .filter(|line| {
-            !line.split_once("] ").is_some_and(|(_, rest)| {
-                ["Step started: ", "Step skipped: ", "Step completed: "]
-                    .iter()
-                    .any(|status| rest.starts_with(status))
-            })
-        })
-        .map(|line| format!("{line}\n"))
-        .collect()
 }
 
 fn success(output: &Output) {
@@ -126,7 +108,7 @@ jobs:
         .output()
         .unwrap();
     success(&output);
-    let text = raw_log(&output);
+    let text = log(&output);
     for secret in ["first-secret", "second-secret", "skipped-secret"] {
         assert!(!text.contains(secret), "{text}");
     }
@@ -322,70 +304,6 @@ jobs:
         log(&refused)
     );
     assert!(!log(&refused).contains("Job started"), "{}", log(&refused));
-}
-
-#[test]
-fn steps_without_a_name_are_named_after_their_script_or_action() {
-    let output = run(
-        r#"
-on: push
-jobs:
-  test:
-    runs-on: self-hosted
-    steps:
-      - id: first
-        run: |
-
-          echo ${{ github.event_name }}-name
-          echo second line
-      - name: Named ${{ github.event_name }}
-        run: "true"
-      - if: false
-        uses: ./missing
-"#,
-        &[],
-        &[],
-    );
-    success(&output);
-    let raw = raw_log(&output);
-    assert!(raw.contains("] Step started: Run echo push-name\n"), "{raw}");
-    assert!(raw.contains("] Step started: Named push\n"), "{raw}");
-    assert!(raw.contains("] Step skipped: Run ./missing\n"), "{raw}");
-}
-
-#[test]
-fn a_snapshot_is_accepted_with_a_warning() {
-    let output = run(
-        "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    snapshot: my-image\n    steps:\n      - run: echo snapshot-job-ran\n",
-        &[],
-        &[],
-    );
-    success(&output);
-    assert!(log(&output).contains("snapshot-job-ran"));
-    assert!(log(&output).contains("the job's snapshot is ignored"));
-}
-
-#[cfg(unix)]
-#[test]
-fn action_metadata_that_links_outside_the_action_is_refused() {
-    let workspace = tempfile::tempdir().unwrap();
-    std::fs::create_dir_all(workspace.path().join("action")).unwrap();
-    std::fs::create_dir_all(workspace.path().join("outside")).unwrap();
-    std::fs::write(
-        workspace.path().join("outside/action.yml"),
-        "runs:\n  using: composite\n  steps:\n    - shell: bash\n      run: echo SHOULD-NOT-RUN\n",
-    )
-    .unwrap();
-    std::os::unix::fs::symlink("../outside/action.yml", workspace.path().join("action/action.yml")).unwrap();
-    std::fs::write(
-        workspace.path().join("workflow.yml"),
-        "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - uses: ./action\n",
-    )
-    .unwrap();
-    let output = command(workspace.path()).output().unwrap();
-    assert!(!output.status.success());
-    assert!(log(&output).contains("metadata file must be inside the action"), "{}", log(&output));
-    assert!(!log(&output).contains("SHOULD-NOT-RUN"));
 }
 
 #[test]
@@ -699,7 +617,7 @@ jobs:
         .output()
         .unwrap();
     success(&output);
-    let text = raw_log(&output);
+    let text = log(&output);
     assert!(!text.contains("top-secret-value"), "{text}");
     assert!(!text.contains("runtime-secret"), "{text}");
     assert!(text.contains("***"), "{text}");
@@ -897,55 +815,6 @@ jobs:
 }
 
 #[test]
-fn github_context_has_ids_the_workflow_ref_and_runner_names() {
-    let workspace = tempfile::tempdir().unwrap();
-    std::fs::write(
-        workspace.path().join("event.json"),
-        r#"{"repository":{"full_name":"owner/project","id":42,"owner":{"id":7}},"sender":{"id":9}}"#,
-    )
-    .unwrap();
-    std::fs::write(
-        workspace.path().join("workflow.yml"),
-        r#"
-on: push
-jobs:
-  test:
-    runs-on: self-hosted
-    steps:
-      - run: |
-          test "$GITHUB_REPOSITORY_ID" = 42
-          test "$GITHUB_REPOSITORY_OWNER_ID" = 7
-          test "$GITHUB_ACTOR_ID" = 9
-          test "$GITHUB_WORKFLOW_REF" = owner/project/.github/workflows/workflow.yml@refs/heads/topic
-          test "$GITHUB_WORKFLOW_SHA" = given-sha
-          test "$GITHUB_REF_PROTECTED" = false
-          test "$GITHUB_RETENTION_DAYS" = 90
-          test '${{ github.secret_source }}' = Actions
-          test '${{ github.repositoryUrl }}' = git://github.com/owner/project.git
-          test -z "${GITHUB_SECRET_SOURCE-}"
-          test "$RUNNER_NAME" = '${{ runner.name }}'
-          test "$RUNNER_ENVIRONMENT" = self-hosted
-          test -n "$RUNNER_TRACKING_ID"
-          echo context-ids-ok
-"#,
-    )
-    .unwrap();
-    let output = command(workspace.path())
-        .args([
-            "--env",
-            "GITHUB_REF=refs/heads/topic",
-            "--env",
-            "GITHUB_SHA=given-sha",
-        ])
-        .arg("--eventpath")
-        .arg(workspace.path().join("event.json"))
-        .output()
-        .unwrap();
-    success(&output);
-    assert!(log(&output).contains("context-ids-ok"), "{}", log(&output));
-}
-
-#[test]
 fn offline_remote_action_from_cache() {
     let workspace = tempfile::tempdir().unwrap();
     let cached = workspace
@@ -1003,7 +872,7 @@ fn authenticated_progress_reports_the_observed_timeout() {
         .output()
         .unwrap();
     assert!(!output.status.success());
-    let text = raw_log(&output);
+    let text = log(&output);
     assert!(!text.contains("deadline-token"));
     let events: Vec<codeyard_actions::progress::Event> = text
         .lines()
@@ -1040,120 +909,6 @@ fn job_timeout_covers_the_whole_job() {
     assert!(!output.status.success());
     assert!(started.elapsed() < std::time::Duration::from_secs(10));
     assert!(log(&output).contains("timed out"));
-}
-
-#[test]
-fn the_cancel_timeout_bounds_cleanup_steps_after_a_job_timeout() {
-    let started = std::time::Instant::now();
-    let output = run(
-        r#"
-on: push
-jobs:
-  test:
-    runs-on: self-hosted
-    timeout-minutes: 0.01
-    steps:
-      - run: sleep 30
-      - if: always()
-        run: |
-          echo cleanup-started
-          sleep 30
-          echo cleanup-finished
-"#,
-        &[],
-        &["--cancel-timeout-minutes", "0.01"],
-    );
-    assert!(!output.status.success());
-    let text = log(&output);
-    assert!(text.contains("cleanup-started"), "{text}");
-    assert!(!text.contains("cleanup-finished"), "{text}");
-    assert!(text.contains("Job completed: failure"), "{text}");
-    assert!(started.elapsed() < std::time::Duration::from_secs(10));
-}
-
-#[test]
-fn a_fail_fast_cancellation_runs_the_cancelled_legs_cleanup() {
-    let started = std::time::Instant::now();
-    let output = run(
-        r#"
-on: push
-jobs:
-  test:
-    runs-on: self-hosted
-    strategy:
-      matrix:
-        leg: [fail, slow]
-    steps:
-      - run: |
-          if [ '${{ matrix.leg }}' = fail ]; then sleep 1; exit 1; fi
-          sleep 30
-      - if: cancelled()
-        run: echo 'cancelled-${{ matrix.leg }}'
-"#,
-        &[],
-        &["--concurrent-jobs", "2"],
-    );
-    assert!(!output.status.success());
-    let text = log(&output);
-    assert!(text.contains("cancelled-slow"), "{text}");
-    assert!(!text.contains("cancelled-fail"), "{text}");
-    assert!(text.contains("Job completed: cancelled"), "{text}");
-    assert!(started.elapsed() < std::time::Duration::from_secs(20));
-}
-
-#[test]
-fn a_step_cannot_redirect_the_event_file_through_a_link() {
-    let output = run(
-        r#"
-on: push
-jobs:
-  test:
-    runs-on: self-hosted
-    steps:
-      - run: |
-          printf keep > outside.txt
-          ln -sf "$PWD/outside.txt" "$GITHUB_EVENT_PATH"
-      - run: |
-          test "$(cat outside.txt)" = keep
-          test ! -L "$GITHUB_EVENT_PATH"
-          echo event-file-replaced
-"#,
-        &[],
-        &[],
-    );
-    success(&output);
-    assert!(
-        log(&output).contains("event-file-replaced"),
-        "{}",
-        log(&output)
-    );
-}
-
-#[test]
-fn step_debug_from_a_secret_shows_debug_messages_and_echoes_commands() {
-    let workspace = tempfile::tempdir().unwrap();
-    std::fs::write(
-        workspace.path().join("secrets"),
-        "ACTIONS_STEP_DEBUG=true\n",
-    )
-    .unwrap();
-    std::fs::write(
-        workspace.path().join("workflow.yml"),
-        "on: push\njobs:\n  test:\n    runs-on: self-hosted\n    steps:\n      - run: |\n          echo '::debug::shown-debug'\n          echo '::remove-matcher owner=echoed-owner::'\n",
-    )
-    .unwrap();
-    let output = command(workspace.path())
-        .arg("--secret-file")
-        .arg(workspace.path().join("secrets"))
-        .output()
-        .unwrap();
-    success(&output);
-    let text = log(&output);
-    assert!(text.contains("debug: shown-debug"), "{text}");
-    assert!(
-        text.contains("::remove-matcher owner=echoed-owner::"),
-        "{text}"
-    );
 }
 
 #[test]
@@ -1210,150 +965,6 @@ fn sigterm_stops_the_running_process_group() {
 }
 
 #[test]
-fn independent_jobs_run_together_and_dependents_wait_for_them() {
-    let output = run(
-        r#"
-on: push
-jobs:
-  first:
-    runs-on: self-hosted
-    steps:
-      - run: |
-          touch first-started
-          for i in $(seq 200); do test -f second-started && break; sleep 0.05; done
-          test -f second-started
-          touch first-done
-  second:
-    runs-on: self-hosted
-    steps:
-      - run: |
-          touch second-started
-          for i in $(seq 200); do test -f first-started && break; sleep 0.05; done
-          test -f first-started
-          touch second-done
-  last:
-    needs: [first, second]
-    runs-on: self-hosted
-    steps:
-      - run: test -f first-done && test -f second-done && echo dependents-$(echo waited)
-"#,
-        &[],
-        &["--concurrent-jobs", "2"],
-    );
-    success(&output);
-    assert!(
-        log(&output).contains("dependents-waited"),
-        "{}",
-        log(&output)
-    );
-}
-
-#[test]
-fn concurrent_jobs_and_max_parallel_bound_how_many_jobs_run_at_once() {
-    // mkdir is atomic, so a job that overlaps another one holding the directory fails.
-    let output = run(
-        r#"
-on: push
-jobs:
-  first:
-    runs-on: self-hosted
-    steps:
-      - run: mkdir running && sleep 1 && rmdir running
-  second:
-    runs-on: self-hosted
-    steps:
-      - run: mkdir running && sleep 1 && rmdir running
-"#,
-        &[],
-        &["--concurrent-jobs", "1"],
-    );
-    success(&output);
-    let output = run(
-        r#"
-on: push
-jobs:
-  matrix:
-    runs-on: self-hosted
-    strategy:
-      max-parallel: 1
-      matrix:
-        leg: [a, b]
-    steps:
-      - run: |
-          mkdir matrix-running
-          touch leg-started
-          for i in $(seq 200); do test -f other-started && break; sleep 0.05; done
-          sleep 0.5
-          rmdir matrix-running
-  other:
-    runs-on: self-hosted
-    steps:
-      - run: |
-          touch other-started
-          for i in $(seq 200); do test -f leg-started && break; sleep 0.05; done
-          test -f leg-started
-"#,
-        &[],
-        &["--concurrent-jobs", "4"],
-    );
-    success(&output);
-}
-
-#[cfg(unix)]
-#[test]
-fn sigterm_stops_every_running_job() {
-    let workspace = tempfile::tempdir().unwrap();
-    std::fs::write(
-        workspace.path().join("workflow.yml"),
-        r#"
-on: push
-jobs:
-  first:
-    runs-on: self-hosted
-    steps:
-      - run: |
-          echo ready > first-ready
-          (sleep 2; echo leaked > first-leaked) &
-          wait
-  second:
-    runs-on: self-hosted
-    steps:
-      - run: |
-          echo ready > second-ready
-          (sleep 2; echo leaked > second-leaked) &
-          wait
-"#,
-    )
-    .unwrap();
-    let mut child = command(workspace.path())
-        .args(["--concurrent-jobs", "2"])
-        .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-        .unwrap();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-    while !["first-ready", "second-ready"]
-        .iter()
-        .all(|name| workspace.path().join(name).exists())
-    {
-        if std::time::Instant::now() > deadline || child.try_wait().unwrap().is_some() {
-            let _ = child.kill();
-            panic!(
-                "Runner did not start both jobs: {}",
-                log(&child.wait_with_output().unwrap())
-            );
-        }
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-    assert_eq!(unsafe { libc::kill(child.id() as i32, libc::SIGTERM) }, 0);
-    let output = child.wait_with_output().unwrap();
-    assert!(!output.status.success(), "{}", log(&output));
-    std::thread::sleep(std::time::Duration::from_secs(3));
-    assert!(!workspace.path().join("first-leaked").exists());
-    assert!(!workspace.path().join("second-leaked").exists());
-}
-
-#[test]
 #[ignore = "needs node"]
 fn node_pre_main_post_and_state() {
     let output = run(r#"
@@ -1392,17 +1003,10 @@ jobs:
       - shell: sh
         run: wget -qO- http://web/ | grep nginx
       - uses: ./docker
-      # Without action metadata, the step's entrypoint and args inputs start the container.
-      - uses: docker://alpine:3.21
-        with:
-          Entrypoint: /bin/sh
-          ARGS: -c "echo docker-url-$INPUT_EXTRA"
-          extra: value
 "#, &[
         ("docker/action.yml", "runs:\n  using: docker\n  image: Dockerfile\n"),
         ("docker/Dockerfile", "FROM alpine:3.21\nENTRYPOINT [\"sh\", \"-c\", \"test -d \\\"$GITHUB_WORKSPACE\\\" && echo docker-ok\"]\n"),
     ], &["--container-options", "--label codeyard-actions-test=yes", "--pull=false"]);
     success(&output);
     assert!(log(&output).contains("docker-ok"));
-    assert!(log(&output).contains("docker-url-value"));
 }

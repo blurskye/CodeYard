@@ -1,14 +1,15 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
-use crate::backend::api::repos::chrome::{load, resolve};
+use crate::backend::api::repos::access::readable_repository;
+use crate::backend::api::repos::chrome::{load, load_refs_from_repo, resolve};
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange, RepoError};
 use axum::extract::{OriginalUri, Path, State};
-use axum::http::{header, HeaderMap, Method, StatusCode};
+use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::Json;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
+use std::sync::Arc;
 
 /// Content type for a raw blob.
 ///
@@ -23,15 +24,77 @@ use std::{collections::HashMap, sync::Arc};
 /// user content from this origin, and an SVG opened directly (not through
 /// `<img>`) can run script in that origin. Raw SVG stays a non-executable type,
 /// which is what the previous behaviour was too.
-pub use crate::webui::raw_content_type;
+pub fn raw_content_type(path: &str, is_binary: bool) -> &'static str {
+    let extension = std::path::Path::new(path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
 
-pub(crate) fn download_limit() -> (u64, String) {
-    let bytes = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES as u64;
-    (bytes, format!("{} MiB", bytes / (1024 * 1024)))
+    match extension.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "avif" => "image/avif",
+        "bmp" => "image/bmp",
+        "ico" => "image/x-icon",
+        "mp4" => "video/mp4",
+        "webm" => "video/webm",
+        "mov" => "video/quicktime",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" => "audio/ogg",
+        "pdf" => "application/pdf",
+        "woff2" => "font/woff2",
+        "woff" => "font/woff",
+        "ttf" => "font/ttf",
+        "otf" => "font/otf",
+        _ if is_binary => "application/octet-stream",
+        _ => "text/plain; charset=utf-8",
+    }
 }
 
-fn limit_message() -> String {
-    format!("Raw responses are limited to {}; request a byte range.", download_limit().1)
+pub(crate) fn requested_range(headers: &HeaderMap) -> Result<(BlobRange, bool), ()> {
+    let mut values = headers.get_all(header::RANGE).iter();
+    let Some(value) = values.next() else {
+        return Ok((BlobRange::Full, false));
+    };
+    if values.next().is_some() {
+        return Err(());
+    }
+    let value = value.to_str().map_err(|_| ())?;
+    let value = value.strip_prefix("bytes=").ok_or(())?;
+    if value.contains(',') {
+        return Err(());
+    }
+    let (start, end) = value.split_once('-').ok_or(())?;
+    let range = match (start.is_empty(), end.is_empty()) {
+        (false, false) => {
+            let start = start.parse::<u64>().map_err(|_| ())?;
+            let end = end.parse::<u64>().map_err(|_| ())?;
+            if end < start {
+                return Err(());
+            }
+            BlobRange::Bytes {
+                start,
+                end: Some(end),
+            }
+        }
+        (false, true) => BlobRange::Bytes {
+            start: start.parse::<u64>().map_err(|_| ())?,
+            end: None,
+        },
+        (true, false) => {
+            let length = end.parse::<u64>().map_err(|_| ())?;
+            if length == 0 {
+                return Err(());
+            }
+            BlobRange::Suffix { length }
+        }
+        (true, true) => return Err(()),
+    };
+    Ok((range, true))
 }
 
 fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
@@ -40,7 +103,7 @@ fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
             StatusCode::PAYLOAD_TOO_LARGE,
             Json(ApiError::new(
                 "payload_too_large",
-                &limit_message(),
+                "Raw responses are limited to 32 MiB; request a byte range",
             )),
         );
     }
@@ -62,13 +125,19 @@ fn raw_store_error(error: RepoError) -> (StatusCode, Json<ApiError>) {
 pub async fn get_raw_blob(
     State(state): State<Arc<AppState>>,
     Path((owner, repo, git_ref, path)): Path<(String, String, String, String)>,
-    method: Method,
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let head = method == Method::HEAD;
-    let (range, partial) = (if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) }).map_err(|_| {
+    let refs = load_refs_from_repo(&state, &repository).await?;
+    if refs.is_empty() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiError::new("not_found", "Repository is empty")),
+        ));
+    }
+
+    let (range, partial) = requested_range(&headers).map_err(|_| {
         (
             StatusCode::RANGE_NOT_SATISFIABLE,
             Json(ApiError::new(
@@ -77,20 +146,19 @@ pub async fn get_raw_blob(
             )),
         )
     })?;
-    let permit = if head { None } else { Some(crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
+    let permit = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads)
         .await
         .ok_or_else(|| {
             (
                 StatusCode::SERVICE_UNAVAILABLE,
                 Json(ApiError::new("downloads_busy", "Repository downloads busy")),
             )
-        })?) };
+        })?;
     let blob = repo_store(&repository, state.cluster.as_ref())
         .blob_range(&git_ref, &path, range)
         .await
         .map_err(raw_store_error)?;
-    // Access may have been lost while the blob was read.
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
+
     Ok(raw_response(&path, blob, partial, permit))
 }
 
@@ -98,10 +166,8 @@ pub(crate) fn raw_response(
     path: &str,
     blob: BlobBytes,
     partial: bool,
-    permit: impl Into<Option<tokio::sync::OwnedSemaphorePermit>>,
+    permit: tokio::sync::OwnedSemaphorePermit,
 ) -> Response {
-    let permit = permit.into();
-    let head = permit.is_none();
     let BlobBytes {
         id: _,
         bytes,
@@ -109,13 +175,10 @@ pub(crate) fn raw_response(
         size,
         offset,
         mode: _,
-        ..
     } = blob;
-    let length = if head { size } else { bytes.len() as u64 };
-    let mut response = Response::new(match permit {
-        Some(permit) => crate::backend::api::http::middleware::buffered_download_body(bytes, permit),
-        None => axum::body::Body::empty(),
-    });
+    let length = bytes.len();
+    let mut response =
+        Response::new(crate::backend::api::http::middleware::buffered_download_body(bytes, permit));
     *response.status_mut() = if partial {
         StatusCode::PARTIAL_CONTENT
     } else {
@@ -168,15 +231,10 @@ pub(crate) fn raw_response(
 pub async fn raw_page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
-    method: Method,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    Path(params): Path<HashMap<String, String>>,
 ) -> Response {
-    if headers.contains_key(header::AUTHORIZATION) {
-        return token_raw_page(state, headers, method, &params).await;
-    }
-    let head = method == Method::HEAD;
-    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) } {
+    let (range, partial) = match requested_range(&headers) {
         Ok(range) => range,
         Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
     };
@@ -194,27 +252,22 @@ pub async fn raw_page(
         Ok(resolved) => resolved,
         Err(response) => return response,
     };
-    let permit = if head { None } else {
-        let Some(permit) = crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await else {
-            return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Repository downloads busy.");
-        };
-        Some(permit)
+    let Some(permit) =
+        crate::backend::api::http::middleware::wait_for_slot(&ctx.state.repository_downloads).await
+    else {
+        return ctx.error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Repository downloads busy.",
+        );
     };
     let blob = repo_store(&loaded.repository, ctx.state.cluster.as_ref())
         .blob_range(&resolved.reference, &resolved.path, range)
         .await;
     match blob {
-        Ok(blob) => {
-            if let Err((status, _)) = check_repo_read_access(
-                &ctx.state.pool, &loaded.repository, &ctx.headers,
-            ).await {
-                return ctx.error(status, "Unable to download this repository file.");
-            }
-            ctx.with_cookie(raw_response(&resolved.path, blob, partial, permit))
-        }
+        Ok(blob) => ctx.with_cookie(raw_response(&resolved.path, blob, partial, permit)),
         Err(error) if error.is_response_too_large() => ctx.error(
             StatusCode::PAYLOAD_TOO_LARGE,
-            &limit_message(),
+            "Raw responses are limited to 32 MiB; request a byte range.",
         ),
         Err(error) if error.is_range_not_satisfiable() => ctx.error(
             StatusCode::RANGE_NOT_SATISFIABLE,
@@ -224,58 +277,6 @@ pub async fn raw_page(
             crate::backend::api::repos::chrome::store_error(&ctx, Some(&loaded.chrome), error)
         }
     }
-}
-
-/// REST contents documents advertise this same native URL. Bearer clients retain their
-/// repository-scoped token instead of being downgraded to anonymous browser visitors.
-async fn token_raw_page(state: Arc<AppState>, headers: HeaderMap, method: Method, params: &HashMap<String, String>) -> Response {
-    let (repository, authentication) = match crate::backend::api::github::repository(
-        &state, &headers, &params["owner"], &params["repo"], false,
-    ).await {
-        Ok(value) => value,
-        Err(error) => return error.into_response(),
-    };
-    let Some(authentication) = authentication else { return StatusCode::UNAUTHORIZED.into_response(); };
-    let credential = crate::backend::repositories::git_sessions::ReceiveCredential::Token(authentication.token.id);
-    if credential.authorize(&state.pool, &repository, false).await.is_err() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    let store = repo_store(&repository, state.cluster.as_ref());
-    let refs = match store.refs().await {
-        Ok(refs) => refs,
-        Err(error) => return raw_store_error(error).into_response(),
-    };
-    let names = refs.keys().flat_map(|name| {
-        let short = name.strip_prefix("refs/heads/").or_else(|| name.strip_prefix("refs/tags/"));
-        std::iter::once(name.clone()).chain(short.map(str::to_owned))
-    }).collect::<Vec<_>>();
-    use crate::webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
-    let Some(resolved) = resolve_repo_ref_path(&split_path(&params["ref_path"]), &names, true) else {
-        return StatusCode::NOT_FOUND.into_response();
-    };
-    let head = method == Method::HEAD;
-    let (range, partial) = match if head { Ok((BlobRange::Window { offset: 0, length: 0 }, false)) } else { crate::backend::api::http::range::requested(&headers, None) } {
-        Ok(range) => range,
-        Err(()) => return StatusCode::RANGE_NOT_SATISFIABLE.into_response(),
-    };
-    let permit = if head { None } else {
-        let Some(permit) = crate::backend::api::http::middleware::wait_for_slot(&state.repository_downloads).await else {
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        };
-        Some(permit)
-    };
-    let blob = match store.blob_range(&resolved.reference, &resolved.path, range).await {
-        Ok(blob) => blob,
-        Err(error) => return raw_store_error(error).into_response(),
-    };
-    let current = match crate::backend::repositories::access::current_repository(&state.pool, repository.id).await {
-        Ok(current) => current,
-        Err(_) => return StatusCode::NOT_FOUND.into_response(),
-    };
-    if credential.authorize(&state.pool, &current, false).await.is_err() {
-        return StatusCode::NOT_FOUND.into_response();
-    }
-    raw_response(&resolved.path, blob, partial, permit)
 }
 
 #[cfg(test)]

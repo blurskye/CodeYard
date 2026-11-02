@@ -28,7 +28,6 @@ const MIGRATION_SEEDS: &[(&str, &str, &[&str])] = &[
             "readme_image",
             "repo_asset",
             "other",
-            "package",
         ],
     ),
     ("issue_attribute_guard", "id", &["1"]),

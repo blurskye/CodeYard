@@ -8,30 +8,8 @@ use std::collections::HashSet;
 pub mod query;
 
 pub const MAX_DEFINITIONS: usize = 100;
-/// Leaves room for selected values, drafts and repository chrome in the 16 MiB page model.
-pub const MAX_CATALOG_BYTES: usize = 2 * 1024 * 1024;
 pub const MAX_ALLOWED_VALUES: usize = 200;
 pub const MAX_VALUE_BYTES: usize = 1024;
-pub const MAX_FORM_VALUE_BYTES: usize = MAX_ALLOWED_VALUES * MAX_VALUE_BYTES + 2 * (MAX_ALLOWED_VALUES - 1);
-
-pub(crate) fn effective_values(
-    definitions: &[Definition], rows: &std::collections::HashMap<i64, String>,
-) -> Result<Vec<ValueInput>> {
-    let mut result = Vec::new();
-    let mut bytes = 0;
-    for definition in definitions {
-        let value = match rows.get(&definition.id) {
-            Some(value) => Some(serde_json::from_str::<PropertyValue>(value)?),
-            None if definition.fields.require_explicit_values => None,
-            None => definition.fields.default_value.clone(),
-        };
-        if let Some(value) = &value { definition.fields.validate_value(value)?; }
-        bytes += serde_json::to_string(&value)?.len() + definition.fields.property_name.len() + 64;
-        ensure!(bytes <= 64 * 1024 * 1024, Refusal::TooLarge);
-        result.push(ValueInput { property_name: definition.fields.property_name.clone(), value });
-    }
-    Ok(result)
-}
 
 #[derive(Debug, thiserror::Error)]
 pub enum Refusal {
@@ -170,11 +148,6 @@ pub fn valid_name(name: &str) -> bool {
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'_'))
 }
 impl DefinitionInput {
-    pub(crate) fn same_value_rules(&self, other: &Self) -> bool {
-        self.value_type == other.value_type && self.allowed_values == other.allowed_values
-            && self.required == other.required && self.require_explicit_values == other.require_explicit_values
-    }
-
     pub fn validate(&self) -> Result<()> {
         ensure!(
             valid_name(&self.property_name),
@@ -332,16 +305,6 @@ impl DefinitionRow {
         })
     }
 }
-/// The catalog columns an overview shows, without the allowed values and default.
-#[derive(Clone, Debug, sqlx::FromRow)]
-pub struct DefinitionSummary {
-    pub id: i64,
-    pub property_name: String,
-    pub value_type: String,
-    pub description: Option<String>,
-    pub required: bool,
-    pub require_explicit_values: bool,
-}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ValueInput {
     pub property_name: String,
@@ -406,16 +369,6 @@ pub(crate) fn checked_changes(
     result.sort_unstable_by_key(|(id, _)| *id);
     Ok(result)
 }
-pub(crate) fn checked_catalog_bytes<'a>(fields: impl IntoIterator<Item = &'a DefinitionInput>) -> Result<()> {
-    let mut bytes = 2usize;
-    for definition in fields {
-        bytes = bytes.checked_add(serde_json::to_vec(definition)?.len() + 1)
-            .filter(|bytes| *bytes <= MAX_CATALOG_BYTES)
-            .ok_or_else(|| invalid("properties", "The serialized property catalog must fit within 2 MiB"))?;
-    }
-    Ok(())
-}
-
 pub(crate) fn checked_definitions(
     inputs: &[DefinitionInput],
     existing: &[Definition],
@@ -448,10 +401,7 @@ pub(crate) fn checked_definitions(
             "An organization can define at most 100 repository properties"
         )
     );
-    checked_catalog_bytes(existing.iter()
-        .filter(|definition| !seen.contains(&definition.fields.property_name.to_ascii_lowercase()))
-        .map(|definition| &definition.fields)
-        .chain(inputs.iter()))
+    Ok(())
 }
 #[derive(Debug)]
 pub struct RepositoryValues {
@@ -468,25 +418,21 @@ pub struct RepositoryMetadata {
 
 native_operation!(crate::backend::db::postgres::organizations::properties::catalog,crate::backend::db::sqlite::organizations::properties::catalog,
     fn catalog(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Vec<Definition>>>);
-native_operation!(crate::backend::db::postgres::organizations::properties::summaries,crate::backend::db::sqlite::organizations::properties::summaries,
-    fn summaries(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Vec<DefinitionSummary>>>);
-native_operation!(crate::backend::db::postgres::organizations::properties::definition,crate::backend::db::sqlite::organizations::properties::definition,
-    fn definition(pool:&DbPool,actor:i64,org:i64,name:&str)->Result<OrganizationOutcome<Option<Definition>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::define,crate::backend::db::sqlite::organizations::properties::define,
-    fn define(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,inputs:&[DefinitionInput])->Result<OrganizationOutcome<Vec<Definition>>>);
+    fn define(pool:&DbPool,actor:i64,org:i64,inputs:&[DefinitionInput])->Result<OrganizationOutcome<Vec<Definition>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::remove,crate::backend::db::sqlite::organizations::properties::remove,
-    fn remove(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,name:&str,definition:Option<i64>)->Result<OrganizationOutcome<()>>);
+    fn remove(pool:&DbPool,actor:i64,org:i64,name:&str)->Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::list_values,crate::backend::db::sqlite::organizations::properties::list_values,
     fn list_values(pool:&DbPool,actor:i64,org:i64,query:&query::RepositoryQuery,window:(i64,i64))->Result<OrganizationOutcome<Vec<RepositoryValues>>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::set_values,crate::backend::db::sqlite::organizations::properties::set_values,
-    fn set_values(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,repositories:&[String],values:&[ValueInput])->Result<OrganizationOutcome<()>>);
+    fn set_values(pool:&DbPool,actor:i64,org:i64,repositories:&[String],values:&[ValueInput])->Result<OrganizationOutcome<()>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::repository,crate::backend::db::sqlite::organizations::properties::repository,
     fn repository(pool:&DbPool,viewer:Option<i64>,repo:i64)->Result<Option<RepositoryMetadata>>);
 native_operation!(crate::backend::db::postgres::organizations::properties::set_repository_values,crate::backend::db::sqlite::organizations::properties::set_repository_values,
-    fn set_repository_values(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,repo:i64,values:&[ValueInput])->Result<()>);
+    fn set_repository_values(pool:&DbPool,actor:i64,repo:i64,values:&[ValueInput])->Result<()>);
 
 native_operation!(crate::backend::db::postgres::organizations::properties::set_repository_value,crate::backend::db::sqlite::organizations::properties::set_repository_value,
-    fn set_repository_value(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,repo:i64,definition:i64,value:&ValueInput)->Result<()>);
+    fn set_repository_value(pool:&DbPool,actor:i64,repo:i64,definition:i64,value:&ValueInput)->Result<()>);
 
 #[cfg(test)]
 mod tests {

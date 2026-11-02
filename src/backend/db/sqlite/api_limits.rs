@@ -14,12 +14,12 @@ pub async fn budget(pool: &SqlitePool, request: Request<'_>) -> Result<(Budget, 
     if consume {
         // Keep the refusal and its headers in the same window as the attempted increment.
         let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-        sqlx::query("DELETE FROM github_api_limits WHERE (requester,resource) IN (SELECT requester,resource FROM github_api_limits WHERE reset_at<=?1 ORDER BY reset_at LIMIT 100)")
+        sqlx::query("DELETE FROM github_api_limits WHERE reset_at<=?1")
             .bind(now)
             .execute(&mut *tx)
             .await?;
-        let row = sqlx::query_as("INSERT INTO github_api_limits(requester,resource,used,reset_at) VALUES(?1,?2,1,?3) ON CONFLICT(requester,resource) DO UPDATE SET used=CASE WHEN github_api_limits.reset_at<=?5 THEN 1 ELSE github_api_limits.used+1 END,reset_at=CASE WHEN github_api_limits.reset_at<=?5 THEN excluded.reset_at ELSE github_api_limits.reset_at END WHERE github_api_limits.reset_at<=?5 OR github_api_limits.used<?4 RETURNING used,reset_at")
-            .bind(key).bind(resource).bind(now+seconds).bind(limit).bind(now).fetch_optional(&mut *tx).await?;
+        let row = sqlx::query_as("INSERT INTO github_api_limits(requester,resource,used,reset_at) VALUES(?1,?2,1,?3) ON CONFLICT(requester,resource) DO UPDATE SET used=github_api_limits.used+1 WHERE github_api_limits.used<?4 RETURNING used,reset_at")
+            .bind(key).bind(resource).bind(now+seconds).bind(limit).fetch_optional(&mut *tx).await?;
         let result = if let Some(row) = row {
             (row, true)
         } else {

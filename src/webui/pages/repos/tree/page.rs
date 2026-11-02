@@ -332,7 +332,12 @@ fn about_column(repo: &RepoChrome, page: &TreePage) -> Element {
     let license = page.entries.iter().find(|entry| {
         entry.kind == "file" && entry.name.to_ascii_lowercase().starts_with("license")
     });
-    let website_is_link = crate::website::parse(&repo.website).is_some();
+    let has_scheme = |scheme: &str| {
+        repo.website
+            .get(..scheme.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(scheme))
+    };
+    let website_is_link = has_scheme("https://") || has_scheme("http://");
     rsx! {
         aside { class: "repo-about", "aria-label": "About",
             div { class: "repo-about-header",
@@ -429,15 +434,14 @@ fn setup_commands(url: &str, branch: &str) -> Element {
     let url = shell_argument(url);
     let branch = shell_argument(branch);
     let new_repository = format!(
-        "git init &&\ngit add . &&\ngit commit -m \"first commit\" &&\ngit branch -M {branch} &&\ngit remote add origin {url} &&\ngit push -u origin {branch}"
+        "git init\ngit add .\ngit commit -m \"first commit\"\ngit branch -M {branch}\ngit remote add origin {url}\ngit push -u origin {branch}"
     );
     let existing_repository =
-        format!("git remote add origin {url} &&\ngit branch -M {branch} &&\ngit push -u origin {branch}");
+        format!("git remote add origin {url}\ngit branch -M {branch}\ngit push -u origin {branch}");
     rsx! {
         h4 { "Create a new repository on the command line" }
         pre { class: "repo-quick-setup-code", "{new_repository}" }
         h4 { "Push an existing repository from the command line" }
-        p { "If origin already exists, inspect it with git remote -v and explicitly change it with git remote set-url origin before pushing. Stop if any setup command fails." }
         pre { class: "repo-quick-setup-code", "{existing_repository}" }
     }
 }
@@ -494,8 +498,8 @@ pub(in crate::webui::pages::repos) fn breadcrumbs(
             for (index, part) in parts.iter().enumerate() {
                 span { key: "{index}", class: "repo-breadcrumb-part",
                     span { class: "repo-path-separator", "/" }
-                    if file && index + 1 == parts.len() { span { class: "repo-path-current", {crate::git_paths::display(part)} } }
-                    else { NavLink { href: file_url(&base, "tree", reference, &parts[..=index].join("/")), {crate::git_paths::display(part)} } }
+                    if file && index + 1 == parts.len() { span { class: "repo-path-current", "{part}" } }
+                    else { NavLink { href: file_url(&base, "tree", reference, &parts[..=index].join("/")), "{part}" } }
                 }
             }
         }

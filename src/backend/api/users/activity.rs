@@ -19,12 +19,12 @@ pub(crate) fn profile_activity_view(page: ActivityPage) -> ProfileActivity {
 
 fn activity_item(row: ActivityRow) -> ProfileActivityItem {
     let repository = format!("{}/{}", row.owner_name, row.repo_name);
-    let repo_path = crate::webui::repository_path(&row.owner_name, &row.repo_name);
+    let repo_path = format!("/{repository}");
     let number = row.number.unwrap_or_default();
     let url = match row.kind.as_str() {
         "push" => format!(
             "{repo_path}/commits?ref={}",
-            crate::webui::encode_component(&format!("refs/heads/{}", row.branch.as_deref().unwrap_or_default()))
+            crate::webui::encode_component(row.branch.as_deref().unwrap_or_default())
         ),
         "issue_opened" | "issue_comment" => format!("{repo_path}/issues/{number}"),
         "pull_request_opened" | "pull_request_merged" | "pull_request_comment" => {

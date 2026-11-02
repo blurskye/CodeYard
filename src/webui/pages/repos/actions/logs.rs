@@ -75,7 +75,8 @@ pub fn timestamp(value: i64) -> String {
 
 /// The job name in the bracketed prefix of an `act` output line, such as `[CI/build]`.
 pub fn act_job_name(line: &str) -> Option<String> {
-    let (token, _) = act_prefix(line)?;
+    let inner = line.strip_prefix('[')?;
+    let token = &inner[..inner.find(']')?];
     let separator = token.rfind('/')?;
     if separator == 0 || separator + 1 >= token.len() {
         return None;
@@ -94,21 +95,9 @@ fn step_name(name: &str) -> String {
     trimmed.trim().to_string()
 }
 
-fn act_prefix(line: &str) -> Option<(&str, &str)> {
-    let inner = line.strip_prefix('[')?;
-    let mut depth = 1;
-    for (at, character) in inner.char_indices() {
-        if character == '[' { depth += 1; }
-        if character == ']' {
-            depth -= 1;
-            if depth == 0 { return Some((&inner[..at], inner[at + 1..].trim_start())); }
-        }
-    }
-    None
-}
-
 fn act_payload(line: &str) -> Option<&str> {
-    act_prefix(line).map(|(_, payload)| payload)
+    let inner = line.strip_prefix('[')?;
+    Some(inner[inner.find(']')? + 1..].trim_start())
 }
 
 /// The step a start line names: act's "⭐ Run <name>" or codeyard-actions' "Step started: <name>".
@@ -226,12 +215,17 @@ pub(super) fn annotation(line: &str) -> Option<Annotation> {
     if !matches!(severity.as_str(), "error" | "warning" | "notice") {
         return None;
     }
-    let decode = crate::command_codec::unescape_data;
+    let decode = |value: &str| {
+        value
+            .replace("%0D", "\r")
+            .replace("%0A", "\n")
+            .replace("%25", "%")
+    };
     let properties: std::collections::BTreeMap<_, _> = properties
         .split(',')
         .filter_map(|part| {
             let (key, value) = part.split_once('=')?;
-            Some((key, crate::command_codec::unescape_property(value)))
+            Some((key, decode(&value.replace("%3A", ":").replace("%2C", ","))))
         })
         .collect();
     let get = |key| properties.get(key).cloned().unwrap_or_default();
@@ -406,7 +400,9 @@ pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
             .entry(&line.stage)
             .or_insert_with(|| "Runner".into());
         if act_job_name(&line.line).is_some() {
-            *identity = act_prefix(&line.line).expect("job prefix").0.to_owned();
+            *identity = line.line[1..line.line.find(']').expect("job prefix")]
+                .trim()
+                .to_owned();
         }
         if let Some((_, _, _, bucket)) = buckets
             .iter_mut()
@@ -434,29 +430,28 @@ pub fn project_logs(lines: &[LogLine], run_status: &str) -> Vec<WorkflowJob> {
 }
 
 /// Adds the steps the workflow file lists but the logs have not reached: pending while the run
-/// is active, unknown once it has ended without an explicit result. Bounded log absence
-/// never proves that a step was skipped.
+/// is active, skipped once it has ended. A planned job with no logs yet is listed the same way.
 /// The set-up and complete phases are the runner's: codeyard-actions logs no markers for them,
 /// so a finished job that logged steps does not get them as skipped.
 pub fn add_planned_steps(jobs: &mut Vec<WorkflowJob>, planned: &[PlannedJob], run_status: &str) {
     let active = matches!(normalize_status(run_status), "queued" | "running");
-    let missing = if active { "pending" } else { "unknown" };
+    let missing = if active { "pending" } else { "skipped" };
     for plan in planned.iter().filter(|plan| !plan.steps.is_empty()) {
         let logged = jobs
             .iter()
-            .any(|job| job.name == plan.name && (plan.workflow.is_empty() || job.stage == plan.workflow) && !job.steps.is_empty());
+            .any(|job| job.name == plan.name && !job.steps.is_empty());
         let phases = active || !logged;
         let names = phases
             .then_some("Set up job")
             .into_iter()
             .chain(plan.steps.iter().map(|step| step.as_str()))
             .chain(phases.then_some("Complete job"));
-        let job = match jobs.iter().position(|job| job.name == plan.name && (plan.workflow.is_empty() || job.stage == plan.workflow)) {
+        let job = match jobs.iter().position(|job| job.name == plan.name) {
             Some(index) => &mut jobs[index],
             None => {
                 jobs.push(WorkflowJob {
-                    key: format!("planned:{}:{}:{}", plan.workflow.len(), plan.workflow, plan.name),
-                    stage: plan.workflow.clone(),
+                    key: format!("planned:{}", plan.name),
+                    stage: String::new(),
                     name: plan.name.clone(),
                     steps: Vec::new(),
                 });
@@ -466,8 +461,8 @@ pub fn add_planned_steps(jobs: &mut Vec<WorkflowJob>, planned: &[PlannedJob], ru
         // Each missing step goes after the step the file lists before it.
         let mut at = 0;
         for name in names {
-            if let Some(offset) = job.steps[at..].iter().position(|step| step.name == name) {
-                at += offset + 1;
+            if let Some(index) = job.steps.iter().position(|step| step.name == name) {
+                at = at.max(index + 1);
             } else {
                 let mut step = new_step(name.to_owned());
                 step.status = missing.to_owned();
@@ -634,7 +629,12 @@ fn group_start(line: &str) -> Option<String> {
     let text = command_payload(line)?.trim_start_matches('❓').trim_start();
     text.strip_prefix("::group::")
         .or_else(|| text.strip_prefix("##[group]"))
-        .map(crate::command_codec::unescape_data)
+        .map(|title| {
+            title
+                .replace("%0D", "\r")
+                .replace("%0A", "\n")
+                .replace("%25", "%")
+        })
 }
 
 fn group_end(line: &str) -> bool {
@@ -880,12 +880,10 @@ mod tests {
     fn planned_steps_show_before_their_logs_and_are_skipped_after_the_run() {
         let plan = vec![
             PlannedJob {
-                workflow: "ci".into(),
                 name: "build".into(),
                 steps: vec!["checkout".into(), "test".into()],
             },
             PlannedJob {
-                workflow: "ci".into(),
                 name: "deploy".into(),
                 steps: vec!["ship".into()],
             },
@@ -917,14 +915,13 @@ mod tests {
 
         let mut finished = project_logs(&lines, "failed");
         add_planned_steps(&mut finished, &plan, "failed");
-        assert_eq!(finished[0].steps[2].status, "unknown");
+        assert_eq!(finished[0].steps[2].status, "skipped");
         assert_eq!(normalize_status("skipped"), "skipped");
     }
 
     #[test]
     fn native_runner_markers_give_step_results() {
         let plan = vec![PlannedJob {
-            workflow: "ci".into(),
             name: "build".into(),
             steps: vec!["checkout".into(), "test (unit)".into(), "lint".into()],
         }];

@@ -36,11 +36,13 @@ pub fn compare(
         encode_component(head),
         repo.chrome.id
     );
-    let can_open_pull = base != head && branches.iter().any(|branch| branch == base)
+    let can_open_pull = branches.iter().any(|branch| branch == base)
         && branches.iter().any(|branch| branch == head);
     let mut selectable = branches.to_vec();
     for reference in [base, head] {
-        if !selectable.iter().any(|choice| choice == reference) {
+        let pinned = reference.contains(':')
+            || (reference.len() == 40 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()));
+        if pinned && !selectable.iter().any(|choice| choice == reference) {
             selectable.push(reference.to_owned());
         }
     }
@@ -58,6 +60,7 @@ pub fn compare(
                     }
                 }
                 if let Some(diff) = diff {
+                    if !diff.files.is_empty() {
                         div { class: "collaboration-actions",
                             {view_toggle(&pair, split)}
                             if let Some(pull) = open_pull {
@@ -67,6 +70,7 @@ pub fn compare(
                                 NavLink { class: "btn btn-primary", href: new_pull, "Create pull request" }
                             }
                         }
+                    }
                     {diff_view(diff, split)}
                 } else {
                     p { class: "collaboration-panel collaboration-muted repo-compare-empty", "There isn't anything to compare." }
@@ -87,7 +91,6 @@ mod tests {
             name: "r".into(),
             signed_in: true,
             can_write: true,
-            can_triage: true,
             can_admin: false,
             csrf: String::new(),
             viewer: "u".into(),

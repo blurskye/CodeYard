@@ -20,9 +20,6 @@ pub async fn create_comment(pool: &SqlitePool, input: CommentCreate<'_>) -> Resu
         .await?,
         CommentRefusal::Denied
     );
-    if let Some(token) = input.token_id {
-        anyhow::ensure!(crate::backend::db::sqlite::users::tokens::permits_write(&mut tx, input.actor_id, token, Some(input.repo_id), None, "contents").await?, CommentRefusal::Denied);
-    }
     let comment = sqlx::query_as("INSERT INTO commit_comments(repo_id,author_id,sha,body,path,position,line) VALUES(?1,?2,?3,?4,?5,?6,?7) RETURNING *")
         .bind(input.repo_id).bind(input.actor_id).bind(input.sha.to_ascii_lowercase()).bind(input.body).bind(input.path).bind(input.position).bind(input.line).fetch_one(&mut *tx).await?;
     tx.commit().await?;
@@ -44,9 +41,6 @@ pub async fn edit_comment(
         .await?,
         CommentRefusal::Denied
     );
-    if let Some(token) = input.token_id {
-        anyhow::ensure!(crate::backend::db::sqlite::users::tokens::permits_write(&mut tx, input.actor_id, token, Some(input.repo_id), None, "contents").await?, CommentRefusal::Denied);
-    }
     let Some(previous) = sqlx::query_as::<_, CommitComment>(
         "SELECT * FROM commit_comments WHERE repo_id=?1 AND id=?2",
     )
@@ -77,22 +71,17 @@ pub async fn edit_comment(
 
 pub async fn delete_comment(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     id: i64,
     expected_revision: Option<&str>,
 ) -> Result<Option<CommitComment>> {
-    let credential = actor.into();
-    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_contribution_authority(&mut tx, actor, repo)
             .await?,
         CommentRefusal::Denied
     );
-    if let Some(token) = credential.token_id() {
-        anyhow::ensure!(crate::backend::db::sqlite::users::tokens::permits_write(&mut tx, actor, token, Some(repo), None, "contents").await?, CommentRefusal::Denied);
-    }
     let Some(comment) = sqlx::query_as::<_, CommitComment>(
         "SELECT * FROM commit_comments WHERE repo_id=?1 AND id=?2",
     )

@@ -6,6 +6,7 @@ use crate::backend::{
         self,
         artifact_metadata::{self, Record, Refusal},
     },
+    repositories::access,
 };
 use crate::webui::{app::Page as AppPage, encode_component, pages::artifact_metadata as view};
 use axum::{
@@ -90,7 +91,11 @@ fn entry(row: Record, organization: &str, repository: &str) -> anyhow::Result<vi
     if let Some(values) = document.get("tags").and_then(Value::as_object) {
         for (key, value) in values.iter().take(10) {
             if let Some(value) = value.as_str() {
-                tags.push((key.clone(), crate::webui::excerpt(value, 192)));
+                let mut preview: String = value.chars().take(192).collect();
+                if preview.len() < value.len() {
+                    preview.push('…');
+                }
+                tags.push((key.clone(), preview));
             }
         }
         omitted_tags = values.len().saturating_sub(tags.len());
@@ -168,13 +173,12 @@ async fn show(
         None => 0,
     };
     let base = format!("/orgs/{}/artifacts", encode_component(&organization.name));
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
     let mut rows = if digest.is_empty() {
         vec![]
     } else {
         match artifact_metadata::pages::list(
             &ctx.state.pool,
-            session.as_deref(),
+            ctx.user.as_ref().map(|user| user.id),
             organization.id,
             &digest,
             &kind,
@@ -196,7 +200,7 @@ async fn show(
                 "after",
                 &rows
                     .last()
-                    .map(|row| row.record.id)
+                    .map(|row| row.id)
                     .unwrap_or_default()
                     .to_string(),
             )
@@ -207,7 +211,23 @@ async fn show(
     };
     let mut entries = Vec::new();
     for row in rows {
-        match entry(row.record, &organization.name, &row.repository) {
+        let repository =
+            match db::repositories::records::get_repository_by_id(&ctx.state.pool, row.repo_id)
+                .await
+            {
+                Ok(Some(repo)) => repo,
+                Ok(None) => continue,
+                Err(error) => return failure(&ctx, error),
+            };
+        if repository.owner_org_id != Some(organization.id) {
+            continue;
+        }
+        match access::can_read(&ctx.state.pool, ctx.user.as_ref(), &repository).await {
+            Ok(true) => {}
+            Ok(false) => continue,
+            Err(error) => return failure(&ctx, error),
+        }
+        match entry(row, &organization.name, &repository.name) {
             Ok(row) => entries.push(row),
             Err(error) => return failure(&ctx, error),
         }
@@ -215,7 +235,7 @@ async fn show(
     ctx.page_model(
         "Artifact inventory",
         AppPage::ArtifactMetadata(view::Page {
-            organization_href: crate::webui::profile_path(&organization.name),
+            organization_href: format!("/{}", encode_component(&organization.name)),
             organization: organization.name,
             base,
             digest,

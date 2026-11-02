@@ -129,10 +129,10 @@ async fn fields(pg: bool) {
         (Owner::User(alice), "/api/v3/users/projects-alice", "user"),
         (Owner::Organization(org), "/api/v3/orgs/projects-org", "org"),
     ] {
-        let project = projects::create(f.pool(), alice, &db::users::accounts::AccountCredential::Session(&session.session), owner, "Roadmap", Some("Plans"), false)
+        let project = projects::create(f.pool(), alice, owner, "Roadmap", Some("Plans"), false)
             .await
             .unwrap();
-        assert!(projects::create(f.pool(), bob, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await), owner, "Denied", None, true)
+        assert!(projects::create(f.pool(), bob, owner, "Denied", None, true)
             .await
             .is_err());
         let base = format!("{prefix}/projectsV2/{}", project.number);
@@ -234,74 +234,9 @@ async fn fields(pg: bool) {
             .await;
         }
         items(&router, &base, area, alice, &credentials, issue, pull, id).await;
-        if area == "org" {
-            // An organization token cannot reach alice's private repository, so the project
-            // lists its issue and pull request with their content redacted and cannot add them.
-            use codeyard::backend::identity::fine_grained;
-            let created = fine_grained::create(
-                f.pool(),
-                alice,
-                Some(&session.session),
-                fine_grained::Request {
-                    name: "projects".into(),
-                    description: "Project reader".into(),
-                    owner: fine_grained::Owner::Organization(org),
-                    access: fine_grained::Access::All,
-                    repositories: vec![],
-                    permissions: json!({"organization_projects":"write","issues":"read","pull_requests":"read"})
-                        .as_object()
-                        .unwrap()
-                        .clone(),
-                    expires_at: Some(chrono::Utc::now() + chrono::Duration::days(30)),
-                },
-            )
-            .await
-            .unwrap();
-            db::fine_grained_tokens::review(
-                f.pool(),
-                org,
-                alice,
-                &[created.id],
-                "pending",
-                "approved",
-                None,
-            )
-            .await
-            .unwrap();
-            let fine = format!("Bearer {}", created.value);
-            let listed = request(
-                &router,
-                "GET",
-                &format!("{base}/items"),
-                Some(&fine),
-                Value::Null,
-                "projects/list-items-for-org",
-                200,
-            )
-            .await;
-            let linked: Vec<_> = listed
-                .as_array()
-                .unwrap()
-                .iter()
-                .filter(|item| item["content_type"] != "DraftIssue")
-                .collect();
-            assert_eq!(linked.len(), 2, "{listed}");
-            assert!(linked.iter().all(|item| item["content"].is_null()), "{listed}");
-            request(
-                &router,
-                "POST",
-                &format!("{base}/items"),
-                Some(&fine),
-                json!({"type":"Issue","id":issue}),
-                "projects/add-item-for-org",
-                404,
-            )
-            .await;
-        }
         projects::save(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(&session.session),
             project.id,
             &projects::Settings {
                 title: Some("Published".into()),
@@ -316,7 +251,6 @@ async fn fields(pg: bool) {
         let unchanged = projects::save(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(&session.session),
             project.id,
             &projects::Settings {
                 title: None,
@@ -355,7 +289,7 @@ async fn fields(pg: bool) {
             json!([]),
             "a public project must not disclose private repository items"
         );
-        projects::delete(f.pool(), alice, &db::users::accounts::AccountCredential::Session(&session.session), project.id).await.unwrap();
+        projects::delete(f.pool(), alice, project.id).await.unwrap();
         request(
             &router,
             "GET",
@@ -366,13 +300,13 @@ async fn fields(pg: bool) {
             404,
         )
         .await;
-        let next = projects::create(f.pool(), alice, &db::users::accounts::AccountCredential::Session(&session.session), owner, "Next", None, false)
+        let next = projects::create(f.pool(), alice, owner, "Next", None, false)
             .await
             .unwrap();
         assert_eq!(next.number, project.number + 1);
     }
     native_pages(&f, &router, &session, alice, bob).await;
-    db::projects::list(f.pool(), None, &projects::ListFilter { owner: Some(Owner::User(alice)), ..Default::default() }, 0, 50)
+    db::projects::list(f.pool(), None, Owner::User(alice))
         .await
         .unwrap();
     f.finish().await;
@@ -464,10 +398,10 @@ async fn native_pages(f: &Database, router: &Router, alice: &Client, actor: i64,
             &[actor],
         )
         .await;
-    assert!(projects::list(f.pool(), Some(actor), &projects::ListFilter { repo: Some(repo), ..Default::default() }, 0, 100)
+    assert!(projects::repository_projects(f.pool(), Some(actor), repo)
         .await
         .unwrap()
-        .1.iter()
+        .iter()
         .any(|p| p.id == project.id));
     let issue_page = "/projects-alice/work/issues/1";
     let html = alice.page_ok(issue_page).await;

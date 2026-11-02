@@ -202,9 +202,6 @@ pub fn DraftSelect(
 ) -> Element {
     let mut value = use_signal(move || initial_value);
     let mut enhanced = use_signal(|| false);
-    // Only the browser build writes it, when the select mounts.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    let mut transfer_focus = use_signal(|| false);
     let enhance = options.len() <= 100;
     use_effect(move || enhanced.set(enhance));
     let mut open = use_signal(|| false);
@@ -215,25 +212,7 @@ pub fn DraftSelect(
         let current = value.peek().clone();
         return rsx! {
             select { name, id, class, required, disabled, form, aria_label,
-                oninput: move |event| {
-                    let chosen = event.value();
-                    value.set(chosen.clone());
-                    on_value.call(chosen);
-                },
-                onmounted: move |event| {
-                    #[cfg(target_arch = "wasm32")]
-                    { use wasm_bindgen::JsCast;
-                      if let Some(input) = event.data().downcast::<web_sys::Element>().and_then(|e| e.dyn_ref::<web_sys::HtmlSelectElement>()) {
-                          let chosen = input.value();
-                          if chosen != *value.peek() {
-                              value.set(chosen.clone());
-                              on_value.call(chosen);
-                          }
-                      }
-                    }
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let _ = event;
-                },
+                oninput: move |event| on_value.call(event.value()),
                 for option in &options {
                     option { key: "{option.value}", value: option.value.clone(), selected: current == option.value, "{option.label}" }
                 }
@@ -246,8 +225,6 @@ pub fn DraftSelect(
         .clone()
         .unwrap_or_else(|| format!("app-select-{instance}-button"));
     let focus_id = button_id.clone();
-    let mounted_id = button_id.clone();
-    let invalid_id = button_id.clone();
     let label_id = button_id.clone();
     let current = value();
     let selected = options
@@ -266,18 +243,15 @@ pub fn DraftSelect(
     let option_id = move |index: usize| format!("app-select-{instance}-option-{index}");
     // Records a chosen value, closes the list and tells the caller.
     let mut pick = move |chosen: String| {
+        value.set(chosen.clone());
         open.set(false);
         sync_native_select(&format!("app-select-{instance}-native"), &chosen);
+        on_value.call(chosen);
     };
     rsx! {
         if enhanced() {
             div { class: "app-select",
                 button { id: button_id, r#type: "button", role: "combobox", class: "app-select-button {class}", disabled,
-                    onmounted: move |_| {
-                        if *transfer_focus.peek() {
-                            focus_element(&mounted_id);
-                        }
-                    },
                     aria_label,
                     "aria-haspopup": "listbox",
                     "aria-expanded": if open_now { "true" } else { "false" },
@@ -381,15 +355,6 @@ pub fn DraftSelect(
                 // Last in the wrapper, so that a label around the dropdown names the button.
                 select { id: native_id.clone(), class: "app-select-native", name, form, required, disabled,
                     tabindex: "-1", "aria-hidden": "true",
-                    oninput: move |event| {
-                        let chosen = event.value();
-                        value.set(chosen.clone());
-                        on_value.call(chosen);
-                    },
-                    oninvalid: move |event| {
-                        event.prevent_default();
-                        focus_element(&invalid_id);
-                    },
                     for option in options.iter() {
                         option { key: "{option.value}", value: option.value.clone(), selected: current == option.value, "{option.label}" }
                     }
@@ -407,7 +372,6 @@ pub fn DraftSelect(
                     { use wasm_bindgen::JsCast;
                       if let Some(element) = event.data().downcast::<web_sys::Element>() {
                           if let Some(input) = element.dyn_ref::<web_sys::HtmlSelectElement>() {
-                              transfer_focus.set(web_sys::window().and_then(|w| w.document()).and_then(|d| d.active_element()).as_ref() == Some(element));
                               // A choice made before hydration reaches the caller too.
                               let chosen = input.value();
                               if chosen != *value.peek() {
@@ -495,18 +459,7 @@ fn scroll_into_view(id: &str) {
             .and_then(|window| window.document())
             .and_then(|document| document.get_element_by_id(id));
         if let Some(element) = element {
-            if let Some(parent) = element.parent_element() {
-                use wasm_bindgen::JsCast;
-                if let (Some(list), Some(option)) = (parent.dyn_ref::<web_sys::HtmlElement>(), element.dyn_ref::<web_sys::HtmlElement>()) {
-                    let top = option.offset_top();
-                    let bottom = top + option.offset_height();
-                    if top < list.scroll_top() {
-                        list.set_scroll_top(top);
-                    } else if bottom > list.scroll_top() + list.client_height() {
-                        list.set_scroll_top(bottom - list.client_height());
-                    }
-                }
-            }
+            element.scroll_into_view_with_bool(false);
         }
     }
     #[cfg(not(target_arch = "wasm32"))]

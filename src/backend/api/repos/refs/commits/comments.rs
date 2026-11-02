@@ -225,7 +225,6 @@ pub(super) async fn react(
     if let Err(error) = db::reactions::toggle_reaction(
         &ctx.state.pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
         loaded.repository.id,
         row.id,
         db::reactions::Subject::CommitComment,
@@ -271,16 +270,14 @@ pub(super) async fn submit(
     route: MatchedPath,
     Form(form): Form<HashMap<String, String>>,
 ) -> Response {
-    let mut ctx = match PageContext::load(state, headers, &uri).await {
+    let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
     if let Err(response) = authorize_post(&ctx, &form) {
         return response;
     }
-    // A Git outage must not replace the submitted text: the commit page then fails and the
-    // draft is shown by the fallback below.
-    let loaded = match chrome::load_metadata(&ctx, &params["owner"], &params["repo"]).await {
+    let loaded = match chrome::load(&ctx, &params["owner"], &params["repo"]).await {
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
@@ -379,7 +376,6 @@ pub(super) async fn submit(
                     &ctx.state.notification_broadcaster,
                     records::CommentEdit {
                         actor_id: actor,
-                        token_id: None,
                         repo_id: loaded.repository.id,
                         id,
                         body: &draft.body,
@@ -412,24 +408,18 @@ pub(super) async fn submit(
     .await;
     let (status, message) = match operation {
         Ok(Some(entry)) => {
-            let mut target = comments::comment_link(&loaded.chrome.owner, &loaded.chrome.name, &entry.comment);
-            if ctx.query.get("view").is_some_and(|view| view == "split") {
-                if let Some(anchor) = target.find('#') { target.insert_str(anchor, "&view=split"); }
-            }
-            return ctx.redirect(&target);
+            return ctx.redirect(&comments::comment_link(
+                &loaded.chrome.owner,
+                &loaded.chrome.name,
+                &entry.comment,
+            ));
         }
         Ok(None) if route.as_str().ends_with("/delete") && !draft.preview => {
-            return ctx.redirect(&format!("{}/commit/{sha}?comments_page={}{}#comments", loaded.chrome.base(),
-                ctx.query.get("comments_page").and_then(|page| page.parse::<usize>().ok()).unwrap_or(1),
-                if ctx.query.get("view").is_some_and(|view| view == "split") { "&view=split" } else { "" }));
+            return ctx.redirect(&format!("{}/commit/{sha}#comments", loaded.chrome.base()));
         }
         Ok(None) => (StatusCode::OK, None),
         Err(error) => (failure(&error), Some(error.to_string())),
     };
-    // The form's own address takes only POST, so appearance changes return to the commit page.
-    if crate::backend::git::is_full_commit_id(sha) {
-        ctx.return_to = Some(format!("{}/commit/{sha}", loaded.chrome.base()));
-    }
     match commit_page(&ctx, &loaded, sha, Some(draft.clone()), message.clone()).await {
         Ok(response) => with_status(response, status),
         Err(response) => {

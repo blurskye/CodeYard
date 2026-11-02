@@ -39,20 +39,14 @@ async fn lock_discussion_authority(
     actor_id: i64,
     repo_id: i64,
     lock: RepositoryLock,
-    include_archived: bool,
 ) -> Result<Option<DiscussionAuthority>> {
     let Some(authority) = super::repositories::access::lock_user_repo_access_in_transaction(
-        tx, actor_id, repo_id, lock, include_archived,
+        tx, actor_id, repo_id, lock, false,
     )
     .await?
     else {
         return Ok(None);
     };
-    if include_archived && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=$1)")
-        .bind(repo_id).fetch_one(&mut **tx).await?
-    {
-        return Ok(None);
-    }
     // Public/read visibility survives suspension; contribution authority does not.
     if authority.organization && !authority.organization_usable {
         return Ok(None);
@@ -70,21 +64,13 @@ async fn lock_discussion_authority(
     }))
 }
 
-/// An effect by a configured repository reader, without issue interaction restrictions.
-pub(crate) async fn lock_read_authority(
-    tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64,
-) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false).await?
-        .is_some_and(|authority| authority.access.can_read() || authority.personal_override))
-}
-
 pub(crate) async fn lock_triage_authority(
     tx: &mut Transaction<'_, Postgres>,
     actor_id: i64,
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
             .await?
             .is_some_and(|a| a.access >= AccessLevel::Triage || a.personal_override),
     )
@@ -96,7 +82,7 @@ pub(crate) async fn lock_write_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
             .await?
             .is_some_and(|a| a.access.can_write() || a.personal_override),
     )
@@ -110,17 +96,10 @@ pub(crate) async fn lock_exclusive_write_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, false)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive)
             .await?
             .is_some_and(|a| a.access.can_write() || a.personal_override),
     )
-}
-
-pub(crate) async fn lock_exclusive_maintain_authority(
-    tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64,
-) -> Result<bool> {
-    Ok(lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, false)
-        .await?.is_some_and(|a| a.access.can_maintain() || a.personal_override))
 }
 
 /// Moderation of other people's comments: repository maintainers and site administrators.
@@ -130,7 +109,7 @@ pub(crate) async fn lock_maintain_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
             .await?
             .is_some_and(|a| a.access.can_maintain() || a.personal_override),
     )
@@ -143,7 +122,7 @@ pub(crate) async fn lock_admin_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared, false)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Shared)
             .await?
             .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override),
     )
@@ -160,25 +139,10 @@ pub(crate) async fn lock_repository_mutation_authority(
     repo_id: i64,
 ) -> Result<bool> {
     Ok(
-        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, false)
+        lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive)
             .await?
             .is_some_and(|a| a.access.can_admin() || a.personal_owner || a.personal_override),
     )
-}
-
-/// Security managers administer security state without repository-wide administration.
-/// History reads include archived repositories; writers still require a mutable repository.
-pub(crate) async fn lock_security_authority(
-    tx: &mut Transaction<'_, Postgres>, actor_id: i64, repo_id: i64, write: bool,
-) -> Result<bool> {
-    let Some(authority) = lock_discussion_authority(tx, actor_id, repo_id, RepositoryLock::Exclusive, !write).await? else { return Ok(false); };
-    if authority.access.can_admin() || authority.personal_owner || authority.personal_override { return Ok(true); }
-    if !authority.organization { return Ok(false); }
-    let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1").bind(repo_id).fetch_one(&mut **tx).await?;
-    match org {
-        Some(org) => super::organizations::roles::manages_security(tx, actor_id, org).await,
-        None => Ok(false),
-    }
 }
 
 /// Administration that remains available on archived repositories, including deletion.
@@ -190,19 +154,18 @@ pub(crate) async fn lock_archive_authority(
     lock_policy_authority_with(tx, actor_id, repo_id, RepositoryLock::Exclusive, false).await
 }
 
-/// Settings reads survive archival. Secret metadata still requires administration;
-/// non-secret values require repository visibility, not contribution authority.
+/// Reading repository settings. Administrators may read them on archived repositories too;
+/// with `admin` false, anyone who may take part in the repository may also read them.
 pub(crate) async fn lock_settings_read_authority(
     tx: &mut Transaction<'_, Postgres>,
     actor_id: i64,
     repo_id: i64,
     admin: bool,
 ) -> Result<bool> {
-    if admin {
-        lock_policy_authority(tx, actor_id, repo_id, false).await
-    } else {
-        super::repositories::access::lock_readable_repository_in_transaction(tx, actor_id, repo_id, super::repositories::access::RepositoryRowLock::Shared).await
+    if !admin && lock_contribution_authority(tx, actor_id, repo_id).await? {
+        return Ok(true);
     }
+    lock_policy_authority(tx, actor_id, repo_id, false).await
 }
 
 /// Settings and bypass administration remain available after archival.
@@ -248,7 +211,7 @@ async fn lock_contribution_authority_with(
     repo_id: i64,
     repository_lock: RepositoryLock,
 ) -> Result<bool> {
-    let authority = lock_discussion_authority(tx, actor_id, repo_id, repository_lock, false).await?;
+    let authority = lock_discussion_authority(tx, actor_id, repo_id, repository_lock).await?;
     let Some(authority) = authority else {
         return Ok(false);
     };
@@ -313,7 +276,7 @@ pub(crate) async fn require_exclusive_contribution_authority(
 
 pub async fn set_lock(
     pool: &sqlx::PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     item: crate::backend::db::assignees::AssignedItem,
     locked: bool,
@@ -324,17 +287,14 @@ pub async fn set_lock(
         crate::backend::db::discussions::valid_lock_reason(reason),
         LockRefusal::InvalidReason
     );
-    let actor = actor.into();
-    let actor_id = actor.user_id;
     let reason = if locked { reason } else { None };
-    let (table, subject, id, permission) = match item {
-        AssignedItem::Issue(id) => ("issues", "issue", id, "issues"),
-        AssignedItem::PullRequest(id) => ("pull_requests", "pull_request", id, "pull_requests"),
+    let (table, subject, id) = match item {
+        AssignedItem::Issue(id) => ("issues", "issue", id),
+        AssignedItem::PullRequest(id) => ("pull_requests", "pull_request", id),
     };
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        lock_triage_authority(&mut tx, actor_id, repo_id).await?
-            && super::credentials::repository(&mut tx, &actor, repo_id, permission, true).await?,
+        lock_write_authority(&mut tx, actor_id, repo_id).await?,
         LockRefusal::Denied
     );
     let (previous, previous_reason): (bool, Option<String>) = sqlx::query_as(&format!(
@@ -347,7 +307,7 @@ pub async fn set_lock(
     .ok_or(LockRefusal::Missing)?;
     if previous != locked || previous_reason.as_deref() != reason {
         sqlx::query(&format!("UPDATE {table} SET locked=$2,lock_reason=$3,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1")).bind(id).bind(locked).bind(reason).execute(&mut *tx).await?;
-        super::timeline::append(&mut tx, repo_id, subject, id, actor_id, if locked {"locked"} else {"unlocked"}, reason.unwrap_or(""), "").await?;
+        sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail) VALUES ($1,$2,$3,$4,$5,$6)").bind(repo_id).bind(subject).bind(id).bind(actor_id).bind(if locked {"locked"} else {"unlocked"}).bind(reason.unwrap_or("")).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -356,10 +316,13 @@ pub async fn set_lock(
 pub(crate) async fn lock_issue_contribution(
     tx: &mut Transaction<'_, Postgres>,
     actor_id: i64,
-    repo: i64,
     issue_id: i64,
 ) -> Result<()> {
-    // The caller's authorized repository is the subject, not the issue's later location.
+    let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=$1")
+        .bind(issue_id)
+        .fetch_optional(&mut **tx)
+        .await?;
+    let repo = repo.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     require_contribution_authority(tx, actor_id, repo).await?;
     let locked: Option<bool> =
         sqlx::query_scalar("SELECT locked FROM issues WHERE id=$1 AND repo_id=$2 FOR UPDATE")
@@ -369,7 +332,7 @@ pub(crate) async fn lock_issue_contribution(
             .await?;
     anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
     anyhow::ensure!(
-        locked == Some(false) || lock_write_authority(tx, actor_id, repo).await?,
+        locked == Some(false),
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
@@ -395,7 +358,7 @@ pub(crate) async fn lock_pull_request_contribution(
     .await?;
     anyhow::ensure!(locked.is_some(), AUTHORITY_DENIED);
     anyhow::ensure!(
-        locked == Some(false) || lock_write_authority(tx, actor_id, repo).await?,
+        locked == Some(false),
         crate::backend::db::discussions::DiscussionWriteRefusal::Locked
     );
     Ok(())
@@ -447,7 +410,7 @@ pub(crate) async fn lock_comment_resolution_authority(
             .await?;
     let (repo, author) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     anyhow::ensure!(
-        lock_discussion_authority(tx, actor_id, repo, RepositoryLock::Shared, false)
+        lock_discussion_authority(tx, actor_id, repo, RepositoryLock::Shared)
             .await?
             .is_some_and(|a| a.access.can_write()
                 || a.personal_override
@@ -466,7 +429,7 @@ pub(crate) async fn lock_review_dismissal_authority(
         .bind(review_id).fetch_optional(&mut **tx).await?;
     let (pr, repo) = scope.ok_or_else(|| anyhow::anyhow!(AUTHORITY_DENIED))?;
     anyhow::ensure!(
-        lock_discussion_authority(tx, actor_id, repo, RepositoryLock::Shared, false)
+        lock_discussion_authority(tx, actor_id, repo, RepositoryLock::Shared)
             .await?
             .is_some_and(|a| if a.organization {
                 a.access.can_admin()
@@ -485,7 +448,14 @@ pub(crate) async fn lock_review_dismissal_authority(
     Ok(pr)
 }
 
-pub async fn list_repo_authors(pool: &sqlx::PgPool, repo_id: i64, selected: Option<i64>) -> Result<Vec<String>> {
-    Ok(sqlx::query_scalar(&crate::backend::db::discussions::author_choices_sql(true))
-        .bind(repo_id).bind(selected).fetch_all(pool).await?)
+pub async fn list_repo_authors(pool: &sqlx::PgPool, repo_id: i64) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT username FROM users WHERE id IN (
+            SELECT author_id FROM issues WHERE repo_id = $1
+            UNION SELECT author_id FROM pull_requests WHERE repo_id = $1
+        ) ORDER BY username",
+    )
+    .bind(repo_id)
+    .fetch_all(pool)
+    .await?)
 }

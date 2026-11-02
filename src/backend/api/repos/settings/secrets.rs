@@ -111,7 +111,6 @@ pub async fn create_or_update_secret(
         &name,
         &body.value,
         Some(user.id),
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default()),
     )
     .await
     .map_err(secret_error)?;
@@ -151,7 +150,7 @@ pub async fn delete_secret(
     let user = get_current_user(&state.pool, &headers).await?;
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
-    let deleted = db::secrets::delete_secret(&state.pool, user.id, repository.id, &name, &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default()))
+    let deleted = db::secrets::delete_secret(&state.pool, user.id, repository.id, &name)
         .await
         .map_err(secret_error)?;
 
@@ -183,8 +182,6 @@ pub(crate) async fn form(
     // Saving stores the name uppercase. Deleting uses the exact stored name the form lists, so
     // an older lowercase secret never deletes its uppercase neighbour.
     let name = field(form, "name");
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
     let result = if action == "secret-save" {
         match ctx.state.secret_encryptor.as_deref() {
             Some(encryptor) => db::secrets::create_or_update_secret_for(
@@ -194,7 +191,6 @@ pub(crate) async fn form(
                 &name,
                 &field(form, "value"),
                 Some(actor.id),
-                &credential,
             )
             .await
             .map(|_| ())
@@ -202,7 +198,7 @@ pub(crate) async fn form(
             None => Err(secrets_unavailable()),
         }
     } else {
-        db::secrets::delete_secret_for(&ctx.state.pool, kind, actor.id, loaded.repository.id, &name, &credential)
+        db::secrets::delete_secret_for(&ctx.state.pool, kind, actor.id, loaded.repository.id, &name)
             .await
             .map_err(secret_error)
             .and_then(|deleted| {

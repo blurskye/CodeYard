@@ -25,21 +25,6 @@ pub struct EventEntry {
     pub repository: super::models::Repository,
     pub owner: String,
 }
-/// The originating credential remains part of private activity selection.
-#[derive(Clone, Copy)]
-pub enum EventViewer<'a> {
-    Token { user: i64, token: i64 },
-    Feed { user: i64, token: i64, value: &'a str },
-}
-impl<'a> EventViewer<'a> {
-    pub(crate) fn parts(self) -> (i64, i64, Option<&'a str>) {
-        match self {
-            Self::Token { user, token } => (user, token, None),
-            Self::Feed { user, token, value } => (user, token, Some(value)),
-        }
-    }
-}
-
 #[derive(Clone, Copy)]
 pub enum EventScope {
     All,
@@ -66,7 +51,7 @@ native_operation!(crate::backend::db::postgres::events::record_event,crate::back
 native_operation!(crate::backend::db::postgres::events::push_actor,crate::backend::db::sqlite::events::push_actor,
     fn push_actor(pool:&DbPool,repo:i64,reference:&str,sha:&str)->Result<Option<i64>>);
 native_operation!(crate::backend::db::postgres::events::list_events,crate::backend::db::sqlite::events::list_events,
-    fn list_events(pool:&DbPool,viewer:Option<EventViewer<'_>>,scope:EventScope,public_only:bool,limit:i64,offset:i64)->Result<Vec<EventEntry>>);
+    fn list_events(pool:&DbPool,viewer:Option<i64>,scope:EventScope,public_only:bool,limit:i64,offset:i64)->Result<Vec<EventEntry>>);
 native_operation!(crate::backend::db::postgres::events::activity_feed_token,
     crate::backend::db::sqlite::events::activity_feed_token,
     fn activity_feed_token(pool:&DbPool, token_id:i64, value:&str)->Result<Option<String>>);

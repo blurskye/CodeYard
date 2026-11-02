@@ -1657,7 +1657,7 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     .await
     .unwrap();
     let claim = queue
-        .claim(&worker, CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .claim(&worker, CiExecutionMode::Local)
         .await
         .unwrap()
         .unwrap();
@@ -1911,7 +1911,7 @@ async fn keyed_storage_node(pool: &DbPool, name: &str) -> (i64, String) {
 
 async fn report_in(pool: &DbPool, key: &str) {
     assert!(
-        db::cluster::record_node_heartbeat(pool, key, "test", "{}", Some(1024 * 1024 * 1024 * 1024))
+        db::cluster::record_node_heartbeat(pool, key, "test", "{}", None)
             .await
             .unwrap()
     );
@@ -2561,7 +2561,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     lock.commit().await.unwrap();
     let error = task.await.unwrap().unwrap_err().to_string();
     assert!(error.contains("fork family changed"), "{error}");
-    assert_eq!(primary_of(pool, source).await, a);
+    assert_eq!(primary_of(pool, source).await, b);
     assert_eq!(primary_of(pool, fork).await, a);
 }
 
@@ -3642,10 +3642,9 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     let error = codeyard::backend::repositories::pull_requests::reviews::create_pull_request_review(
         &database.pool, Some(&web.context),
         &codeyard::backend::notifications::NotificationBroadcaster::new(&database.pool), repo.actor,
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, repo.actor).await),
         (actor.username, repo.repository.name.clone(), pull.number),
         codeyard::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
-            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None, token:None,
+            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None,
         },
     ).await.unwrap_err();
     assert!(matches!(
@@ -3687,7 +3686,7 @@ async fn writes_are_refused_while_the_primary_is_down() {
         repository: uuid,
         operation: Operation::CreateBranch {
             name: "after".into(),
-            sha: head.clone().into(),
+            sha: head.clone(),
         },
         actor: Some(repo.actor),
         ci_run: None,

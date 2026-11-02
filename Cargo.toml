@@ -32,7 +32,6 @@ syntect = { version = "5", default-features = false, features = ["default-fancy"
 pulldown-cmark = { version = "=0.13.4", default-features = false }
 # The parser matches footnote labels with Unicode case folding; the emitter must too.
 unicase = "2"
-unicode-normalization = "0.1.25"
 # Text revisions used by native forms must also be computed after hydration.
 sha2.workspace = true
 
@@ -50,12 +49,10 @@ subtle = "2.6"
 argon2 = { version = "=0.5.3", features = ["std"] }
 tokio.workspace = true
 tokio-util = { version = "0.7", features = ["io", "rt"] }
-# Classifies body length-limit errors from axum::body::to_bytes.
-http-body-util = "0.1"
 # The TLS provider iroh already uses (aws-lc-rs), so node connections over TCP share it.
 tokio-rustls = "0.26"
 # TCP keepalive on node connections; tokio does not expose the socket option.
-socket2 = { version = "0.6", features = ["all"] }
+socket2 = "0.6"
 flate2 = "1"
 tar = "=0.4.46"
 zip = { version = "=2.6.1", default-features = false, features = ["deflate", "deflate-flate2", "flate2"] }
@@ -111,7 +108,7 @@ gloo-timers = { version = "0.3", features = ["futures"], optional = true }
 wasm-bindgen = { version = "0.2", optional = true }
 wasm-bindgen-futures = { version = "0.4", optional = true }
 js-sys = { version = "0.3", optional = true }
-web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "ScrollRestoration", "Element", "Node", "Location", "History", "Navigator", "Performance", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "ReadableStream", "ReadableStreamDefaultReader", "HtmlFormElement", "HtmlDocument", "KeyboardEvent", "NodeList", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "ScrollRestoration", "Element", "Node", "Location", "History", "Navigator", "Performance", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "HtmlFormElement", "HtmlDocument", "KeyboardEvent", "NodeList", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies.rsa]
 version = "=0.9.10"
@@ -120,6 +117,7 @@ features = ["sha2", "pem"]
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
 jsonschema = { version = "=0.60.0", default-features = false }
 
 # The application binds the full generated schema; its debug graph is similarly large.

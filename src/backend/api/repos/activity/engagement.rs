@@ -38,7 +38,7 @@ async fn set_engagement(
     change(
         &state.pool,
         &state.notification_broadcaster,
-        crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default())),
+        actor.id,
         repository.id,
         kind,
         on,

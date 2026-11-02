@@ -531,7 +531,6 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
                 inputs: None,
                 repo_id: None,
             },
-            None,
         )
         .await
         .unwrap();
@@ -554,7 +553,6 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
                 inputs: None,
                 repo_id: None,
             },
-            None,
         )
         .await
         .unwrap_err();
@@ -596,7 +594,6 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
                 inputs: None,
                 repo_id: None,
             },
-            None,
         )
         .await
         .unwrap();

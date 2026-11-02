@@ -35,9 +35,9 @@ async fn change(
     reason: Option<&str>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.database_actor();
+    let actor = auth.ok_or_else(auth::required)?.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
-    db::discussions::set_lock(&state.pool, actor, repo.id, item, locked, reason)
+    db::discussions::set_lock(&state.pool, actor.id, repo.id, item, locked, reason)
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -49,7 +49,12 @@ async fn lock(
     Path(p): Path<HashMap<String, String>>,
     body: Bytes,
 ) -> Result<StatusCode> {
-    let input: Lock = super::optional_json::decode(&body).map_err(|_| Error::validation("Issue", "lock_reason", "invalid"))?.unwrap_or_default();
+    let input: Lock = if body.is_empty() {
+        Lock::default()
+    } else {
+        serde_json::from_slice(&body)
+            .map_err(|_| Error::validation("Issue", "lock_reason", "invalid"))?
+    };
     change(state, headers, p, true, input.lock_reason.as_deref()).await
 }
 async fn unlock(

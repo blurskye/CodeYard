@@ -48,10 +48,14 @@ pub(super) async fn load(
     match kind.as_str() {
         "commit" => git::load(repo, oid, "contents", request).await,
         "blob" => {
-            let blob = store.blob_by_id_range(oid, crate::backend::repositories::store::BlobRange::Window { offset: 0, length: 0 }).await.map_err(unavailable)?;
-            request.charge(blob.size.min(8_000) as usize)?;
-            Ok(json!({"__typename":"Blob","_repo":repo.id,"id":node_id::git_object("B",repo.id,oid),"oid":oid,"byteSize":blob.size,
-                "isBinary":blob.is_binary,"isTruncated":blob.size > crate::backend::repositories::store::MAX_BLOB_RESPONSE_BYTES as u64}))
+            let bytes = store.blob_by_id(oid).await.map_err(unavailable)?;
+            request.charge(bytes.len())?;
+            let text = std::str::from_utf8(&bytes)
+                .ok()
+                .filter(|_| !bytes.contains(&0));
+            Ok(
+                json!({"__typename":"Blob","_repo":repo.id,"id":node_id::git("B",oid),"oid":oid,"byteSize":bytes.len(),"isBinary":text.is_none(),"isTruncated":false,"text":text}),
+            )
         }
         "tree" => {
             let tree = store.git_tree(oid, false).await.map_err(unavailable)?;
@@ -60,39 +64,18 @@ pub(super) async fn load(
                     "Tree exceeds the repository store read limit",
                 ));
             }
-            request.charge(tree.tree.iter().fold(0usize, |bytes, entry|
-                bytes.saturating_add(entry.path.len().saturating_mul(6)).saturating_add(256)))?;
             Ok(
-                json!({"__typename":"Tree","_repo":repo.id,"id":node_id::git_object("T",repo.id,oid),"oid":oid,"entries":tree.tree.iter().map(|e|json!({"_repo":repo.id,"name":e.path,"nameRaw":STANDARD.encode(&e.path_raw),"path":e.path,"pathRaw":STANDARD.encode(&e.path_raw),"submodule":null,"mode":i32::from_str_radix(&e.mode,8).unwrap_or(0),"oid":e.sha,"size":e.size.unwrap_or(0),"type":e.kind})).collect::<Vec<_>>()}),
+                json!({"__typename":"Tree","_repo":repo.id,"id":node_id::git("T",oid),"oid":oid,"entries":tree.tree.iter().map(|e|json!({"_repo":repo.id,"name":e.path,"nameRaw":STANDARD.encode(&e.path),"path":e.path,"pathRaw":STANDARD.encode(&e.path),"submodule":null,"mode":i32::from_str_radix(&e.mode,8).unwrap_or(0),"oid":e.sha,"size":e.size.unwrap_or(0),"type":e.kind})).collect::<Vec<_>>()}),
             )
         }
         "tag" => {
             let tag = store.git_tag(oid).await.map_err(unavailable)?;
-            request.charge(tag.message.len().saturating_add(tag.tag.len()).saturating_add(tag.object.len())
-                .saturating_add(tag.tagger.as_ref().map_or(0, |tagger| tagger.name.len().saturating_add(tagger.email.len()))))?;
             Ok(
-                json!({"__typename":"Tag","_repo":repo.id,"_target":tag.object,"id":node_id::git_object("TAG",repo.id,oid),"oid":oid,"name":tag.tag,"message":tag.message,"tagger":tag.tagger.as_ref().map(|t|json!({"name":t.name,"email":t.email,"date":t.date,"user":null}))}),
+                json!({"__typename":"Tag","_repo":repo.id,"_target":tag.object,"id":node_id::git("TAG",oid),"oid":oid,"name":tag.tag,"message":tag.message,"tagger":tag.tagger.as_ref().map(|t|json!({"name":t.name,"email":t.email,"date":t.date,"user":null}))}),
             )
         }
         _ => Err(missing()),
     }
-}
-
-pub(super) async fn blob_text(parent: &Value, request: &RequestContext) -> Result<Value> {
-    if parent["isBinary"] == true || parent["isTruncated"] == true { return Ok(Value::Null); }
-    let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
-    request.authorize(repo.id, "contents", false).await?;
-    let bytes = repo_store(&repo, request.state.cluster.as_ref()).blob_by_id(parent["oid"].as_str().ok_or_else(missing)?).await.map_err(unavailable)?;
-    request.charge(bytes.len())?;
-    Ok(std::str::from_utf8(&bytes).ok().map_or(Value::Null, |text| json!(text)))
-}
-
-// Callers authorize before I/O; recheck after it and charge the map plus cloned names.
-async fn loaded_refs(repo: &db::models::Repository, request: &RequestContext) -> Result<std::collections::HashMap<String, String>> {
-    let refs = repo_store(repo, request.state.cluster.as_ref()).refs().await.map_err(unavailable)?;
-    request.authorize(repo.id, "contents", false).await?;
-    request.charge(refs.iter().map(|(name, oid)| name.len() * 2 + oid.len() + 96).sum())?;
-    Ok(refs)
 }
 
 pub(super) async fn reference(
@@ -101,19 +84,13 @@ pub(super) async fn reference(
     request: &RequestContext,
 ) -> Result<Value> {
     request.authorize(repo.id, "contents", false).await?;
-    let refs = loaded_refs(repo, request).await?;
+    let refs = repo_store(repo, request.state.cluster.as_ref())
+        .refs()
+        .await
+        .map_err(unavailable)?;
     let Some(oid) = refs.get(name) else {
         return Ok(Value::Null);
     };
-    reference_at(repo, name, oid, request).await
-}
-
-pub(super) async fn reference_at(
-    repo: &db::models::Repository,
-    name: &str,
-    oid: &str,
-    _request: &RequestContext,
-) -> Result<Value> {
     let (prefix, short) = if let Some(name) = name.strip_prefix("refs/heads/") {
         ("refs/heads/", name)
     } else if let Some(name) = name.strip_prefix("refs/tags/") {
@@ -122,7 +99,7 @@ pub(super) async fn reference_at(
         ("refs/", name.trim_start_matches("refs/"))
     };
     Ok(
-        json!({"__typename":"Ref","_repo":repo.id,"_oid":oid,"id":node_id::reference(repo.id,name),"name":short,"prefix":prefix}),
+        json!({"__typename":"Ref","_repo":repo.id,"id":node_id::reference(repo.id,name),"name":short,"prefix":prefix,"target":load(repo,oid,request).await?}),
     )
 }
 
@@ -133,7 +110,6 @@ pub(super) async fn reference_field(
     request: &RequestContext,
 ) -> Result<Value> {
     let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
-    if field == "target" { return load(&repo, parent["_oid"].as_str().ok_or_else(missing)?, request).await; }
     let branch = parent["name"].as_str().ok_or_else(missing)?;
     if field == "branchProtectionRule" {
         let rules = crate::backend::repositories::protection::matching_rules(
@@ -155,7 +131,7 @@ pub(super) async fn reference_field(
     let head = super::arg(args, "headRef")?;
     let (source, head) = if let Some((owner, branch)) = head.split_once(':') {
         let source =
-            crate::backend::repositories::pull_requests::branches::owner_head_repository(&request.state.pool, &repo, owner)
+            db::repositories::records::get_repository(&request.state.pool, owner, &repo.name)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
@@ -179,7 +155,7 @@ pub(super) async fn reference_field(
     let comparison = store
         .comparison_from(
             &repo_store(&source, request.state.cluster.as_ref()),
-            parent["_oid"].as_str().ok_or_else(missing)?,
+            parent["target"]["oid"].as_str().ok_or_else(missing)?,
             &format!("refs/heads/{head}"),
             0,
             0,
@@ -259,21 +235,68 @@ pub(super) async fn node(value: &str, request: &RequestContext) -> Result<Value>
     if !matches!(kind, "C" | "B" | "TAG" | "T") {
         return Err(missing());
     }
-    let key = std::str::from_utf8(&bytes).map_err(|_| missing())?;
-    let (repo, oid) = if let Some((repo, oid)) = key.split_once('/') {
-        (repo.parse::<i64>().ok().filter(|id| *id > 0).ok_or_else(missing)?, oid)
-    } else if request.auth.is_job() {
-        // Only a single-repository job credential gives an old, unqualified ID an unambiguous
-        // origin. Other legacy IDs cannot retain repository-specific identity, so fail closed
-        // instead of selecting a different fork or probing every readable repository.
-        let token = db::ci_tokens::get(&request.state.pool, request.auth.token.id).await.map_err(unavailable)?.ok_or_else(missing)?;
-        (token.repo_id, key)
-    } else {
+    let oid = std::str::from_utf8(&bytes).map_err(|_| missing())?;
+    if !crate::backend::git::is_full_commit_id(oid) {
         return Err(missing());
-    };
-    if !crate::backend::git::is_full_commit_id(oid) { return Err(missing()); }
-    let repo = repository::by_id(repo, request).await?;
-    checked(&repo, kind, oid, request).await
+    }
+    if request.auth.is_job() {
+        let token = db::ci_tokens::get(&request.state.pool, request.auth.token.id)
+            .await
+            .map_err(unavailable)?
+            .ok_or_else(missing)?;
+        let repo = repository::by_id(token.repo_id, request).await?;
+        return checked(&repo, kind, oid, request).await;
+    }
+    // REST's content-addressed IDs have no repository component. Find a readable copy;
+    // never probe inaccessible stores, and never treat storage failure as absence.
+    let mut offset = 0;
+    loop {
+        let rows = db::repositories::discovery::search_repositories(
+            &request.state.pool,
+            Some(request.auth.user.id),
+            "",
+            db::repositories::records::RepositorySort::Recent,
+            offset,
+            100,
+        )
+        .await
+        .map_err(unavailable)?;
+        if rows.is_empty() {
+            return Err(missing());
+        }
+        offset += rows.len() as i64;
+        for repo in rows {
+            // A fine-grained token looks only in the repositories it reaches.
+            if request.personal.is_some() {
+                match request
+                    .auth
+                    .repository_scope(&request.state.pool, repo.id, "contents", false)
+                    .await
+                {
+                    Ok(()) => {}
+                    Err(super::auth::ScopeError::Unavailable) => return Err(unavailable(())),
+                    Err(_) => continue,
+                }
+            }
+            repository::by_id(repo.id, request).await?;
+            match repo_store(&repo, request.state.cluster.as_ref())
+                .git_object_kind(oid)
+                .await
+            {
+                Ok(actual)
+                    if matches!(
+                        (kind, actual.as_str()),
+                        ("C", "commit") | ("B", "blob") | ("TAG", "tag") | ("T", "tree")
+                    ) =>
+                {
+                    return load(&repo, oid, request).await
+                }
+                Ok(_) => {}
+                Err(error) if error.kind == ErrorKind::NotFound => {}
+                Err(error) => return Err(unavailable(error)),
+            }
+        }
+    }
 }
 pub(super) async fn resolve(
     field: &str,
@@ -322,7 +345,7 @@ pub(super) async fn resolve(
             } else if crate::backend::git::is_full_commit_id(expression) {
                 expression.to_owned()
             } else {
-                let refs = loaded_refs(repo, request).await?;
+                let refs = store.refs().await.map_err(unavailable)?;
                 if let Some(oid) = refs
                     .get(expression)
                     .or_else(|| refs.get(&format!("refs/heads/{expression}")))
@@ -360,8 +383,11 @@ pub(super) async fn resolve(
                     "Codeyard does not support this ref ordering yet",
                 ));
             }
-            let refs = loaded_refs(repo, request).await?;
-            let mut names = refs.keys().cloned()
+            let mut names = store
+                .refs()
+                .await
+                .map_err(unavailable)?
+                .into_keys()
                 .filter(|name| name.starts_with(&prefix) && name[prefix.len()..].contains(query))
                 .collect::<Vec<_>>();
             names.sort();
@@ -381,7 +407,7 @@ pub(super) async fn resolve(
                 .skip(page.offset as usize)
                 .take(page.limit as usize)
             {
-                nodes.push(reference_at(repo, &name, &refs[&name], request).await?);
+                nodes.push(reference(repo, &name, request).await?);
             }
             Ok(page.finish(nodes))
         }

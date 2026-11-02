@@ -49,11 +49,6 @@ pub async fn get_owner_fork(
     Ok(sqlx::query_as("SELECT * FROM repositories WHERE owner_kind=?1 AND (owner_user_id=?2 OR owner_org_id=?3) AND forked_from_id=?4 AND NOT is_gist").bind(kind).bind(user).bind(org).bind(forked_from).fetch_optional(pool).await?)
 }
 
-/// Resolve an owner's fork by network identity, not its mutable repository name.
-pub async fn comparison_forks(pool: &SqlitePool, repo: i64, owner: &str) -> Result<Vec<Repository>> {
-    Ok(sqlx::query_as("WITH RECURSIVE ancestors(id,forked_from_id) AS (SELECT id,forked_from_id FROM repositories WHERE id=?1 UNION SELECT r.id,r.forked_from_id FROM repositories r JOIN ancestors a ON a.forked_from_id=r.id), network(id) AS (SELECT id FROM ancestors WHERE forked_from_id IS NULL UNION SELECT r.id FROM repositories r JOIN network n ON r.forked_from_id=n.id) SELECT r.* FROM repositories r JOIN network n ON n.id=r.id LEFT JOIN users u ON u.id=r.owner_user_id LEFT JOIN organizations o ON o.id=r.owner_org_id WHERE (u.username=?2 OR o.name=?2) ORDER BY (r.name=(SELECT name FROM repositories WHERE id=?1)) DESC,r.id LIMIT 2").bind(repo).bind(owner).fetch_all(pool).await?)
-}
-
 pub async fn list_forks(
     pool: &SqlitePool,
     repo_id: i64,
@@ -69,38 +64,6 @@ pub async fn list_forks(
     .bind(offset)
     .fetch_all(pool)
     .await?)
-}
-
-const FORK_VIEWER_JOIN: &str = "LEFT JOIN users u ON u.id=?1 AND (?2 IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=?2 AND s.user_id=u.id AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))";
-
-pub async fn visible_fork_counts(
-    pool: &SqlitePool,
-    viewer: Option<i64>,
-    session: Option<&str>,
-    ids: &[i64],
-) -> Result<std::collections::HashMap<i64, i32>> {
-    ensure!(ids.len() <= 100, "Too many repository counts");
-    if ids.is_empty() { return Ok(std::collections::HashMap::new()); }
-    let rows = sqlx::query_as::<_, (i64, i32)>(&format!(
-        "SELECT r.forked_from_id, COUNT(*) FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id IN (SELECT value FROM json_each(?3)) AND {} GROUP BY r.forked_from_id",
-        readable_condition(),
-    )).bind(viewer).bind(session).bind(serde_json::to_string(ids)?).fetch_all(pool).await?;
-    Ok(rows.into_iter().collect())
-}
-
-pub async fn list_visible_forks(
-    pool: &SqlitePool,
-    viewer: Option<i64>,
-    session: Option<&str>,
-    repo: i64,
-    limit: i64,
-    offset: i64,
-) -> Result<Vec<Repository>> {
-    ensure!(offset >= 0, "Page offset must be nonnegative");
-    Ok(sqlx::query_as(&format!(
-        "SELECT r.* FROM repositories r {FORK_VIEWER_JOIN} WHERE r.forked_from_id=?3 AND {} ORDER BY r.created_at DESC, r.id DESC LIMIT ?4 OFFSET ?5",
-        readable_condition(),
-    )).bind(viewer).bind(session).bind(repo).bind(limit.clamp(1, 101)).bind(offset).fetch_all(pool).await?)
 }
 
 /// Joins the owner of `r` and the viewer, which the access projection reads as `u`. `?1` is the
@@ -133,8 +96,6 @@ pub async fn search_repositories(
 ) -> Result<Vec<Repository>> {
     ensure!(offset >= 0, "Result offset must be nonnegative");
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    let mut connection = search_connection(pool).await?;
-    let pool = &mut *connection;
     let search = RepositorySearch::parse(query);
     // The paging placeholders follow the match's binds: one for text, two for an owned search.
     let (limit_at, offset_at) = match &search {
@@ -152,39 +113,7 @@ pub async fn search_repositories(
         RepositorySearch::Text(text) => statement.bind(contains(text)),
         RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
     };
-    let result = statement.bind(limit).bind(offset).fetch_all(pool).await;
-    connection.finish().await?;
-    Ok(result?)
-}
-
-pub async fn search_repository_ids(
-    pool: &SqlitePool,
-    viewer: Option<i64>,
-    query: &str,
-    limit: i64,
-) -> Result<Vec<i64>> {
-    ensure!(limit >= 0, "Result limit must be nonnegative");
-    let search = RepositorySearch::parse(query);
-    // The limit follows the match's binds: one for text, two for an owned search.
-    let limit_at = match &search {
-        RepositorySearch::Text(_) => 3,
-        RepositorySearch::Owned { .. } => 4,
-    };
-    let sql = format!(
-        "SELECT r.id FROM repositories r {OWNER_JOINS} WHERE {} AND {} ORDER BY {} LIMIT ?{limit_at}",
-        readable_condition(),
-        repository_match(&search),
-        repository_order_by(RepositorySort::Updated)
-    );
-    let mut connection = search_connection(pool).await?;
-    let statement = sqlx::query_scalar::<_, i64>(&sql).bind(viewer);
-    let statement = match search {
-        RepositorySearch::Text(text) => statement.bind(contains(text)),
-        RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
-    };
-    let result = statement.bind(limit).fetch_all(&mut *connection).await;
-    connection.finish().await?;
-    Ok(result?)
+    Ok(statement.bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 pub async fn count_repositories(
@@ -193,8 +122,6 @@ pub async fn count_repositories(
     query: &str,
     cap: i64,
 ) -> Result<i64> {
-    let mut connection = search_connection(pool).await?;
-    let pool = &mut *connection;
     let search = RepositorySearch::parse(query);
     // The cap follows the match's binds: one for text, two for an owned search.
     let cap_at = match &search {
@@ -211,9 +138,7 @@ pub async fn count_repositories(
         RepositorySearch::Text(text) => statement.bind(contains(text)),
         RepositorySearch::Owned { owner, name } => statement.bind(owner).bind(contains(name)),
     };
-    let result = statement.bind(cap).fetch_one(pool).await;
-    connection.finish().await?;
-    Ok(result?)
+    Ok(statement.bind(cap).fetch_one(pool).await?)
 }
 
 pub(crate) struct SearchConnection(Option<sqlx::pool::PoolConnection<sqlx::Sqlite>>);
@@ -371,24 +296,25 @@ pub async fn search_users(
 ) -> Result<Vec<User>> {
     ensure!(offset >= 0, "Result offset must be nonnegative");
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    let mut connection = search_connection(pool).await?;
-    let result = sqlx::query_as::<_, User>(
+    Ok(sqlx::query_as::<_, User>(
         "SELECT * FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 \
          ORDER BY username, id LIMIT ?2 OFFSET ?3",
     )
-    .bind(contains(query)).bind(limit).bind(offset).fetch_all(&mut *connection).await;
-    connection.finish().await?;
-    Ok(result?)
+    .bind(contains(query))
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?)
 }
 
 pub async fn count_users(pool: &SqlitePool, query: &str, cap: i64) -> Result<i64> {
-    let mut connection = search_connection(pool).await?;
-    let result = sqlx::query_scalar::<_, i64>(
+    Ok(sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM (SELECT 1 FROM users WHERE username REGEXP ?1 OR display_name REGEXP ?1 LIMIT ?2) AS matches",
     )
-    .bind(contains(query)).bind(cap).fetch_one(&mut *connection).await;
-    connection.finish().await?;
-    Ok(result?)
+    .bind(contains(query))
+    .bind(cap)
+    .fetch_one(pool)
+    .await?)
 }
 
 #[cfg(test)]

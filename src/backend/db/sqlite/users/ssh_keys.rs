@@ -7,11 +7,6 @@ use anyhow::Result;
 use sqlx::SqlitePool;
 use tracing::debug;
 
-pub async fn touch_ssh_key(pool: &SqlitePool, key_id: i64) -> Result<()> {
-    sqlx::query("UPDATE ssh_keys SET last_used_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1").bind(key_id).execute(pool).await?;
-    Ok(())
-}
-
 /// Operator enrollment does not depend on a browser session.
 pub async fn add_ssh_key(
     pool: &SqlitePool,
@@ -43,14 +38,13 @@ pub async fn add_ssh_key_for_token(
     pool: &SqlitePool,
     user_id: i64,
     token: i64,
-    hash: &str,
     name: &str,
     public_key: &str,
 ) -> Result<SshKey> {
     insert_ssh_key(
         pool,
         user_id,
-        Some(&AccountCredential::Token(token, hash)),
+        Some(&AccountCredential::Token(token)),
         name,
         public_key,
     )
@@ -62,7 +56,7 @@ async fn require_key_account(
     user: i64,
     credential: Option<&AccountCredential<'_>>,
 ) -> Result<()> {
-    if let Some(credential @ AccountCredential::Token(_, _)) = credential {
+    if let Some(credential @ AccountCredential::Token(_)) = credential {
         return super::transitions::require_account(tx, user, credential)
             .await
             .map_err(|error| {
@@ -184,15 +178,10 @@ pub async fn get_user_by_ssh_key_id(pool: &SqlitePool, key_id: i64) -> Result<Op
 pub async fn list_user_key_summaries(
     pool: &SqlitePool,
     user_id: i64,
-    credential: &AccountCredential<'_>,
     after: i64,
 ) -> Result<Vec<crate::backend::db::users::ssh_keys::SshKeySummary>> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_account(&mut tx, user_id, credential).await?;
-    let keys = sqlx::query_as("SELECT id,name,fingerprint,key_type,created_at FROM ssh_keys WHERE user_id=?1 AND id>?2 ORDER BY id LIMIT 100")
-        .bind(user_id).bind(after.max(0)).fetch_all(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(keys)
+    Ok(sqlx::query_as("SELECT id,name,fingerprint,key_type,created_at FROM ssh_keys WHERE user_id=?1 AND id>?2 ORDER BY id LIMIT 100")
+        .bind(user_id).bind(after.max(0)).fetch_all(pool).await?)
 }
 
 pub async fn user_keys_page(
@@ -245,13 +234,12 @@ pub async fn delete_user_ssh_key_for_token(
     pool: &SqlitePool,
     user_id: i64,
     token: i64,
-    hash: &str,
     key_id: i64,
 ) -> Result<bool> {
     delete_key(
         pool,
         user_id,
-        Some(&AccountCredential::Token(token, hash)),
+        Some(&AccountCredential::Token(token)),
         key_id,
     )
     .await

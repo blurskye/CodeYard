@@ -7,11 +7,10 @@ use super::authority::*;
 
 pub async fn recover_suspended_organization_owner(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::users::transitions::AdministratorActor>,
+    actor: i64,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
-    let actor = actor.into();
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     if sqlx::query_scalar::<_, i64>("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
@@ -24,8 +23,11 @@ pub async fn recover_suspended_organization_owner(
     }
     // Lock the users in id order so concurrent recoveries cannot deadlock.
     let users: Vec<(i64, bool, bool)> = sqlx::query_as("SELECT id,is_admin,NOT is_banned AND NOT must_change_password FROM users WHERE id=ANY($1) ORDER BY id FOR SHARE")
-        .bind(vec![actor.user_id, target]).fetch_all(&mut *tx).await?;
-    if !crate::backend::db::postgres::users::transitions::active_admin_session(&mut tx, &actor).await? {
+        .bind(vec![actor, target]).fetch_all(&mut *tx).await?;
+    if !users
+        .iter()
+        .any(|&(id, admin, active)| id == actor && admin && active)
+    {
         return Ok(Denied);
     }
     if remaining_active_owner(&mut tx, org, -1).await? {
@@ -49,7 +51,7 @@ pub async fn recover_suspended_organization_owner(
     .await?;
     let audit = serde_json::json!({"reason":"no_usable_owner","previous_role":old,"replacement_user_id":target});
     sqlx::query("INSERT INTO audit_log(org_id,actor_id,action,target_type,target_id,metadata) VALUES($1,$2,'org.governance.recover_owner','org_membership',$3,$4)")
-        .bind(org).bind(actor.user_id).bind(member.id).bind(audit).execute(&mut *tx).await?;
+        .bind(org).bind(actor).bind(member.id).bind(audit).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(member))
 }
@@ -63,7 +65,7 @@ pub async fn list_ownerless_organizations(
     if !site_administrator(&mut tx, actor).await? {
         return Ok(Denied);
     }
-    let rows = sqlx::query_as("SELECT o.id,o.name,NULL::TEXT AS display_name,NULL::TEXT AS description,FALSE AS is_verified,TRUE AS governance_suspended,NULL::UUID AS avatar_file_id FROM organizations o WHERE NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AND o.id>$1 ORDER BY o.id LIMIT $2")
+    let rows = sqlx::query_as("SELECT o.id,o.name,NULL::TEXT AS display_name,NULL::TEXT AS description,FALSE AS is_verified,TRUE AS governance_suspended FROM organizations o WHERE NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AND o.id>$1 ORDER BY o.id LIMIT $2")
         .bind(page.after).bind(page.limit)
         .fetch_all(&mut *tx)
         .await?;

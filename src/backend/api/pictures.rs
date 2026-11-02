@@ -60,25 +60,29 @@ pub async fn read(mut multipart: Multipart) -> Result<PictureForm, PictureFormEr
             return Err(PictureFormError::Unreadable);
         }
         let name = field.name().unwrap_or_default().to_owned();
-        if name == "picture" {
-            let mut bytes = Vec::new();
-            while let Some(chunk) = field.chunk().await.map_err(read_error)? {
-                if bytes.len() + chunk.len() > MAX_PICTURE_BYTES {
-                    return Err(PictureFormError::TooLarge);
-                }
-                bytes.extend_from_slice(&chunk);
+        let is_picture = name == "picture";
+        let limit = if is_picture {
+            MAX_PICTURE_BYTES
+        } else {
+            MAX_FIELD_BYTES
+        };
+        let mut bytes = Vec::new();
+        while let Some(chunk) = field.chunk().await.map_err(read_error)? {
+            if bytes.len() + chunk.len() > limit {
+                return Err(if is_picture {
+                    PictureFormError::TooLarge
+                } else {
+                    PictureFormError::Unreadable
+                });
             }
+            bytes.extend_from_slice(&chunk);
+        }
+        if is_picture {
             if form.picture.replace(bytes).is_some() {
                 return Err(PictureFormError::Unreadable);
             }
         } else {
-            let value = crate::backend::api::http::multipart::bounded_text(
-                &mut field,
-                MAX_FIELD_BYTES,
-            )
-            .await
-            .map_err(read_error)?
-            .ok_or(PictureFormError::Unreadable)?;
+            let value = String::from_utf8(bytes).map_err(|_| PictureFormError::Unreadable)?;
             form.fields.insert(name, value);
         }
     }

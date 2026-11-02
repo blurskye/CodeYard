@@ -1,17 +1,16 @@
 //! Warm a derived Git index for authenticated repository mutations. This middleware grants
 //! nothing: failed/missing/stale proofs are rechecked and fail closed in the domain transaction.
 use crate::backend::{
-    api::{github, http::{csrf, session}},
-    api::github::auth,
+    api::{github, http::session},
     app::AppState,
     db,
     identity::interactions,
 };
 use axum::{
     extract::{FromRequestParts, Path, Request},
-    http::{header, Method, StatusCode},
+    http::{header, Method},
     middleware::Next,
-    response::{IntoResponse, Response},
+    response::Response,
     Extension,
 };
 use std::{collections::HashMap, sync::Arc};
@@ -21,10 +20,7 @@ pub(crate) async fn prepare(
     request: Request,
     next: Next,
 ) -> Response {
-    // Review comment replies and review submissions end in /replies and /events.
-    let contribution = ["/issues", "/issues/new", "/pulls", "/pulls/new", "/comments", "/replies", "/reviews", "/review", "/events"]
-        .iter().any(|suffix| request.uri().path().ends_with(suffix));
-    if !contribution || request.method() != Method::POST || (!request.headers().contains_key(header::COOKIE)
+    if (!request.headers().contains_key(header::COOKIE)
         && !request.headers().contains_key(header::AUTHORIZATION))
         || !matches!(
             *request.method(),
@@ -33,28 +29,7 @@ pub(crate) async fn prepare(
     {
         return next.run(request).await;
     }
-    let token_route = request.uri().path().starts_with("/api/v3/");
-    let (mut parts, mut body) = request.into_parts();
-    if !token_route {
-        let mut headers = parts.headers.clone();
-        if headers.get(header::CONTENT_TYPE).and_then(|value| value.to_str().ok())
-            .is_some_and(|value| value.starts_with("application/x-www-form-urlencoded"))
-        {
-            let bytes = match axum::body::to_bytes(body, 1024 * 1024).await {
-                Ok(bytes) => bytes,
-                Err(_) => return StatusCode::PAYLOAD_TOO_LARGE.into_response(),
-            };
-            let form: HashMap<String, String> = url::form_urlencoded::parse(&bytes).into_owned().collect();
-            body = axum::body::Body::from(bytes);
-            headers.remove("x-csrf-token");
-            if let Some(token) = form.get("csrf_token").and_then(|token| token.parse().ok()) {
-                headers.insert("x-csrf-token", token);
-            }
-        }
-        if let Err(error) = csrf::check(state.clone(), &headers).await {
-            return error.into_response();
-        }
-    }
+    let (mut parts, body) = request.into_parts();
     let params = Path::<HashMap<String, String>>::from_request_parts(&mut parts, &())
         .await
         .ok();
@@ -70,11 +45,8 @@ pub(crate) async fn prepare(
                     .flatten()
                     .is_some_and(|restriction| restriction.limit != "collaborators_only")
                 {
-                    let actor = if token_route {
-                        match auth::authenticate(&state, &parts.headers, true).await {
-                            Ok(Some(actor)) if actor.require_write().is_ok() => github::interaction_actor(&state, &parts.headers).await,
-                            _ => None,
-                        }
+                    let actor = if parts.headers.contains_key(header::AUTHORIZATION) {
+                        github::interaction_actor(&state, &parts.headers).await
                     } else {
                         session::get_current_user(&state.pool, &parts.headers)
                             .await

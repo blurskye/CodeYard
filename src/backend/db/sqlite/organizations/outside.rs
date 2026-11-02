@@ -29,17 +29,14 @@ pub async fn list(
 }
 pub async fn remove(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
-    let grant = actor.into();
-    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
     if membership_role(&mut tx, org, target).await?.is_some() {
         return Ok(Conflict);
     }

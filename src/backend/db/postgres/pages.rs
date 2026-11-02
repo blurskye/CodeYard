@@ -1,45 +1,26 @@
-use crate::backend::db::pages::{Attempt, Build, Deployment, Refusal, Role, Site, Update, NO_PUBLISHER};
+use crate::backend::db::pages::{Attempt, Build, Deployment, Refusal, Site, Update, NO_PUBLISHER};
 use anyhow::Result;
 use sqlx::PgPool;
 
-use crate::backend::db::repositories::credentials::{repository_condition, Access, Reader};
-
-async fn begin_read<'a>(pool: &'a PgPool, reader: &Reader<'_>, repo: i64) -> Result<sqlx::Transaction<'a, sqlx::Postgres>> {
-    let mut tx = pool.begin().await?;
-    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY").execute(&mut *tx).await?;
-    let allowed: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$1 WHERE r.id=$2 AND ({}) AND ({}))", super::repositories::access::readable_condition(), repository_condition(true, "pages", Access::PublicRead, "$3", "$4", "$5")))
-        .bind(reader.user).bind(repo).bind(reader.token()).bind(reader.session()).bind(reader.hash()).fetch_one(&mut *tx).await?;
-    anyhow::ensure!(allowed, Refusal::Missing);
-    Ok(tx)
-}
-
-async fn authorize_write(tx: &mut sqlx::Transaction<'_, sqlx::Postgres>, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, role: Role) -> Result<()> {
-    let allowed = match role {
-        Role::Admin => super::discussions::lock_repository_mutation_authority(tx, actor, repo).await?,
-        Role::Maintain => super::discussions::lock_exclusive_maintain_authority(tx, actor, repo).await?,
-        Role::Write => super::discussions::lock_write_authority(tx, actor, repo).await?,
-    };
-    anyhow::ensure!(allowed && super::users::transitions::credential_live(tx, actor, credential, true).await?, Refusal::Denied);
-    Ok(())
-}
-
-pub async fn site(pool: &PgPool, reader: &Reader<'_>, repo: i64) -> Result<Option<Site>> {
-    let mut tx = begin_read(pool, reader, repo).await?;
-    let row = sqlx::query_as("SELECT * FROM pages_sites WHERE repo_id=$1").bind(repo).fetch_optional(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(row)
+pub async fn site(pool: &PgPool, repo: i64) -> Result<Option<Site>> {
+    Ok(sqlx::query_as("SELECT * FROM pages_sites WHERE repo_id=$1")
+        .bind(repo)
+        .fetch_optional(pool)
+        .await?)
 }
 pub async fn save(
     pool: &PgPool,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: &Update,
     create: bool,
 ) -> Result<Site> {
     input.validate(create)?;
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, Role::Maintain).await?;
+    anyhow::ensure!(
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
+        Refusal::Denied
+    );
     let existing: Option<Site> = sqlx::query_as("SELECT * FROM pages_sites WHERE repo_id=$1")
         .bind(repo)
         .fetch_optional(&mut *tx)
@@ -82,15 +63,16 @@ pub async fn save(
     let kind = input.build_type.as_ref().unwrap_or(&previous.build_type);
     anyhow::ensure!(kind != "legacy" || branch.is_some(), Refusal::Invalid);
     let row=sqlx::query_as("INSERT INTO pages_sites(repo_id,build_type,branch,path,cname,https_enforced,is_public) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(repo_id) DO UPDATE SET build_type=excluded.build_type,branch=excluded.branch,path=excluded.path,cname=excluded.cname,https_enforced=excluded.https_enforced,is_public=excluded.is_public RETURNING *")
-        .bind(repo).bind(kind).bind(branch).bind(path).bind(cname).bind(input.https_enforced.unwrap_or(previous.https_enforced)).bind(input.public.unwrap_or(previous.public)).fetch_one(&mut *tx).await.map_err(|error| {
-            if error.as_database_error().is_some_and(|error| error.constraint() == Some("pages_sites_cname_key")) { anyhow::Error::from(Refusal::Duplicate) } else { error.into() }
-        })?;
+        .bind(repo).bind(kind).bind(branch).bind(path).bind(cname).bind(input.https_enforced.unwrap_or(previous.https_enforced)).bind(input.public.unwrap_or(previous.public)).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(row)
 }
-pub async fn delete(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64) -> Result<()> {
+pub async fn delete(pool: &PgPool, actor: i64, repo: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, Role::Admin).await?;
+    anyhow::ensure!(
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
+        Refusal::Denied
+    );
     anyhow::ensure!(
         sqlx::query("DELETE FROM pages_sites WHERE repo_id=$1")
             .bind(repo)
@@ -103,24 +85,31 @@ pub async fn delete(pool: &PgPool, actor: i64, credential: &crate::backend::db::
     tx.commit().await?;
     Ok(())
 }
-pub async fn builds(pool: &PgPool, reader: &Reader<'_>, repo: i64, offset: i64, limit: i64) -> Result<Vec<Build>> {
-    anyhow::ensure!(offset >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
-    let mut tx = begin_read(pool, reader, repo).await?;
-    let rows = sqlx::query_as("SELECT * FROM pages_builds WHERE repo_id=$1 ORDER BY id DESC LIMIT $2 OFFSET $3")
-        .bind(repo).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(rows)
+pub async fn builds(pool: &PgPool, repo: i64, offset: i64, limit: i64) -> Result<Vec<Build>> {
+    Ok(sqlx::query_as(
+        "SELECT * FROM pages_builds WHERE repo_id=$1 ORDER BY id DESC LIMIT $2 OFFSET $3",
+    )
+    .bind(repo)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?)
 }
-pub async fn build(pool: &PgPool, reader: &Reader<'_>, repo: i64, id: i64) -> Result<Option<Build>> {
-    let mut tx = begin_read(pool, reader, repo).await?;
-    let row = sqlx::query_as("SELECT * FROM pages_builds WHERE repo_id=$1 AND id=$2")
-        .bind(repo).bind(id).fetch_optional(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(row)
+pub async fn build(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Build>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM pages_builds WHERE repo_id=$1 AND id=$2")
+            .bind(repo)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
-pub async fn request_build(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, sha: &str) -> Result<Build> {
+pub async fn request_build(pool: &PgPool, actor: i64, repo: i64, sha: &str) -> Result<Build> {
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, Role::Write).await?;
+    anyhow::ensure!(
+        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        Refusal::Denied
+    );
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM pages_sites WHERE repo_id=$1 AND build_type='legacy')",
     )
@@ -135,12 +124,14 @@ pub async fn request_build(pool: &PgPool, actor: i64, credential: &crate::backen
 pub async fn request_deployment(
     pool: &PgPool,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     input: Attempt<'_>,
 ) -> Result<Deployment> {
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, Role::Write).await?;
+    anyhow::ensure!(
+        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        Refusal::Denied
+    );
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM pages_sites WHERE repo_id=$1 AND build_type='workflow')",
     )
@@ -158,16 +149,21 @@ pub async fn request_deployment(
     tx.commit().await?;
     Ok(row)
 }
-pub async fn deployment(pool: &PgPool, reader: &Reader<'_>, repo: i64, id: i64) -> Result<Option<Deployment>> {
-    let mut tx = begin_read(pool, reader, repo).await?;
-    let row = sqlx::query_as("SELECT * FROM pages_deployments WHERE repo_id=$1 AND id=$2")
-        .bind(repo).bind(id).fetch_optional(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(row)
+pub async fn deployment(pool: &PgPool, repo: i64, id: i64) -> Result<Option<Deployment>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM pages_deployments WHERE repo_id=$1 AND id=$2")
+            .bind(repo)
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
 }
-pub async fn cancel(pool: &PgPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, repo: i64, id: i64) -> Result<()> {
+pub async fn cancel(pool: &PgPool, actor: i64, repo: i64, id: i64) -> Result<()> {
     let mut tx = pool.begin().await?;
-    authorize_write(&mut tx, actor, credential, repo, Role::Write).await?;
+    anyhow::ensure!(
+        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        Refusal::Denied
+    );
     let row: Deployment =
         sqlx::query_as("SELECT * FROM pages_deployments WHERE repo_id=$1 AND id=$2")
             .bind(repo)

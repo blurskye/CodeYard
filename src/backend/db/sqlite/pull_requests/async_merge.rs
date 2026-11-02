@@ -1,4 +1,4 @@
-use crate::backend::db::pull_requests::async_merge::{AsyncMerge, NewAsyncMerge, PENDING_TIMEOUT_SECONDS, TIMEOUT_MESSAGE};
+use crate::backend::db::pull_requests::async_merge::{AsyncMerge, NewAsyncMerge};
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::SqlitePool;
@@ -18,22 +18,14 @@ pub async fn finish(pool: &SqlitePool, uuid: &str, status: &str, details: &Value
     sqlx::query("UPDATE pull_request_async_merges SET status=?2,details=?3,expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE uuid=?1 AND status='pending'").bind(uuid).bind(status).bind(details).execute(pool).await?;
     Ok(())
 }
-/// Requests whose pull request already merged finish as merged: the merge committed before the
-/// restart cut off the result. The rest of this node's pending requests fail.
 pub async fn recover(pool: &SqlitePool, node_id: Option<i64>, details: &Value) -> Result<u64> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    // Rows without a worker predate cluster adoption, so any node recovers them.
-    let merged = sqlx::query("UPDATE pull_request_async_merges SET status='merged',details=(SELECT json_object('message','Pull request #'||p.number||' merged successfully','sha',p.merge_commit_sha) FROM pull_requests p WHERE p.id=pull_request_async_merges.pull_request_id),expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE (worker_node_id IS NULL OR worker_node_id=?1) AND status='pending' AND EXISTS(SELECT 1 FROM pull_requests p WHERE p.id=pull_request_async_merges.pull_request_id AND p.merged AND p.merge_commit_sha IS NOT NULL)").bind(node_id).execute(&mut *tx).await?.rows_affected();
-    let failed = sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=?2,expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE (worker_node_id IS NULL OR worker_node_id=?1) AND status='pending'").bind(node_id).bind(details).execute(&mut *tx).await?.rows_affected();
-    tx.commit().await?;
-    Ok(merged + failed)
+    Ok(sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=?2,expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE worker_node_id IS ?1 AND status='pending'").bind(node_id).bind(details).execute(pool).await?.rows_affected())
 }
 pub async fn prune(pool: &SqlitePool) -> Result<u64> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let failed = sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=?2,expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day') WHERE status='pending' AND julianday(created_at)<=julianday('now')-(?1/86400.0)")
-        .bind(PENDING_TIMEOUT_SECONDS).bind(serde_json::json!({"message":TIMEOUT_MESSAGE})).execute(&mut *tx).await?.rows_affected();
-    let deleted = sqlx::query("DELETE FROM pull_request_async_merges WHERE julianday(expires_at)<=julianday('now')")
-        .execute(&mut *tx).await?.rows_affected();
-    tx.commit().await?;
-    Ok(failed + deleted)
+    Ok(sqlx::query(
+        "DELETE FROM pull_request_async_merges WHERE julianday(expires_at)<=julianday('now')",
+    )
+    .execute(pool)
+    .await?
+    .rows_affected())
 }

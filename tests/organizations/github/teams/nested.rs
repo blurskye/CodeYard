@@ -264,9 +264,8 @@ pub(super) async fn run(
         ("teams/delete-legacy", 204),
     )
     .await;
-    let deletion_session = db::users::sessions::create_session(pool, &uuid::Uuid::new_v4().simple().to_string().repeat(2), alice, None, None, chrono::Utc::now() + chrono::Duration::hours(1)).await.unwrap();
     applied(
-        orgs::delete_organization(pool, (alice, &db::users::accounts::AccountCredential::Session(&deletion_session.id)), foreign_org.id)
+        orgs::delete_organization(pool, alice, foreign_org.id)
             .await
             .unwrap(),
     );
@@ -403,30 +402,40 @@ pub(super) async fn run(
         ("teams/delete-in-org", 204),
     )
     .await;
-    // Deleting a parent deletes its child teams too, as on GitHub.
-    call(
-        router,
-        "GET",
-        &child_path,
-        reader,
-        Value::Null,
-        ("teams/get-by-name", 404),
-    )
-    .await;
+    assert_eq!(
+        call(
+            router,
+            "GET",
+            &child_path,
+            reader,
+            Value::Null,
+            ("teams/get-by-name", 200)
+        )
+        .await["parent"],
+        Value::Null
+    );
     assert_eq!(
         db::repositories::access::get_user_repo_access(pool, charlie, repo)
             .await
             .unwrap(),
         AccessLevel::None
     );
-    // The sibling went with the parent as well.
+    call(
+        router,
+        "DELETE",
+        &child_path,
+        writer,
+        Value::Null,
+        ("teams/delete-in-org", 204),
+    )
+    .await;
     call(
         router,
         "DELETE",
         &format!("/api/v3/teams/{}", sibling["id"].as_i64().unwrap()),
         writer,
         Value::Null,
-        ("teams/delete-legacy", 404),
+        ("teams/delete-legacy", 204),
     )
     .await;
 }

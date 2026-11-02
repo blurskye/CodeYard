@@ -5,14 +5,6 @@ use super::{
 };
 use crate::backend::repositories::store::repo_store;
 
-pub(super) async fn drafts_visible(repo: &db::models::Repository, request: &RequestContext) -> Result<bool> {
-    if request.private_viewer(repo.id, "contents").await?.is_none() {
-        return Ok(false);
-    }
-    Ok(crate::backend::repositories::access::user_access(&request.state.pool, &request.auth.user, repo)
-        .await.map_err(unavailable)?.can_write())
-}
-
 pub(super) async fn resolve(
     field: &str,
     ctx: &Arguments,
@@ -21,7 +13,9 @@ pub(super) async fn resolve(
 ) -> Result<Value> {
     request.authorize(repo.id, "contents", false).await?;
     let pool = &request.state.pool;
-    let writer = drafts_visible(repo, request).await?;
+    let writer = crate::backend::repositories::access::can_write(pool, &request.auth.user, repo)
+        .await
+        .map_err(unavailable)?;
     match field {
         "release" | "latestRelease" => {
             let row = if field == "release" {
@@ -83,8 +77,6 @@ pub(super) async fn field(
     let repo = repository::by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
     request.authorize(repo.id, "contents", false).await?;
     match field {
-        "reactionGroups" => super::collaboration::reactions(db::reactions::Subject::Release,
-            parent["databaseId"].as_i64().ok_or_else(missing)?, request).await,
         "releaseAssets" => {
             connection::validate(args)?;
             let mut rows = db::releases::list_release_assets(
@@ -129,7 +121,7 @@ pub(super) async fn field(
                 return Ok(Value::Null);
             }
             let row = store.commit(&name).await.map_err(unavailable)?;
-            super::git::commit(repo.id, &row, "contents", request)
+            super::git::commit(repo.id, &row, "contents")
         }
         _ => Err(async_graphql::Error::new(format!(
             "Codeyard does not support Release.{field} yet"

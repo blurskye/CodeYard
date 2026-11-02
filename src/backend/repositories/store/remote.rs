@@ -98,18 +98,12 @@ impl RemoteStore {
         let raw_json = matches!(
             &operation,
             Operation::FilePaths { .. }
-                | Operation::GitTree { .. }
-                | Operation::IntroducedBlobs { .. }
-                | Operation::GitTag { .. }
-                | Operation::TemplateTexts { .. }
                 | Operation::CommitsBetween { .. }
                 | Operation::Blame { .. }
                 | Operation::Commits { .. }
                 | Operation::CommitPage { .. }
                 | Operation::PathCommits { .. }
                 | Operation::ComparisonFrom { .. }
-                | Operation::SearchCode { raw_json: true, .. }
-                | Operation::CommitStatistics { raw_json: true, .. }
         );
         let (reply, body) = self.exchange(operation, body).await?;
         let value = reply.result.map_err(|failure| match failure {
@@ -260,22 +254,17 @@ impl RemoteStore {
         path: &str,
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
-        self.blob_part(Operation::BlobBytes {
-            git_ref: git_ref.into(),
-            path: path.into(),
-            range,
-        })
-        .await
-    }
-
-    pub(super) async fn blob_by_id_range(&self, id: &str, range: BlobRange) -> Result<BlobBytes, RepoError> {
-        self.blob_part(Operation::BlobByIdRange { id: id.into(), range }).await
-    }
-
-    /// Blob bytes travel as the raw reply body beside their JSON metadata.
-    async fn blob_part(&self, operation: Operation) -> Result<BlobBytes, RepoError> {
         let (reply, bytes) = self
-            .exchange_with_actor_and_limit(None, operation, b"", MAX_BLOB_RESPONSE_BYTES)
+            .exchange_with_actor_and_limit(
+                None,
+                Operation::BlobBytes {
+                    git_ref: git_ref.into(),
+                    path: path.into(),
+                    range,
+                },
+                b"",
+                MAX_BLOB_RESPONSE_BYTES,
+            )
             .await?;
         match reply.result {
             Ok(value) => {
@@ -288,7 +277,6 @@ impl RemoteStore {
                     size: metadata.size,
                     offset: metadata.offset,
                     mode: metadata.mode,
-                    preview: metadata.preview,
                 })
             }
             Err(Failure::Repository(error)) => Err(error),
@@ -353,11 +341,9 @@ impl RemoteStore {
         let permit = crate::backend::git::repository::process::forwarding_permit()
             .await
             .map_err(RepoError::from)?;
-        let mut request = Vec::new();
-        super::source::append_packet(&mut request, &format!("want {oid}\n"));
-        request.extend_from_slice(b"00000009done\n");
-        let parent = destination.parent().ok_or_else(|| rpc::wire::invalid("invalid checkout directory"))?;
-        let pack = tempfile::NamedTempFile::new_in(parent)
+        let want = format!("want {oid}\n");
+        let request = format!("{:04x}{want}00000009done\n", want.len() + 4);
+        let pack = tempfile::NamedTempFile::new()
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         let mut output = tokio::fs::File::from_std(
             pack.reopen()
@@ -367,7 +353,7 @@ impl RemoteStore {
             .git_session(
                 super::GitSession::new(super::GitService::UploadPack, true),
                 super::GitStreams {
-                    input: &mut request.as_slice(),
+                    input: &mut request.as_bytes(),
                     output: &mut output,
                     errors: &mut tokio::io::sink(),
                 },
@@ -384,7 +370,7 @@ impl RemoteStore {
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
         drop(output);
         let lock = crate::backend::git::locks::lock(destination).await;
-        LocalStore::checkout_pack(destination, sha, &self.disk_path, pack, permit, lock).await
+        LocalStore::checkout_pack(destination, sha, pack, permit, lock).await
     }
 }
 

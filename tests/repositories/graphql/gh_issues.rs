@@ -272,7 +272,6 @@ async fn contract(pg: bool) {
         alice,
         &db::issue_attributes::Definition {
             id: None,
-            expected_updated: None,
             kind: "type".into(),
             name: "Task".into(),
             description: Some("A task".into()),

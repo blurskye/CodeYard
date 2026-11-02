@@ -15,11 +15,7 @@ pub fn confirm_dialog(
     // A fragment alone cannot close an open details element without JavaScript.
     let cancel = cancel_url(id, cancel);
     rsx! {
-        dialog { id: id.map(str::to_owned), class: "repo-confirm-modal", aria_label: label.to_owned(),
-            onmounted: move |_| {
-                #[cfg(target_arch = "wasm32")]
-                super::menu::sync_dialogs();
-            },
+        div { id: id.map(str::to_owned), class: "repo-confirm-modal", role: "dialog", aria_label: label.to_owned(),
             a { class: "repo-confirm-backdrop", href: cancel.to_owned(), aria_label: "Cancel", tabindex: "-1" }
             form { method: "post", action: action.to_owned(), class: "repo-confirm-card",
                 {fields}

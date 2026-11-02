@@ -24,7 +24,6 @@ pub(in crate::backend::api) fn write_error(error: anyhow::Error) -> Error {
             Error::invalid("A label with this name already exists")
         }
         Some(LabelWriteRefusal::InvalidLabels) => Error::invalid("Invalid labels"),
-        Some(LabelWriteRefusal::Conflict) => Error::new(StatusCode::CONFLICT, "Label changed"),
         None => Error::unavailable(error),
     }
 }
@@ -230,22 +229,15 @@ async fn list_on_issue(
 #[derive(Deserialize)]
 #[serde(untagged)]
 enum Names {
-    Object { labels: Vec<LabelName> },
-    Array(Vec<LabelName>),
-}
-
-#[derive(Deserialize)]
-#[serde(untagged)]
-enum LabelName {
-    String(String),
-    Object { name: String },
+    Object { labels: Vec<String> },
+    Array(Vec<String>),
 }
 
 async fn change(
     state: Arc<AppState>,
     headers: HeaderMap,
     p: Params,
-    names: Vec<LabelName>,
+    names: Vec<String>,
     replace: bool,
 ) -> Result<Json<Vec<Value>>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
@@ -254,12 +246,21 @@ async fn change(
     if names.len() > db::labels::MAX_ISSUE_LABELS {
         return Err(Error::invalid("Too many labels"));
     }
-    let catalog = db::labels::list_repo_labels(&state.pool, repo.id).await.map_err(Error::unavailable)?;
-    let ids = names.into_iter().map(|entry| {
-        let (LabelName::String(name) | LabelName::Object { name }) = entry;
-        catalog.iter().find(|label| label.name.eq_ignore_ascii_case(&name)).map(|label| label.id)
-            .ok_or_else(|| Error::invalid("Label does not exist"))
-    }).collect::<Result<Vec<_>>>()?;
+    let mut ids = Vec::new();
+    for name in names {
+        ids.push(
+            find(&state.pool, repo.id, &name)
+                .await
+                .map_err(|error| {
+                    if error.0 == StatusCode::NOT_FOUND {
+                        Error::invalid("Label does not exist")
+                    } else {
+                        error
+                    }
+                })?
+                .id,
+        );
+    }
     let labels = save_labels(&state.pool, actor.id, repo.id, item, &ids, replace).await?;
     Ok(Json(
         labels
@@ -277,6 +278,7 @@ pub(in crate::backend::api) async fn save_labels(
     ids: &[i64],
     replace: bool,
 ) -> Result<Vec<db::models::Label>> {
+    let before = assigned(pool, item).await?;
     match (item, replace) {
         (db::assignees::AssignedItem::Issue(id), true) => {
             db::labels::set_issue_labels(pool, actor_id, repo_id, id, ids).await
@@ -296,7 +298,20 @@ pub(in crate::backend::api) async fn save_labels(
         }
     }
     .map_err(write_error)?;
-    assigned(pool, item).await
+    let after = assigned(pool, item).await?;
+    for label in before
+        .iter()
+        .filter(|label| !after.iter().any(|current| current.id == label.id))
+    {
+        db::timeline::record_for(pool, repo_id, item, actor_id, "unlabeled", &label.name).await;
+    }
+    for label in after
+        .iter()
+        .filter(|label| !before.iter().any(|previous| previous.id == label.id))
+    {
+        db::timeline::record_for(pool, repo_id, item, actor_id, "labeled", &label.name).await;
+    }
+    Ok(after)
 }
 
 async fn add(
@@ -350,6 +365,15 @@ async fn remove_from_issue(
     if !removed {
         return Err(Error::missing());
     }
+    db::timeline::record_for(
+        &state.pool,
+        repo.id,
+        item,
+        actor.id,
+        "unlabeled",
+        &label.name,
+    )
+    .await;
     Ok(Json(
         assigned(&state.pool, item)
             .await?

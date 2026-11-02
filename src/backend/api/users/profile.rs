@@ -66,7 +66,7 @@ pub(crate) async fn profile_response(
     // The Stars tab shows the repository count and its own list. Only the Repositories tab reads the
     // repositories and the activity feed.
     let stars_tab = ctx.query.get("tab").map(String::as_str) == Some("stars");
-    let viewer = ctx.session_id.as_deref();
+    let viewer = ctx.user.as_ref().map(|viewer| viewer.id);
     let repositories_page = ctx
         .query
         .get("repo_page")
@@ -118,10 +118,7 @@ pub(crate) async fn profile_response(
         .user
         .as_ref()
         .is_some_and(|viewer| viewer.id == target.id);
-    let repositories = match profile_repositories(&ctx.state.pool, repositories).await {
-        Ok(repositories) => repositories,
-        Err(_) => return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Repository counts are temporarily unavailable."),
-    };
+    let repositories = repositories.into_iter().map(profile_repository).collect();
     let following = if let Some(viewer) = ctx.user.as_ref().filter(|viewer| viewer.id != target.id)
     {
         match db::following::is_user_following(&ctx.state.pool, viewer.id, target.id).await {
@@ -159,7 +156,7 @@ pub(crate) async fn profile_response(
     } else {
         match crate::backend::identity::activity::profile_activity(
             &ctx.state.pool,
-            ctx.user.as_ref().zip(ctx.session_id.as_deref()).map(|(user, session)| db::activity::ActivityViewer { user: user.id, session }),
+            ctx.user.as_ref(),
             target.id,
             page,
         )
@@ -190,7 +187,7 @@ pub(crate) async fn profile_response(
     let repositories_older = (!stars_tab
         && repositories_page.saturating_mul(30) < repository_count)
         .then(|| repository_href(repositories_page.saturating_add(1)));
-    let mut profile = match load_profile(&ctx.state.pool, &target).await {
+    let profile = match load_profile(&ctx.state.pool, &target).await {
         Ok(profile) => profile,
         Err(_) => {
             return ctx.error(
@@ -199,7 +196,6 @@ pub(crate) async fn profile_response(
             )
         }
     };
-    profile.repository_query = repository_query.to_owned();
     let title = format!("{}'s profile", target.username);
     ctx.page_model_status(
         status,
@@ -223,27 +219,15 @@ pub(crate) async fn profile_response(
     )
 }
 
-pub(crate) async fn profile_repositories(
-    pool: &db::DbPool,
-    repos: Vec<db::models::Repository>,
-) -> anyhow::Result<Vec<users::Repository>> {
-    let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
-    let mut counts = db::repositories::discovery::public_fork_counts(pool, &ids).await?;
-    Ok(repos.into_iter().map(|repo| {
-        let forks = counts.remove(&repo.id).unwrap_or_default();
-        profile_repository(repo, forks)
-    }).collect())
-}
-
 /// One repository row on a public page. Users and organizations list the same fields.
-fn profile_repository(repo: db::models::Repository, forks: i32) -> users::Repository {
+pub(crate) fn profile_repository(repo: db::models::Repository) -> users::Repository {
     users::Repository {
         name: repo.name,
         description: repo.description.unwrap_or_default(),
         private: repo.is_private,
         archived: repo.is_archived,
         stars: i64::from(repo.stars_count),
-        forks: i64::from(forks),
+        forks: i64::from(repo.forks_count),
         updated: repo.updated_at.format("%b %e, %Y").to_string(),
     }
 }

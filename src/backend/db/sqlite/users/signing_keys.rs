@@ -9,15 +9,10 @@ use sqlx::SqlitePool;
 pub async fn list_signing_key_summaries(
     pool: &SqlitePool,
     user: i64,
-    credential: &AccountCredential<'_>,
     after: i64,
 ) -> Result<Vec<crate::backend::db::users::ssh_keys::SshKeySummary>> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    super::transitions::require_account(&mut tx, user, credential).await?;
-    let keys = sqlx::query_as("SELECT id,title AS name,fingerprint,substr(key,1,instr(key,' ')-1) AS key_type,created_at FROM ssh_signing_keys WHERE user_id=?1 AND id>?2 ORDER BY id LIMIT 100")
-        .bind(user).bind(after.max(0)).fetch_all(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(keys)
+    Ok(sqlx::query_as("SELECT id,title AS name,fingerprint,substr(key,1,instr(key,' ')-1) AS key_type,created_at FROM ssh_signing_keys WHERE user_id=?1 AND id>?2 ORDER BY id LIMIT 100")
+        .bind(user).bind(after.max(0)).fetch_all(pool).await?)
 }
 
 pub async fn find_signing_key(

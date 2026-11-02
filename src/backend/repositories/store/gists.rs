@@ -10,7 +10,7 @@ pub const MAX_GIST_REQUEST_BYTES: usize = 64 * 1024 * 1024;
 #[derive(Clone, Serialize, Deserialize)]
 pub enum GistCredential {
     Session(String),
-    Token(i64, String),
+    Token(i64),
 }
 impl std::fmt::Debug for GistCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -21,13 +21,13 @@ impl GistCredential {
     pub fn borrowed(&self) -> AccountCredential<'_> {
         match self {
             Self::Session(session) => AccountCredential::Session(session),
-            Self::Token(id, hash) => AccountCredential::Token(*id, hash),
+            Self::Token(id) => AccountCredential::Token(*id),
         }
     }
     pub fn from_credential(credential: &AccountCredential<'_>) -> Self {
         match credential {
             AccountCredential::Session(session) => Self::Session((*session).into()),
-            AccountCredential::Token(id, hash) => Self::Token(*id, (*hash).into()),
+            AccountCredential::Token(id) => Self::Token(*id),
         }
     }
 }
@@ -76,8 +76,13 @@ impl GistEdit {
     }
 }
 pub fn valid_gist_filename(name: &str) -> bool {
-    crate::backend::storage::valid_basename(name, MAX_GIST_FILENAME_BYTES)
-        && !super::editor::is_git_dir_name(name)
+    !name.is_empty()
+        && name.len() <= MAX_GIST_FILENAME_BYTES
+        && !matches!(name, "." | "..")
+        && !name.eq_ignore_ascii_case(".git")
+        && !name
+            .chars()
+            .any(|c| c.is_control() || matches!(c, '/' | '\\'))
 }
 fn invalid() -> RepoError {
     RepoError::new(ErrorKind::Invalid, "Invalid gist files or description")

@@ -3,17 +3,14 @@ use super::{db, missing, node_id, repository, unavailable, RequestContext, Resul
 use crate::backend::{api::github, db::assignees::AssignedItem, repositories::access};
 use serde_json::json;
 
-pub(super) fn list(value: &Value) -> &[Value] {
-    match value {
-        Value::Array(values) => values,
-        Value::Null => &[],
-        value => std::slice::from_ref(value),
-    }
-}
-
 pub(super) fn ids(value: &Value, expected: &str) -> Result<Vec<i64>> {
-    list(value)
-        .iter()
+    let values = match value {
+        Value::Array(v) => v.iter().collect::<Vec<_>>(),
+        Value::Null => vec![],
+        _ => vec![value],
+    };
+    values
+        .into_iter()
         .map(|v| {
             node_id::decode(v.as_str().ok_or_else(missing)?)
                 .filter(|(kind, _)| *kind == expected)
@@ -39,14 +36,8 @@ pub(super) async fn prepare(
         return Err(super::token_denied());
     }
     if let Some(value) = input.get("labelIds").filter(|v| !v.is_null()) {
-        let mut selected = ids(value, "L")?;
-        selected.sort_unstable();
-        selected.dedup();
-        if selected.len() > db::labels::MAX_ISSUE_LABELS {
-            return Err(async_graphql::Error::new("At most 100 labels are allowed"));
-        }
         let mut names = vec![];
-        for id in selected {
+        for id in ids(value, "L")? {
             let row = db::labels::get_label_by_id(&request.state.pool, id)
                 .await
                 .map_err(unavailable)?
@@ -57,16 +48,15 @@ pub(super) async fn prepare(
         translated["labels"] = json!(names);
     }
     if let Some(value) = input.get("assigneeIds").filter(|v| !v.is_null()) {
-        let mut selected = ids(value, "U")?;
-        selected.sort_unstable();
-        selected.dedup();
-        if selected.len() > db::assignees::MAX_ASSIGNEES as usize {
-            return Err(async_graphql::Error::new("At most 10 assignees are allowed"));
+        let mut names = vec![];
+        for id in ids(value, "U")? {
+            let row = db::users::accounts::get_user_by_id(&request.state.pool, id)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            names.push(row.username);
         }
-        let users = db::users::accounts::get_users_by_ids(&request.state.pool, &selected)
-            .await.map_err(unavailable)?;
-        if users.len() != selected.len() { return Err(missing()); }
-        translated["assignees"] = json!(users.into_iter().map(|user| user.username).collect::<Vec<_>>());
+        translated["assignees"] = json!(names);
     }
     if let Some(value) = input.get("milestoneId") {
         translated["milestone"] = if value.is_null() {
@@ -102,7 +92,7 @@ pub(super) async fn apply(
     let owner = repository::owner(repo, request).await?;
     github::issues::apply_metadata(
         &request.state,
-        &request.auth,
+        &request.auth.user,
         repo,
         item,
         (&owner, number, title),

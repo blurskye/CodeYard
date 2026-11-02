@@ -80,33 +80,29 @@ pub async fn change_block(
         tx.commit().await?;
         return Ok(());
     }
-    let inserted = sqlx::query("INSERT INTO user_blocks(user_id,blocked_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
+    sqlx::query("INSERT INTO user_blocks(user_id,blocked_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
         .bind(user)
         .bind(target)
         .execute(&mut *tx)
-        .await?.rows_affected();
-    if inserted == 0 {
-        tx.commit().await?;
-        return Ok(());
-    }
+        .await?;
     sqlx::query("DELETE FROM follows WHERE (follower_id=?1 AND following_id=?2) OR (follower_id=?2 AND following_id=?1)").bind(user).bind(target).execute(&mut *tx).await?;
-    let repositories = "SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=?1";
-    for (owner, actor) in [(user, target), (target, user)] {
+    let repositories: Vec<(i64,i64)> = sqlx::query_as("SELECT id,owner_user_id FROM repositories WHERE owner_kind='user' AND owner_user_id IN (?1,?2) ORDER BY id").bind(user).bind(target).fetch_all(&mut *tx).await?;
+    for (repo, owner) in repositories {
+        let actor = if owner == user { target } else { user };
         for table in ["stars", "watches", "repo_access", "gist_stars"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE user_id=?2 AND repo_id IN ({repositories})"))
-                .bind(owner).bind(actor).execute(&mut *tx).await?;
+            sqlx::query(&format!(
+                "DELETE FROM {table} WHERE repo_id=?1 AND user_id=?2"
+            ))
+            .bind(repo)
+            .bind(actor)
+            .execute(&mut *tx)
+            .await?;
         }
-        sqlx::query(&format!("DELETE FROM issue_assignees WHERE user_id=?2 AND issue_id IN (SELECT id FROM issues WHERE repo_id IN ({repositories}))"))
-            .bind(owner).bind(actor).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM issue_assignees WHERE user_id=?2 AND issue_id IN (SELECT id FROM issues WHERE repo_id=?1)").bind(repo).bind(actor).execute(&mut *tx).await?;
         for table in ["pr_assignees", "pr_reviewers"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE user_id=?2 AND pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id IN ({repositories}))"))
-                .bind(owner).bind(actor).execute(&mut *tx).await?;
+            sqlx::query(&format!("DELETE FROM {table} WHERE user_id=?2 AND pull_request_id IN (SELECT id FROM pull_requests WHERE repo_id=?1)")).bind(repo).bind(actor).execute(&mut *tx).await?;
         }
-        sqlx::query(&format!("UPDATE repository_invitations SET state='cancelled' WHERE invitee_id=?2 AND state='pending' AND repo_id IN ({repositories})"))
-            .bind(owner).bind(actor).execute(&mut *tx).await?;
-        let runs: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM ci_runs WHERE triggered_by_id=?2 AND repo_id IN ({repositories}) AND (status IN ('queued','running') OR completed_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour'))"))
-            .bind(owner).bind(actor).fetch_all(&mut *tx).await?;
-        crate::backend::db::sqlite::ci::stop_ci_runs(&mut tx, &runs).await?;
+        crate::backend::db::sqlite::ci::stop_actor_repo_ci_runs(&mut tx, actor, repo).await?;
     }
     sqlx::query("DELETE FROM notifications WHERE (user_id=?1 AND actor_id=?2) OR (user_id=?2 AND actor_id=?1)").bind(user).bind(target).execute(&mut *tx).await?;
     tx.commit().await?;

@@ -13,10 +13,23 @@ pub async fn commit_authors(
     emails: &[String],
 ) -> anyhow::Result<HashMap<String, db::models::User>> {
     anyhow::ensure!(emails.len() <= 512, "Too many commit email addresses");
-    Ok(db::users::accounts::commit_authors(pool, emails).await?
-        .into_iter()
-        .map(|author| (author.address, author.user))
-        .collect())
+    let usernames = emails
+        .iter()
+        .filter_map(|email| email.strip_suffix("@users.noreply").map(str::to_owned))
+        .collect::<Vec<_>>();
+    let mut users = db::users::accounts::get_users_by_emails(pool, emails).await?;
+    users.extend(db::users::accounts::get_users_by_usernames(pool, &usernames).await?);
+    let mut result = HashMap::new();
+    for user in &users {
+        if let Some(email) = &user.email {
+            result.insert(email.clone(), user.clone());
+        }
+    }
+    // The generated namespace belongs to the account, not to someone claiming it as an email.
+    for user in users {
+        result.insert(format!("{}@users.noreply", user.username), user);
+    }
+    Ok(result)
 }
 
 /// Prefer `stored` when Git has that branch, then `database`, then `main`, `master`, or the

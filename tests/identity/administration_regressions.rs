@@ -57,12 +57,12 @@ async fn bounded_administration(pg: bool) {
             .unwrap(),
         105
     );
-    let keys = db::users::ssh_keys::list_user_key_summaries(f.pool(), admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), admin).await), 0)
+    let keys = db::users::ssh_keys::list_user_key_summaries(f.pool(), admin, 0)
         .await
         .unwrap();
     assert_eq!(keys.len(), 100);
     assert_eq!(
-        db::users::ssh_keys::list_user_key_summaries(f.pool(), admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), admin).await), keys.last().unwrap().id)
+        db::users::ssh_keys::list_user_key_summaries(f.pool(), admin, keys.last().unwrap().id)
             .await
             .unwrap()
             .len(),

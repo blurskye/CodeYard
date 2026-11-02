@@ -21,8 +21,6 @@ pub struct GitFacts {
     repo_id: i64,
     readme: Option<String>,
     pub license: Option<&'static str>,
-    #[serde(skip)]
-    readme_incomplete: bool,
 }
 
 pub async fn git_facts(
@@ -34,26 +32,22 @@ pub async fn git_facts(
         repo_id: repo.id,
         readme: None,
         license: None,
-        readme_incomplete: false,
     };
     let store = repo_store(repo, cluster);
-    let refs = store.refs_from_primary().await?;
-    let Some(revision) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else {
+    if store.refs().await?.is_empty() {
         return Ok(facts);
-    };
-    let directories = super::community::directories(&store, revision).await?;
-    let mut read_readme = false;
-    let mut read_license = false;
-    for (_, mut entries) in directories {
-    entries.sort_by_key(|entry| entry.name.to_ascii_lowercase());
+    }
+    let revision = store.commit(&repo.default_branch).await?.sha;
+    let mut entries = store.tree_metadata(&revision, "").await?;
+    entries.sort_by_key(|e| e.name.to_ascii_lowercase());
     for entry in entries {
         if entry.entry_type != "file" {
             continue;
         }
         let name = entry.name.to_ascii_lowercase();
         let is_readme =
-            readme && !read_readme && (name == "readme" || name.starts_with("readme."));
-        let is_license = !read_license && templates::is_license_file(&name);
+            readme && facts.readme.is_none() && (name == "readme" || name.starts_with("readme."));
+        let is_license = facts.license.is_none() && templates::is_license_file(&name);
         if !is_readme && !is_license {
             continue;
         }
@@ -67,20 +61,16 @@ pub async fn git_facts(
                 },
             )
             .await?;
-        read_readme |= is_readme;
-        read_license |= is_license;
-        // An unread README is unknown, not an authoritative negative search predicate.
+        // An oversized README or license stays unknown instead of failing the whole search.
         if blob.size > 256 * 1024 {
-            facts.readme_incomplete |= is_readme;
             continue;
         }
-        if is_readme && !blob.is_binary && !blob.bytes.contains(&0) {
+        if is_readme {
             facts.readme = std::str::from_utf8(&blob.bytes).ok().map(str::to_owned);
         }
         if is_license {
             facts.license = templates::detect_license(&blob.bytes).map(|t| t.name);
         }
-    }
     }
     Ok(facts)
 }
@@ -114,7 +104,6 @@ pub async fn prepare(
     let repos = db::repositories::records::get_repositories_by_ids(pool, &ids).await?;
     let mut facts = Vec::new();
     let mut bytes = 0;
-    let readme = query.needs_readme();
     for repo in repos {
         // Search candidates are not authority to read a later Git snapshot.
         if super::access::check_read(pool, repo.id, viewer)
@@ -124,12 +113,8 @@ pub async fn prepare(
             incomplete = true;
             continue;
         }
-        match timeout_at(deadline, git_facts(&repo, cluster, readme)).await {
+        match timeout_at(deadline, git_facts(&repo, cluster, true)).await {
             Ok(Ok(value)) => {
-                if value.readme_incomplete {
-                    incomplete = true;
-                    continue;
-                }
                 bytes += value.readme.as_ref().map_or(0, String::len);
                 if bytes > 8 * 1024 * 1024 {
                     incomplete = true;

@@ -22,6 +22,9 @@ pub struct CodeOwnerError {
     pub kind: String,
 }
 
+/// The raw endpoint's full-response limit; larger files support byte ranges or Git clone.
+pub const MAX_DOWNLOAD_BYTES: u64 = 32 * 1024 * 1024;
+
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct BlobPage {
     pub reference: String,
@@ -29,9 +32,6 @@ pub struct BlobPage {
     pub content: String,
     pub binary: bool,
     pub size: u64,
-    /// Server-owned full-response ceiling and its human-readable label.
-    #[serde(default)]
-    pub download_limit: Option<(u64, String)>,
     pub offset: u64,
     /// Global line number of the first source line in this window.
     #[serde(default)]
@@ -96,17 +96,14 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
     let base = repo.base();
     let raw = file_url(&base, "raw", &page.reference, &page.path);
     let url = file_url(&base, "blob", &page.reference, &page.path);
-    let preview_url = if page.permalink.is_empty() { &url } else { &page.permalink };
     let blame = file_url(&base, "blame", &page.reference, &page.path);
     let edit = file_url(&base, "edit", &page.reference, &page.path);
     let delete = file_url(&base, "delete", &page.reference, &page.path);
-    let display_name = crate::git_paths::display(page.path.rsplit('/').next().unwrap_or_default());
-    let name = display_name.as_str();
+    let name = page.path.rsplit('/').next().unwrap_or_default();
     let language = language_of_path(&page.path);
     let display = display_text(&page.content);
     let line_count = display.lines().count();
-    let downloadable = page.download_limit.as_ref().is_none_or(|(limit, _)| page.size <= *limit);
-    let limit_label = page.download_limit.as_ref().map_or("server", |(_, label)| label.as_str());
+    let downloadable = page.size <= MAX_DOWNLOAD_BYTES;
     let markdown = page.renders_markdown();
     let markdown_html = markdown.then(|| {
         document_html(
@@ -219,12 +216,12 @@ pub fn blob(repo: &RepoChrome, page: &BlobPage) -> Element {
             if let Some(notice)=&page.codeowners_notice {p {class:"p-3 text-muted-foreground","{notice}"}}
             {body}
         }
-        if !downloadable { p { class: "text-sm text-muted-foreground", "This file exceeds the {limit_label} download limit. Clone the repository or use HTTP byte-range requests on the raw URL to retrieve it." } }
+        if !downloadable { p { class: "text-sm text-muted-foreground", "This file exceeds the 32 MiB download limit. Clone the repository or use HTTP byte-range requests on the raw URL to retrieve it." } }
         if page.truncated { p { class: "text-sm text-muted-foreground", "Showing a bounded preview starting at byte {page.offset}." if downloadable { " Raw contains the complete file." } } }
         if page.previous.is_some() || page.next.is_some() {
             nav { class: "flex gap-4", "aria-label": "File preview",
-                if let Some(offset) = page.previous { NavLink { href: format!("{preview_url}?offset={offset}"), "Previous" } }
-                if let Some(offset) = page.next { NavLink { href: format!("{preview_url}?offset={offset}"), "Next" } }
+                if let Some(offset) = page.previous { NavLink { href: format!("{url}?offset={offset}"), "Previous" } }
+                if let Some(offset) = page.next { NavLink { href: format!("{url}?offset={offset}"), "Next" } }
             }
         }
     };
@@ -299,8 +296,6 @@ pub fn FilesPanel(
     can_write: bool,
     default_branch: String,
 ) -> Element {
-    let linked: std::collections::HashSet<_> = folders.iter().flat_map(|folder| &folder.entries).filter(|entry| entry.kind == "tree").map(|entry| entry.path.as_str()).collect();
-    let roots: Vec<_> = folders.iter().filter(|folder| folder.path.is_empty() || !linked.contains(folder.path.as_str())).collect();
     rsx! {
         aside { class: "repo-files-panel", "aria-label": "Files",
             div { class: "repo-files-head",
@@ -315,12 +310,7 @@ pub fn FilesPanel(
                 label { class: "repo-icon-button icon-tooltip", r#for: "repo-files-filter", "aria-label": "Go to file", {icon("search")} }
             }
             GoToFile { base: base.clone(), reference: reference.clone(), folders: folders.clone() }
-            div { class: "repo-files-tree",
-                for listing in roots {
-                    if !listing.path.is_empty() { p { class: "repo-files-item", "Loaded folder: " NavLink { href: file_url(&base, "tree", &reference, &listing.path), "{listing.path}" } } }
-                    {folder_items(&base, &reference, &path, &folders, &listing.path)}
-                }
-            }
+            div { class: "repo-files-tree", {folder_items(&base, &reference, &path, &folders, "")} }
         }
     }
 }
@@ -624,7 +614,14 @@ fn file_size(bytes: u64) -> String {
 
 /// The image types the raw route serves as images. SVG is served as text, so it is not drawn.
 fn is_inline_image(path: &str) -> bool {
-    crate::webui::raw_content_type(path, true).starts_with("image/")
+    let extension = path
+        .rsplit_once('.')
+        .map_or("", |(_, extension)| extension)
+        .to_ascii_lowercase();
+    matches!(
+        extension.as_str(),
+        "png" | "jpg" | "jpeg" | "gif" | "webp" | "avif" | "bmp" | "ico"
+    )
 }
 
 /// The rows of one folder's listing, folders first. A folder whose listing is loaded is a disclosure

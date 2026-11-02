@@ -174,7 +174,7 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
     // The gutter and the field grow with the text, so one scroll box moves both together. The
     // memo changes only when a line is added or removed, not on every key.
     let lines = use_memo(move || content.read().matches('\n').count() + 1);
-    let gutter = use_memo(move || if lines() <= 2000 { line_numbers(lines()) } else { String::new() });
+    let gutter = use_memo(move || line_numbers(lines()));
     // The path field's live value decides whether the preview links the page's references. A new
     // file's first load resolves only this repository's numbers, so links to other repositories and
     // to users appear once the native Preview posts the text.
@@ -260,10 +260,10 @@ fn EditorView(repo: RepoChrome, editor: Editor) -> Element {
                         }
                         label { class: "sr-only", r#for: "repository-file-content", "File contents" }
                         div { class: "repo-code-editor-body",
-                            if lines() <= 2000 { pre { class: "repo-code-editor-gutter", aria_hidden: "true", {gutter()} } }
+                            pre { class: "repo-code-editor-gutter", aria_hidden: "true", {gutter()} }
                             div { class: "repo-editor-stack",
                                 EditorHighlight { text: content, path: live_path, enabled: hydrated() }
-                                DraftTextarea { id: "repository-file-content", class: "repo-editor-textarea", name: "content", rows: if lines() <= 2000 { lines().max(10) as u32 } else { 30 }, initial_value: editor.content.clone(), on_value: move |next: String| content.set(next), on_scroll: move |event: ScrollEvent| follow_scroll(event.data().scroll_top(), event.data().scroll_left()) }
+                                DraftTextarea { id: "repository-file-content", class: "repo-editor-textarea", name: "content", rows: lines().max(10) as u32, initial_value: editor.content.clone(), on_value: move |next: String| content.set(next), on_scroll: move |event: ScrollEvent| follow_scroll(event.data().scroll_top(), event.data().scroll_left()) }
                             }
                         }
                     }

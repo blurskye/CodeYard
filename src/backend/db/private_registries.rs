@@ -210,12 +210,12 @@ pub(crate) fn configuration(
 
 native_operation!(super::postgres::private_registries::list,
     super::sqlite::private_registries::list,
-    fn list(pool: &DbPool, actor: i64, org: i64, name: Option<&str>, offset: i64, limit: i64) -> Result<(i64, Vec<Registry>), RegistryError>);
+    fn list(pool: &DbPool, actor: i64, org: i64) -> Result<Vec<Registry>, RegistryError>);
 
 native_operation!(super::postgres::private_registries::save,
     super::sqlite::private_registries::save,
-    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, org: i64, name: Option<&str>, input: &Value, value: Option<&str>) -> Result<Registry, RegistryError>);
+    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, org: i64, name: Option<&str>, input: &Value, value: Option<&str>) -> Result<Registry, RegistryError>);
 
 native_operation!(super::postgres::private_registries::delete,
     super::sqlite::private_registries::delete,
-    fn delete(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, org: i64, name: &str) -> Result<(), RegistryError>);
+    fn delete(pool: &DbPool, actor: i64, org: i64, name: &str) -> Result<(), RegistryError>);

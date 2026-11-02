@@ -59,16 +59,16 @@ async fn create(
     let (repo, auth) = super::repository(&state, &headers, &owner, &name, false).await?;
     let auth = auth.ok_or_else(auth::required)?;
     auth.require_write()?;
-    let Json(body) = body.map_err(super::json_error)?;
+    let Json(body) = body.map_err(|_| Error::invalid("Invalid attestation input"))?;
     let bundle = PreparedBundle::new(&body.bundle).map_err(error)?;
-    let id = store::create(&state.pool, auth.database_actor(), repo.id, &bundle)
+    let id = store::create(&state.pool, auth.user.id, repo.id, &bundle)
         .await
         .map_err(error)?;
     Ok((StatusCode::CREATED, Json(json!({"id":id}))).into_response())
 }
 #[derive(Deserialize, Default)]
 struct CursorQuery {
-    per_page: Option<usize>,
+    per_page: Option<u64>,
     before: Option<String>,
     after: Option<String>,
     predicate_type: Option<String>,
@@ -126,7 +126,7 @@ async fn list(
     let page = store::Page {
         after,
         before,
-        limit: super::pagination::page_size(query.per_page) as i64,
+        limit: query.per_page.unwrap_or(30).clamp(1, 100) as i64,
         predicate_type: query.predicate_type.as_deref(),
     };
     let (rows, more) = store::list(&state.pool, Some(auth.user.id), repo.id, &digest, &page)

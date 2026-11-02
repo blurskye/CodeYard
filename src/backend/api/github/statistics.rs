@@ -57,35 +57,18 @@ fn history_weeks(stats: &CommitStatistics) -> Result<Vec<i64>> {
     Ok((first..=last).step_by(604800).collect())
 }
 
-async fn live_read(state: &AppState, auth: Option<&super::auth::Authentication>, repo: i64) -> Result<()> {
-    if let Some(auth) = auth {
-        if crate::backend::db::users::tokens::token_user(&state.pool, auth.token.id, false)
-            .await.map_err(Error::unavailable)?.is_none() {
-            return Err(super::auth::required());
-        }
-        auth.repository_scope(&state.pool, repo, "metadata", false).await.map_err(super::auth::scope_error)?;
-    }
-    if crate::backend::db::repositories::access::readable_repository_ids(&state.pool, auth.map(|auth| auth.user.id), &[repo])
-        .await.map_err(Error::unavailable)?.is_empty() {
-        return Err(Error::missing());
-    }
-    Ok(())
-}
-
 async fn statistics(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let kind = uri.path().rsplit('/').next().unwrap_or("");
-    let mode = if matches!(kind, "contributors" | "code_frequency") { crate::backend::git::StatisticsMode::Full } else { crate::backend::git::StatisticsMode::Counts };
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let stats = repo_store(&repo, state.cluster.as_ref())
-        .commit_statistics(&repo.default_branch, mode)
+        .commit_statistics(&repo.default_branch)
         .await
         .map_err(store_error)?;
-    live_read(&state, auth.as_ref(), repo.id).await?;
+    let kind = uri.path().rsplit('/').next().unwrap_or("");
     if stats.commits == 0 && matches!(kind, "code_frequency" | "contributors" | "commit_activity") {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
@@ -95,9 +78,9 @@ async fn statistics(
         .collect::<Vec<_>>();
     let value = match kind {
         "code_frequency" => {
-            if stats.commits >= 10_000 {
+            if stats.commits > 10_000 {
                 return Err(Error::invalid(
-                    "Repository contains 10,000 or more commits",
+                    "Repository contains more than 10,000 commits",
                 ));
             }
             Value::Array(
@@ -129,23 +112,30 @@ async fn statistics(
         "punch_card" => json!(stats.punch_card),
         "participation" => {
             let accounts = accounts(&state, &stats).await?;
-            let end = chrono::Utc::now().date_naive().and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-            let start = end - 52 * 604800;
-            let mut all = vec![0u64; 52];
-            let mut own = vec![0u64; 52];
-            let mut add = |week: i64, days: &[u64; 7], owner: bool| {
-                for (day, count) in days.iter().enumerate() {
-                    let date = week + day as i64 * 86400;
-                    if date >= start && date < end {
-                        let index = ((date - start) / 604800) as usize;
-                        if owner { own[index] += count } else { all[index] += count }
-                    }
-                }
-            };
-            for week in &stats.weeks { add(week.week, &week.days, false); }
-            for author in stats.authors.iter().filter(|author| accounts.get(&author.email)
-                .is_some_and(|user| repo.is_personal_owner(user.id))) {
-                for week in &author.weeks { add(week.week, &week.days, true); }
+            let mut all = Vec::new();
+            let mut own = Vec::new();
+            for date in &year {
+                all.push(
+                    stats
+                        .weeks
+                        .iter()
+                        .find(|week| week.week == *date)
+                        .map_or(0, |week| week.days.iter().sum::<u64>()),
+                );
+                own.push(
+                    stats
+                        .authors
+                        .iter()
+                        .filter(|author| {
+                            accounts
+                                .get(&author.email)
+                                .is_some_and(|user| repo.is_personal_owner(user.id))
+                        })
+                        .flat_map(|author| &author.weeks)
+                        .filter(|week| week.week == *date)
+                        .map(|week| week.all_commits)
+                        .sum::<u64>(),
+                );
             }
             json!({"all":all, "owner":own})
         }
@@ -180,16 +170,8 @@ async fn statistics(
                 return Err(Error::invalid("Statistics exceed their response size"));
             }
             Value::Array(authors.into_iter().map(|(total, _, user, weeks)| {
-                let mut totals = HashMap::<i64, (u64, u64, u64)>::new();
-                for week in weeks {
-                    let total = totals.entry(week.week).or_default();
-                    total.0 += week.additions;
-                    total.1 += week.deletions;
-                    total.2 += week.commits;
-                }
                 let weeks = dates.iter().map(|date| {
-                    let (mut a, mut d, c) = totals.get(date).copied().unwrap_or_default();
-                    if stats.commits >= 10_000 { a = 0; d = 0; }
+                    let (a, d, c) = weeks.iter().filter(|week| week.week == *date).fold((0, 0, 0), |(a, d, c), week| (a + week.additions, d + week.deletions, c + week.commits));
                     json!({"w":date, "a":a, "d":d, "c":c})
                 }).collect::<Vec<_>>();
                 json!({"author":user.map(|user| payloads::simple_person(&payloads::Person::of(user))), "total":total, "weeks":weeks})
@@ -213,15 +195,16 @@ async fn contributors(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let authors = repo_store(&repo, state.cluster.as_ref())
-        .branch_contributors(&repo.default_branch).await.map_err(store_error)?;
-    live_read(&state, auth.as_ref(), repo.id).await?;
-    if authors.is_empty() {
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let stats = repo_store(&repo, state.cluster.as_ref())
+        .commit_statistics(&repo.default_branch)
+        .await
+        .map_err(store_error)?;
+    if stats.commits == 0 {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let accounts = contributor_accounts(&state.pool, &authors).await.map_err(Error::unavailable)?;
-    let mut authors = authors.iter().collect::<Vec<_>>();
+    let accounts = accounts(&state, &stats).await?;
+    let mut authors = stats.authors.iter().collect::<Vec<_>>();
     authors.sort_by(|a, b| b.commits.cmp(&a.commits).then(a.email.cmp(&b.email)));
     let anonymous = matches!(query.anon.as_deref(), Some("true" | "1"));
     let mut values = Vec::<Value>::new();
@@ -229,7 +212,7 @@ async fn contributors(
         if let Some(user) = accounts.get(&author.email).filter(|_| index < 500) {
             if let Some(value) = values.iter_mut().find(|value| value["id"] == user.id) {
                 value["contributions"] =
-                    json!(value["contributions"].as_u64().unwrap_or_default() + u64::from(author.commits));
+                    json!(value["contributions"].as_u64().unwrap() + author.commits);
             } else {
                 let mut value = payloads::simple_person(&payloads::Person::of(user));
                 value["contributions"] = json!(author.commits);

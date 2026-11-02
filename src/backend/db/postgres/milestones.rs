@@ -34,11 +34,9 @@ const SUMMARY_SELECT: &str = "SELECT m.id, m.repo_id, m.number, m.title, m.descr
 /// writer at a time.
 async fn begin_write(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
 ) -> Result<Transaction<'_, Postgres>> {
-    let credential = actor.into();
-    let actor_id = credential.user_id;
     let mut tx = pool.begin().await?;
     // The exclusive authority lock takes the membership lock before the repository row, the
     // order every other write uses.
@@ -46,9 +44,6 @@ async fn begin_write(
         super::discussions::lock_exclusive_write_authority(&mut tx, actor_id, repo_id).await?,
         MilestoneWriteRefusal::Denied
     );
-    if let Some(token) = credential.token_id() {
-        anyhow::ensure!(super::users::tokens::permits_write(&mut tx, actor_id, token, Some(repo_id), None, "issues").await?, MilestoneWriteRefusal::Denied);
-    }
     Ok(tx)
 }
 
@@ -86,9 +81,9 @@ pub async fn create_milestone(
         repo_id,
         None,
         MilestoneInput {
-            title: Some(title),
-            description: Some(description),
-            due_on: Some(crate::backend::db::milestones::due_on(due_date)?),
+            title,
+            description,
+            due_on: crate::backend::db::milestones::due_on(due_date)?,
             state: None,
         },
     )
@@ -104,88 +99,44 @@ pub async fn update_milestone(
     description: Option<&str>,
     due_date: Option<&str>,
 ) -> Result<Milestone> {
-    save_milestone_in(
+    save_milestone(
         pool,
-        actor_id.into(),
+        actor_id,
         repo_id,
         Some(number),
         MilestoneInput {
-            title: Some(title),
-            description: Some(description),
-            due_on: Some(crate::backend::db::milestones::due_on(due_date)?),
+            title,
+            description,
+            due_on: crate::backend::db::milestones::due_on(due_date)?,
             state: None,
         },
-        None,
-        true,
     )
     .await
 }
 
 pub async fn save_milestone(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     number: Option<i32>,
     input: MilestoneInput<'_>,
 ) -> Result<Milestone> {
-    save_milestone_in(pool, actor.into(), repo_id, number, input, None, false).await
-}
-
-/// Saves a milestone from the edit form; with `expected`, only while the stored title,
-/// description, due date and state still serialize to it, so a form never overwrites an edit it
-/// did not show.
-pub async fn save_milestone_checked(
-    pool: &PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
-    repo_id: i64,
-    number: Option<i32>,
-    input: MilestoneInput<'_>,
-    expected: Option<&str>,
-) -> Result<Milestone> {
-    save_milestone_in(pool, actor.into(), repo_id, number, input, expected, true).await
-}
-
-/// Form dates are whole days (`calendar`): an unchanged day keeps the stored time of day.
-async fn save_milestone_in(
-    pool: &PgPool,
-    credential: crate::backend::db::credentials::Actor,
-    repo_id: i64,
-    number: Option<i32>,
-    input: MilestoneInput<'_>,
-    expected: Option<&str>,
-    calendar: bool,
-) -> Result<Milestone> {
-    let actor_id = credential.user_id;
+    crate::backend::issues::validate_milestone(input.title, input.description.unwrap_or(""))
+        .map_err(anyhow::Error::msg)?;
     anyhow::ensure!(
         input
             .state
             .is_none_or(|state| matches!(state, "open" | "closed")),
         "Invalid milestone state"
     );
-    let mut tx = begin_write(pool, credential, repo_id).await?;
-    let existing = match number {
-        Some(number) => Some(sqlx::query_as::<_, Milestone>(&format!("SELECT {MILESTONE_COLUMNS} FROM milestones WHERE repo_id=$1 AND number=$2 FOR UPDATE"))
-            .bind(repo_id).bind(number).fetch_optional(&mut *tx).await?.ok_or(MilestoneWriteRefusal::NotFound)?),
-        None => None,
-    };
-    if let (Some(current), Some(expected)) = (&existing, expected) {
-        anyhow::ensure!(serde_json::to_string(&(&current.title, &current.description, &current.due_date, &current.state))? == expected, MilestoneWriteRefusal::Conflict);
-    }
-    let title = input.title.or_else(|| existing.as_ref().map(|m| m.title.as_str())).ok_or_else(|| anyhow::anyhow!("Title is required"))?;
-    let description = input.description.unwrap_or_else(|| existing.as_ref().and_then(|m| m.description.as_deref()));
-    let due_on = input.due_on.unwrap_or_else(|| existing.as_ref().and_then(|m| m.due_on));
-    crate::backend::issues::validate_milestone(title, description.unwrap_or("")).map_err(anyhow::Error::msg)?;
-    ensure_unique_title(&mut tx, repo_id, title, number).await?;
+    let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    ensure_unique_title(&mut tx, repo_id, input.title, number).await?;
     let creating = number.is_none();
     let number = match number {
         Some(number) => number,
         None => sqlx::query_scalar::<_, i32>("UPDATE repositories SET milestone_number=milestone_number+1 WHERE id=$1 RETURNING milestone_number").bind(repo_id).fetch_one(&mut *tx).await?,
     };
-    let due_on = match &existing {
-        Some(current) if calendar => crate::backend::db::milestones::calendar_due_on(current.due_on, due_on),
-        _ => due_on,
-    };
-    let due_date = due_on.map(|date| {
+    let due_date = input.due_on.map(|date| {
         date.date_naive()
             .and_hms_opt(0, 0, 0)
             .expect("midnight")
@@ -199,10 +150,10 @@ async fn save_milestone_in(
     let mut query = sqlx::query_as(&sql)
         .bind(repo_id)
         .bind(number)
-        .bind(title)
-        .bind(description)
+        .bind(input.title)
+        .bind(input.description)
         .bind(due_date)
-        .bind(due_on)
+        .bind(input.due_on)
         .bind(input.state);
     if creating {
         query = query.bind(actor_id);
@@ -244,7 +195,7 @@ pub async fn set_milestone_state(
 
 pub async fn delete_milestone(
     pool: &PgPool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     number: i32,
     expected_id: i64,
@@ -259,11 +210,11 @@ pub async fn delete_milestone(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(MilestoneWriteRefusal::NotFound)?;
-    sqlx::query("UPDATE issues SET milestone_id = NULL, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE milestone_id = $1")
+    sqlx::query("UPDATE issues SET milestone_id = NULL WHERE milestone_id = $1")
         .bind(id)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("UPDATE pull_requests SET milestone_id = NULL, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE milestone_id = $1")
+    sqlx::query("UPDATE pull_requests SET milestone_id = NULL WHERE milestone_id = $1")
         .bind(id)
         .execute(&mut *tx)
         .await?;
@@ -273,13 +224,6 @@ pub async fn delete_milestone(
         .await?;
     tx.commit().await?;
     Ok(())
-}
-
-pub async fn read_milestones(pool: &PgPool, viewer: Option<i64>, repo: i64, number: Option<i32>, state: Option<&str>, sort: &str, limit: i64, offset: i64) -> Result<Vec<MilestoneSummary>> {
-    let order = crate::backend::db::milestones::milestone_order(sort);
-    let readable = super::repositories::access::readable_condition();
-    Ok(sqlx::query_as(&format!("SELECT * FROM ({SUMMARY_SELECT} WHERE m.repo_id=$1 AND ($3::INTEGER IS NULL OR m.number=$3) AND ($4::TEXT IS NULL OR m.state=$4) AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=m.repo_id AND {readable})) summaries ORDER BY {order} LIMIT $5 OFFSET $6"))
-        .bind(repo).bind(viewer).bind(number).bind(state).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
 pub async fn get_milestone(
@@ -307,24 +251,6 @@ pub async fn get_milestone_by_id(
     .bind(repo_id)
     .bind(id)
     .fetch_optional(pool)
-    .await?)
-}
-
-pub async fn get_milestones_by_ids(
-    pool: &PgPool,
-    repo_id: i64,
-    ids: &[i64],
-) -> Result<Vec<MilestoneSummary>> {
-    anyhow::ensure!(ids.len() <= 500, "Milestone batch exceeds its limit");
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    Ok(sqlx::query_as::<_, MilestoneSummary>(&format!(
-        "{SUMMARY_SELECT} WHERE m.repo_id = $1 AND m.id IN (SELECT unnest($2::BIGINT[]))"
-    ))
-    .bind(repo_id)
-    .bind(ids)
-    .fetch_all(pool)
     .await?)
 }
 
@@ -411,7 +337,7 @@ pub async fn milestone_choice_by_title(
     title: &str,
 ) -> Result<Option<Milestone>> {
     Ok(sqlx::query_as(&format!(
-        "SELECT {} FROM milestones WHERE repo_id=$1 AND LOWER(title COLLATE \"C\")=LOWER($2::TEXT COLLATE \"C\") ORDER BY number LIMIT 1",
+        "SELECT {} FROM milestones WHERE repo_id=$1 AND title=$2 ORDER BY number LIMIT 1",
         MILESTONE_COLUMNS.replace("description", "NULL::TEXT AS description")
     ))
     .bind(repo_id)
@@ -483,27 +409,12 @@ async fn set_item_milestone(
     milestone_number: Option<i32>,
 ) -> Result<()> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    set_item_milestone_in_transaction(&mut tx, actor_id, repo_id, table, item_id, milestone_number).await?;
-    tx.commit().await?;
-    Ok(())
-}
-
-/// The milestone change of [`set_item_milestone`] inside a transaction that already holds the
-/// write authority.
-pub(crate) async fn set_item_milestone_in_transaction(
-    tx: &mut Transaction<'_, Postgres>,
-    actor_id: i64,
-    repo_id: i64,
-    table: &'static str,
-    item_id: i64,
-    milestone_number: Option<i32>,
-) -> Result<()> {
-    let item: Option<Option<i64>> = sqlx::query_scalar(&format!(
-        "SELECT milestone_id FROM {table} WHERE id = $1 AND repo_id = $2 FOR UPDATE"
+    let item: Option<i64> = sqlx::query_scalar(&format!(
+        "SELECT id FROM {table} WHERE id = $1 AND repo_id = $2"
     ))
     .bind(item_id)
     .bind(repo_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut *tx)
     .await?;
     anyhow::ensure!(item.is_some(), MilestoneWriteRefusal::NotFound);
     let milestone_id = match milestone_number {
@@ -514,26 +425,18 @@ pub(crate) async fn set_item_milestone_in_transaction(
             )
             .bind(repo_id)
             .bind(number)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *tx)
             .await?
             .ok_or(MilestoneWriteRefusal::NotFound)?,
         ),
     };
-    let old = item.flatten();
-    if old == milestone_id { return Ok(()); }
-    let subject = if table == "issues" { "issue" } else { "pull_request" };
-    for (id, kind) in [(old, "demilestoned"), (milestone_id, "milestoned")] {
-        if let Some(id) = id {
-            let title: String = sqlx::query_scalar("SELECT title FROM milestones WHERE id=$1 AND repo_id=$2").bind(id).bind(repo_id).fetch_one(&mut **tx).await?;
-            super::timeline::append(tx, repo_id, subject, item_id, actor_id, kind, &title, "").await?;
-        }
-    }
     sqlx::query(&format!(
-        "UPDATE {table} SET milestone_id = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1"
+        "UPDATE {table} SET milestone_id = $2 WHERE id = $1"
     ))
     .bind(item_id)
     .bind(milestone_id)
-    .execute(&mut **tx)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(())
 }

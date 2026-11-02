@@ -6,25 +6,6 @@ use crate::backend::db::DbPool;
 use std::net::IpAddr;
 use uuid::Uuid;
 
-/// Request entry points retain their session; trusted internal file work carries an account.
-#[derive(Clone)]
-pub struct FileAuthority {
-    pub user_id: Option<i64>,
-    pub session: Option<String>,
-}
-impl From<i64> for FileAuthority {
-    fn from(user_id: i64) -> Self { Self { user_id: Some(user_id), session: None } }
-}
-impl From<Option<i64>> for FileAuthority {
-    fn from(user_id: Option<i64>) -> Self { Self { user_id, session: None } }
-}
-impl From<(i64, String)> for FileAuthority {
-    fn from((user_id, session): (i64, String)) -> Self { Self { user_id: Some(user_id), session: Some(session) } }
-}
-impl From<(Option<i64>, Option<String>)> for FileAuthority {
-    fn from((user_id, session): (Option<i64>, Option<String>)) -> Self { Self { user_id, session } }
-}
-
 pub const MAX_UPLOAD_BYTES: i64 = crate::backend::storage::MAX_OBJECT_BYTES;
 
 /// How long a client has to send the bytes after reserving an upload.
@@ -113,7 +94,10 @@ impl ReserveUpload<'_> {
                 .as_ref()
                 .is_none_or(|types| types.iter().any(|t| t == self.content_type))
             && (!matches!(self.reason, FileReason::Avatar | FileReason::OrgAvatar)
-                || crate::media::AVATAR_CONTENT_TYPES.contains(&self.content_type))
+                || matches!(
+                    self.content_type,
+                    "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+                ))
     }
 }
 
@@ -121,21 +105,13 @@ native_operation!(crate::backend::db::postgres::files::reserve_upload,
     crate::backend::db::sqlite::files::reserve_upload,
     fn reserve_upload(pool: &DbPool, req: ReserveUpload<'_>) -> Result<File, AdmissionError>);
 
-native_operation!(crate::backend::db::postgres::files::charge_upload,
-    crate::backend::db::sqlite::files::charge_upload,
-    fn charge_upload(pool: &DbPool, user: i64, reason: &str, size: i64) -> Result<Uuid, AdmissionError>);
-
 native_operation!(crate::backend::db::postgres::files::verify_pending_upload,
     crate::backend::db::sqlite::files::verify_pending_upload,
     fn verify_pending_upload(pool: &DbPool, file_id: Uuid, user_id: i64) -> Result<bool, sqlx::Error>);
 
-native_operation!(crate::backend::db::postgres::files::can_publish_upload,
-    crate::backend::db::sqlite::files::can_publish_upload,
-    fn can_publish_upload(pool: &DbPool, file_id: Uuid, actor: FileAuthority) -> Result<bool, sqlx::Error>);
-
 native_operation!(crate::backend::db::postgres::files::activate_upload,
     crate::backend::db::sqlite::files::activate_upload,
-    fn activate_upload(pool: &DbPool, file_id: Uuid, actor: impl Into<FileAuthority>) -> Result<bool, sqlx::Error>);
+    fn activate_upload(pool: &DbPool, file_id: Uuid, user_id: i64) -> Result<bool, sqlx::Error>);
 
 native_operation!(crate::backend::db::postgres::files::extend_direct_upload,
     crate::backend::db::sqlite::files::extend_direct_upload,
@@ -143,7 +119,7 @@ native_operation!(crate::backend::db::postgres::files::extend_direct_upload,
 
 native_operation!(crate::backend::db::postgres::files::delete_file,
     crate::backend::db::sqlite::files::delete_file,
-    fn delete_file(pool: &DbPool, file_id: Uuid, actor: impl Into<FileAuthority>) -> Result<DeleteFileOutcome, sqlx::Error>);
+    fn delete_file(pool: &DbPool, file_id: Uuid, user_id: i64) -> Result<DeleteFileOutcome, sqlx::Error>);
 
 native_operation!(crate::backend::db::postgres::files::delete_unreferenced_file,
     crate::backend::db::sqlite::files::delete_unreferenced_file,
@@ -190,7 +166,7 @@ native_operation!(crate::backend::db::postgres::files::get_user_file,
 
 native_operation!(crate::backend::db::postgres::files::get_downloadable_file,
     crate::backend::db::sqlite::files::get_downloadable_file,
-    fn get_downloadable_file(pool: &DbPool, file_id: Uuid, actor: impl Into<FileAuthority>) -> Result<Option<File>, sqlx::Error>);
+    fn get_downloadable_file(pool: &DbPool, file_id: Uuid, actor: Option<i64>) -> Result<Option<File>, sqlx::Error>);
 
 /// Upload charges are kept for the longest admin report window and download
 /// charges for 30 days. Each sweep removes at most `SWEEP_BATCHES` batches of

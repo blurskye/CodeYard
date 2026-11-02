@@ -20,20 +20,10 @@ bucket=gitserv-storage-test-$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')
 work=$(mktemp -d)
 rustfs_pid=
 cleanup() {
-    if [[ -n $rustfs_pid ]]; then
-        kill -TERM "$rustfs_pid" 2>/dev/null || true
-        for _ in $(seq 1 100); do
-            kill -0 "$rustfs_pid" 2>/dev/null || break
-            sleep 0.1
-        done
-        kill -KILL "$rustfs_pid" 2>/dev/null || true
-        wait "$rustfs_pid" 2>/dev/null || true
-    fi
+    [[ -z $rustfs_pid ]] || kill "$rustfs_pid" 2>/dev/null || true
     rm -rf "$work"
 }
 trap cleanup EXIT
-trap 'exit 130' INT
-trap 'exit 143' TERM
 
 s3() { curl -sS -f --connect-timeout 10 --max-time 120 --aws-sigv4 "aws:amz:us-east-1:s3" --user "$access:$secret" "$@"; }
 

@@ -4,7 +4,7 @@ use super::{
     ActionsPage,
 };
 use crate::webui::{
-    components::{relative_time, short_sha, LiveTime, Markdown},
+    components::{relative_time, short_sha, LiveTime},
     encode_component,
     navigation::{NavLink, RefreshLink},
 };
@@ -75,8 +75,6 @@ pub struct RunProgress {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SelectedRun {
     pub run: Run,
-    #[serde(default)]
-    pub summaries: Vec<Summary>,
     pub logs: Vec<LogLine>,
     pub deployment: Option<Deployment>,
     pub fetched_lines: usize,
@@ -88,16 +86,7 @@ pub struct SelectedRun {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Summary {
-    pub job: String,
-    pub number: i32,
-    pub markdown: String,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PlannedJob {
-    #[serde(default)]
-    pub workflow: String,
     pub name: String,
     pub steps: Vec<String>,
 }
@@ -149,7 +138,12 @@ pub(super) fn workflow_file_url(model: &ActionsPage, run: &Run) -> Option<String
     {
         return None;
     }
-    Some(crate::webui::pages::repos::ref_path::file_url(&base, "blob", sha, path))
+    let path = path
+        .split('/')
+        .map(encode_component)
+        .collect::<Vec<_>>()
+        .join("/");
+    Some(format!("{base}/blob/{}/{path}", encode_component(sha)))
 }
 
 /// The commit's short id. It links to the commit page when the repository has one.
@@ -277,10 +271,7 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                                 strong { "{issue.severity}" if !issue.title.is_empty() { ": {issue.title}" } }
                                 if !issue.file.is_empty() { p { "{issue.file}" if !issue.line.is_empty() { ":{issue.line}" } if !issue.column.is_empty() { ":{issue.column}" } } }
                                 p { "{issue.message}" }
-                                NavLink { class: "actions-history-link", href: {
-                                    let job = jobs.iter().find(|job| job.steps.iter().any(|step| step.lines.iter().any(|line| line.id == *id))).map_or("", |job| job.key.as_str());
-                                    format!("{}#log-{id}", model.url(&[("view", "logs"), ("workflow_job", job), ("log_q", "")]))
-                                }, "View log line" }
+                                a { class: "actions-history-link", href: format!("#log-{id}"), "View log line" }
                             }
                         }
                     }
@@ -298,12 +289,6 @@ fn SelectedRunView(model: ActionsPage, selected: std::rc::Rc<SelectedRun>) -> El
                             div { dt { "Commit" } dd {
                                 if let Some(sha) = &run.head_sha { {commit_link(model, sha)} } else { span { class: "actions-summary-secondary", "Not recorded" } }
                             } }
-                        }
-                    }
-                    for summary in &selected.summaries {
-                        section { class: "actions-summary-card", aria_label: "Step summary",
-                            h2 { "{summary.job} · step {summary.number}" }
-                            Markdown { content: summary.markdown.clone() }
                         }
                     }
                     section { class: "actions-workflow-card", "aria-label": "Workflow jobs",

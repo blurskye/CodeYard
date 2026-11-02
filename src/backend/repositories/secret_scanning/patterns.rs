@@ -54,8 +54,6 @@ pub struct Pattern {
     pub custom_pattern_version: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-    #[serde(skip)]
-    compiled: std::sync::OnceLock<std::result::Result<Compiled, String>>,
 }
 
 #[derive(Deserialize)]
@@ -73,7 +71,6 @@ pub struct Delete {
     pub custom_pattern_version: Option<String>,
 }
 
-#[derive(Clone)]
 struct Compiled {
     regex: Regex,
     positive: Vec<Regex>,
@@ -122,20 +119,6 @@ fn compile(
     })
 }
 
-pub(crate) async fn validate_batch(input: &[Create]) -> Result<()> {
-    static COMPILATIONS: std::sync::LazyLock<std::sync::Arc<tokio::sync::Semaphore>> =
-        std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Semaphore::new(2)));
-    let permit = COMPILATIONS.clone().acquire_owned().await?;
-    let input = input.to_vec();
-    tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        for item in input {
-            item.validate()?;
-        }
-        Ok(())
-    }).await?
-}
-
 impl Create {
     pub fn validate(&self) -> Result<()> {
         ensure!(
@@ -169,13 +152,11 @@ impl Create {
             custom_pattern_version: Some(uuid::Uuid::new_v4().to_string()),
             created_at: now,
             updated_at: now,
-            compiled: Default::default(),
         }
     }
 }
 impl Pattern {
     pub fn apply(&mut self, input: &Update) -> Result<()> {
-        self.compiled.take();
         ensure!(
             input.pattern.is_some()
                 || input.start_delimiter.is_some()
@@ -212,21 +193,20 @@ impl Pattern {
     }
 }
 
-pub fn scan(patterns: &[Pattern], text: &str, push: bool, deadline: std::time::Instant) -> Result<Vec<Detection>> {
+pub fn scan(patterns: &[Pattern], text: &str, push: bool) -> Result<Vec<Detection>> {
     let mut detections = Vec::new();
-    let mut matched_bytes = 0usize;
     for pattern in patterns.iter().filter(|pattern| {
         pattern.state == "published" && (!push || pattern.push_protection_enabled)
     }) {
-        ensure!(std::time::Instant::now() < deadline, "Secret scanning exceeded its time budget");
-        let compiled = pattern.compiled.get_or_init(|| compile(
-            &pattern.pattern, &pattern.start_delimiter, &pattern.end_delimiter,
-            &pattern.must_match, &pattern.must_not_match,
-        ).map_err(|error| error.to_string())).as_ref().map_err(|error| anyhow::anyhow!("{error}"))?;
+        let compiled = compile(
+            &pattern.pattern,
+            &pattern.start_delimiter,
+            &pattern.end_delimiter,
+            &pattern.must_match,
+            &pattern.must_not_match,
+        )?;
         let mut from = 0;
-        while from <= text.len() {
-            ensure!(std::time::Instant::now() < deadline, "Secret scanning exceeded its time budget");
-            let Some(captures) = compiled.regex.captures_at(text, from) else { break };
+        while let Some(captures) = compiled.regex.captures_at(text, from) {
             let secret = captures
                 .name("codeyard_secret")
                 .ok_or_else(|| anyhow::anyhow!("Custom pattern matched without a secret"))?;
@@ -251,10 +231,14 @@ pub fn scan(patterns: &[Pattern], text: &str, push: bool, deadline: std::time::I
                 continue;
             }
             let (start_line, start_column) = super::scanner::position(text, secret.start());
-            let last = secret.end() - 1;
+            let last = secret.end()
+                - secret
+                    .as_str()
+                    .chars()
+                    .last()
+                    .expect("nonempty secret")
+                    .len_utf8();
             let (end_line, end_column) = super::scanner::position(text, last);
-            matched_bytes = matched_bytes.saturating_add(secret.len());
-            ensure!(matched_bytes <= super::scanner::MAX_MATCHED_BYTES && detections.len() < super::scanner::MAX_DETECTIONS, "Blob exceeds secret scanning detection budget");
             detections.push(Detection {
                 rule_id: format!("cp_{}", pattern.id),
                 secret_type: pattern.slug.clone(),

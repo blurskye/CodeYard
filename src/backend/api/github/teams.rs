@@ -1,14 +1,10 @@
 //! Organization teams share native membership, repository and visibility checks.
-use super::{
-    api_url, auth,
-    pagination::{next_after, Pagination},
-    repos, Error, Result,
-};
+use super::{api_url, auth, pagination::Pagination, repos, Error, Result};
 use crate::backend::{
     app::AppState,
     db::{
         self,
-        models::{Organization, Team, User},
+        models::{Organization, Team},
         organizations as orgs,
     },
     webhooks::payloads,
@@ -27,27 +23,14 @@ use std::{collections::HashMap, sync::Arc};
 
 type Params = HashMap<String, String>;
 
-/// Native team lists are read in keyset batches of this size.
-const BATCH: i64 = 100;
-
-fn batch(after: i64) -> Result<orgs::OrganizationPage> {
-    orgs::OrganizationPage::new(after, BATCH).map_err(|_| Error::unavailable(()))
-}
-
 fn outcome<T>(value: orgs::OrganizationOutcome<T>) -> Result<T> {
+    use orgs::OrganizationOutcome::*;
     match value {
-        orgs::OrganizationOutcome::Denied => Err(denied()),
-        orgs::OrganizationOutcome::Conflict => Err(Error::validation("Team", "name", "already_exists")),
-        other => super::orgs::outcome(other),
+        Applied(value) => Ok(value),
+        Missing => Err(Error::missing()),
+        Denied | Suspended => Err(Error::new(StatusCode::FORBIDDEN, "Team mutation denied")),
+        Conflict => Err(Error::validation("Team", "name", "already_exists")),
     }
-}
-
-fn denied() -> Error {
-    Error::new(StatusCode::FORBIDDEN, "Team mutation denied")
-}
-
-fn writer(auth: &auth::Authentication) -> orgs::TeamActor {
-    orgs::TeamActor { user: auth.user.id, token: Some(auth.token.id) }
 }
 
 async fn actor(
@@ -73,27 +56,27 @@ async fn organization(state: &AppState, name: &str) -> Result<Organization> {
 
 async fn selected(
     state: &AppState,
-    auth: &auth::Authentication,
+    actor: i64,
     params: &Params,
 ) -> Result<(Organization, orgs::PublicTeam)> {
-    let actor = auth.user.id;
     if let Some(id) = params.get("team_id") {
         let id = id
             .parse::<i64>()
             .ok()
             .filter(|id| *id > 0)
             .ok_or_else(Error::missing)?;
-        let team = orgs::get_public_team_by_id(&state.pool, actor, id)
+        let team = orgs::get_team_by_id(&state.pool, actor, id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        let org = orgs::get_public_organization_by_id(&state.pool, team.team.org_id)
+        let org = orgs::get_public_organization_by_id(&state.pool, team.org_id)
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        // The legacy route names no organization, so the request middleware cannot apply
-        // its token policy.
-        auth::refuse_classic(state, auth.token.id, org.id).await?;
+        let team = orgs::get_public_team(&state.pool, actor, org.id, &team.slug)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
         Ok((org, team))
     } else {
         let org = organization(state, &params["org"]).await?;
@@ -113,25 +96,20 @@ fn team_error(error: anyhow::Error) -> Error {
     }
 }
 
-fn team_value(team: &Team, org: &str, permission: i16, parent: Option<&Team>) -> Value {
-    let mut value = payloads::team_document(team, org, permission);
-    if let Some(parent) = parent {
-        value["parent"] = payloads::team_document(parent, org, parent.default_permission);
-    }
-    value
-}
-
-/// A team named by a repository record, such as a requested reviewer, with its visible parent.
 pub(super) async fn summary(
     state: &AppState,
     team: &Team,
     org: &str,
     permission: i16,
 ) -> Result<Value> {
-    let parent = orgs::get_team_parent(&state.pool, team.id)
+    let mut value = payloads::team_document(team, org, permission);
+    if let Some(parent) = orgs::get_team_parent(&state.pool, team.id)
         .await
-        .map_err(Error::unavailable)?;
-    Ok(team_value(team, org, permission, parent.as_ref()))
+        .map_err(Error::unavailable)?
+    {
+        value["parent"] = payloads::team_document(&parent, org, parent.default_permission);
+    }
+    Ok(value)
 }
 
 async fn parent(
@@ -173,12 +151,7 @@ async fn document(
     public: &orgs::PublicTeam,
 ) -> Result<Value> {
     let team = &public.team;
-    let mut value = team_value(
-        team,
-        &org.name,
-        team.default_permission,
-        public.parent.as_ref(),
-    );
+    let mut value = summary(state, team, &org.name, team.default_permission).await?;
     value["members_count"] = json!(public.member_count);
     value["repos_count"] = json!(public.repository_count);
     value["created_at"] = json!(team.created_at);
@@ -186,25 +159,20 @@ async fn document(
     let public_repos = orgs::count_organization_profile_repositories(&state.pool, org.id, None)
         .await
         .map_err(Error::unavailable)?;
-    let has_organization_projects = orgs::settings::get(&state.pool, org.id)
-        .await
-        .map_err(Error::unavailable)?
-        .is_none_or(|settings| settings.has_organization_projects);
-    value["organization"] =
-        payloads::team_organization(org, public_repos, has_organization_projects);
+    value["organization"] = payloads::team_organization(org, public_repos);
     Ok(value)
 }
 
 async fn input(request: Request) -> Result<Map<String, Value>> {
     let bytes = to_bytes(request.into_body(), 1024 * 1024)
         .await
-        .map_err(super::json_bytes_error)?;
+        .map_err(|_| Error::invalid("Invalid JSON body"))?;
     if bytes.is_empty() {
         return Ok(Map::new());
     }
     serde_json::from_slice::<Value>(&bytes)
-        .map_err(super::json_parse_error)?
-        .as_object().cloned()
+        .ok()
+        .and_then(|value| value.as_object().cloned())
         .ok_or_else(|| Error::invalid("Expected an object"))
 }
 
@@ -231,80 +199,60 @@ fn permission(value: &str) -> Result<orgs::TeamRepositoryPermission> {
     .map_err(|_| Error::validation("Team", "permission", "invalid"))
 }
 
-/// GitHub's slug for a team name: accented letters lose their accents, every other character
-/// outside ASCII letters, digits and `_` separates words, and words join with `-`.
 fn slug(name: &str) -> String {
-    use unicode_normalization::{char::is_combining_mark, UnicodeNormalization};
-    let mut folded = String::with_capacity(name.len());
-    for ch in name.nfkd().filter(|ch| !is_combining_mark(*ch)) {
-        match ch {
-            'ß' => folded.push_str("ss"),
-            'æ' | 'Æ' => folded.push_str("ae"),
-            'œ' | 'Œ' => folded.push_str("oe"),
-            'ø' | 'Ø' => folded.push('o'),
-            'đ' | 'Đ' | 'ð' | 'Ð' => folded.push('d'),
-            'ł' | 'Ł' => folded.push('l'),
-            'þ' | 'Þ' => folded.push_str("th"),
-            'ı' => folded.push('i'),
-            ch => folded.push(ch),
-        }
-    }
-    folded
-        .to_lowercase()
-        .split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+    name.to_lowercase()
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || ch == '_' {
+                ch
+            } else {
+                '-'
+            }
+        })
+        .collect::<String>()
+        .split('-')
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
         .join("-")
 }
 
-/// The profile a create or an edit names. An edit changes only the fields the request has.
 fn profile(
     input: &Map<String, Value>,
-    creating: bool,
+    old: Option<&Team>,
     parent: Option<Option<i64>>,
 ) -> Result<orgs::TeamProfile> {
-    let refused = |error: orgs::OrganizationInputError| {
-        Error::validation(
-            "Team",
-            if error == orgs::OrganizationInputError::Description {
-                "description"
-            } else {
-                "name"
-            },
-            "invalid",
-        )
-    };
-    let mut profile = orgs::TeamProfile::default();
-    let name = string(input, "name")?;
-    match name {
-        Some(name) => profile = profile.with_name(name).map_err(refused)?,
-        None if creating => return Err(Error::validation("Team", "name", "missing_field")),
-        None => {}
-    }
-    match input.get("description") {
-        None => {}
-        Some(Value::Null) => profile = profile.with_description(None).map_err(refused)?,
-        Some(value) => {
-            let description = value
+    let name = string(input, "name")?
+        .or_else(|| old.map(|team| team.name.as_str()))
+        .ok_or_else(|| Error::validation("Team", "name", "missing_field"))?;
+    let description = match input.get("description") {
+        None => old.and_then(|team| team.description.as_deref()),
+        Some(Value::Null) => None,
+        Some(value) => Some(
+            value
                 .as_str()
-                .ok_or_else(|| Error::validation("Team", "description", "invalid"))?;
-            profile = profile
-                .with_description(Some(description))
-                .map_err(refused)?;
-        }
-    }
-    let privacy = match string(input, "privacy")? {
-        Some("secret") => Some(orgs::TeamPrivacy::Secret),
-        Some("closed") => Some(orgs::TeamPrivacy::Visible),
-        Some(_) => return Err(Error::validation("Team", "privacy", "invalid")),
-        // A new team is secret unless it has a parent: nested teams must be visible.
-        None if creating && parent.flatten().is_some() => Some(orgs::TeamPrivacy::Visible),
-        None if creating => Some(orgs::TeamPrivacy::Secret),
-        None => None,
+                .ok_or_else(|| Error::validation("Team", "description", "invalid"))?,
+        ),
     };
-    if let Some(privacy) = privacy {
-        profile = profile.with_privacy(privacy);
-    }
+    let privacy = match string(input, "privacy")?.unwrap_or_else(|| {
+        old.map_or(
+            if parent.flatten().is_some() {
+                "closed"
+            } else {
+                "secret"
+            },
+            |team| {
+                if team.privacy == "secret" {
+                    "secret"
+                } else {
+                    "closed"
+                }
+            },
+        )
+    }) {
+        "secret" => orgs::TeamPrivacy::Secret,
+        "closed" => orgs::TeamPrivacy::Visible,
+        _ => return Err(Error::validation("Team", "privacy", "invalid")),
+    };
     let notifications = string(input, "notification_setting")?
         .map(|value| match value {
             "notifications_enabled" => Ok(true),
@@ -314,17 +262,30 @@ fn profile(
         .transpose()?;
     let default_permission = string(input, "permission")?
         .map(|value| {
-            if !matches!(value, "pull" | "push" | "admin") || (creating && value == "admin") {
+            if !matches!(value, "pull" | "push" | "admin") || (old.is_none() && value == "admin") {
                 return Err(Error::validation("Team", "permission", "invalid"));
             }
             permission(value)
         })
         .transpose()?;
-    let slug = name.map(slug);
-    profile
-        .with_settings(slug.as_deref(), default_permission, notifications)
-        .and_then(|profile| profile.with_parent(parent))
-        .map_err(refused)
+    let slug = input.contains_key("name").then(|| slug(name));
+    orgs::TeamProfile::new(name, description, privacy)
+        .and_then(|profile| {
+            profile
+                .with_settings(slug.as_deref(), default_permission, notifications)?
+                .with_parent(parent)
+        })
+        .map_err(|error| {
+            Error::validation(
+                "Team",
+                if error == orgs::OrganizationInputError::Description {
+                    "description"
+                } else {
+                    "name"
+                },
+                "invalid",
+            )
+        })
 }
 
 fn strings<'a>(input: &'a Map<String, Value>, field: &str) -> Result<Vec<&'a str>> {
@@ -353,20 +314,9 @@ async fn create(
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::POST).await?;
     let org = organization(&state, &params["org"]).await?;
-    // Only owners and admins create teams. Checking first keeps the maintainer and repository
-    // names below from telling anyone else which accounts and private repositories exist; the
-    // creation checks again.
-    match orgs::get_organization_role(&state.pool, auth.user.id, org.id)
-        .await
-        .map_err(Error::unavailable)?
-    {
-        orgs::OrganizationOutcome::Applied(role) if orgs::administers(role) => {}
-        orgs::OrganizationOutcome::Missing => return Err(Error::missing()),
-        _ => return Err(denied()),
-    }
     let input = input(request).await?;
     let parent = parent(&state, auth.user.id, org.id, &input).await?;
-    let profile = profile(&input, true, parent)?;
+    let profile = profile(&input, None, parent)?;
     let name = string(&input, "name")?
         .ok_or_else(|| Error::validation("Team", "name", "missing_field"))?;
     let mut maintainers = vec![auth.user.id];
@@ -391,20 +341,17 @@ async fn create(
             .map_err(Error::unavailable)?
             .filter(|repo| repo.owner_org_id == Some(org.id))
             .ok_or_else(|| Error::validation("Team", "repo_names", "invalid"))?;
-        auth.repository_scope(&state.pool, repo.id, "administration", true)
-            .await
-            .map_err(auth::scope_error)?;
         repositories.push(repo.id);
     }
     let new = orgs::NewTeam::new(&slug(name), profile)
         .map_err(|_| Error::validation("Team", "name", "invalid"))?
         .with_members_and_repositories(maintainers, repositories);
     let team = outcome(
-        orgs::create_organization_team(&state.pool, writer(&auth), org.id, &new)
+        orgs::create_organization_team(&state.pool, auth.user.id, org.id, &new)
             .await
             .map_err(team_error)?,
     )?;
-    let public = orgs::get_public_team_by_id(&state.pool, auth.user.id, team.id)
+    let public = orgs::get_public_team(&state.pool, auth.user.id, org.id, &team.slug)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -423,10 +370,10 @@ async fn team(
     request: Request,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &method).await?;
-    let (org, mut public) = selected(&state, &auth, &params).await?;
+    let (org, mut public) = selected(&state, auth.user.id, &params).await?;
     if method == Method::DELETE {
         outcome(
-            orgs::delete_organization_team(&state.pool, writer(&auth), org.id, public.team.id)
+            orgs::delete_organization_team(&state.pool, auth.user.id, org.id, public.team.id)
                 .await
                 .map_err(Error::unavailable)?,
         )?;
@@ -438,11 +385,14 @@ async fn team(
             return Err(Error::validation("Team", "name", "missing_field"));
         }
         let parent = parent(&state, auth.user.id, org.id, &input).await?;
-        let profile = profile(&input, false, parent)?;
-        let team = outcome(
+        let mut profile = profile(&input, Some(&public.team), parent)?;
+        if !input.contains_key("privacy") {
+            profile = profile.keeping_privacy();
+        }
+        public.team = outcome(
             orgs::update_organization_team(
                 &state.pool,
-                writer(&auth),
+                auth.user.id,
                 org.id,
                 public.team.id,
                 &profile,
@@ -450,11 +400,6 @@ async fn team(
             .await
             .map_err(team_error)?,
         )?;
-        // The counts and the parent follow a new parent, so the whole team is read again.
-        public = orgs::get_public_team_by_id(&state.pool, auth.user.id, team.id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
     }
     Ok(Json(document(&state, &org, &public).await?).into_response())
 }
@@ -468,32 +413,37 @@ async fn list(
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
     let org = organization(&state, &params["org"]).await?;
-    let (state, actor, org_id) = (&*state, auth.user.id, org.id);
-    let (rows, more) = page
-        .collect(move |after| async move {
-            let rows = match orgs::list_organization_teams(&state.pool, actor, org_id, batch(after)?)
-                .await
-                .map_err(Error::unavailable)?
-            {
-                orgs::OrganizationOutcome::Applied(rows) => rows,
-                _ => return Err(Error::missing()),
-            };
-            let next = next_after(&rows, BATCH, |row| row.team.id);
-            Ok::<_, Error>((rows, next))
-        })
-        .await?;
-    let items = rows
-        .iter()
-        .map(|row| {
-            team_value(
-                &row.team,
-                &org.name,
-                row.team.default_permission,
-                row.parent.as_ref(),
-            )
-        })
-        .collect();
-    page.response(&uri, items, more)
+    let (offset, limit) = page.window()?;
+    let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
+    loop {
+        let rows = match orgs::list_organization_teams(
+            &state.pool,
+            auth.user.id,
+            org.id,
+            orgs::OrganizationPage::new(after, 100).unwrap(),
+        )
+        .await
+        .map_err(Error::unavailable)?
+        {
+            orgs::OrganizationOutcome::Applied(rows) => rows,
+            _ => return Err(Error::missing()),
+        };
+        let more = rows.len() == 100;
+        for row in rows {
+            after = row.team.id;
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            items.push(summary(&state, &row.team, &org.name, row.team.default_permission).await?);
+            if items.len() > limit {
+                return page.response(&uri, items, true);
+            }
+        }
+        if !more {
+            return page.response(&uri, items, false);
+        }
+    }
 }
 
 async fn children(
@@ -504,23 +454,36 @@ async fn children(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
-    let (org, public) = selected(&state, &auth, &params).await?;
-    let (state, actor, org_id, team) = (&*state, auth.user.id, org.id, public.team.id);
-    let (rows, more) = page
-        .collect(move |after| async move {
-            let rows = orgs::list_child_teams(&state.pool, actor, org_id, team, batch(after)?)
-                .await
-                .map_err(Error::unavailable)?
-                .ok_or_else(Error::missing)?;
-            let next = next_after(&rows, BATCH, |row| row.id);
-            Ok::<_, Error>((rows, next))
-        })
-        .await?;
-    let items = rows
-        .iter()
-        .map(|row| team_value(row, &org.name, row.default_permission, Some(&public.team)))
-        .collect();
-    page.response(&uri, items, more)
+    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (offset, limit) = page.window()?;
+    let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
+    loop {
+        let rows = orgs::list_child_teams(
+            &state.pool,
+            auth.user.id,
+            org.id,
+            public.team.id,
+            orgs::OrganizationPage::new(after, 100).unwrap(),
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+        let more = rows.len() == 100;
+        for row in rows {
+            after = row.id;
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            items.push(summary(&state, &row, &org.name, row.default_permission).await?);
+            if items.len() > limit {
+                return page.response(&uri, items, true);
+            }
+        }
+        if !more {
+            return page.response(&uri, items, false);
+        }
+    }
 }
 
 async fn user_teams(
@@ -537,38 +500,17 @@ async fn user_teams(
     let more = rows.len() > limit;
     let mut items = Vec::new();
     for team in rows.into_iter().take(limit) {
-        // An organization that forbids classic tokens keeps its teams out of their lists too.
-        if db::fine_grained_tokens::classic_refused(&state.pool, auth.token.id, team.org_id)
+        let org = orgs::get_public_organization_by_id(&state.pool, team.org_id)
             .await
             .map_err(Error::unavailable)?
-        {
-            continue;
-        }
-        let Some(org) = orgs::get_public_organization_by_id(&state.pool, team.org_id)
-            .await
-            .map_err(Error::unavailable)? else { continue; };
-        // A team hidden or deleted since the list was read is left out.
-        let Some(public) = orgs::get_public_team_by_id(&state.pool, auth.user.id, team.id)
+            .ok_or_else(Error::missing)?;
+        let public = orgs::get_public_team(&state.pool, auth.user.id, org.id, &team.slug)
             .await
             .map_err(Error::unavailable)?
-        else {
-            continue;
-        };
+            .ok_or_else(Error::missing)?;
         items.push(document(&state, &org, &public).await?);
     }
     page.response(&uri, items, more)
-}
-
-/// The accounts behind a page of rows, by ID. An account deleted since the rows were read is
-/// missing.
-async fn users(state: &AppState, ids: impl IntoIterator<Item = i64>) -> Result<HashMap<i64, User>> {
-    let ids: Vec<i64> = ids.into_iter().collect();
-    Ok(db::users::accounts::get_users_by_ids(&state.pool, &ids)
-        .await
-        .map_err(Error::unavailable)?
-        .into_iter()
-        .map(|user| (user.id, user))
-        .collect())
 }
 
 #[derive(Deserialize)]
@@ -585,75 +527,70 @@ async fn members(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
-    let (org, public) = selected(&state, &auth, &params).await?;
-    let role = match query.role.as_deref().unwrap_or("all") {
-        "all" => None,
-        value => Some(
-            orgs::TeamRole::parse(value)
-                .map_err(|_| Error::validation("Team", "role", "invalid"))?,
-        ),
-    };
-    let (state, actor, org_id, team) = (&*state, auth.user.id, org.id, public.team.id);
-    let (rows, more) = page
-        .collect(move |after| async move {
-            let rows = orgs::list_team_members_by_role(
-                &state.pool,
-                actor,
-                org_id,
-                team,
-                role,
-                batch(after)?,
-            )
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-            let next = next_after(&rows, BATCH, |row| row.id);
-            Ok::<_, Error>((rows, next))
-        })
-        .await?;
-    let accounts = users(state, rows.iter().map(|row| row.user_id)).await?;
-    let items = rows
-        .iter()
-        .filter_map(|row| accounts.get(&row.user_id))
-        .map(payloads::user)
-        .collect();
-    page.response(&uri, items, more)
+    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let role = query.role.as_deref().unwrap_or("all");
+    if !matches!(role, "all" | "member" | "maintainer") {
+        return Err(Error::validation("Team", "role", "invalid"));
+    }
+    let (offset, limit) = page.window()?;
+    let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
+    loop {
+        let rows = orgs::list_public_team_members(
+            &state.pool,
+            auth.user.id,
+            org.id,
+            public.team.id,
+            orgs::OrganizationPage::new(after, 100).unwrap(),
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+        let more = rows.len() == 100;
+        for row in rows {
+            after = row.id;
+            let member_role = orgs::get_organization_role(&state.pool, row.user_id, org.id)
+                .await
+                .map_err(Error::unavailable)?;
+            let effective_role = if matches!(
+                member_role,
+                orgs::OrganizationOutcome::Applied(db::models::OrgRole::Owner)
+            ) {
+                "maintainer"
+            } else {
+                &row.role
+            };
+            if role != "all" && role != effective_role {
+                continue;
+            }
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            let user = db::users::accounts::get_user_by_id(&state.pool, row.user_id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
+            items.push(payloads::user(&user));
+            if items.len() > limit {
+                return page.response(&uri, items, true);
+            }
+        }
+        if !more {
+            return page.response(&uri, items, false);
+        }
+    }
 }
 
-/// The membership routes under `/orgs/{org}/teams/{team_slug}/memberships` and the legacy ones
-/// under `/teams/{team_id}/memberships`, which answer with the membership document.
 async fn membership(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(params): Path<Params>,
+    OriginalUri(uri): OriginalUri,
     method: Method,
     request: Request,
 ) -> Result<Response> {
-    team_member(&state, &headers, &params, &method, request, false).await
-}
-
-/// The legacy `/teams/{team_id}/members/{username}` routes, which answer with a bare status and
-/// never invite.
-async fn legacy_member(
-    State(state): State<Arc<AppState>>,
-    headers: HeaderMap,
-    Path(params): Path<Params>,
-    method: Method,
-    request: Request,
-) -> Result<Response> {
-    team_member(&state, &headers, &params, &method, request, true).await
-}
-
-async fn team_member(
-    state: &AppState,
-    headers: &HeaderMap,
-    params: &Params,
-    method: &Method,
-    request: Request,
-    legacy_member: bool,
-) -> Result<Response> {
-    let auth = actor(state, headers, method).await?;
-    let (org, public) = selected(state, &auth, params).await?;
+    let auth = actor(&state, &headers, &method).await?;
+    let (org, public) = selected(&state, auth.user.id, &params).await?;
     let username = &params["username"];
     let user = db::users::accounts::get_user_by_username(&state.pool, username)
         .await
@@ -665,10 +602,11 @@ async fn team_member(
                 Error::missing()
             }
         })?;
+    let legacy_member = uri.path().contains("/members/");
     if method == Method::DELETE {
         match orgs::remove_organization_team_member(
             &state.pool,
-            writer(&auth),
+            auth.user.id,
             org.id,
             public.team.id,
             user.id,
@@ -681,14 +619,15 @@ async fn team_member(
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let (role, membership_state) = if method == Method::PUT {
-        let target_role = orgs::get_organization_role(&state.pool, user.id, org.id)
-            .await
-            .map_err(Error::unavailable)?;
+    let target_role = orgs::get_organization_role(&state.pool, user.id, org.id)
+        .await
+        .map_err(Error::unavailable)?;
+    let mut membership_state = "active";
+    let role = if method == Method::PUT {
         let input = input(request).await?;
         let mut role = orgs::TeamRole::parse(string(&input, "role")?.unwrap_or("member"))
             .map_err(|_| Error::validation("Team", "role", "invalid"))?;
-        let orgs::OrganizationOutcome::Applied(target_role) = target_role else {
+        if !matches!(target_role, orgs::OrganizationOutcome::Applied(_)) {
             if legacy_member {
                 return Err(Error::missing());
             }
@@ -718,15 +657,17 @@ async fn team_member(
                 "pending",
             ))
             .into_response());
-        };
-        // Organization owners maintain every team they are on.
-        if matches!(target_role, db::models::OrgRole::Owner) {
+        }
+        if matches!(
+            target_role,
+            orgs::OrganizationOutcome::Applied(db::models::OrgRole::Owner)
+        ) {
             role = orgs::TeamRole::Maintainer;
         }
         let row = outcome(
             orgs::add_organization_team_member(
                 &state.pool,
-                writer(&auth),
+                auth.user.id,
                 org.id,
                 public.team.id,
                 user.id,
@@ -735,7 +676,7 @@ async fn team_member(
             .await
             .map_err(Error::unavailable)?,
         )?;
-        (row.role, "active")
+        row.role
     } else {
         let pending = if legacy_member {
             None
@@ -750,31 +691,46 @@ async fn team_member(
             .await
             .map_err(Error::unavailable)?
         };
-        match pending {
-            Some(role) => (role, "pending"),
-            None => {
-                let member = orgs::get_team_member(
-                    &state.pool,
-                    auth.user.id,
-                    org.id,
-                    public.team.id,
-                    user.id,
-                )
-                .await
-                .map_err(Error::unavailable)?
-                .flatten()
-                .ok_or_else(Error::missing)?;
-                (member.role, "active")
+        let mut after = 0;
+        loop {
+            if let Some(role) = pending {
+                membership_state = "pending";
+                break role;
             }
+            let rows = orgs::list_public_team_members(
+                &state.pool,
+                auth.user.id,
+                org.id,
+                public.team.id,
+                orgs::OrganizationPage::new(after, 100).unwrap(),
+            )
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+            if let Some(row) = rows.iter().find(|row| row.user_id == user.id) {
+                break row.role.clone();
+            }
+            if rows.len() < 100 {
+                return Err(Error::missing());
+            }
+            after = rows.last().unwrap().id;
         }
     };
     if legacy_member {
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
+    let role = if matches!(
+        target_role,
+        orgs::OrganizationOutcome::Applied(db::models::OrgRole::Owner)
+    ) {
+        "maintainer"
+    } else {
+        &role
+    };
     Ok(Json(membership_document(
         public.team.id,
         username,
-        &role,
+        role,
         membership_state,
     ))
     .into_response())
@@ -792,64 +748,69 @@ async fn invitations(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
-    let (org, public) = selected(&state, &auth, &params).await?;
-    let (state, actor, org_id, team) = (&*state, auth.user.id, org.id, public.team.id);
-    let (rows, more) = page
-        .collect(move |after| async move {
-            let rows = outcome(
-                orgs::list_team_invitations(&state.pool, actor, org_id, team, batch(after)?)
+    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (offset, limit) = page.window()?;
+    let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
+    loop {
+        let rows = outcome(
+            orgs::list_team_invitations(
+                &state.pool,
+                auth.user.id,
+                org.id,
+                public.team.id,
+                orgs::OrganizationPage::new(after, 100).unwrap(),
+            )
+            .await
+            .map_err(Error::unavailable)?,
+        )?;
+        let more = rows.len() == 100;
+        for row in rows {
+            after = row.invitation.id;
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            let invited = if let Some(id) = row.invitation.user_id {
+                db::users::accounts::get_user_by_id(&state.pool, id)
                     .await
-                    .map_err(Error::unavailable)?,
-            )?;
-            let next = next_after(&rows, BATCH, |row| row.invitation.id);
-            Ok::<_, Error>((rows, next))
-        })
-        .await?;
-    let accounts = users(
-        state,
-        rows.iter().flat_map(|row| {
-            [row.invitation.user_id, row.invitation.invited_by_id]
-                .into_iter()
-                .flatten()
-        }),
-    )
-    .await?;
-    let account = |id: Option<i64>| id.and_then(|id| accounts.get(&id));
-    let items = rows
-        .iter()
-        .map(|row| {
-            payloads::organization_invitation(
+                    .map_err(Error::unavailable)?
+            } else {
+                None
+            };
+            let inviter = if let Some(id) = row.invitation.invited_by_id {
+                db::users::accounts::get_user_by_id(&state.pool, id)
+                    .await
+                    .map_err(Error::unavailable)?
+            } else {
+                None
+            };
+            items.push(payloads::organization_invitation(
                 &row.invitation,
                 &org,
-                account(row.invitation.user_id),
-                account(row.invitation.invited_by_id),
+                invited.as_ref(),
+                inviter.as_ref(),
                 row.team_count,
-            )
-        })
-        .collect();
-    page.response(&uri, items, more)
+            ));
+            if items.len() > limit {
+                return page.response(&uri, items, true);
+            }
+        }
+        if !more {
+            return page.response(&uri, items, false);
+        }
+    }
 }
 
 fn permissions(level: i16) -> Value {
     json!({"pull":level >= 1,"triage":level >= 2,"push":level >= 3,"maintain":level >= 4,"admin":level >= 5})
 }
 
-/// A team's repository with the team's permissions, or `None` when the repository left the
-/// organization after the grant was read.
-async fn repository_document(
-    state: &AppState,
-    auth: &auth::Authentication,
-    org: i64,
-    grant: &orgs::TeamRepositoryGrant,
-) -> Result<Option<Value>> {
-    let Some(repo) = db::repositories::records::get_repository_by_id(&state.pool, grant.repo_id)
+async fn repository_document(state: &AppState, grant: &orgs::TeamRepositoryGrant) -> Result<Value> {
+    let repo = db::repositories::records::get_repository_by_id(&state.pool, grant.repo_id)
         .await
         .map_err(Error::unavailable)?
-        .filter(|repo| repo.owner_org_id == Some(org))
-    else {
-        return Ok(None);
-    };
-    let mut value = repos::document(state, &repo, Some(auth)).await?;
+        .ok_or_else(Error::missing)?;
+    let mut value = repos::document(state, &repo, None).await?;
     value["permissions"] = permissions(grant.permission);
     value["role_name"] = json!(match grant.permission {
         1 => "read",
@@ -859,7 +820,7 @@ async fn repository_document(
         5 => "admin",
         _ => "none",
     });
-    Ok(Some(value))
+    Ok(value)
 }
 
 async fn repositories(
@@ -870,40 +831,36 @@ async fn repositories(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &Method::GET).await?;
-    let (org, public) = selected(&state, &auth, &params).await?;
-    let (state, credential, org_id, team) = (&*state, &auth, org.id, public.team.id);
-    let (rows, more) = page
-        .collect(move |after| async move {
-            let rows = orgs::list_public_team_repositories(
-                &state.pool,
-                credential.user.id,
-                org_id,
-                team,
-                batch(after)?,
-            )
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-            let next = next_after(&rows, BATCH, |row| row.id);
-            // The credential's repository bounds and the reader's current access apply before
-            // the page is cut.
-            let ids: Vec<i64> = rows.iter().map(|row| row.repo_id).collect();
-            let readable =
-                auth::readable_repositories(state, Some(credential), &ids, "metadata").await?;
-            let rows = rows
-                .into_iter()
-                .filter(|row| readable.contains(&row.repo_id))
-                .collect();
-            Ok::<_, Error>((rows, next))
-        })
-        .await?;
-    let mut items = Vec::new();
-    for grant in &rows {
-        if let Some(value) = repository_document(state, &auth, org.id, grant).await? {
-            items.push(value);
+    let (org, public) = selected(&state, auth.user.id, &params).await?;
+    let (offset, limit) = page.window()?;
+    let (mut after, mut skipped, mut items) = (0, 0, Vec::new());
+    loop {
+        let rows = orgs::list_public_team_repositories(
+            &state.pool,
+            auth.user.id,
+            org.id,
+            public.team.id,
+            orgs::OrganizationPage::new(after, 100).unwrap(),
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+        let more = rows.len() == 100;
+        for row in rows {
+            after = row.id;
+            if skipped < offset {
+                skipped += 1;
+                continue;
+            }
+            items.push(repository_document(&state, &row).await?);
+            if items.len() > limit {
+                return page.response(&uri, items, true);
+            }
+        }
+        if !more {
+            return page.response(&uri, items, false);
         }
     }
-    page.response(&uri, items, more)
 }
 
 async fn repository(
@@ -914,7 +871,7 @@ async fn repository(
     request: Request,
 ) -> Result<Response> {
     let auth = actor(&state, &headers, &method).await?;
-    let (org, public) = selected(&state, &auth, &params).await?;
+    let (org, public) = selected(&state, auth.user.id, &params).await?;
     let (repo, _) = super::repository(
         &state,
         &headers,
@@ -926,17 +883,6 @@ async fn repository(
     if repo.owner_org_id != Some(org.id) {
         return Err(Error::missing());
     }
-    // The organization's members permission does not reach past the credential's repository
-    // bounds: changing a team's access needs administration on that repository.
-    let write = !auth::read_method(&method);
-    auth.repository_scope(
-        &state.pool,
-        repo.id,
-        if write { "administration" } else { "metadata" },
-        write,
-    )
-    .await
-    .map_err(auth::scope_error)?;
     if method == Method::PUT {
         let input = input(request).await?;
         let permission = match string(&input, "permission")? {
@@ -947,7 +893,7 @@ async fn repository(
         outcome(
             orgs::grant_organization_team_repository(
                 &state.pool,
-                writer(&auth),
+                auth.user.id,
                 org.id,
                 public.team.id,
                 repo.id,
@@ -961,7 +907,7 @@ async fn repository(
     if method == Method::DELETE {
         match orgs::revoke_organization_team_repository(
             &state.pool,
-            writer(&auth),
+            auth.user.id,
             org.id,
             public.team.id,
             repo.id,
@@ -974,28 +920,33 @@ async fn repository(
         }
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let grant = orgs::get_public_team_repository(
-        &state.pool,
-        auth.user.id,
-        org.id,
-        public.team.id,
-        repo.id,
-    )
-    .await
-    .map_err(Error::unavailable)?
-    .flatten()
-    .ok_or_else(Error::missing)?;
-    if headers
-        .get("accept")
-        .and_then(|value| value.to_str().ok())
-        .is_some_and(|value| value.contains("application/vnd.github.v3.repository+json"))
-    {
-        let value = repository_document(&state, &auth, org.id, &grant)
-            .await?
-            .ok_or_else(Error::missing)?;
-        return Ok(Json(value).into_response());
+    let mut after = 0;
+    loop {
+        let rows = orgs::list_public_team_repositories(
+            &state.pool,
+            auth.user.id,
+            org.id,
+            public.team.id,
+            orgs::OrganizationPage::new(after, 100).unwrap(),
+        )
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
+        if let Some(grant) = rows.iter().find(|row| row.repo_id == repo.id) {
+            if headers
+                .get("accept")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| value.contains("application/vnd.github.v3.repository+json"))
+            {
+                return Ok(Json(repository_document(&state, grant).await?).into_response());
+            }
+            return Ok(StatusCode::NO_CONTENT.into_response());
+        }
+        if rows.len() < 100 {
+            return Err(Error::missing());
+        }
+        after = rows.last().unwrap().id;
     }
-    Ok(StatusCode::NO_CONTENT.into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
@@ -1024,9 +975,9 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
             "teams/remove-membership-for-user-in-org",
             delete(membership),
         ),
-        ("teams/get-member-legacy", get(legacy_member)),
-        ("teams/add-member-legacy", put(legacy_member)),
-        ("teams/remove-member-legacy", delete(legacy_member)),
+        ("teams/get-member-legacy", get(membership)),
+        ("teams/add-member-legacy", put(membership)),
+        ("teams/remove-member-legacy", delete(membership)),
         ("teams/get-membership-for-user-legacy", get(membership)),
         (
             "teams/add-or-update-membership-for-user-legacy",

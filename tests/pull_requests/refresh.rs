@@ -970,65 +970,6 @@ async fn postgres_merge_names_the_base_branch_it_read() {
     merge_names_the_base_branch_it_read(true).await;
 }
 
-async fn merge_into_the_default_branch_closes_named_issues(pg: bool) {
-    let mut f = Database::new(pg).await;
-    f.complete_setup().await;
-    let alice_id = f.actor("alice").await;
-    let root = tempfile::tempdir().unwrap();
-    let repository = codeyard::backend::repositories::lifecycle::provision(
-        (f.pool(), None),
-        root.path(),
-        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
-        "proj",
-        None,
-        false,
-        None,
-    )
-    .await
-    .unwrap();
-    let router = f.router(root.path()).await;
-    let alice = Client::login(&router, f.pool(), alice_id).await;
-    let trunk = repository.default_branch.as_str();
-    let main0 = alice.save(trunk, "README.md", "unborn").await;
-    alice.branch("topic", &main0).await;
-    alice.save("topic", "topic.txt", &main0).await;
-    let mut issues = Vec::new();
-    for title in ["Named", "Unnamed"] {
-        let issue = alice
-            .expect("POST", "/api/repos/alice/proj/issues", json!({"title": title, "body": "Body"}), StatusCode::CREATED)
-            .await;
-        issues.push(issue["number"].as_i64().unwrap());
-    }
-    let pull = alice
-        .expect(
-            "POST",
-            "/api/repos/alice/proj/pulls",
-            json!({"title": "Fix", "body": format!("Fixes #{}", issues[0]), "head_branch": "topic", "base_branch": trunk}),
-            StatusCode::CREATED,
-        )
-        .await;
-    alice.merge_current(pull["number"].as_i64().unwrap()).await;
-    let mut states = Vec::new();
-    for number in &issues {
-        let issue = alice
-            .expect("GET", &format!("/api/repos/alice/proj/issues/{number}"), Value::Null, StatusCode::OK)
-            .await;
-        states.push(issue["state"].as_str().unwrap().to_owned());
-    }
-    assert_eq!(states, ["closed", "open"]);
-    f.finish().await;
-}
-
-#[tokio::test]
-async fn sqlite_merge_into_the_default_branch_closes_named_issues() {
-    merge_into_the_default_branch_closes_named_issues(false).await;
-}
-
-#[tokio::test]
-async fn postgres_merge_into_the_default_branch_closes_named_issues() {
-    merge_into_the_default_branch_closes_named_issues(true).await;
-}
-
 #[tokio::test]
 async fn sqlite_pull_requests_follow_their_branches() {
     contract(false).await;

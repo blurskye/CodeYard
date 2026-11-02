@@ -1,7 +1,6 @@
 //! Supported provider requests and bounded response parsing. One configured HTTP client.
 
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
-use crate::webui::encode_component;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -79,6 +78,20 @@ pub fn provider_credentials(provider: &str) -> Option<(String, String)> {
     Some((read(&id_key)?, read(&secret_key)?))
 }
 
+/// Percent encoding that leaves only RFC 3986 unreserved characters as they are.
+fn encode(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    for byte in value.as_bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(*byte as char)
+            }
+            other => out.push_str(&format!("%{other:02X}")),
+        }
+    }
+    out
+}
+
 /// The authorize URL the browser is redirected to.
 pub fn authorize_url(
     meta: &ProviderMeta,
@@ -89,10 +102,10 @@ pub fn authorize_url(
     format!(
         "{}?client_id={}&redirect_uri={}&scope={}&state={}&response_type=code",
         meta.auth_url,
-        encode_component(client_id),
-        encode_component(redirect_uri),
-        encode_component(meta.scopes),
-        encode_component(state),
+        encode(client_id),
+        encode(redirect_uri),
+        encode(meta.scopes),
+        encode(state),
     )
 }
 
@@ -162,9 +175,10 @@ pub fn profile_from_user_info(provider: &str, data: &Value) -> Option<OAuthProfi
 pub(crate) fn supports_pkce(provider: &str) -> bool {
     matches!(provider, "github" | "google" | "gitlab")
 }
-pub(crate) use crate::backend::identity::tokens::token_hash as browser_binding;
-/// The RFC 7636 S256 challenge for a PKCE verifier.
-pub(crate) fn pkce_challenge(verifier: &str) -> String {
+pub(crate) fn browser_binding(nonce: &str) -> String {
+    hex::encode(Sha256::digest(nonce.as_bytes()))
+}
+fn pkce_challenge(verifier: &str) -> String {
     URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()))
 }
 
@@ -198,20 +212,20 @@ pub(crate) fn token_body(
     let mut body = if provider == "bitbucket" {
         format!(
             "code={}&redirect_uri={}&grant_type=authorization_code",
-            encode_component(code),
-            encode_component(redirect)
+            encode(code),
+            encode(redirect)
         )
     } else {
         format!(
             "client_id={}&client_secret={}&code={}&redirect_uri={}&grant_type=authorization_code",
-            encode_component(client),
-            encode_component(secret),
-            encode_component(code),
-            encode_component(redirect)
+            encode(client),
+            encode(secret),
+            encode(code),
+            encode(redirect)
         )
     };
     if !verifier.is_empty() {
-        body.push_str(&format!("&code_verifier={}", encode_component(verifier)));
+        body.push_str(&format!("&code_verifier={}", encode(verifier)));
     }
     body
 }

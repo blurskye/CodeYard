@@ -170,8 +170,7 @@ pub async fn create_commit_status(
         .filter(|v| !v.is_empty());
 
     // A status belongs to a commit of this repository.
-    let store = repo_store(&repository, state.cluster.as_ref());
-    let commit = store
+    repo_store(&repository, state.cluster.as_ref())
         .commit(&sha)
         .await
         .map_err(|error| repo_store_error(error, StatusCode::SERVICE_UNAVAILABLE))?;
@@ -190,15 +189,6 @@ pub async fn create_commit_status(
     )
     .await
     .map_err(crate::backend::api::http::error::protection_write_error)?;
-    crate::backend::webhooks::statuses::emit_status(
-        &state.pool,
-        &store,
-        &repository,
-        &status,
-        &commit,
-        user.id,
-    )
-    .await;
 
     Ok((
         StatusCode::CREATED,

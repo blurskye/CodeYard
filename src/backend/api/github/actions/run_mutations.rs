@@ -26,10 +26,10 @@ async fn cancel(
     // Both engines use bounded process-group termination, rather than leaving always() jobs running.
     if !state
         .ci_runs
-        .cancel_run(
+        .cancel_run_with_token(
             run.run_id,
-            authentication.workflow_actor(&state, repo.id).await?,
-            Some(authentication.ci_credential(&headers, "actions")?),
+            authentication.user.id,
+            Some(authentication.token.id),
         )
         .await
         .map_err(admission_error)?
@@ -51,8 +51,8 @@ async fn remove(
     kind: CiRunDeletion,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let authentication = authentication.ok_or_else(auth::required)?;
-    if !db::ci::delete_ci_run_data(&state.pool, authentication.database_actor(), repo.id, id, kind)
+    let actor = authentication.ok_or_else(auth::required)?.user.id;
+    if !db::ci::delete_ci_run_data(&state.pool, actor, repo.id, id, kind)
         .await
         .map_err(|error| admission_error(error.into()))?
     {

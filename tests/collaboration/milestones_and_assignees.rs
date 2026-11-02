@@ -371,10 +371,10 @@ async fn contract(pg: bool) {
         .await,
         Vec::<i32>::new()
     );
-    db::issues::add_issue_comment(pool, second.repo_id, second.id, owner, "one", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner).await))
+    db::issues::add_issue_comment(pool, second.id, owner, "one")
         .await
         .unwrap();
-    db::issues::add_issue_comment(pool, second.repo_id, second.id, owner, "two", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner).await))
+    db::issues::add_issue_comment(pool, second.id, owner, "two")
         .await
         .unwrap();
     assert_eq!(
@@ -456,7 +456,7 @@ async fn contract(pg: bool) {
     );
 
     assert_eq!(
-        db::discussions::list_repo_authors(pool, repo, None)
+        db::discussions::list_repo_authors(pool, repo)
             .await
             .unwrap(),
         vec!["alice"]

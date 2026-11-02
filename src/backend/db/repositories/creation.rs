@@ -32,13 +32,6 @@ pub enum RepositoryStorageRefusal {
     StalePlacement,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct CreationAdmission<'a> {
-    pub authority: Option<&'a crate::backend::db::credentials::Actor>,
-    /// Only draft advisory remediation may have multiple forks per personal owner.
-    pub advisory: Option<&'a str>,
-}
-
 pub struct NewRepository<'a> {
     pub owner: RepositoryCreationOwner,
     pub name: &'a str,
@@ -60,9 +53,6 @@ native_operation!(crate::backend::db::postgres::repositories::creation::insert_r
 native_operation!(crate::backend::db::postgres::repositories::creation::insert_repository_with_properties,
     crate::backend::db::sqlite::repositories::creation::insert_repository_with_properties,
     fn insert_repository_with_properties(pool: &DbPool, input: NewRepository<'_>, properties: &[crate::backend::db::organizations::properties::ValueInput]) -> Result<Option<Repository>>);
-native_operation!(crate::backend::db::postgres::repositories::creation::insert_repository_with_admission,
-    crate::backend::db::sqlite::repositories::creation::insert_repository_with_admission,
-    fn insert_repository_with_admission(pool: &DbPool, input: NewRepository<'_>, properties: &[crate::backend::db::organizations::properties::ValueInput], admission: CreationAdmission<'_>) -> Result<Option<Repository>>);
 native_operation!(crate::backend::db::postgres::repositories::creation::insert_gist_repository,crate::backend::db::sqlite::repositories::creation::insert_gist_repository,
     fn insert_gist_repository(pool: &DbPool,input: NewRepository<'_>) -> Result<Option<Repository>>);
 

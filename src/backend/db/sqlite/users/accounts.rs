@@ -1,5 +1,4 @@
 use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
-use crate::backend::db::users::accounts::CommitAuthor;
 use anyhow::Result;
 use sqlx::SqlitePool;
 
@@ -116,27 +115,31 @@ pub async fn get_user_by_email(pool: &SqlitePool, email: &str) -> Result<Option<
     )
 }
 
-/// Git attribution prefers the account's noreply identity, then verified addresses, with
-/// the lowest account ID resolving legacy duplicate claims. Banned accounts never attribute.
-pub async fn commit_authors(pool: &SqlitePool, emails: &[String]) -> Result<Vec<CommitAuthor>> {
-    if emails.is_empty() { return Ok(Vec::new()); }
+pub async fn get_users_by_emails(pool: &SqlitePool, emails: &[String]) -> Result<Vec<User>> {
+    if emails.is_empty() {
+        return Ok(vec![]);
+    }
+    Ok(
+        sqlx::query_as("SELECT * FROM users WHERE email IN (SELECT value FROM json_each(?1))")
+            .bind(serde_json::to_string(emails)?)
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
+/// The verified owner of each address, as `(address, user id)`. Primary and secondary addresses
+/// both count, and the address is returned as it was requested.
+pub async fn get_verified_email_owners(
+    pool: &SqlitePool,
+    emails: &[String],
+) -> Result<Vec<(String, i64)>> {
+    if emails.is_empty() {
+        return Ok(vec![]);
+    }
     Ok(sqlx::query_as(
-        "WITH requested AS (
-            SELECT DISTINCT value AS address, LOWER(value) AS normalized FROM json_each(?1)
-         ), candidates AS (
-            SELECT a.address, u.id, 0 AS priority FROM requested a
-                JOIN users u ON LOWER(u.username || '@users.noreply')=a.normalized
-            UNION ALL
-            SELECT a.address, u.id, 1 AS priority FROM requested a
-                JOIN users u ON u.email_verified AND LOWER(u.email)=a.normalized
-            UNION ALL
-            SELECT a.address, e.user_id AS id, 1 AS priority FROM requested a
-                JOIN user_emails e ON e.verified AND LOWER(e.email)=a.normalized
-         ), ranked AS (
-            SELECT c.address, c.id, ROW_NUMBER() OVER (PARTITION BY c.address ORDER BY c.priority,c.id) AS ordinal
-            FROM candidates c JOIN users u ON u.id=c.id WHERE NOT u.is_banned
-         )
-         SELECT ranked.address, u.* FROM ranked JOIN users u ON u.id=ranked.id WHERE ranked.ordinal=1",
+        "SELECT a.value, u.id FROM json_each(?1) a JOIN users u ON u.email_verified AND lower(u.email)=lower(a.value)
+         UNION
+         SELECT a.value, e.user_id FROM json_each(?1) a JOIN user_emails e ON e.verified AND lower(e.email)=lower(a.value)",
     )
     .bind(serde_json::to_string(emails)?)
     .fetch_all(pool)
@@ -200,26 +203,28 @@ pub async fn create_user_from_oauth(
 pub async fn set_user_avatar(
     pool: &SqlitePool,
     user_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     avatar_file_id: Option<uuid::Uuid>,
 ) -> Result<crate::backend::db::users::accounts::UserAvatarOutcome> {
     use crate::backend::db::users::accounts::UserAvatarOutcome;
 
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    // The account and the requesting session must still be live when the picture changes,
-    // which happens after the upload's storage work.
-    super::transitions::require_account(&mut tx, user_id, credential).await?;
-    let previous: Option<uuid::Uuid> = sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=?1")
-        .bind(user_id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let account: Option<(Option<uuid::Uuid>, bool)> =
+        sqlx::query_as("SELECT avatar_file_id,is_banned FROM users WHERE id=?1")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((previous, banned)) = account else {
+        return Ok(UserAvatarOutcome::NotUsable);
+    };
+    if banned {
+        return Ok(UserAvatarOutcome::Banned);
+    }
     if let Some(file) = avatar_file_id {
         let usable: Option<uuid::Uuid> = sqlx::query_scalar(
-            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND user_id=?2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))) AND reason='avatar' AND content_type IN (SELECT value FROM json_each(?3)) RETURNING id",
+            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND user_id=?2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))) AND reason='avatar' AND content_type IN ('image/png','image/jpeg','image/gif','image/webp') RETURNING id",
         )
         .bind(file)
         .bind(user_id)
-        .bind(serde_json::to_string(&crate::media::AVATAR_CONTENT_TYPES)?)
         .fetch_optional(&mut *tx)
         .await?;
         if usable.is_none() {
@@ -273,7 +278,7 @@ pub async fn update_user_profile(
 }
 
 /// Accounts that match the search: all of them, the administrators and the banned ones.
-pub async fn count_matching_users<'a>(pool: impl sqlx::Executor<'a, Database=sqlx::Sqlite>, text: &str) -> Result<(i64, i64, i64)> {
+pub async fn count_matching_users(pool: &SqlitePool, text: &str) -> Result<(i64, i64, i64)> {
     Ok(sqlx::query_as(
         "SELECT COUNT(*), COALESCE(SUM(is_admin),0), COALESCE(SUM(is_banned),0) FROM users WHERE username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1",
     )
@@ -282,8 +287,8 @@ pub async fn count_matching_users<'a>(pool: impl sqlx::Executor<'a, Database=sql
     .await?)
 }
 
-pub async fn list_admin_users<'a>(
-    pool: impl sqlx::Executor<'a, Database=sqlx::Sqlite>,
+pub async fn list_admin_users(
+    pool: &SqlitePool,
     text: &str,
     role: &str,
     limit: i64,
@@ -291,18 +296,6 @@ pub async fn list_admin_users<'a>(
 ) -> Result<Vec<AdminUser>> {
     Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE (username REGEXP ?1 OR COALESCE(email,'') REGEXP ?1) AND CASE ?4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE 1 END ORDER BY username,id LIMIT ?2 OFFSET ?3")
         .bind(super::super::search::contains(text.trim())).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
-}
-
-pub async fn admin_users_page(pool: &SqlitePool, administrator: &crate::backend::db::users::transitions::AdministratorActor, text: &str, role: &str, limit: i64, requested: usize) -> Result<crate::backend::db::users::accounts::AdminUserPage> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    anyhow::ensure!(super::transitions::active_admin_session(&mut tx, administrator).await?, crate::backend::db::users::accounts::AccountRestricted);
-    let counts = count_matching_users(&mut *tx, text).await?;
-    let total = match role { "admins" => counts.1, "banned" => counts.2, _ => counts.0 } as usize;
-    let limit = limit.clamp(1,100);
-    let page = requested.clamp(1, total.div_ceil(limit as usize).max(1));
-    let users = list_admin_users(&mut *tx, text, role, limit, ((page-1) * limit as usize) as i64).await?;
-    tx.commit().await?;
-    Ok(crate::backend::db::users::accounts::AdminUserPage { counts, page, users })
 }
 
 pub async fn list_admin_account_summaries(
@@ -389,8 +382,8 @@ pub async fn list_admin_activity_points(
         ), storage_events(day,bytes) AS (
             SELECT date(recorded_at),max(size_bytes-COALESCE(previous,0),0) FROM repo_storage_events,window_start
                 WHERE recorded_at>=moment
-            UNION ALL SELECT date(confirmed_at),file_size FROM upload_rate_limit,window_start
-                WHERE confirmed_at>=moment
+            UNION ALL SELECT date(uploaded_at),file_size FROM upload_rate_limit,window_start
+                WHERE uploaded_at>=moment
         ), storage_daily AS (SELECT day,SUM(bytes) AS daily FROM storage_events GROUP BY day)
         SELECT d.day,COALESCE(c.commits,0) AS commits,COALESCE(c.pulls_opened,0) AS pulls_opened,
             COALESCE(c.pulls_merged,0) AS pulls_merged,COALESCE(c.issues_opened,0) AS issues_opened,

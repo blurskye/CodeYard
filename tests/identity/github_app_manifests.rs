@@ -248,19 +248,10 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(reply.status, 303, "{}", reply.text());
-    let installation = db::github_apps::installations(
-        f.pool(),
-        &db::github_apps::InstallationFilter {
-            app: Some(id),
-            ..Default::default()
-        },
-        0,
-        1,
-    )
-    .await
-    .unwrap()
-    .1[0]
-    .id;
+    let installation = db::github_apps::installations(f.pool(), Some(id), None)
+        .await
+        .unwrap()[0]
+        .id;
     request(
         &router,
         "issues/create",
@@ -381,58 +372,6 @@ async fn contract(pg: bool) {
     assert!(!headers.contains_key("x-hub-signature-256"));
     assert!(body.starts_with(b"payload="));
     recorded(&f, id, 3).await;
-    // A redirect never reached the receiver, and a timeout got no answer: both are failures.
-    for (guid, status_code, error) in [
-        ("redirected", Some(302), None),
-        ("timed-out", None, Some("Delivery timed out")),
-    ] {
-        db::github_app_hooks::insert_delivery(
-            f.pool(),
-            id,
-            &db::webhooks::NewDelivery {
-                redelivery: false,
-                guid: guid.into(),
-                event: "issues".into(),
-                action: Some("opened".into()),
-                status_code,
-                duration_ms: 1,
-                error: error.map(str::to_owned),
-                request_headers: String::new(),
-                request_body: "{}".into(),
-                response_headers: None,
-                response_body: None,
-            },
-            false,
-            None,
-            Some(repo.id),
-            "https://example.test/hook",
-        )
-        .await
-        .unwrap();
-    }
-    for (status, expected) in [
-        ("failure", vec!["timed-out", "redirected"]),
-        ("success", Vec::new()),
-    ] {
-        let (_, rows) = request(
-            &router,
-            "apps/list-webhook-deliveries",
-            "GET",
-            &format!("/api/v3/app/hook/deliveries?status={status}"),
-            Some(&auth),
-            Value::Null,
-            200,
-        )
-        .await;
-        let guids: Vec<&str> = rows
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|row| row["guid"].as_str())
-            .filter(|guid| matches!(*guid, "redirected" | "timed-out"))
-            .collect();
-        assert_eq!(guids, expected, "status={status}");
-    }
     request(
         &router,
         "apps/remove-repo-from-installation-for-authenticated-user",
@@ -519,19 +458,10 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, 303);
     let private_id = private["id"].as_i64().unwrap();
-    let private_installation = db::github_apps::installations(
-        f.pool(),
-        &db::github_apps::InstallationFilter {
-            app: Some(private_id),
-            ..Default::default()
-        },
-        0,
-        1,
-    )
-    .await
-    .unwrap()
-    .1[0]
-    .id;
+    let private_installation = db::github_apps::installations(f.pool(), Some(private_id), None)
+        .await
+        .unwrap()[0]
+        .id;
     user.page_ok("/apps/private-bot").await;
     let page = user.page_ok("/settings/apps/installations").await;
     assert!(page.contains("Private Bot"));

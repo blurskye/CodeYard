@@ -12,10 +12,11 @@ use crate::backend::{
 };
 use axum::{
     extract::{Path, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
+use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};
 use std::sync::Arc;
 
@@ -118,13 +119,25 @@ pub(super) fn client_credentials(path: &str) -> bool {
     )
 }
 
-pub(super) async fn application(state: &AppState, headers: &HeaderMap, id: &str) -> Result<Application> {
-    let credentials = crate::backend::api::http::credentials::basic(headers)
-        .filter(|(client, _)| client == id).map(|(_, secret)| secret);
+async fn application(state: &AppState, headers: &HeaderMap, id: &str) -> Result<Application> {
+    let credentials = || {
+        let mut values = headers.get_all(header::AUTHORIZATION).iter();
+        let value = values.next()?.to_str().ok()?;
+        if values.next().is_some() {
+            return None;
+        }
+        let (scheme, value) = value.split_once(' ')?;
+        if !scheme.eq_ignore_ascii_case("basic") || value.len() > 2048 {
+            return None;
+        }
+        let decoded = String::from_utf8(STANDARD.decode(value).ok()?).ok()?;
+        let (client, secret) = decoded.split_once(':')?;
+        (client == id).then(|| secret.to_owned())
+    };
     let app = oauth::client(&state.pool, id)
         .await
         .map_err(Error::unavailable)?;
-    if let (Some(app), Some(secret)) = (app, credentials) {
+    if let (Some(app), Some(secret)) = (app, credentials()) {
         if oauth::valid_secret(&app, &secret) {
             return Ok(app);
         }
@@ -165,16 +178,12 @@ async fn owned_token(state: &AppState, client: &str, hash: &str) -> Result<Perso
     Ok(token)
 }
 
-/// What an authorization response shows besides the token itself. It is read before a reset
-/// rotates the token, so the response after the rotation needs no further reads.
-struct Authorization {
-    scopes: String,
-    user: db::models::User,
-    /// A scoped user token's installation, with the token's own permissions and selection.
-    installation: Option<Value>,
-}
-
-async fn authorization(state: &AppState, token: &PersonalAccessToken) -> Result<Authorization> {
+async fn document(
+    state: &AppState,
+    app: &Application,
+    token: &PersonalAccessToken,
+    value: &str,
+) -> Result<Value> {
     let metadata = db::oauth_apps::token(&state.pool, token.id)
         .await
         .map_err(Error::unavailable)?
@@ -183,51 +192,14 @@ async fn authorization(state: &AppState, token: &PersonalAccessToken) -> Result<
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let bounds = db::github_apps::token(&state.pool, token.id)
-        .await
-        .map_err(Error::unavailable)?
-        .filter(|bounds| bounds.user_token);
-    let mut installation = None;
-    if let Some(bounds) = bounds {
-        if let Some(row) = db::github_apps::installation(&state.pool, bounds.installation_id)
-            .await
-            .map_err(Error::unavailable)?
-        {
-            let selected: Vec<i64> =
-                serde_json::from_str(&bounds.repositories).map_err(Error::unavailable)?;
-            let mut value = installations::document(state, &row).await?;
-            value["permissions"] =
-                serde_json::from_str(&bounds.permissions).map_err(Error::unavailable)?;
-            value["repository_selection"] = json!(if row.all_repos && selected.is_empty() {
-                "all"
-            } else {
-                "selected"
-            });
-            installation = Some(value);
-        }
-    }
-    Ok(Authorization {
-        scopes: metadata.scopes,
-        user,
-        installation,
-    })
-}
-
-fn document(
-    app: &Application,
-    token: &PersonalAccessToken,
-    value: &str,
-    details: &Authorization,
-) -> Value {
-    json!({
+    Ok(json!({
         "id":token.id,"url":api_url(&format!("/applications/{}/token",app.client_id)),
-        "scopes":details.scopes.split(',').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
+        "scopes":metadata.scopes.split(',').filter(|s| !s.is_empty()).collect::<Vec<_>>(),
         "token":value,"token_last_eight":value.get(value.len().saturating_sub(8)..),
         "hashed_token":token_hash(value),"app":{"client_id":app.client_id,"name":app.name,"url":app.homepage},
         "note":null,"note_url":null,"updated_at":token.created_at,"created_at":token.created_at,
-        "fingerprint":null,"user":payloads::user(&details.user),"expires_at":token.expires_at,
-        "installation":details.installation,
-    })
+        "fingerprint":null,"user":payloads::user(&user),"expires_at":token.expires_at,
+    }))
 }
 
 async fn check_token(
@@ -242,8 +214,7 @@ async fn check_token(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let details = authorization(&state, &token).await?;
-    Ok(Json(document(&app, &token, value, &details)))
+    Ok(Json(document(&state, &app, &token, value).await?))
 }
 
 async fn reset_token(
@@ -254,10 +225,7 @@ async fn reset_token(
 ) -> Result<Json<Value>> {
     let app = application(&state, &headers, &id).await?;
     let old = access_token(&body)?;
-    let current = owned_token(&state, &id, &token_hash(old)).await?;
-    // Everything the response shows is read first: once the hash rotates, the old token is
-    // gone and the new one exists only in this response.
-    let details = authorization(&state, &current).await?;
+    owned_token(&state, &id, &token_hash(old)).await?;
     let value = if db::github_apps::app(&state.pool, &id)
         .await
         .map_err(Error::unavailable)?
@@ -272,7 +240,7 @@ async fn reset_token(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-    Ok(Json(document(&app, &token, &value, &details)))
+    Ok(Json(document(&state, &app, &token, &value).await?))
 }
 
 async fn delete_token(

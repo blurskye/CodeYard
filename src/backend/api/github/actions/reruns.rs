@@ -37,14 +37,13 @@ async fn perform(
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
     let authentication = authentication.ok_or_else(auth::required)?;
-    let actor = authentication.workflow_actor(&state, repo.id).await?;
-    let credential = Some(authentication.ci_credential(&headers, "actions")?);
+    let actor = authentication.user.id;
+    let credential = Some(authentication.token.id);
     let args: Parameters = if body.is_empty() {
         Parameters::default()
     } else {
-        serde_json::from_slice::<Option<Parameters>>(&body)
+        serde_json::from_slice(&body)
             .map_err(|_| Error::invalid_simple("Invalid re-run parameters"))?
-            .unwrap_or_default()
     };
     match selection {
         Selection::All => {

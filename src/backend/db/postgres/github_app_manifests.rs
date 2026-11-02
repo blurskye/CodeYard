@@ -1,7 +1,7 @@
 use crate::backend::db::{
     github_app_manifests::Draft,
     github_apps::App,
-    webhooks::{SealedSecret, WebhookFields, WebhookPatch},
+    webhooks::{SealedSecret, WebhookFields},
 };
 use anyhow::Result;
 use sqlx::PgPool;
@@ -34,8 +34,16 @@ pub async fn approve(
     code: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if !super::users::transitions::active_session(&mut tx, actor, session).await? { return Ok(false); }
-    let changed=sqlx::query("UPDATE github_app_manifests SET conversion_hash=$4,user_id=$2,session_id=$3,expires_at=$5 WHERE hash=$1 AND user_id IS NULL AND expires_at>$6").bind(hash).bind(actor).bind(session).bind(code).bind(chrono::Utc::now().timestamp()+3600).bind(chrono::Utc::now().timestamp()).execute(&mut *tx).await?.rows_affected()==1;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(actor)
+        .fetch_optional(&mut *tx)
+        .await?;
+    sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR SHARE")
+        .bind(session)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let changed=sqlx::query("UPDATE github_app_manifests SET conversion_hash=$4,user_id=$2,session_id=$3,expires_at=$5 WHERE hash=$1 AND user_id IS NULL AND expires_at>$6 AND EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$2 AND s.id=$3 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password)").bind(hash).bind(actor).bind(session).bind(code).bind(chrono::Utc::now().timestamp()+3600).bind(chrono::Utc::now().timestamp()).execute(&mut *tx).await?.rows_affected()==1;
     tx.commit().await?;
     Ok(changed)
 }
@@ -58,7 +66,14 @@ pub async fn convert(
         return Ok(None);
     };
     // Account -> session -> grant, matching logout/account revocation and its FK cascades.
-    if !super::users::transitions::active_session(&mut tx, actor, &session).await? { return Ok(None); }
+    sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
+        .bind(actor)
+        .fetch_optional(&mut *tx)
+        .await?;
+    sqlx::query("SELECT id FROM sessions WHERE id=$1 FOR SHARE")
+        .bind(&session)
+        .fetch_optional(&mut *tx)
+        .await?;
     let draft:Option<Draft>=sqlx::query_as("SELECT * FROM github_app_manifests WHERE conversion_hash=$1 AND user_id IS NOT NULL AND expires_at>$2 FOR UPDATE").bind(hash).bind(chrono::Utc::now().timestamp()).fetch_optional(&mut *tx).await?;
     let Some(draft) = draft else {
         return Ok(None);
@@ -89,14 +104,7 @@ pub async fn convert(
         .await?;
     }
     if let Some(hook) = hook {
-        super::github_app_hooks::save_in_connection(
-            &mut tx,
-            app.id,
-            &WebhookPatch::from(hook),
-            secret,
-            false,
-        )
-        .await?;
+        super::github_app_hooks::save_in_connection(&mut tx, app.id, hook, secret, false).await?;
     }
     sqlx::query("DELETE FROM github_app_manifests WHERE hash=$1")
         .bind(&draft.hash)

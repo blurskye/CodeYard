@@ -27,8 +27,7 @@ pub struct SshKeySummary {
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::list_user_key_summaries,
     crate::backend::db::sqlite::users::ssh_keys::list_user_key_summaries,
-    /// The account's own settings listing, read while `credential` is still live.
-    fn list_user_key_summaries(pool: &DbPool, user_id: i64, credential: &super::accounts::AccountCredential<'_>, after: i64) -> Result<Vec<SshKeySummary>>);
+    fn list_user_key_summaries(pool: &DbPool, user_id: i64, after: i64) -> Result<Vec<SshKeySummary>>);
 
 fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
     use SshKeyWriteRefusal::InvalidKey;
@@ -56,13 +55,11 @@ fn parse_key_parts(key_type: &str, blob: &str) -> Result<PublicKey, SshKeyWriteR
     Ok(key)
 }
 
-pub const MAX_PUBLIC_KEY_BYTES: usize = 32768;
-
 /// One complete-key policy for enrollment and both SSH transports; comments are labels only.
 pub(crate) fn parse_public_key(public_key: &str) -> Result<PublicKey, SshKeyWriteRefusal> {
     use SshKeyWriteRefusal::InvalidKey;
     let public_key = public_key.trim();
-    if public_key.len() > MAX_PUBLIC_KEY_BYTES || public_key.contains(['\r', '\n', '\0']) {
+    if public_key.len() > 32768 || public_key.contains(['\r', '\n', '\0']) {
         return Err(InvalidKey);
     }
     let mut fields = public_key.split_whitespace();
@@ -196,7 +193,7 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key,
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key_for_token,
     crate::backend::db::sqlite::users::ssh_keys::add_ssh_key_for_token,
-    fn add_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, hash: &str, name: &str, public_key: &str) -> Result<SshKey>);
+    fn add_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, name: &str, public_key: &str) -> Result<SshKey>);
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::add_ssh_key_for_session,
     crate::backend::db::sqlite::users::ssh_keys::add_ssh_key_for_session,
@@ -214,10 +211,6 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::get_user_by_key
     pool: &DbPool,
     fingerprint: &str,
 ) -> Result<Option<UserWithKey>>);
-
-native_operation!(crate::backend::db::postgres::users::ssh_keys::touch_ssh_key,
-    crate::backend::db::sqlite::users::ssh_keys::touch_ssh_key,
-    fn touch_ssh_key(pool: &DbPool, key_id: i64) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::get_user_by_ssh_key_id,
     crate::backend::db::sqlite::users::ssh_keys::get_user_by_ssh_key_id,
@@ -238,7 +231,7 @@ native_operation!(crate::backend::db::postgres::users::ssh_keys::get_user_key,
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::delete_user_ssh_key_for_token,
     crate::backend::db::sqlite::users::ssh_keys::delete_user_ssh_key_for_token,
-    fn delete_user_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, hash: &str, key_id: i64) -> Result<bool>);
+    fn delete_user_ssh_key_for_token(pool: &DbPool, user_id: i64, token: i64, key_id: i64) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::users::ssh_keys::delete_user_ssh_key,
     crate::backend::db::sqlite::users::ssh_keys::delete_user_ssh_key,

@@ -16,7 +16,6 @@ async fn settings_response(
     ctx: &PageContext,
     status: StatusCode,
     message: Option<&str>,
-    submitted: Option<&Fields>,
 ) -> Response {
     let mut ctx = ctx.clone();
     ctx.return_to = Some("/admin/settings".to_owned());
@@ -51,10 +50,10 @@ async fn settings_response(
             model: AdminSettings {
                 private,
                 ai_crawlers,
-                osv_base_url: submitted.map(|form| field(form, "osv_base_url").to_owned()).unwrap_or(osv.base_url),
-                osv_ecosystems: submitted.map(|form| field(form, "osv_ecosystems").to_owned()).unwrap_or_else(|| serde_json::from_str::<Vec<String>>(&osv.ecosystems)
+                osv_base_url: osv.base_url,
+                osv_ecosystems: serde_json::from_str::<Vec<String>>(&osv.ecosystems)
                     .unwrap_or_default()
-                    .join(", ")),
+                    .join(", "),
             },
             csrf_token: ctx.csrf_token.clone(),
             message: message.map(str::to_owned),
@@ -78,7 +77,7 @@ pub(crate) async fn settings_get(
         Some("vulnerabilities") => Some("Vulnerability sources saved."),
         _ => None,
     };
-    settings_response(&ctx, StatusCode::OK, message, None).await
+    settings_response(&ctx, StatusCode::OK, message).await
 }
 
 /// The settings form. Without JavaScript it posts here and is redirected back.
@@ -115,15 +114,17 @@ pub(crate) async fn settings_post(
             Err(error) => {
                 settings_response(
                     &ctx,
-                    match error.downcast_ref::<db::vulnerabilities::Refusal>() {
-                        Some(db::vulnerabilities::Refusal::Invalid) => StatusCode::UNPROCESSABLE_ENTITY,
-                        Some(db::vulnerabilities::Refusal::Denied) => StatusCode::FORBIDDEN,
-                        None => StatusCode::SERVICE_UNAVAILABLE,
+                    if error
+                        .downcast_ref::<db::vulnerabilities::Refusal>()
+                        .is_some()
+                    {
+                        StatusCode::UNPROCESSABLE_ENTITY
+                    } else {
+                        StatusCode::SERVICE_UNAVAILABLE
                     },
                     Some(
                         "Unable to save vulnerability sources. Check the URL and ecosystem names.",
                     ),
-                    Some(&form),
                 )
                 .await
             }
@@ -137,7 +138,6 @@ pub(crate) async fn settings_post(
                 &ctx,
                 StatusCode::BAD_REQUEST,
                 Some("Choose open or by approval for sign-up."),
-                None,
             )
             .await;
         };
@@ -152,7 +152,6 @@ pub(crate) async fn settings_post(
                 &ctx,
                 StatusCode::BAD_REQUEST,
                 Some("Choose allow or block for AI crawlers."),
-                None,
             )
             .await;
         };
@@ -169,10 +168,9 @@ pub(crate) async fn settings_post(
                 &ctx,
                 StatusCode::CONFLICT,
                 Some("Finish setup before changing this setting."),
-                None,
             )
             .await
         }
-        Err(_) => settings_response(&ctx, StatusCode::SERVICE_UNAVAILABLE, Some(failure), None).await,
+        Err(_) => settings_response(&ctx, StatusCode::SERVICE_UNAVAILABLE, Some(failure)).await,
     }
 }

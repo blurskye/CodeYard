@@ -1,10 +1,11 @@
 //! A user's public activity, filtered to the repositories the viewer may read.
-use crate::backend::db::{self, activity::{ActivityRow, ActivityViewer, SCAN_ROWS}, DbPool};
+use crate::backend::db::{self, activity::ActivityRow, models::User, DbPool};
 use anyhow::Result;
 
 pub const PAGE_SIZE: usize = 30;
 /// Later pages are not served, so one request reads a bounded number of rows.
 pub const MAX_PAGE: i64 = 100;
+const SCAN_ROWS: i64 = 100;
 /// Most rows one request reads while it looks for items the viewer can read. A page the scan does
 /// not fill is served short, with no next page, so a long private history is not read in full.
 pub const MAX_SCAN_ROWS: i64 = 1_000;
@@ -19,7 +20,7 @@ pub struct ActivityPage {
 /// the scan stops after `MAX_SCAN_ROWS` rows.
 pub async fn profile_activity(
     pool: &DbPool,
-    viewer: Option<ActivityViewer<'_>>,
+    viewer: Option<&User>,
     user_id: i64,
     page: i64,
 ) -> Result<ActivityPage> {
@@ -31,8 +32,14 @@ pub async fn profile_activity(
     let mut items = Vec::with_capacity(wanted);
     let mut offset = 0i64;
     'scan: while offset < MAX_SCAN_ROWS {
-        let batch =
-            db::activity::list_user_activity(pool, user_id, viewer, SCAN_ROWS, offset).await?;
+        let batch = db::activity::list_user_activity(
+            pool,
+            user_id,
+            viewer.map(|u| u.id),
+            SCAN_ROWS,
+            offset,
+        )
+        .await?;
         let exhausted = batch.scanned < SCAN_ROWS as usize;
         for row in batch.rows {
             if visible_before >= skip {

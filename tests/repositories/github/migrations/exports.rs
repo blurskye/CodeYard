@@ -257,7 +257,6 @@ pub(super) async fn run(
             db::projects::create(
                 f.pool(),
                 alice,
-                &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
                 owner,
                 "Migration project",
                 Some("Private owner project"),
@@ -270,7 +269,6 @@ pub(super) async fn run(
     db::projects::create(
         f.pool(),
         bob,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await),
         db::projects::Owner::User(bob),
         "Unrelated private project",
         None,
@@ -283,7 +281,6 @@ pub(super) async fn run(
         db::projects::add_field(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
             projects[0].id,
             &db::projects::NewField {
                 name: format!("Migration field {n}"),
@@ -549,7 +546,7 @@ pub(super) async fn run(
                     refs: prepared.refs,
                     default_branch: prepared.default_branch,
                 },
-                prepared.pack,
+                &prepared.pack,
             )
             .await
             .unwrap();
@@ -812,8 +809,14 @@ pub(super) async fn run(
                 tar::Archive::new(flate2::read::GzDecoder::new(bytes.as_slice()))
                     .unpack(extracted.path())
                     .unwrap();
-                assert!(extracted.path().join("projects_000001.json").exists());
-                assert!(extracted.path().join("project_fields_000001.json").exists());
+                assert_eq!(
+                    extracted.path().join("projects_000001.json").exists(),
+                    !exclude
+                );
+                assert_eq!(
+                    extracted.path().join("project_fields_000001.json").exists(),
+                    !exclude
+                );
                 assert!(extracted.path().join("teams_000001.json").exists());
             }
         }

@@ -26,6 +26,8 @@ struct Merge {
 fn operation_error(error: pull_requests::OperationError) -> Error {
     use pull_requests::OperationError;
     match error {
+        OperationError::Missing { .. } => Error::missing(),
+        OperationError::Unauthenticated { .. } => super::super::auth::required(),
         OperationError::Conflict {
             code: "revision_conflict",
             message,
@@ -39,7 +41,9 @@ fn operation_error(error: pull_requests::OperationError) -> Error {
             code: "branch_protection",
             message,
         } => Error::new(StatusCode::METHOD_NOT_ALLOWED, message),
-        error => super::mutations::operation_error(error),
+        OperationError::Denied { message, .. } => Error::new(StatusCode::FORBIDDEN, message),
+        OperationError::Invalid { message, .. } => Error::invalid(message),
+        _ => Error::unavailable(()),
     }
 }
 
@@ -50,14 +54,7 @@ async fn merge_pull(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::super::auth::required)?;
-    // The merge moves the base branch, so the credential needs contents write as well as the
-    // pull request grant the route asked for.
-    auth.repository_scope(&state.pool, repo.id, "contents", true)
-        .await
-        .map_err(super::super::auth::scope_error)?;
-    let authority = auth.database_actor();
-    let actor = auth.user;
+    let actor = auth.ok_or_else(super::super::auth::required)?.user;
     if !access::can_write(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -67,7 +64,7 @@ async fn merge_pull(
     let input: Merge = if body.is_empty() {
         Merge::default()
     } else {
-        serde_json::from_slice(&body).map_err(super::super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid merge request"))?
     };
     let method = MergeMethod::parse(input.merge_method.as_deref().unwrap_or("merge"))
         .ok_or_else(|| Error::invalid("Invalid merge method"))?;
@@ -107,8 +104,10 @@ async fn merge_pull(
         ));
     }
     let result = pull_requests::merge::merge_pull_request(
-        &state,
-        authority,
+        &state.pool,
+        &state.ci_runs,
+        &state.notification_broadcaster,
+        actor.id,
         (owner, name, number),
         pull_requests::merge::MergeRequest {
             expected_head: pull.head_sha,
@@ -139,29 +138,13 @@ async fn update_branch(
     Path((owner, name, number)): Path<(String, String, i32)>,
     body: Bytes,
 ) -> Result<(StatusCode, Json<Value>)> {
-    let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = viewer.ok_or_else(super::super::auth::required)?;
-    // The update moves the head branch, which may live in a fork, so the credential needs
-    // contents write on the head repository.
-    let pull = db::pull_requests::records::get_pull_request(&state.pool, repo.id, number)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    auth.repository_scope(
-        &state.pool,
-        pull.head_repo_id.ok_or_else(|| Error::invalid("Head branch is unavailable"))?,
-        "contents",
-        true,
-    )
-    .await
-    .map_err(super::super::auth::scope_error)?;
-    let token = auth.token.id;
-    let actor = auth.user;
+    let (_, viewer) = repository(&state, &headers, &owner, &name, true).await?;
+    let actor = viewer.ok_or_else(super::super::auth::required)?.user;
     let input: Option<UpdateBranch> = if body.is_empty() {
         None
     } else {
         serde_json::from_slice(&body)
-            .map_err(super::super::json_parse_error)?
+            .map_err(|_| Error::invalid("Invalid branch update request"))?
     };
     let input = input.unwrap_or_default();
     pull_requests::update_branch::update_branch(
@@ -170,7 +153,6 @@ async fn update_branch(
         actor.id,
         (&owner, &name, number),
         input.expected_head_sha.as_deref(),
-        Some(token),
     )
     .await
     .map_err(super::mutations::operation_error)?;

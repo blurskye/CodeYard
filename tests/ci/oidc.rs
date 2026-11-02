@@ -17,7 +17,6 @@ fn claims(jwt: &str) -> Value {
 async fn contract(pg: bool) {
     let mut f = Database::new(pg).await;
     f.complete_setup().await;
-    let signing_keys = ci::oidc::SigningKeys::new(f.pool().clone());
     let actor = f.actor("alice").await;
     let root = tempfile::tempdir().unwrap();
     let repo = repositories::lifecycle::provision(
@@ -51,10 +50,7 @@ async fn contract(pg: bool) {
             branch: "refs/heads/main",
             head_sha: &sha,
             workflow_path: path,
-            workflow_blobs: &json!({
-                (called): {"repository_id": repo.id, "source_path": called, "sha": sha, "full_ref": "refs/heads/main"},
-                (leaf): {"repository_id": repo.id, "source_path": leaf, "sha": sha, "full_ref": "refs/heads/main"}
-            }),
+            workflow_blobs: &json!({}),
             workflow_inputs: None,
             environment: Some("prod:west"),
             manual: false,
@@ -63,7 +59,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor])
         .await
         .unwrap()
         .filter(|claim| claim.id == run.id)
@@ -80,16 +76,16 @@ async fn contract(pg: bool) {
     assert!(!credentials
         .oidc_jobs
         .contains(&format!("{path}:reader/deploy")));
-    assert!(ci::oidc::issue(&signing_keys, &jobs["reader/deploy"], None)
+    assert!(ci::oidc::issue(f.pool(), &jobs["reader/deploy"], None)
         .await
         .unwrap()
         .is_none());
-    let token = ci::oidc::issue(&signing_keys, writer, Some("cloud:example"))
+    let token = ci::oidc::issue(f.pool(), writer, Some("cloud:example"))
         .await
         .unwrap()
         .unwrap();
     let claims = claims(&token);
-    assert_eq!(claims["workflow"], "Caller");
+    assert_eq!(claims["workflow"], "Called");
     assert_eq!(
         claims["job_workflow_ref"],
         format!("alice/project/{called}@refs/heads/main")
@@ -102,12 +98,12 @@ async fn contract(pg: bool) {
     assert_eq!(claims["sub"], "repo:alice/project:environment:prod%3Awest");
     assert_eq!(claims["environment"], "prod:west");
     assert_eq!(claims["aud"], "cloud:example");
-    let token = ci::oidc::issue(&signing_keys, nested, None)
+    let token = ci::oidc::issue(f.pool(), nested, None)
         .await
         .unwrap()
         .unwrap();
     let nested_claims = self::claims(&token);
-    assert_eq!(nested_claims["workflow"], "Caller");
+    assert_eq!(nested_claims["workflow"], "Leaf");
     assert_eq!(
         nested_claims["job_workflow_ref"],
         format!("alice/project/{leaf}@refs/heads/main")
@@ -122,7 +118,7 @@ async fn contract(pg: bool) {
         &[run.id],
     )
     .await;
-    assert!(ci::oidc::issue(&signing_keys, writer, None)
+    assert!(ci::oidc::issue(f.pool(), writer, None)
         .await
         .unwrap()
         .is_none());
@@ -131,7 +127,7 @@ async fn contract(pg: bool) {
         &[run.id],
     )
     .await;
-    assert!(ci::oidc::issue(&signing_keys, writer, None)
+    assert!(ci::oidc::issue(f.pool(), writer, None)
         .await
         .unwrap()
         .is_none());
@@ -140,11 +136,11 @@ async fn contract(pg: bool) {
     db::ci_tokens::finish_job(f.pool(), run.id, "worker", &format!("{path}:writer/deploy"))
         .await
         .unwrap();
-    assert!(ci::oidc::issue(&signing_keys, writer, None)
+    assert!(ci::oidc::issue(f.pool(), writer, None)
         .await
         .unwrap()
         .is_none());
-    assert!(ci::oidc::issue(&signing_keys, nested, None)
+    assert!(ci::oidc::issue(f.pool(), nested, None)
         .await
         .unwrap()
         .is_some());

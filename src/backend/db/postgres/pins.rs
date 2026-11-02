@@ -1,6 +1,6 @@
 use crate::backend::db::{
     assignees::AssignedItem,
-    pins::{scope, ItemPin, Pin, PinRefusal},
+    pins::{scope, Pin, PinRefusal},
 };
 use anyhow::Result;
 use sqlx::PgPool;
@@ -14,31 +14,9 @@ pub async fn get_pin(pool: &PgPool, item: AssignedItem) -> Result<Option<Pin>> {
     .fetch_optional(pool)
     .await?)
 }
-pub async fn get_pins(
-    pool: &PgPool,
-    pull_requests: bool,
-    ids: &[i64],
-) -> Result<Vec<ItemPin>> {
-    anyhow::ensure!(ids.len() <= 500, "Pin batch exceeds its limit");
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let (pins, foreign) = if pull_requests {
-        ("pr_comment_pins", "pull_request_id")
-    } else {
-        ("issue_comment_pins", "issue_id")
-    };
-    Ok(sqlx::query_as(&format!(
-        "SELECT {foreign} AS item_id,comment_id,pinned_by,pinned_at FROM {pins} WHERE {foreign} IN (SELECT unnest($1::BIGINT[]))"
-    ))
-    .bind(ids)
-    .fetch_all(pool)
-    .await?)
-}
 pub async fn set_pin(
     pool: &PgPool,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo: i64,
     item: AssignedItem,
     comment: i64,
@@ -46,10 +24,8 @@ pub async fn set_pin(
 ) -> Result<()> {
     let s = scope(item);
     let mut tx = pool.begin().await?;
-    let permission = if s.pull { "pull_requests" } else { "issues" };
     anyhow::ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &crate::backend::db::credentials::Actor::from((actor, credential)), repo, permission, true).await?,
+        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         PinRefusal::Denied
     );
     let present: Option<i64> = sqlx::query_scalar(&format!(

@@ -14,8 +14,11 @@ use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::api::user::responses::PublicUserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
+use crate::backend::db::assignees::AssignedItem;
 use crate::backend::db::discussions::{ListFilter, ListSort, Pick};
 use crate::backend::issues::mutations::CreateIssueRequest;
+use crate::backend::notifications::assignments::{notify_assignees, Assignment};
+use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::issue_templates::{
     compose_form_body, first_missing_answer, issue_templates, pull_request_template, FormElement,
     FormKind, IssueTemplate, IssueTemplates,
@@ -47,7 +50,7 @@ pub async fn create_issue(
     let issue = crate::backend::issues::mutations::create_issue(
         &state.pool,
         &state.notification_broadcaster,
-        crate::backend::db::credentials::Actor::from((current_actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        current_actor.id,
         owner,
         repo,
         req,
@@ -273,17 +276,13 @@ async fn list_filters(
     repo: &RepositoryData,
     milestones: Vec<db::models::Milestone>,
     selected_labels: Vec<String>,
-    selected_author: Option<i64>,
 ) -> ResultPage<view::ListFilters> {
-    let mut labels: Vec<_> = db::labels::list_repo_labels_page(&ctx.state.pool, repo.record.id, "", "name", 100, 0)
-        .await.map_err(|_| unavailable(ctx))?.into_iter().map(label).collect();
-    for name in &selected_labels {
-        if !labels.iter().any(|label| label.name.eq_ignore_ascii_case(name)) {
-            if let Some(found) = db::labels::get_repo_label_by_name(&ctx.state.pool, repo.record.id, name).await.map_err(|_| unavailable(ctx))? {
-                labels.push(label(found));
-            }
-        }
-    }
+    let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .into_iter()
+        .map(label)
+        .collect();
     Ok(view::ListFilters {
         labels,
         selected_labels,
@@ -293,7 +292,7 @@ async fn list_filters(
         assignee: query_value(ctx, "assignee"),
         milestones: milestones.into_iter().map(milestone_choice_view).collect(),
         milestone: query_value(ctx, "milestone"),
-        authors: db::discussions::list_repo_authors(&ctx.state.pool, repo.record.id, selected_author)
+        authors: db::discussions::list_repo_authors(&ctx.state.pool, repo.record.id)
             .await
             .map_err(|_| unavailable(ctx))?,
         author: query_value(ctx, "author"),
@@ -400,7 +399,7 @@ pub(crate) async fn native_index(
         .iter()
         .map(|milestone| (milestone.id, milestone_choice_view(milestone.clone())))
         .collect();
-    let mut filters = list_filters(&ctx, &repo, milestones, labels.clone(), list.author_id).await?;
+    let mut filters = list_filters(&ctx, &repo, milestones, labels.clone()).await?;
     filters.page = page_number;
     if kind == Kind::Issue {
         filters.pinned_issues = super::management::pinned(&ctx, &repo).await?;
@@ -697,6 +696,47 @@ fn issue_choices_valid(
     }
 }
 
+/// Puts the picks of a new issue on it through the store functions the issue page uses. Each one
+/// checks the write right again. A user who is newly assigned hears about it.
+async fn apply_issue_choices(
+    pool: &db::DbPool,
+    broadcaster: &NotificationBroadcaster,
+    assignment: &Assignment<'_>,
+    issue_id: i64,
+    draft: &view::NewDraft,
+) -> anyhow::Result<()> {
+    let actor_id = assignment.actor.id;
+    let repo_id = assignment.repository.id;
+    for username in &draft.assignees {
+        if let Some(user) = db::users::accounts::get_user_by_username(pool, username).await? {
+            let added = db::assignees::assign_user(
+                pool,
+                actor_id,
+                repo_id,
+                AssignedItem::Issue(issue_id),
+                user.id,
+            )
+            .await?;
+            if added {
+                notify_assignees(pool, broadcaster, assignment, &[user.id]).await;
+            }
+        }
+    }
+    let labels = draft
+        .labels
+        .iter()
+        .filter_map(|id| id.parse::<i64>().ok())
+        .collect::<Vec<_>>();
+    if !labels.is_empty() {
+        db::labels::add_issue_labels(pool, actor_id, repo_id, issue_id, &labels).await?;
+    }
+    if let Ok(number) = draft.milestone.parse::<i32>() {
+        db::milestones::set_issue_milestone(pool, actor_id, repo_id, issue_id, Some(number))
+            .await?;
+    }
+    Ok(())
+}
+
 /// The repository's issue templates on its default branch.
 async fn repository_issue_templates(
     ctx: &PageContext,
@@ -720,8 +760,8 @@ fn form_fields(form: &[FormElement], answers: &[Vec<String>]) -> Vec<view::FormF
                     vec![element.value.clone()]
                 }
                 FormKind::Dropdown if given.is_empty() && !element.multiple => element
-                    .default
-                    .and_then(|index| element.options.get(index))
+                    .options
+                    .get(element.default)
                     .map(|option| vec![option.label.clone()])
                     .unwrap_or_default(),
                 _ => given,
@@ -747,7 +787,6 @@ fn form_fields(form: &[FormElement], answers: &[Vec<String>]) -> Vec<view::FormF
                     .iter()
                     .map(|option| option.label.clone())
                     .collect(),
-                required_options: element.options.iter().filter(|option| option.required).map(|option| option.label.clone()).collect(),
                 multiple: element.multiple,
                 required: element.required || element.options.iter().any(|option| option.required),
                 values,
@@ -846,7 +885,6 @@ pub(crate) async fn native_new_page(
                     repository: repo.view,
                     templates,
                     blank_allowed: found.blank_allowed,
-                    draft,
                 }),
             ));
         }
@@ -955,7 +993,7 @@ pub(crate) async fn native_create(
         }) {
             if !template.form.is_empty() {
                 let answers: Vec<Vec<String>> = (0..template.form.len())
-                    .map(|index| repeated(&pairs, &format!("form_{index}")).into_iter().map(|value| value.replace("\r\n", "\n")).collect())
+                    .map(|index| repeated(&pairs, &format!("form_{index}")))
                     .collect();
                 missing_answer = first_missing_answer(&template.form, &answers).map(str::to_owned);
                 draft.body = compose_form_body(&template.form, &answers);
@@ -1105,27 +1143,10 @@ pub(crate) async fn native_create(
     let result: Result<i32, ApiFailure> = match kind {
         Kind::Issue => {
             let actor = ctx.require_user()?;
-            let mut names = draft.assignees.clone();
-            names.sort_unstable();
-            names.dedup();
-            let users = match db::users::accounts::get_users_by_usernames(&ctx.state.pool, &names).await {
-                Ok(users) => users,
-                Err(error) => {
-                    tracing::warn!(?error, "Initial issue assignees could not be verified");
-                    return Ok(new_page("Submission failed", StatusCode::SERVICE_UNAVAILABLE, None,
-                        Some("Assignees could not be verified. Your submission is preserved; try again shortly.".to_owned()), false));
-                }
-            };
-            if users.len() != names.len() {
-                return Ok(new_page("Submission failed", StatusCode::UNPROCESSABLE_ENTITY, None,
-                    Some("An assignee is no longer available. Review your preserved submission.".to_owned()), false));
-            }
-            let assignees: Vec<i64> = users.iter().map(|user| user.id).collect();
-            let labels: Vec<i64> = draft.labels.iter().filter_map(|id| id.parse().ok()).collect();
-            let created = crate::backend::issues::mutations::create_issue_with_metadata(
+            let created = crate::backend::issues::mutations::create_issue(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
-                ctx.database_actor(actor.id),
+                actor.id,
                 owner.clone(),
                 name.clone(),
                 crate::backend::issues::mutations::CreateIssueRequest {
@@ -1133,16 +1154,37 @@ pub(crate) async fn native_create(
                     body: Some(draft.body.clone()),
                     repository_id: Some(repo.record.id),
                     parent_issue_id: None,
-                    parent_repository_id: None,
-                },
-                db::issues::OwnedIssueMetadata {
-                    labels, assignees,
-                    milestone: draft.milestone.parse().ok(),
-                    ..Default::default()
                 },
             )
             .await
             .map_err(crate::backend::api::repos::issues::operation_error);
+            // The issue exists now, so a failure here cannot undo it. The redirect opens the issue,
+            // where the missing assignees, labels or milestone can be added again.
+            if let Ok(issue) = &created {
+                let link = format!("/{owner}/{name}/issues/{}", issue.number);
+                let assignment = Assignment {
+                    actor,
+                    repository: &repo.record,
+                    owner: &owner,
+                    repo: &name,
+                    number: issue.number,
+                    pull_request: false,
+                    title: &issue.title,
+                    link: &link,
+                };
+                if let Err(error) = apply_issue_choices(
+                    &ctx.state.pool,
+                    &ctx.state.notification_broadcaster,
+                    &assignment,
+                    issue.id,
+                    &draft,
+                )
+                .await
+                {
+                    tracing::warn!(number = issue.number, %error, "a new issue lost its assignees, labels or milestone");
+                    return Ok(ctx.redirect(&format!("{link}?creation_warning=1")));
+                }
+            }
             created.map(|value| value.number)
         }
         Kind::Pull => crate::backend::repositories::pull_requests::mutations::create_pull_request(
@@ -1153,7 +1195,6 @@ pub(crate) async fn native_create(
             owner,
             name,
             crate::backend::repositories::pull_requests::mutations::CreatePullRequestRequest {
-                suppress_ci: false,
                 head_repo_id: Some(head_repo.id),
                 source:
                     crate::backend::repositories::pull_requests::mutations::PullRequestSource::New {

@@ -129,7 +129,7 @@ async fn create(
     let key = gpg::enroll(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        &AccountCredential::Token(actor.token.id),
         input.name.as_deref(),
         &input.armored_public_key,
     )
@@ -168,7 +168,7 @@ async fn remove(
     gpg::delete(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        &AccountCredential::Token(actor.token.id),
         id,
     )
     .await

@@ -29,7 +29,7 @@ fn denied<T>(result: Result<T, SecretsError>) {
     );
 }
 async fn put(pool: &db::DbPool, repo: i64, actor: Option<i64>) -> Result<(), SecretsError> {
-    secrets::create_or_update_secret(pool, &encryptor(), repo, NAME, VALUE, actor, &db::users::accounts::AccountCredential::Session(&format!("{:064x}", actor.unwrap_or(-1))))
+    secrets::create_or_update_secret(pool, &encryptor(), repo, NAME, VALUE, actor)
         .await
         .map(|_| ())
 }
@@ -48,12 +48,11 @@ async fn refuse_writes(d: &Database, repo: i64, actor: i64) {
             "DENIED_NEW_NAME",
             "denied replacement",
             Some(actor),
-            &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}")),
         )
         .await,
     );
-    denied(secrets::delete_secret(d.pool(), actor, repo, NAME, &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}"))).await);
-    denied(secrets::delete_secret(d.pool(), actor, repo, "UNKNOWN_NAME", &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}"))).await);
+    denied(secrets::delete_secret(d.pool(), actor, repo, NAME).await);
+    denied(secrets::delete_secret(d.pool(), actor, repo, "UNKNOWN_NAME").await);
     assert_eq!(
         d.snapshot(repo).await,
         before,
@@ -74,10 +73,10 @@ async fn allow(d: &Database, repo: i64, actor: i64) {
         .collect();
     assert_eq!(keys, ["created_at", "name", "updated_at"]);
     assert!(!meta.to_string().contains(VALUE));
-    assert!(secrets::delete_secret(d.pool(), actor, repo, NAME, &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}")))
+    assert!(secrets::delete_secret(d.pool(), actor, repo, NAME)
         .await
         .unwrap());
-    assert!(!secrets::delete_secret(d.pool(), actor, repo, NAME, &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}")))
+    assert!(!secrets::delete_secret(d.pool(), actor, repo, NAME)
         .await
         .unwrap());
     assert!(secrets::list_secrets(d.pool(), actor, repo)
@@ -104,7 +103,6 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
             name,
             "private hostile value",
             Some(owner),
-            &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
         )
         .await
         .unwrap_err();
@@ -118,7 +116,6 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
             name,
             "private reserved value",
             Some(owner),
-            &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
         )
         .await
         .unwrap_err();
@@ -131,7 +128,6 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "VALID_NAME",
         "private\0value",
         Some(owner),
-        &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
     )
     .await
     .unwrap_err();
@@ -143,7 +139,6 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "VALID_NAME",
         &"x".repeat(secrets::MAX_SECRET_VALUE_BYTES + 1),
         Some(owner),
-        &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
     )
     .await
     .unwrap_err();
@@ -159,11 +154,10 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         &longest_name,
         &largest_value,
         Some(owner),
-        &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
     )
     .await
     .unwrap();
-    secrets::create_or_update_secret(d.pool(), &encryptor(), repo, "_", "", Some(owner), &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")))
+    secrets::create_or_update_secret(d.pool(), &encryptor(), repo, "_", "", Some(owner))
         .await
         .unwrap();
     let decrypted = secrets::decrypt_repository_secrets(d.pool(), &encryptor(), repo)
@@ -175,10 +169,10 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
     assert!(decrypted
         .iter()
         .any(|(name, value)| name == "_" && value.is_empty()));
-    assert!(secrets::delete_secret(d.pool(), owner, repo, &longest_name, &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")))
+    assert!(secrets::delete_secret(d.pool(), owner, repo, &longest_name)
         .await
         .unwrap());
-    assert!(secrets::delete_secret(d.pool(), owner, repo, "_", &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")))
+    assert!(secrets::delete_secret(d.pool(), owner, repo, "_")
         .await
         .unwrap());
 
@@ -196,7 +190,6 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
             &fill(index),
             "v",
             Some(owner),
-            &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
         )
         .await
         .unwrap();
@@ -208,7 +201,6 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "ONE_TOO_MANY",
         "v",
         Some(owner),
-        &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
     )
     .await
     .unwrap_err();
@@ -220,12 +212,11 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         &fill(held),
         "replaced",
         Some(owner),
-        &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
     )
     .await
     .unwrap();
     for index in held..secrets::MAX_REPOSITORY_SECRETS {
-        assert!(secrets::delete_secret(d.pool(), owner, repo, &fill(index), &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")))
+        assert!(secrets::delete_secret(d.pool(), owner, repo, &fill(index))
             .await
             .unwrap());
     }
@@ -240,7 +231,6 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "DEPLOY_KEY",
         "deploy value",
         Some(owner),
-        &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
     )
     .await
     .unwrap();
@@ -264,14 +254,13 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
         "GITHUB_DEPLOY_KEY",
         "replacement must be refused",
         Some(owner),
-        &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")),
     )
     .await
     .unwrap_err();
     assert!(matches!(error, SecretsError::ReservedName));
     assert_eq!(d.snapshot(repo).await, stored);
     assert!(
-        secrets::delete_secret(d.pool(), owner, repo, "GITHUB_DEPLOY_KEY", &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")))
+        secrets::delete_secret(d.pool(), owner, repo, "GITHUB_DEPLOY_KEY")
             .await
             .unwrap()
     );
@@ -280,13 +269,13 @@ async fn validation_contract(d: &Database, repo: i64, owner: i64) {
 
 async fn contract(pg: bool) {
     let mut d = Database::new(pg).await;
-    let owner = d.secret_actor("secret_owner").await;
-    let admin = d.secret_actor("secret_admin").await;
-    let member = d.secret_actor("secret_member").await;
-    let writer = d.secret_actor("secret_writer").await;
-    let collaborator = d.secret_actor("secret_collaborator").await;
-    let site = d.secret_actor("secret_site").await;
-    let outsider = d.secret_actor("secret_outsider").await;
+    let owner = d.actor("secret_owner").await;
+    let admin = d.actor("secret_admin").await;
+    let member = d.actor("secret_member").await;
+    let writer = d.actor("secret_writer").await;
+    let collaborator = d.actor("secret_collaborator").await;
+    let site = d.actor("secret_site").await;
+    let outsider = d.actor("secret_outsider").await;
     d.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
@@ -343,7 +332,6 @@ async fn contract(pg: bool) {
                 "MISSING_ACTOR",
                 VALUE,
                 None,
-                &db::users::accounts::AccountCredential::Session(""),
             )
             .await,
         );
@@ -355,7 +343,7 @@ async fn contract(pg: bool) {
         refuse(&d, repo, site).await; // No organization siteadmin bypass.
     }
     // Updating ciphertext does not erase or adopt the persisted creator.
-    secrets::delete_secret(d.pool(), owner, private, NAME, &db::users::accounts::AccountCredential::Session(&format!("{owner:064x}")))
+    secrets::delete_secret(d.pool(), owner, private, NAME)
         .await
         .unwrap();
     put(d.pool(), private, Some(owner)).await.unwrap();
@@ -368,7 +356,6 @@ async fn contract(pg: bool) {
         NAME,
         "changed fixture value",
         Some(admin),
-        &db::users::accounts::AccountCredential::Session(&format!("{admin:064x}")),
     )
     .await
     .unwrap();

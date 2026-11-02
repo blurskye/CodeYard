@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::ci::workflows::parse_workflow_definition;
+use crate::backend::ci::workflows::parse_push_workflow;
 
 fn revision(paths: usize) -> (tempfile::TempDir, RepoStore, String) {
     let root = tempfile::tempdir().unwrap();
@@ -22,7 +22,7 @@ fn revision(paths: usize) -> (tempfile::TempDir, RepoStore, String) {
 }
 
 fn workflow(name: &str, filters: &str) -> WorkflowDefinition {
-    parse_workflow_definition(
+    parse_push_workflow(
         &format!(".github/workflows/{name}.yml"),
         &format!(
             "on:\n  push: {filters}\njobs: {{check: {{runs-on: ubuntu-latest, steps: []}}}}\n"
@@ -60,7 +60,7 @@ async fn new_refs_match_paths_against_the_same_root_tree_for_every_publisher() {
 }
 
 #[tokio::test]
-async fn unavailable_large_path_lists_run_ref_matched_workflows() {
+async fn unavailable_large_path_lists_skip_only_path_filtered_workflows() {
     let (_root, store, sha) = revision(crate::backend::git::MAX_CI_CHANGED_PATHS + 1);
     let update = RefUpdate {
         reference: "refs/heads/main".into(),
@@ -83,7 +83,7 @@ async fn unavailable_large_path_lists_run_ref_matched_workflows() {
     .unwrap();
     assert_eq!(
         matched.iter().map(|w| w.path.as_str()).collect::<Vec<_>>(),
-        [".github/workflows/all.yml", ".github/workflows/docs.yml"]
+        [".github/workflows/all.yml"]
     );
 }
 

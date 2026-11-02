@@ -10,7 +10,7 @@ use std::time::Duration;
 use tokio::sync::broadcast;
 use tokio::sync::watch;
 use tokio::sync::Mutex;
-use tokio_util::task::AbortOnDropHandle;
+use tokio::task::JoinHandle;
 #[derive(Serialize, Deserialize)]
 struct Announcement {
     origin: String,
@@ -20,8 +20,6 @@ struct Announcement {
 /// Open notification sockets one account may hold. Each socket answers every event
 /// for its account with a projection query, so the number per account is capped.
 pub const MAX_SOCKETS_PER_USER: usize = 8;
-/// How long a committed change waits for its cross-node hint to be announced.
-const ANNOUNCE_TIMEOUT: Duration = Duration::from_secs(2);
 
 type SocketCounts = Arc<std::sync::Mutex<HashMap<i64, usize>>>;
 type Subscriptions = Arc<std::sync::Mutex<HashMap<i64, broadcast::Sender<NotificationEvent>>>>;
@@ -42,7 +40,7 @@ pub struct NotificationBroadcaster {
     pool: db::DbPool,
     origin: String,
     stop: watch::Sender<bool>,
-    listener: Mutex<Option<AbortOnDropHandle<()>>>,
+    listener: Mutex<Option<JoinHandle<()>>>,
     sockets: SocketCounts,
 }
 
@@ -63,12 +61,12 @@ impl NotificationBroadcaster {
     pub async fn start(&self) {
         let mut task = self.listener.lock().await;
         if matches!(&self.pool, db::DbPool::Postgres(_)) && task.is_none() {
-            *task = Some(AbortOnDropHandle::new(tokio::spawn(listen(
+            *task = Some(tokio::spawn(listen(
                 self.pool.clone(),
                 self.origin.clone(),
                 self.subscriptions.clone(),
                 self.stop.subscribe(),
-            ))));
+            )));
         }
     }
 
@@ -109,48 +107,43 @@ impl NotificationBroadcaster {
         })
     }
 
-    /// Delivers `(user_id, notification_id)` rows another transaction stored, such as CI's,
-    /// as ordinary creation delivers its own: the announcement and the email.
     pub async fn send_created(&self, notifications: &[(i64, i64)]) {
         for &(user_id, notification_id) in notifications {
-            match db::notifications::records::get_notification(&self.pool, user_id, notification_id)
-                .await
-            {
-                Ok(Some(notification)) => {
-                    super::create::deliver(&self.pool, self, &notification).await;
-                }
-                Ok(None) => {}
-                Err(error) => {
-                    tracing::warn!(%error, notification_id, "Stored notification could not be delivered");
-                }
-            }
+            self.send(NotificationEvent::Created {
+                user_id,
+                notification_id,
+                kind: String::new(),
+                title: String::new(),
+                body: None,
+                link: None,
+                created_at: 0,
+                unread_count: 0,
+            })
+            .await;
         }
     }
 
-    /// A committed row remains authoritative even if announcing its hint fails. Local sockets
-    /// hear first, and the announcement to other nodes is bounded, so a stuck database
-    /// connection cannot hold the request that committed the change.
+    /// A committed row remains authoritative even if announcing its hint fails.
     pub async fn send(&self, event: NotificationEvent) {
-        let hint = event.hint();
-        dispatch(&self.subscriptions, hint.clone());
-        let Ok(payload) = serde_json::to_string(&Announcement {
+        let payload = serde_json::to_string(&Announcement {
             origin: self.origin.clone(),
-            event: hint,
-        }) else {
-            return;
-        };
-        if !matches!(
-            tokio::time::timeout(ANNOUNCE_TIMEOUT, events::announce(&self.pool, &payload)).await,
-            Ok(Ok(()))
-        ) {
-            tracing::warn!("Notification announcement unavailable");
+            event: event.hint(),
+        });
+        if let Ok(payload) = payload {
+            if events::announce(&self.pool, &payload).await.is_err() {
+                tracing::warn!("Notification announcement unavailable");
+            }
         }
+        dispatch(&self.subscriptions, event.hint());
     }
 }
 
 impl Drop for NotificationBroadcaster {
     fn drop(&mut self) {
         self.stop.send_replace(true);
+        if let Some(task) = self.listener.get_mut().take() {
+            task.abort();
+        }
     }
 }
 
@@ -193,12 +186,6 @@ async fn listen(
         let mut listener = match connected {
             Ok(Some(listener)) => {
                 wait = Duration::from_secs(1);
-                // Hints sent while no listener was connected are lost. Dropping every
-                // subscription closes the open sockets, and their clients reload the inbox.
-                subscriptions
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .clear();
                 listener
             }
             Ok(None) => return,
@@ -213,14 +200,14 @@ async fn listen(
             let received =
                 tokio::select! { _ = stop.changed() => return, value = listener.recv() => value };
             match received {
-                Ok(Some(payload)) => {
+                Ok(payload) => {
                     if let Ok(announcement) = serde_json::from_str::<Announcement>(&payload) {
                         if announcement.origin != origin {
                             dispatch(&subscriptions, announcement.event);
                         }
                     }
                 }
-                Ok(None) | Err(_) => {
+                Err(_) => {
                     tracing::warn!("Notification listener connection lost");
                     break;
                 }

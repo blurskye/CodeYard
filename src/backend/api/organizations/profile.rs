@@ -4,7 +4,7 @@
 use super::membership::project;
 use super::organization::{cursor_with_limit, invalid, public_view, team_view, unavailable};
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::users::profile::profile_repositories;
+use crate::backend::api::users::profile::profile_repository;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::webui::app::Page;
@@ -102,10 +102,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             };
             let after = after + rows.len() as i64;
             let more = after < repository_count;
-            repositories = match profile_repositories(&ctx.state.pool, rows).await {
-                Ok(repositories) => repositories,
-                Err(_) => return unavailable(ctx),
-            };
+            repositories = rows.into_iter().map(profile_repository).collect();
             (Vec::new(), Vec::new(), more, after)
         }
         ("people", Some(actor)) => {

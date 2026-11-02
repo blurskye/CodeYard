@@ -23,11 +23,6 @@ pub struct ActionsSettings {
 }
 
 impl ActionsSettings {
-    pub(crate) fn tightens_cache_limits(&self, previous: &Self) -> bool {
-        self.cache_size_gib.unwrap_or(10) < previous.cache_size_gib.unwrap_or(10)
-            || self.cache_retention_days.unwrap_or(7) < previous.cache_retention_days.unwrap_or(7)
-    }
-
     pub fn engine_enabled(&self, engine: &str) -> bool {
         match engine {
             "codeyard-actions" => self.codeyard_actions_enabled,
@@ -51,13 +46,21 @@ impl ActionsSettings {
     }
 
     pub fn cache_size_bytes(&self, repo: &RepoActionsSettings) -> i64 {
-        i64::from(CacheLimit::Storage.effective(self.cache_size_gib, repo.org_cache_size_gib, repo.cache_size_gib)) * 1024
+        i64::from(
+            repo.cache_size_gib
+                .unwrap_or(i32::MAX)
+                .min(self.cache_size_gib.unwrap_or(10))
+                .min(repo.org_cache_size_gib.unwrap_or(i32::MAX)),
+        ) * 1024
             * 1024
             * 1024
     }
 
     pub fn cache_expiry_days(&self, repo: &RepoActionsSettings) -> i32 {
-        CacheLimit::Retention.effective(self.cache_retention_days, repo.org_cache_retention_days, repo.cache_retention_days)
+        repo.cache_retention_days
+            .unwrap_or(i32::MAX)
+            .min(self.cache_retention_days.unwrap_or(7))
+            .min(repo.org_cache_retention_days.unwrap_or(i32::MAX))
     }
 }
 
@@ -138,9 +141,6 @@ impl CacheLimit {
             Self::Retention => "cache_retention_days",
         }
     }
-    pub(crate) fn effective(self, site: Option<i32>, organization: Option<i32>, repository: Option<i32>) -> i32 {
-        site.unwrap_or_else(|| self.default_value()).min(organization.unwrap_or(i32::MAX)).min(repository.unwrap_or(i32::MAX))
-    }
     pub(crate) fn default_value(self) -> i32 {
         match self {
             Self::Storage => 10,
@@ -187,7 +187,7 @@ native_operation!(crate::backend::db::postgres::actions::get_repo_actions_settin
 native_operation!(crate::backend::db::postgres::actions::set_repo_enabled,
     crate::backend::db::sqlite::actions::set_repo_enabled,
     /// Changes only the execution switch, preserving native limits and engine selection.
-    fn set_repo_enabled(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, enabled: bool) -> Result<()>);
+    fn set_repo_enabled(pool: &DbPool, actor: i64, repo: i64, enabled: bool) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::actions::save_repo_actions_settings,
     crate::backend::db::sqlite::actions::save_repo_actions_settings,
@@ -195,7 +195,7 @@ native_operation!(crate::backend::db::postgres::actions::save_repo_actions_setti
     /// repository and it is not archived.
     fn save_repo_actions_settings(
     pool: &DbPool,
-    actor_id: impl Into<super::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     settings: &RepoActionsSettings,
 ) -> Result<()>);

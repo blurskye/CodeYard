@@ -1,4 +1,4 @@
-use super::{container_owner as owner, package, tokens, Error, Result};
+use super::{owner, package, tokens, Error, Result};
 use crate::backend::{
     app::AppState,
     db::{
@@ -69,10 +69,6 @@ fn upload_response(status: StatusCode, name: &str, upload: &Upload) -> Result<Re
         header::RANGE,
         format!("0-{}", (upload.offset - 1).max(0)).parse().unwrap(),
     );
-    response.headers_mut().insert(
-        "oci-chunk-min-length",
-        "1048576".parse().unwrap(),
-    );
     Ok(response)
 }
 
@@ -131,8 +127,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
     let auth = tokens::authenticate(state, &headers, name, !read || resource == "uploads").await?;
     let (namespace, package_name) = name.split_once('/').ok_or_else(Error::invalid)?;
     let owner = owner(state, namespace).await?;
-    let create = (method == Method::POST && resource == "uploads" && reference.is_empty())
-        || (method == Method::PUT && resource == "manifests");
+    let create = method == Method::POST && resource == "uploads" && reference.is_empty();
     let package = package(
         state,
         &owner,
@@ -186,13 +181,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                             )
                             .await
                             .map_err(Error::db)?;
-                            db::packages::reserve_blob(
-                                &state.pool,
-                                package.id,
-                                token,
-                                &blob,
-                                db::packages::Charge::Upload,
-                            )
+                            db::packages::reserve_blob(&state.pool, package.id, token, &blob)
                                 .await
                                 .map_err(Error::db)?;
                             Ok::<_, Error>(blob)
@@ -257,7 +246,6 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                     response(StatusCode::NO_CONTENT, None, None)
                 }
                 "PATCH" => {
-                    let _slot = super::upload_slot(state)?;
                     let upload = append(
                         state,
                         package.id,
@@ -265,7 +253,6 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                         upload,
                         &headers,
                         request.into_body(),
-                        false,
                     )
                     .await?;
                     upload_response(StatusCode::ACCEPTED, name, &upload)
@@ -307,7 +294,6 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
             Ok(response)
         }
         ("manifests", "PUT") => {
-            let _slot = super::upload_slot(state)?;
             let token = write_token()?;
             if !valid_tag(reference) && !packages::valid_digest(reference) {
                 return Err(Error::invalid());
@@ -345,7 +331,6 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 package.id,
                 token,
                 bytes.to_vec(),
-                db::packages::Charge::Upload,
             )
             .await
             .map_err(Error::db)?;
@@ -404,7 +389,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 .map_err(|_| Error::invalid())?
                 .unwrap_or(100)
                 .clamp(1, 1000);
-            let mut tags: Vec<String> = db::packages::tag_page(
+            let mut tags = db::packages::tag_page(
                 &state.pool,
                 package.id,
                 token,
@@ -412,10 +397,7 @@ async fn dispatch(state: &AppState, request: Request) -> Result<Response> {
                 n as i64 + 1,
             )
             .await
-            .map_err(Error::db)?
-            .into_iter()
-            .map(|(tag, _)| tag)
-            .collect();
+            .map_err(Error::db)?;
             let more = tags.len() > n;
             tags.truncate(n);
             let last = tags.last().cloned();
@@ -447,8 +429,8 @@ async fn append(
     upload: Upload,
     headers: &HeaderMap,
     body: Body,
-    final_chunk: bool,
 ) -> Result<Upload> {
+    let _slot = super::upload_slot(state)?;
     let bytes = to_bytes(body, MAX_OBJECT_BYTES as usize)
         .await
         .map_err(|_| {
@@ -484,20 +466,10 @@ async fn append(
             "Layer exceeds 100 MiB",
         ));
     }
-    if !final_chunk && bytes.len() < 1024 * 1024 {
-        return Err(Error(StatusCode::BAD_REQUEST, "SIZE_INVALID", "Upload chunks must be at least 1 MiB"));
-    }
     if bytes.is_empty() {
         return Ok(upload);
     }
-    let chunk = packages::store(
-        &state.pool,
-        &state.storage,
-        package,
-        token,
-        bytes.to_vec(),
-        db::packages::Charge::Chunk(&upload.id),
-    )
+    let chunk = packages::store(&state.pool, &state.storage, package, token, bytes.to_vec())
         .await
         .map_err(Error::db)?;
     db::packages::append_upload(
@@ -526,46 +498,31 @@ async fn finish(
     if !packages::valid_digest(digest) {
         return Err(Error::invalid());
     }
-    let _slot = super::upload_slot(state)?;
     let current = db::packages::upload(&state.pool, package.id, token, &upload.id)
         .await
         .map_err(Error::db)?;
-    let upload = append(state, package.id, token, current, headers, body, true).await?;
+    let upload = append(state, package.id, token, current, headers, body).await?;
     let chunks: Vec<Blob> =
         serde_json::from_str(&upload.chunks).map_err(|_| Error::unavailable())?;
-    let blob = if chunks.len() == 1 && chunks[0].digest == digest {
-        db::packages::blob(&state.pool, package.id, Some(token.into()), digest)
-            .await
-            .map_err(Error::db)?
-    } else {
-        let mut bytes = Vec::with_capacity(upload.offset as usize);
-        for chunk in chunks {
-            bytes.extend(
-                packages::read(&state.storage, &chunk)
-                    .await
-                    .map_err(Error::db)?,
-            );
-        }
-        if packages::digest(&bytes) != digest {
-            return Err(Error(
-                StatusCode::BAD_REQUEST,
-                "DIGEST_INVALID",
-                "Blob digest does not match",
-            ));
-        }
-        // The chunks were charged as they arrived.
-        packages::store(
-            &state.pool,
-            &state.storage,
-            package.id,
-            token,
-            bytes,
-            db::packages::Charge::Assembled,
-        )
-            .await
-            .map_err(Error::db)?
-    };
-    db::packages::finish_upload(&state.pool, package.id, token, &upload.id, upload.offset)
+    let mut bytes = Vec::with_capacity(upload.offset as usize);
+    for chunk in chunks {
+        bytes.extend(
+            packages::read(&state.storage, &chunk)
+                .await
+                .map_err(Error::db)?,
+        );
+    }
+    if packages::digest(&bytes) != digest {
+        return Err(Error(
+            StatusCode::BAD_REQUEST,
+            "DIGEST_INVALID",
+            "Blob digest does not match",
+        ));
+    }
+    let blob = packages::store(&state.pool, &state.storage, package.id, token, bytes)
+        .await
+        .map_err(Error::db)?;
+    db::packages::cancel_upload(&state.pool, package.id, token, &upload.id)
         .await
         .map_err(Error::db)?;
     response(
@@ -635,24 +592,6 @@ async fn manifest_blobs(
             .as_i64()
             .filter(|size| *size >= 0)
             .ok_or_else(Error::invalid)?;
-        let foreign = matches!(descriptor["mediaType"].as_str(),
-            Some("application/vnd.docker.image.rootfs.foreign.diff.tar.gzip"
-                | "application/vnd.oci.image.layer.nondistributable.v1.tar"
-                | "application/vnd.oci.image.layer.nondistributable.v1.tar+gzip"
-                | "application/vnd.oci.image.layer.nondistributable.v1.tar+zstd"));
-        if !index && foreign {
-            let urls = descriptor["urls"].as_array().filter(|urls| !urls.is_empty())
-                .ok_or_else(Error::invalid)?;
-            for url in urls {
-                let url = url.as_str().and_then(|url| url::Url::parse(url).ok())
-                    .filter(|url| matches!(url.scheme(), "http" | "https")
-                        && url.host_str().is_some() && url.username().is_empty()
-                        && url.password().is_none())
-                    .ok_or_else(Error::invalid)?;
-                let _ = url;
-            }
-            continue;
-        }
         let blob = db::packages::blob(&state.pool, package, Some(token.into()), digest)
             .await
             .map_err(Error::db)?;
@@ -668,13 +607,45 @@ async fn manifest_blobs(
     Ok(blobs)
 }
 
-/// `validator` is the response's strong ETag, if it has one, for `If-Range`.
-pub(super) fn byte_range(headers: &HeaderMap, size: u64, validator: Option<&str>) -> Result<Option<(u64, u64)>> {
-    let invalid = || Error(StatusCode::RANGE_NOT_SATISFIABLE, "RANGE_INVALID", "Invalid blob range");
-    let (range, partial) = crate::backend::api::http::range::requested(headers, validator).map_err(|_| invalid())?;
-    if !partial { return Ok(None); }
-    let (start, length) = range.normalize(size).map_err(|_| invalid())?;
-    Ok(Some((start, start + length - 1)))
+pub(super) fn byte_range(headers: &HeaderMap, size: u64) -> Result<Option<(u64, u64)>> {
+    let Some(value) = headers.get(header::RANGE) else {
+        return Ok(None);
+    };
+    let invalid = || {
+        Error(
+            StatusCode::RANGE_NOT_SATISFIABLE,
+            "RANGE_INVALID",
+            "Invalid blob range",
+        )
+    };
+    let value = value
+        .to_str()
+        .map_err(|_| invalid())?
+        .strip_prefix("bytes=")
+        .ok_or_else(invalid)?;
+    if size == 0 || headers.get_all(header::RANGE).iter().count() != 1 {
+        return Err(invalid());
+    }
+    let (start, end) = value.split_once('-').ok_or_else(invalid)?;
+    let (start, end) = if start.is_empty() {
+        let suffix: u64 = end.parse().map_err(|_| invalid())?;
+        if suffix == 0 {
+            return Err(invalid());
+        }
+        (size.saturating_sub(suffix), size - 1)
+    } else {
+        let start: u64 = start.parse().map_err(|_| invalid())?;
+        let end = if end.is_empty() {
+            size - 1
+        } else {
+            end.parse::<u64>().map_err(|_| invalid())?.min(size - 1)
+        };
+        (start, end)
+    };
+    if start >= size || end < start {
+        return Err(invalid());
+    }
+    Ok(Some((start, end)))
 }
 
 pub(super) async fn download(
@@ -698,7 +669,7 @@ pub(super) async fn download(
     if *method == Method::HEAD {
         return Ok(response);
     }
-    let range = byte_range(headers, blob.size as u64, None)?;
+    let range = byte_range(headers, blob.size as u64)?;
     let (start, length) = range.map_or((0, blob.size as u64), |(start, end)| {
         (start, end - start + 1)
     });
@@ -770,7 +741,7 @@ mod tests {
         ] {
             let mut headers = HeaderMap::new();
             headers.insert(header::RANGE, value.parse().unwrap());
-            assert_eq!(byte_range(&headers, 10, None).unwrap(), Some(expected));
+            assert_eq!(byte_range(&headers, 10).unwrap(), Some(expected));
         }
         for value in [
             "bytes=10-",
@@ -782,7 +753,7 @@ mod tests {
         ] {
             let mut headers = HeaderMap::new();
             headers.insert(header::RANGE, value.parse().unwrap());
-            assert!(byte_range(&headers, 10, None).is_err());
+            assert!(byte_range(&headers, 10).is_err());
         }
     }
 }

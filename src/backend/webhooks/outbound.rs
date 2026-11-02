@@ -18,20 +18,6 @@ pub enum Refusal {
     Unreachable,
 }
 
-/// A client builder for a request to `url` whose addresses `resolve` just checked. It follows no
-/// redirects and uses no proxy, which would receive the name instead of the checked addresses. A
-/// domain name is pinned to those addresses, so the connection cannot reach another host.
-/// Timeouts, user agent and certificate options stay with the caller.
-pub fn pinned_client(url: &Url, addresses: &[SocketAddr]) -> reqwest::ClientBuilder {
-    let mut builder = reqwest::Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none());
-    if let Some(Host::Domain(name)) = url.host() {
-        builder = builder.resolve_to_addrs(name, addresses);
-    }
-    builder
-}
-
 pub fn allow_private() -> bool {
     std::env::var(ALLOW_PRIVATE_ENV).is_ok_and(|value| value == "true")
 }

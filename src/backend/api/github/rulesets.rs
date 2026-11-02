@@ -254,7 +254,7 @@ async fn create(
     input: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let scope = Scope::resolve(&state, &headers, &params, true).await?;
-    let Json(input) = input.map_err(super::json_error)?;
+    let Json(input) = input.map_err(|_| Error::invalid("Invalid ruleset document"))?;
     let input = Definition::parse(&input).map_err(|e| error(e.into()))?;
     let row = outcome(
         rulesets::create_ruleset(&state.pool, scope.actor()?, scope.owner, &input)
@@ -276,7 +276,7 @@ async fn update(
     let input = if body.is_empty() {
         json!({})
     } else {
-        serde_json::from_slice(&body).map_err(super::json_parse_error)?
+        serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid ruleset document"))?
     };
     let row = outcome(
         rulesets::change_ruleset(

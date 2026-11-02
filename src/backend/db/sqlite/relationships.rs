@@ -1,77 +1,25 @@
 use crate::backend::db::{
-    models::Repository,
-    relationships::{
-        related_sql, window_sql, Kind, Link, Mutation, Refusal, RelationCounts, Window,
-    },
+    models::{Issue, Repository},
+    relationships::{Kind, Link, Mutation, Refusal, Summary},
 };
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
-pub async fn window(pool: &SqlitePool, page: &Window<'_>) -> Result<Vec<Link>> {
-    anyhow::ensure!(page.offset >= 0 && (1..=101).contains(&page.limit), Refusal::Invalid);
-    let readable = super::repositories::access::readable_condition();
-    let sql = window_sql(
-        page,
-        &readable,
-        "$5 IS NULL OR i.repo_id IN (SELECT value FROM json_each($5))",
-    )
-    .replace('$', "?");
-    let repositories = page.repositories.map(serde_json::to_string).transpose()?;
-    Ok(sqlx::query_as(&sql)
-        .bind(page.viewer)
-        .bind(page.root)
-        .bind(page.kind.storage())
-        .bind(crate::backend::db::ci_tokens::BOT)
-        .bind(repositories)
-        .bind(page.limit)
-        .bind(page.offset)
-        .fetch_all(pool)
-        .await?)
-}
-pub async fn repository_counts(
+pub async fn list(
     pool: &SqlitePool,
     viewer: Option<i64>,
     root: i64,
     kind: Kind,
-) -> Result<Vec<(i64, i64)>> {
-    let readable = super::repositories::access::readable_condition();
-    let sql = format!(
-        "SELECT i.repo_id,COUNT(*) {} GROUP BY i.repo_id ORDER BY i.repo_id",
-        related_sql(kind, &readable, "1")
-    )
-    .replace('$', "?");
-    Ok(sqlx::query_as(&sql)
-        .bind(viewer)
-        .bind(root)
-        .bind(kind.storage())
-        .bind(crate::backend::db::ci_tokens::BOT)
-        .fetch_all(pool)
-        .await?)
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Link>> {
+    anyhow::ensure!(offset >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
+    let (target, source) = kind.selection();
+    let target = target.replace('$', "?");
+    let source = source.replace('$', "?");
+    Ok(sqlx::query_as(&format!("SELECT i.id,i.repo_id,i.number,i.title,i.state,COALESCE(owners.username,orgs.name) AS owner,r.name AS repo FROM issue_relations e JOIN issues i ON i.id={target} JOIN repositories r ON r.id=i.repo_id LEFT JOIN users u ON u.id=?1 LEFT JOIN users owners ON r.owner_kind='user' AND owners.id=r.owner_user_id LEFT JOIN organizations orgs ON r.owner_kind='org' AND orgs.id=r.owner_org_id WHERE {source}=?2 AND e.kind=?3 AND {} AND (COALESCE(u.username,'')<>?6 OR i.repo_id=(SELECT repo_id FROM issues WHERE id=?2)) ORDER BY e.position,i.id LIMIT ?4 OFFSET ?5",super::repositories::access::readable_condition())).bind(viewer).bind(root).bind(kind.storage()).bind(limit).bind(offset).bind(crate::backend::db::ci_tokens::BOT).fetch_all(pool).await?)
 }
-pub async fn summaries(pool: &SqlitePool, roots: &[i64]) -> Result<Vec<RelationCounts>> {
-    anyhow::ensure!(roots.len() <= 100, Refusal::Limit);
-    if roots.is_empty() {
-        return Ok(Vec::new());
-    }
-    Ok(sqlx::query_as(
-        "WITH edges(root, side, repo_id, state) AS (
-    SELECT e.source_id, 'child', i.repo_id, i.state FROM issue_relations e JOIN issues i ON i.id=e.target_id
-        WHERE e.kind='parent' AND e.source_id IN (SELECT value FROM json_each(?1))
-    UNION ALL SELECT e.target_id, 'blocked_by', i.repo_id, i.state FROM issue_relations e JOIN issues i ON i.id=e.source_id
-        WHERE e.kind='blocks' AND e.target_id IN (SELECT value FROM json_each(?1))
-    UNION ALL SELECT e.source_id, 'blocking', i.repo_id, i.state FROM issue_relations e JOIN issues i ON i.id=e.target_id
-        WHERE e.kind='blocks' AND e.source_id IN (SELECT value FROM json_each(?1)))
-SELECT root, repo_id,
-    SUM(CASE WHEN side='child' THEN 1 ELSE 0 END) AS total,
-    SUM(CASE WHEN side='child' AND state='closed' THEN 1 ELSE 0 END) AS completed,
-    SUM(CASE WHEN side='blocked_by' AND state='open' THEN 1 ELSE 0 END) AS blocked_by,
-    SUM(CASE WHEN side='blocking' AND state='open' THEN 1 ELSE 0 END) AS blocking,
-    SUM(CASE WHEN side='blocked_by' THEN 1 ELSE 0 END) AS total_blocked_by,
-    SUM(CASE WHEN side='blocking' THEN 1 ELSE 0 END) AS total_blocking
-FROM edges GROUP BY root, repo_id",
-    )
-    .bind(serde_json::to_string(roots)?)
-    .fetch_all(pool)
-    .await?)
+pub async fn summary(pool: &SqlitePool, root: i64) -> Result<Summary> {
+    Ok(sqlx::query_as("SELECT (SELECT COUNT(*) FROM issue_relations WHERE kind='parent' AND source_id=?1) AS total,(SELECT COUNT(*) FROM issue_relations e JOIN issues i ON i.id=e.target_id WHERE e.kind='parent' AND e.source_id=?1 AND i.state='closed') AS completed,(SELECT COUNT(*) FROM issue_relations e JOIN issues i ON i.id=e.source_id WHERE e.kind='blocks' AND e.target_id=?1 AND i.state='open') AS blocked_by,(SELECT COUNT(*) FROM issue_relations e JOIN issues i ON i.id=e.target_id WHERE e.kind='blocks' AND e.source_id=?1 AND i.state='open') AS blocking,(SELECT COUNT(*) FROM issue_relations WHERE kind='blocks' AND target_id=?1) AS total_blocked_by,(SELECT COUNT(*) FROM issue_relations WHERE kind='blocks' AND source_id=?1) AS total_blocking").bind(root).fetch_one(pool).await?)
 }
 pub async fn change(
     pool: &SqlitePool,
@@ -79,9 +27,8 @@ pub async fn change(
     repo: i64,
     root: i64,
     mutation: Mutation,
-    token: Option<i64>,
 ) -> Result<()> {
-    change_once(pool, actor, repo, root, mutation, token).await
+    change_once(pool, actor, repo, root, mutation).await
 }
 async fn change_once(
     pool: &SqlitePool,
@@ -89,11 +36,9 @@ async fn change_once(
     repo: i64,
     root: i64,
     mutation: Mutation,
-    token: Option<i64>,
 ) -> Result<()> {
     let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let triage = matches!(mutation, Mutation::Move { .. } | Mutation::Add { kind: Kind::Children | Kind::Parent, .. } | Mutation::Remove { kind: Kind::Children | Kind::Parent, .. });
-    let tx = change_in_transaction(tx, actor, repo, root, mutation, triage, token).await?;
+    let tx = change_in_transaction(tx, actor, repo, root, mutation, false).await?;
     tx.commit().await?;
     Ok(())
 }
@@ -109,14 +54,13 @@ async fn authority(
         super::discussions::lock_write_authority(tx, actor, repo).await
     }
 }
-pub(crate) async fn change_in_transaction<'a>(
+async fn change_in_transaction<'a>(
     mut tx: Transaction<'a, Sqlite>,
     actor: i64,
     repo: i64,
     root: i64,
     mutation: Mutation,
     triage: bool,
-    token: Option<i64>,
 ) -> Result<Transaction<'a, Sqlite>> {
     let other = mutation.target();
     anyhow::ensure!(other > 0 && root != other, Refusal::Invalid);
@@ -140,20 +84,14 @@ pub(crate) async fn change_in_transaction<'a>(
         .await?;
     let target_repo = target_repo.ok_or(Refusal::Missing)?;
     anyhow::ensure!(!restricted || target_repo == repo, Refusal::Missing);
-    if let Some(token) = token {
-        for affected in [repo, target_repo] {
-            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, affected, "issues").await?, Refusal::Denied);
-        }
-    }
     let visible:bool=sqlx::query_scalar(&format!("SELECT EXISTS (SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",super::repositories::access::readable_condition())).bind(actor).bind(target_repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(visible, Refusal::Missing);
     let ids: Vec<i64> = sqlx::query_scalar(
-        "SELECT id FROM issues WHERE (id=?1 AND repo_id=?3) OR (id=?2 AND repo_id=?4) ORDER BY id",
+        "SELECT id FROM issues WHERE (id=?1 AND repo_id=?3) OR id=?2 ORDER BY id",
     )
     .bind(root)
     .bind(other)
     .bind(repo)
-    .bind(target_repo)
     .fetch_all(&mut *tx)
     .await?;
     anyhow::ensure!(ids.len() == 2, Refusal::Missing);
@@ -175,7 +113,6 @@ pub(crate) async fn change_in_transaction<'a>(
         );
     }
     let mut changed = true;
-    let mut former_parent = None;
     match mutation {
         Mutation::Add { kind, replace, .. } => {
             let (source, target) = kind.edge(root, other);
@@ -204,17 +141,13 @@ pub(crate) async fn change_in_transaction<'a>(
                         Refusal::Invalid
                     );
                     let old:Option<(i64,i64)>=sqlx::query_as("SELECT e.source_id,i.repo_id FROM issue_relations e JOIN issues i ON i.id=e.source_id WHERE e.kind='parent' AND e.target_id=?1").bind(target).fetch_optional(&mut *tx).await?;
-                    if let Some((old_parent, old_repo)) = old {
+                    if let Some((_, old_repo)) = old {
                         anyhow::ensure!(!restricted || old_repo == repo, Refusal::Missing);
                         anyhow::ensure!(replace, Refusal::HasParent);
-                        if let Some(token) = token {
-                            anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor, old_repo, "issues").await?, Refusal::Denied);
-                        }
                         anyhow::ensure!(
                             authority(&mut tx, actor, old_repo, triage).await?,
                             Refusal::Denied
                         );
-                        former_parent = Some(old_parent);
                     }
                 }
                 if storage != "related" {
@@ -230,11 +163,10 @@ pub(crate) async fn change_in_transaction<'a>(
                         .await?;
                 }
                 let count: i64 = sqlx::query_scalar(
-                    "SELECT MAX(n) FROM (SELECT COUNT(*) AS n FROM issue_relations WHERE kind=?1 AND (source_id=?2 OR (kind='related' AND target_id=?2)) UNION ALL SELECT COUNT(*) AS n FROM issue_relations WHERE kind=?1 AND kind='related' AND (source_id=?3 OR target_id=?3)) counts",
+                    "SELECT COUNT(*) FROM issue_relations WHERE kind=?1 AND source_id=?2",
                 )
                 .bind(storage)
                 .bind(source)
-                .bind(target)
                 .fetch_one(&mut *tx)
                 .await?;
                 anyhow::ensure!(count < 100, Refusal::Limit);
@@ -281,11 +213,39 @@ pub(crate) async fn change_in_transaction<'a>(
     }
     if changed {
         touch(&mut tx, root, other).await?;
-        if let Some(parent) = former_parent {
-            touch(&mut tx, parent, parent).await?;
-        }
     }
     Ok(tx)
+}
+pub async fn create_child(
+    pool: &SqlitePool,
+    actor: i64,
+    repo: i64,
+    parent: i64,
+    title: &str,
+    body: &str,
+) -> Result<Issue> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::discussions::require_contribution_authority(&mut tx, actor, repo).await?;
+    let issue = super::issues::insert_in_transaction(&mut tx, repo, actor, title, body).await?;
+    let mut tx = change_in_transaction(
+        tx,
+        actor,
+        repo,
+        issue.id,
+        Mutation::Add {
+            kind: Kind::Parent,
+            other: parent,
+            replace: false,
+        },
+        true,
+    )
+    .await?;
+    let issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1")
+        .bind(issue.id)
+        .fetch_one(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(issue)
 }
 async fn touch(tx: &mut Transaction<'_, Sqlite>, a: i64, b: i64) -> Result<()> {
     let rows: Vec<(i64, chrono::DateTime<chrono::Utc>)> =

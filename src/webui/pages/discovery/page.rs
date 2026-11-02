@@ -85,8 +85,6 @@ pub struct CodeHit {
     pub owner: String,
     pub repo: String,
     pub branch: String,
-    #[serde(default)]
-    pub sha: String,
     pub path: String,
     pub line_number: u32,
     pub line: String,
@@ -188,9 +186,6 @@ pub struct SearchModel {
     /// Set when the budget stopped the walk over repositories before its end.
     #[serde(default)]
     pub scan: Option<SearchScan>,
-    /// Set when later results lie past the furthest page the search reads.
-    #[serde(default)]
-    pub window_limited: bool,
     /// Repositories a code or commit search reached but could not read.
     #[serde(default)]
     pub unsearched: usize,
@@ -510,10 +505,10 @@ pub fn home(model: HomeModel) -> Element {
     }
     // Trending follows the filter too, and its heading says what it is narrowed to.
     let trending_scope = if model.find.is_empty() {
-        "Most starred public repositories of other owners.".to_owned()
+        "Most starred of the 100 newest public repositories.".to_owned()
     } else {
         format!(
-            "Most starred public repositories of other owners matching “{}”.",
+            "Most starred of the 100 newest public repositories matching “{}”.",
             model.find
         )
     };
@@ -814,9 +809,6 @@ fn search_notices(model: &SearchModel) -> Element {
         if model.unsearched > 0 {
             p { role: "status", class: "mb-3 text-sm text-muted-foreground", {count_label(model.unsearched, "repository", "repositories")}, " could not be searched." }
         }
-        if model.window_limited {
-            p { role: "status", class: "mb-3 text-sm text-muted-foreground", "Older results are past the furthest page search reads, narrow the search to see them." }
-        }
         for name in &model.truncated {
             p { role: "status", class: "mb-3 text-sm text-muted-foreground", "More matches in {name}, narrow with repo:{name} to see them." }
         }
@@ -850,29 +842,34 @@ fn issue_results(model: &SearchModel, kind: Kind, issues: &[IssueCard], none: &s
     }
 }
 
-/// Match the searcher's Unicode lowercase projection while retaining original byte ranges.
+/// The parts of `line` split at the matches of `needle`, ignoring ASCII case. Each part says
+/// whether it is a match.
 fn highlight_parts(line: &str, needle: &str) -> Vec<(String, bool)> {
-    if needle.is_empty() { return vec![(line.to_owned(), false)]; }
-    let needle = needle.to_lowercase();
-    let mut folded = String::new();
-    let mut ranges = Vec::new();
-    for (start, character) in line.char_indices() {
-        for lower in character.to_lowercase() {
-            folded.push(lower);
-            for _ in 0..lower.len_utf8() { ranges.push((start, start + character.len_utf8())); }
+    let mut parts = Vec::new();
+    if needle.is_empty() {
+        return vec![(line.to_owned(), false)];
+    }
+    let mut plain = 0;
+    let mut at = 0;
+    while at + needle.len() <= line.len() {
+        // A match starts on a character boundary, and it ends on one too because its bytes equal
+        // the needle's, which is valid UTF-8.
+        let matched = line.is_char_boundary(at)
+            && line.as_bytes()[at..at + needle.len()].eq_ignore_ascii_case(needle.as_bytes());
+        if matched {
+            if plain < at {
+                parts.push((line[plain..at].to_owned(), false));
+            }
+            parts.push((line[at..at + needle.len()].to_owned(), true));
+            at += needle.len();
+            plain = at;
+        } else {
+            at += 1;
         }
     }
-    let mut parts = Vec::new();
-    let mut plain = 0;
-    for (at, _) in folded.match_indices(&needle) {
-        let start = ranges[at].0;
-        let end = ranges[at + needle.len() - 1].1;
-        if start < plain { continue; }
-        if plain < start { parts.push((line[plain..start].to_owned(), false)); }
-        parts.push((line[start..end].to_owned(), true));
-        plain = end;
+    if plain < line.len() {
+        parts.push((line[plain..].to_owned(), false));
     }
-    if plain < line.len() { parts.push((line[plain..].to_owned(), false)); }
     parts
 }
 
@@ -916,7 +913,7 @@ fn search_results(model: &SearchModel) -> Element {
                 for hit in &model.code {
                     article { class: "border-b border-border px-4 py-3",
                         p { class: "text-sm",
-                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::file_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.sha, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}@{hit.branch}: {hit.path}" }
+                            NavLink { href: format!("{}?view=code&line={}#L{}", crate::webui::pages::repos::ref_path::file_url(&repository_url(&hit.owner, &hit.repo), "blob", &hit.branch, &hit.path), hit.line_number, hit.line_number), class: "font-semibold text-primary hover:underline", "{hit.owner}/{hit.repo}: {hit.path}" }
                         }
                         pre { class: "mt-2 overflow-x-auto rounded-md bg-muted px-3 py-2 text-xs", code { "{hit.line_number}  ", {highlighted_text(&hit.line, &model.highlight)} } }
                     }
@@ -964,7 +961,7 @@ pub fn search(model: SearchModel) -> Element {
             form { id: "search-form", action: "/search", method: "get", class: "mb-6 flex flex-wrap items-end gap-3",
                 div { class: "flex-1",
                     label { r#for: "search-q", class: "sr-only", "Search repositories, code, commits, issues, pull requests and people" }
-                    input { id: "search-q", name: "q", "value": model.query.clone(), class: INPUT, placeholder: "Search repositories, code, commits, issues, pull requests and people" }
+                    input { id: "search-q", name: "q", "value": model.query.clone(), maxlength: 256, class: INPUT, placeholder: "Search repositories, code, commits, issues, pull requests and people" }
                 }
                 input { r#type: "hidden", name: "type", value: model.tab.clone() }
                 if !sorts.is_empty() {
@@ -1048,7 +1045,7 @@ fn starred_repository(repo: &RepositoryCard, csrf_token: &str, return_to: &str) 
         article { class: "flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-4 sm:px-5",
             div { class: "min-w-0 flex-1", {repository_summary(repo)} }
             form { method: "post", action, class: "stars-unstar-form",
-                {crate::webui::pages::fields::csrf(csrf_token)}
+                input { r#type: "hidden", name: "csrf_token", value: csrf_token.to_owned() }
                 input { r#type: "hidden", name: "return_to", value: return_to.to_owned() }
                 input { r#type: "hidden", name: "repository_id", value: repo.id.to_string() }
                 button { r#type: "submit", class: "btn btn-sm stars-unstar", "aria-label": "Unstar {repo.owner}/{repo.name}", "Unstar" }
@@ -1114,7 +1111,13 @@ pub fn new_repository(
 
 // Browser feedback never replaces server validation or authorization.
 pub fn valid_repository_name(name: &str) -> bool {
-    crate::repository_names::valid(name)
+    !name.is_empty()
+        && name.len() <= 100
+        && !matches!(name, "." | "..")
+        && !name.ends_with(".git")
+        && name
+            .chars()
+            .all(|ch| ch.is_alphanumeric() || matches!(ch, '-' | '_' | '.'))
 }
 
 /// The options of a template select: an empty choice for none, then each listed name.
@@ -1183,7 +1186,7 @@ fn NewRepositoryView(
             // Browser constraint checks would show only a native bubble that is not part of
             // the page. The server validates the same rules and marks the field itself.
             form { method: "post", action, novalidate: true, onsubmit: move |_| submitting.set(true), class: "space-y-6",
-                {crate::webui::pages::fields::csrf(&csrf_token)}
+                input { r#type: "hidden", name: "csrf_token", value: csrf_token }
                 div { class: "space-y-6 rounded-md border border-border bg-card p-6",
                     div {
                         label { r#for: "repo-owner", class: "mb-2 block text-sm font-medium", "Owner" }

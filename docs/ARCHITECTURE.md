@@ -385,8 +385,7 @@ where UDP is blocked (see `tls.rs`).
 - Protocols are ALPNs with the same names on both transports:
   - `codeyard/pair/1`: the join handshake (see Pairing). The only protocol open
     to keys that are not members yet; it reads one request, answers and hangs up.
-  - `codeyard/rpc/4`: repository request/response calls, including gist token
-    credentials bound to both their ID and authenticated hash. Peers using an older
+  - `codeyard/rpc/3`: repository request/response calls. Peers using an older
     generation fail ALPN negotiation before a request is decoded. Each bidirectional
     stream carries one request: a four-byte big-endian JSON length, JSON, a
     four-byte raw-body length, and the raw body. The response has the same

@@ -1,5 +1,5 @@
 //! Owner-inherited issue types and organization custom fields.
-use super::{credentials::Actor, DbPool};
+use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -11,13 +11,6 @@ pub struct SelectOption {
     pub color: String,
     pub description: Option<String>,
     pub priority: i64,
-}
-/// The type of one issue in a batch read.
-#[derive(sqlx::FromRow)]
-pub struct AssignedType {
-    pub issue_id: i64,
-    #[sqlx(flatten)]
-    pub attribute: Attribute,
 }
 #[derive(Clone, Debug, Serialize, Deserialize, sqlx::FromRow)]
 pub struct Attribute {
@@ -67,7 +60,6 @@ impl FieldChanges {
     pub(crate) fn apply_to(&self, current: &Attribute) -> Definition {
         Definition {
             id: Some(current.id),
-            expected_updated: Some(current.updated_at),
             kind: "field".into(),
             name: self.name.clone().unwrap_or_else(|| current.name.clone()),
             description: self
@@ -97,18 +89,8 @@ impl FieldChanges {
         }
     }
 }
-pub fn owner_key(user: Option<i64>, org: Option<i64>) -> String {
-    org.map_or_else(|| format!("user:{}", user.unwrap_or(0)), |id| format!("org:{id}"))
-}
-
-pub fn revision(attribute: &Attribute) -> Result<String> {
-    use sha2::Digest;
-    Ok(format!("{:x}", sha2::Sha256::digest(serde_json::to_vec(attribute)?)))
-}
-
 pub struct Definition {
     pub id: Option<i64>,
-    pub expected_updated: Option<DateTime<Utc>>,
     pub kind: String,
     pub name: String,
     pub description: Option<String>,
@@ -191,12 +173,6 @@ impl Definition {
     }
 }
 impl Attribute {
-    fn option_id(&self, value: &Value) -> Result<i64> {
-        self.options.iter().find(|option| {
-            value.as_i64() == Some(option.id) || value.as_str() == Some(option.name.as_str())
-        }).map(|option| option.id).ok_or_else(|| Refusal::Invalid.into())
-    }
-
     /// Select values are stored as stable option IDs, never mutable option names.
     pub(crate) fn canonical(&self, value: &Value) -> Result<Value> {
         let invalid = || Refusal::Invalid;
@@ -214,13 +190,23 @@ impl Attribute {
             }
             Some("date") => {
                 let text = value.as_str().ok_or_else(invalid)?;
+                let date = chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
+                    .map_err(|_| Refusal::Invalid)?;
                 anyhow::ensure!(
-                    crate::backend::issues::calendar_day(text).is_some(),
+                    date.format("%Y-%m-%d").to_string() == text,
                     Refusal::Invalid
                 );
                 value.clone()
             }
-            Some("single_select") => self.option_id(value)?.into(),
+            Some("single_select") => {
+                let name = value.as_str().ok_or_else(invalid)?;
+                self.options
+                    .iter()
+                    .find(|o| o.name == name)
+                    .ok_or_else(invalid)?
+                    .id
+                    .into()
+            }
             Some("multi_select") => {
                 let values = value
                     .as_array()
@@ -228,7 +214,13 @@ impl Attribute {
                     .ok_or_else(invalid)?;
                 let mut result = Vec::new();
                 for value in values {
-                    let id = self.option_id(value)?;
+                    let name = value.as_str().ok_or_else(invalid)?;
+                    let id = self
+                        .options
+                        .iter()
+                        .find(|o| o.name == name)
+                        .ok_or_else(invalid)?
+                        .id;
                     anyhow::ensure!(!result.contains(&Value::from(id)), Refusal::Invalid);
                     result.push(id.into());
                 }
@@ -248,39 +240,32 @@ pub enum Refusal {
     Invalid,
     #[error("Issue attribute limit exceeded")]
     Limit,
-    #[error("This definition changed; reload it before saving again")]
-    Conflict,
 }
 native_operation!(crate::backend::db::postgres::issue_attributes::catalog,crate::backend::db::sqlite::issue_attributes::catalog,
     fn catalog(pool:&DbPool,repo:i64,viewer:Option<i64>,kind:&str)->Result<Vec<Attribute>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::organization_catalog,crate::backend::db::sqlite::issue_attributes::organization_catalog,
     fn organization_catalog(pool:&DbPool,org:i64,actor:i64,kind:&str)->Result<Vec<Attribute>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::configure_organization,crate::backend::db::sqlite::issue_attributes::configure_organization,
-    fn configure_organization(pool:&DbPool,org:i64,actor:impl Into<Actor>,definition:&Definition)->Result<Attribute>);
+    fn configure_organization(pool:&DbPool,org:i64,actor:i64,definition:&Definition)->Result<i64>);
 native_operation!(crate::backend::db::postgres::issue_attributes::create_organization_field,crate::backend::db::sqlite::issue_attributes::create_organization_field,
-    fn create_organization_field(pool:&DbPool,org:i64,actor:impl Into<Actor>,definition:&Definition)->Result<Attribute>);
+    fn create_organization_field(pool:&DbPool,org:i64,actor:i64,definition:&Definition)->Result<Attribute>);
 native_operation!(crate::backend::db::postgres::issue_attributes::patch_organization_field,crate::backend::db::sqlite::issue_attributes::patch_organization_field,
-    fn patch_organization_field(pool:&DbPool,org:i64,actor:impl Into<Actor>,id:i64,changes:&FieldChanges)->Result<Attribute>);
+    fn patch_organization_field(pool:&DbPool,org:i64,actor:i64,id:i64,changes:&FieldChanges)->Result<Attribute>);
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_organization_definition,crate::backend::db::sqlite::issue_attributes::delete_organization_definition,
-    fn delete_organization_definition(pool:&DbPool,org:i64,actor:impl Into<Actor>,id:i64,kind:&str)->Result<()>);
+    fn delete_organization_definition(pool:&DbPool,org:i64,actor:i64,id:i64,kind:&str)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::values,crate::backend::db::sqlite::issue_attributes::values,
     fn values(pool:&DbPool,repo:i64,issue:i64,viewer:Option<i64>)->Result<Vec<FieldValue>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::assigned_type,crate::backend::db::sqlite::issue_attributes::assigned_type,
     fn assigned_type(pool:&DbPool,repo:i64,issue:i64)->Result<Option<Attribute>>);
-native_operation!(crate::backend::db::postgres::issue_attributes::assigned_types,crate::backend::db::sqlite::issue_attributes::assigned_types,
-    /// The types of the repository's issues among `ids` (at most 500).
-    fn assigned_types(pool:&DbPool,repo:i64,ids:&[i64])->Result<Vec<AssignedType>>);
 native_operation!(crate::backend::db::postgres::issue_attributes::owner_can_configure,crate::backend::db::sqlite::issue_attributes::owner_can_configure,
     fn owner_can_configure(pool:&DbPool,repo:i64,actor:i64)->Result<bool>);
 native_operation!(crate::backend::db::postgres::issue_attributes::configure,crate::backend::db::sqlite::issue_attributes::configure,
-    fn configure(pool:&DbPool,repo:i64,actor:impl Into<Actor>,definition:&Definition)->Result<i64>);
-native_operation!(crate::backend::db::postgres::issue_attributes::configure_checked,crate::backend::db::sqlite::issue_attributes::configure_checked,
-    fn configure_checked(pool:&DbPool,repo:i64,actor:impl Into<Actor>,definition:&Definition,guard:(Option<&str>,Option<&str>))->Result<i64>);
+    fn configure(pool:&DbPool,repo:i64,actor:i64,definition:&Definition)->Result<i64>);
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_definition,crate::backend::db::sqlite::issue_attributes::delete_definition,
-    fn delete_definition(pool:&DbPool,repo:i64,actor:impl Into<Actor>,id:i64)->Result<()>);
+    fn delete_definition(pool:&DbPool,repo:i64,actor:i64,id:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::set_values,crate::backend::db::sqlite::issue_attributes::set_values,
-    fn set_values(pool:&DbPool,repo:i64,actor:impl Into<Actor>,issue:i64,values:&[ValueInput],replace:bool)->Result<()>);
+    fn set_values(pool:&DbPool,repo:i64,actor:i64,issue:i64,values:&[ValueInput],replace:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::delete_value,crate::backend::db::sqlite::issue_attributes::delete_value,
-    fn delete_value(pool:&DbPool,repo:i64,actor:impl Into<Actor>,issue:i64,field:i64)->Result<()>);
+    fn delete_value(pool:&DbPool,repo:i64,actor:i64,issue:i64,field:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::issue_attributes::set_type,crate::backend::db::sqlite::issue_attributes::set_type,
-    fn set_type(pool:&DbPool,repo:i64,actor:impl Into<Actor>,issue:i64,kind:Option<i64>)->Result<()>);
+    fn set_type(pool:&DbPool,repo:i64,actor:i64,issue:i64,kind:Option<i64>)->Result<()>);

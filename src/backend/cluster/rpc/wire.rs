@@ -19,76 +19,6 @@ fn is_zero(value: &usize) -> bool {
     *value == 0
 }
 
-/// A retained credential uses the former numeric token slot, so an older storage peer
-/// rejects it instead of silently dropping a new optional authorization field. A bare token
-/// number from an older peer carries no secret and fails to decode.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct PublicationCredential(crate::backend::db::credentials::Actor);
-impl PublicationCredential {
-    /// Trusted in-process callers carry no credential, and the receiving node uses the caller.
-    pub fn retain(actor: crate::backend::db::credentials::Actor) -> Option<Self> {
-        actor.credential.is_some().then(|| Self(actor))
-    }
-    pub fn into_actor(self, expected: i64) -> Result<crate::backend::db::credentials::Actor, RepoError> {
-        let Self(actor) = self;
-        if actor.user_id != expected { return Err(invalid("publication credential actor mismatch")); }
-        Ok(actor)
-    }
-}
-
-/// Bind a mutation's original text input to its initiating credential. Keeping the
-/// credential in a formerly string-valued slot makes older peers reject it safely.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum PublicationText {
-    Legacy(String),
-    Retained { value: String, authority: crate::backend::db::credentials::Actor },
-}
-impl From<&str> for PublicationText {
-    fn from(value: &str) -> Self { Self::Legacy(value.into()) }
-}
-impl From<String> for PublicationText {
-    fn from(value: String) -> Self { Self::Legacy(value) }
-}
-impl PublicationText {
-    pub fn retain(value: &str, authority: crate::backend::db::credentials::Actor) -> Self {
-        if authority.credential.is_none() {
-            return Self::Legacy(value.into());
-        }
-        Self::Retained { value: value.into(), authority }
-    }
-    pub fn into_parts(self, actor: i64) -> Result<(crate::backend::db::credentials::Actor, String), RepoError> {
-        match self {
-            Self::Legacy(value) => Ok((actor.into(), value)),
-            Self::Retained { value, authority } => Ok((PublicationCredential(authority).into_actor(actor)?, value)),
-        }
-    }
-}
-
-/// Filtered listings use an object in the existing ref slot: older peers reject the
-/// request rather than silently returning an unfiltered prefix.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
-pub enum FilePathQuery {
-    Reference(String),
-    Filtered { reference: String, query: String },
-}
-impl From<&str> for FilePathQuery {
-    fn from(reference: &str) -> Self { Self::Reference(reference.into()) }
-}
-impl From<String> for FilePathQuery {
-    fn from(reference: String) -> Self { Self::Reference(reference) }
-}
-impl FilePathQuery {
-    pub fn into_parts(self) -> (String, String) {
-        match self {
-            Self::Reference(reference) => (reference, String::new()),
-            Self::Filtered { reference, query } => (reference, query),
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Operation {
     Initialize {
@@ -99,12 +29,11 @@ pub enum Operation {
     /// silently preserving history when a template requested its removal.
     InitializeCopy {
         source: Uuid,
-        default_branch: PublicationText,
+        default_branch: String,
         template: bool,
         default_branch_only: bool,
     },
     Remove,
-    Retire,
     GistSnapshot {
         revision: Option<String>,
     },
@@ -118,7 +47,6 @@ pub enum Operation {
     },
     /// Fetches a commit of another repository on this node into a pull ref.
     FetchPullHead {
-        token: Option<i64>,
         source: Uuid,
         number: i32,
         head: String,
@@ -126,14 +54,10 @@ pub enum Operation {
     },
     Exists,
     SizeBytes,
-    RefreshStorageSize,
     Refs,
-    MatchingRefs { prefix: String },
     /// The same refs as `Refs`, answered only by the primary. For a caller that writes the
     /// answer into the database.
     PrimaryRefs,
-    /// Default-branch statistics are computed and cached by the owning primary.
-    PrimaryLanguages { git_ref: String },
     BranchPublication {
         repository_id: i64,
         reference: String,
@@ -143,28 +67,20 @@ pub enum Operation {
     GitTree {
         revision: String,
         recursive: bool,
-        #[serde(default)]
-        raw_json: bool,
     },
     GitTag {
         sha: String,
-        #[serde(default)]
-        raw_json: bool,
     },
     GitObjectKind {
         sha: String,
     },
-    IntroducedBlobs {
-        sha: String,
-    },
     UpdateReference {
         reference: String,
-        sha: PublicationText,
+        sha: String,
         force: bool,
     },
     WriteGitObject {
         input: crate::backend::git::objects::ObjectWrite,
-        token: Option<i64>,
     },
     ImportGit {
         import: crate::backend::repositories::imports::GitImport,
@@ -190,8 +106,6 @@ pub enum Operation {
     TemplateTexts {
         revision: String,
         paths: Vec<String>,
-        #[serde(default)]
-        raw_json: bool,
     },
     Blob {
         git_ref: String,
@@ -205,10 +119,6 @@ pub enum Operation {
     },
     BlobById {
         id: String,
-    },
-    BlobByIdRange {
-        id: String,
-        range: BlobRange,
     },
     Commits {
         git_ref: String,
@@ -240,8 +150,6 @@ pub enum Operation {
         #[serde(default, skip_serializing_if = "is_zero")]
         offset: usize,
         limit: usize,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        raw_json: bool,
     },
     /// Commits that changed `path`, as `git log -- <path>` lists them.
     PathCommits {
@@ -282,10 +190,8 @@ pub enum Operation {
     CommitsBetween {
         base_ref: String,
         head_ref: String,
-        #[serde(default, skip_serializing_if = "is_zero")]
-        offset: usize,
         limit: usize,
-        /// Include the full count and the requested window of GitHub's oldest 250 commits.
+        /// Include the full count and GitHub's first 250 commits, oldest first.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         pull_request: bool,
         /// The caller can decode JSON from the raw response frame.
@@ -330,7 +236,7 @@ pub enum Operation {
         git_ref: String,
     },
     FilePaths {
-        git_ref: FilePathQuery,
+        git_ref: String,
         limit: usize,
         #[serde(default)]
         raw_json: bool,
@@ -340,13 +246,8 @@ pub enum Operation {
         path: String,
     },
     Contributors,
-    BranchContributors { branch: String },
     CommitStatistics {
         branch: String,
-        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-        raw_json: bool,
-        #[serde(default)]
-        mode: crate::backend::git::StatisticsMode,
     },
     CodeFrequency {
         branch: String,
@@ -371,31 +272,26 @@ pub enum Operation {
     },
     RenameBranch {
         old: String,
-        new: PublicationText,
+        new: String,
     },
-    #[serde(rename = "MergeUpstreamWithCredential", alias = "MergeUpstream")]
     MergeUpstream {
         source: Uuid,
         branch: String,
-        #[serde(default)]
-        token: Option<i64>,
     },
     CreateBranch {
         name: String,
-        sha: PublicationText,
+        sha: String,
     },
     DeleteBranch {
-        name: PublicationText,
+        name: String,
     },
     SetDefaultBranch {
-        name: PublicationText,
+        name: String,
     },
     TransferRepository {
-        new_owner: PublicationText,
+        new_owner: String,
     },
-    #[serde(rename = "ConfigureDependencySecurityWithAuthority", alias = "ConfigureDependencySecurity")]
     ConfigureDependencySecurity {
-        credential: crate::backend::db::users::accounts::OwnedAccountCredential,
         feature: crate::backend::db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
@@ -405,31 +301,27 @@ pub enum Operation {
         attestation: Option<crate::backend::repositories::releases::integrity::Attestation>,
     },
     PatchRepository {
-        default_branch: PublicationText,
+        default_branch: String,
         changes: crate::backend::db::repositories::records::RepositoryChanges<String>,
     },
     CreateTag {
         name: String,
-        sha: PublicationText,
+        sha: String,
         message: Option<String>,
         tagger_name: String,
         tagger_email: String,
     },
     DeleteTag {
-        name: PublicationText,
+        name: String,
     },
     PrepareFile {
         write: FileWrite,
         author: String,
         email: String,
-        #[serde(default)]
-        identities: crate::backend::repositories::store::CommitIdentities,
     },
-    #[serde(rename = "PublishFileWithAuthority", alias = "PublishFile")]
     PublishFile {
         prepared: PreparedFile,
     },
-    #[serde(rename = "PublishDependencyUpdateWithAuthority", alias = "PublishDependencyUpdate")]
     PublishDependencyUpdate {
         prepared: PreparedFile,
         publication: Box<crate::backend::db::repositories::dependencies::Publication>,
@@ -460,7 +352,6 @@ pub enum Operation {
     PublishAsyncMerge {
         request: AsyncMergePublication,
     },
-    #[serde(rename = "PublishBranchMergeWithAuthority", alias = "PublishBranchMerge")]
     PublishBranchMerge {
         publication: crate::backend::repositories::store::BranchMergePublication,
     },
@@ -471,11 +362,6 @@ pub enum Operation {
         base: String,
         result: String,
         method: MergeMethod,
-        #[serde(default)]
-        token: Option<PublicationCredential>,
-        /// The merge policy revision the merge was checked against; the publish refuses a newer one.
-        #[serde(default)]
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     },
     /// Publishes a stacked merge commit. Each head is `(head branch or pull ref, commit)`.
     PublishStackedMerge {
@@ -483,11 +369,6 @@ pub enum Operation {
         base_branch: String,
         base: String,
         result: String,
-        #[serde(default)]
-        token: Option<PublicationCredential>,
-        /// The merge policy revision the merge was checked against; the publish refuses a newer one.
-        #[serde(default)]
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     },
     /// Builds the commits of a restack: `from..head` replayed onto `onto`.
     PrepareRestack {
@@ -502,7 +383,7 @@ pub enum Operation {
     PublishRestack {
         stack_id: i64,
         versions: Vec<(i64, i64)>,
-        base_branch: PublicationText,
+        base_branch: String,
         base: String,
         moves: Vec<RestackMove>,
     },
@@ -534,13 +415,11 @@ impl Operation {
             | Self::GitTree { .. }
             | Self::GitTag { .. }
             | Self::GitObjectKind { .. }
-            | Self::IntroducedBlobs { .. }
             | Self::SidebarTrees { .. }
             | Self::TemplateTexts { .. }
             | Self::Blob { .. }
             | Self::BlobBytes { .. }
             | Self::BlobById { .. }
-            | Self::BlobByIdRange { .. }
             | Self::Commits { .. }
             | Self::CommitPage { .. }
             | Self::SearchCode { .. }
@@ -551,7 +430,6 @@ impl Operation {
             | Self::CommitsBetween { .. }
             | Self::DiffFile { .. }
             | Self::Refs
-            | Self::MatchingRefs { .. }
             | Self::Info
             | Self::CommitCount
             | Self::Tags
@@ -560,20 +438,18 @@ impl Operation {
             | Self::FilePaths { .. }
             | Self::Blame { .. }
             | Self::Contributors
-            | Self::BranchContributors { .. }
             | Self::CommitStatistics { .. }
             | Self::CodeFrequency { .. }
-            | Self::BranchStatuses { .. }
-            | Self::GistSnapshot { .. }
-            | Self::GistHistory { .. } => true,
+            | Self::BranchStatuses { .. } => true,
             Self::AdvertiseRefs { service } => *service == GitService::UploadPack,
             Self::GitSession(session) => session.service == GitService::UploadPack,
             Self::Exists
             | Self::SizeBytes
             | Self::WorkflowFiles { .. }
             | Self::PrimaryRefs
-            | Self::PrimaryLanguages { .. }
             | Self::BranchPublication { .. }
+            | Self::GistSnapshot { .. }
+            | Self::GistHistory { .. }
             | Self::PrimaryCommit { .. }
             | Self::ReleaseHistory { .. }
             | Self::ChangedPaths { .. }
@@ -585,7 +461,6 @@ impl Operation {
             Self::Initialize { .. }
             | Self::InitializeCopy { .. }
             | Self::Remove
-            | Self::Retire
             | Self::FetchPullHead { .. }
             | Self::PrepareFile { .. }
             | Self::WriteGitObject { .. }
@@ -620,7 +495,6 @@ impl Operation {
             | Self::ConfigureDependencySecurity { .. }
             | Self::CreateTag { .. }
             | Self::DeleteTag { .. }
-            | Self::RefreshStorageSize
             | Self::ReplicaPack { .. } => false,
         }
     }
@@ -632,7 +506,7 @@ pub struct CiRunAccess {
     pub worker: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Request {
     pub repository: Uuid,
     pub operation: Operation,
@@ -681,7 +555,6 @@ pub(super) fn operation_body_limit(operation: &Operation) -> usize {
         Operation::PrepareFile { .. } | Operation::SaveFile { .. } => MAX_EDITOR_BYTES,
         Operation::WriteGitObject {
             input: crate::backend::git::objects::ObjectWrite::Blob,
-            ..
         } => crate::backend::git::objects::MAX_BLOB_WRITE_BYTES,
         Operation::PrepareUpload { .. } => MAX_UPLOAD_TOTAL_BYTES,
         Operation::GistWrite { .. } => crate::backend::repositories::store::MAX_GIST_REQUEST_BYTES,
@@ -807,7 +680,6 @@ mod tests {
             text: "needle".into(),
             offset: 0,
             limit: 5,
-            raw_json: false,
         };
         assert_eq!(
             serde_json::to_value(&operation).unwrap(),
@@ -831,7 +703,7 @@ mod tests {
         assert!(request.actor.is_none());
         assert!(matches!(
             request.operation,
-            Operation::CreateBranch { name, sha: PublicationText::Legacy(sha) }
+            Operation::CreateBranch { name, sha }
                 if name == "feature" && sha == "1111111111111111111111111111111111111111"
         ));
     }
@@ -851,7 +723,6 @@ mod tests {
                 write: write.clone(),
                 author: "Author".into(),
                 email: "author@example.invalid".into(),
-                identities: Default::default(),
             }),
             MAX_EDITOR_BYTES
         );

@@ -5,14 +5,6 @@ use chrono::{DateTime, Utc};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
 
-pub(crate) const TOKEN_BYTES: usize = 32;
-pub(crate) const HEX_TOKEN_CHARS: usize = TOKEN_BYTES * 2;
-pub(crate) const URL_TOKEN_CHARS: usize = (TOKEN_BYTES * 8 + 5) / 6;
-pub(crate) const PAT_PREFIX: &str = "cy_pat_";
-pub(crate) const FGPAT_PREFIX: &str = "cy_fgpat_";
-pub(crate) const ACTIONS_PREFIX: &str = "ghs_";
-pub(crate) const INSTALLATION_PREFIX: &str = "ghs_";
-
 pub struct TokenInput<'a> {
     pub name: &'a str,
     pub scope: &'a str,
@@ -22,11 +14,6 @@ pub struct TokenInput<'a> {
 pub struct CreatedToken {
     pub token: PersonalAccessToken,
     pub value: String,
-}
-
-pub struct ActivityFeedUser {
-    pub user: crate::backend::db::models::User,
-    pub token: i64,
 }
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -42,15 +29,9 @@ pub enum TokenError {
 }
 
 pub(super) fn random_token() -> String {
-    let mut random = [0u8; TOKEN_BYTES];
+    let mut random = [0u8; 32];
     rand::rngs::OsRng.fill_bytes(&mut random);
     hex::encode(random)
-}
-
-/// Installation credentials use the hex format; Actions uses the URL-safe format with
-/// the same public prefix. Scanners must recognize both complete values.
-pub(crate) fn installation_token() -> String {
-    format!("{INSTALLATION_PREFIX}{}", random_token())
 }
 
 /// A feed credential has only read-only event access and remains bound to this API token's
@@ -80,7 +61,7 @@ pub async fn activity_feed_token(pool: &DbPool, token_id: i64) -> Result<String,
 pub async fn activity_feed_user(
     pool: &DbPool,
     value: &str,
-) -> Result<ActivityFeedUser, TokenError> {
+) -> Result<crate::backend::db::models::User, TokenError> {
     if value.len() != 69 || !value.starts_with("feed_") {
         return Err(TokenError::Denied);
     }
@@ -99,47 +80,18 @@ pub async fn activity_feed_user(
     {
         return Err(TokenError::Denied);
     }
-    Ok(ActivityFeedUser { user, token: id })
-}
-
-/// Recheck a retained token's account, organization policy and effective repository grant.
-pub(crate) async fn repository_scope(pool: &DbPool, token: i64, actor: i64, repo: i64, permission: &str, write: bool) -> anyhow::Result<bool> {
-    if !tokens::token_user(pool, token, write).await?.is_some_and(|user| user.id == actor)
-        || crate::backend::db::fine_grained_tokens::classic_refused_repository(pool, token, repo).await? {
-        return Ok(false);
-    }
-    if let Some(authority) = super::github_apps::authority(pool, token).await? {
-        return authority.allows(pool, actor, repo, permission, write).await;
-    }
-    if let Some(job) = crate::backend::db::ci_tokens::get(pool, token).await? {
-        return Ok(job.repo_id == repo && super::github_apps::allows(&serde_json::from_str(&job.permissions)?, permission, write));
-    }
-    if let Some(oauth) = crate::backend::db::oauth_apps::token(pool, token).await? {
-        if super::oauth_apps::client(pool, &oauth.client_id).await?.is_none() {
-            return Ok(false);
-        }
-        return Ok(super::oauth_apps::has_scope(&oauth.scopes, "repo") || (!write
-            && crate::backend::db::repositories::records::get_repository_by_id(pool, repo).await?.is_some_and(|repo| !repo.is_private)));
-    }
-    Ok(true)
+    Ok(user)
 }
 
 pub fn token_hash(value: &str) -> String {
     hex::encode(Sha256::digest(value.as_bytes()))
 }
 
-/// The stored form of a personal access token name, classic or fine-grained: trimmed,
-/// 1-100 characters and without control characters.
-pub fn valid_name(name: &str) -> Option<&str> {
-    let name = name.trim();
-    (!name.is_empty() && name.chars().count() <= 100 && !name.chars().any(char::is_control))
-        .then_some(name)
-}
-
 pub fn validate(input: &TokenInput<'_>, now: DateTime<Utc>) -> Result<(), TokenError> {
-    if valid_name(input.name).is_none()
+    if input.name.trim().is_empty()
+        || input.name.trim().len() > 100
+        || input.name.contains('\0')
         || !matches!(input.scope, "read" | "write")
-        || !tokens::supported_expiry(input.expires_at)
         || input.expires_at.is_some_and(|expiry| expiry <= now)
     {
         return Err(TokenError::Invalid);
@@ -157,7 +109,7 @@ pub async fn create(
 ) -> Result<CreatedToken, TokenError> {
     validate(&input, Utc::now())?;
     let session_id = session_id.ok_or(TokenError::Denied)?;
-    let value = format!("{PAT_PREFIX}{}", random_token());
+    let value = format!("cy_pat_{}", random_token());
     let token = tokens::create_token(
         pool,
         actor,

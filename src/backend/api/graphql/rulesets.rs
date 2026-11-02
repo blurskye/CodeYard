@@ -5,7 +5,7 @@ use super::{
 };
 use crate::backend::db::{
     organizations::OrganizationOutcome,
-    rulesets::{self, ListFilter, Owner, Page, Ruleset, Target},
+    rulesets::{self, ListFilter, Owner, Page, Target},
 };
 use async_graphql::Error;
 use serde_json::json;
@@ -53,7 +53,6 @@ pub(super) async fn list(
 ) -> Result<Value> {
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
     let owner = if ty == "Organization" {
-        request.authorize_organization(id).await?;
         Owner::Organization(id)
     } else {
         Owner::Repository(id)
@@ -85,41 +84,22 @@ pub(super) async fn list(
     let mut nodes = Vec::with_capacity(rows.len());
     for row in rows {
         let ruleset = row.value;
-        nodes.push(object(ruleset, request).await?);
+        let source = match ruleset.owner {
+            source if source == owner => parent.clone(),
+            Owner::Organization(org) => user::organization_by_id(org, request).await?,
+            Owner::Repository(repo) => repository::object(&repository::by_id(repo, request).await?),
+        };
+        let mut rules = Vec::with_capacity(ruleset.definition.rules.len());
+        for rule in &ruleset.definition.rules {
+            rules.push(json!({"__typename":"RepositoryRule","type":upper(rule.name())?}));
+        }
+        nodes.push(json!({"__typename":"RepositoryRuleset",
+            "id":node_id::encode("RRS",ruleset.id),"databaseId":ruleset.id,
+            "name":ruleset.definition.name,"target":upper(ruleset.definition.target)?,
+            "enforcement":upper(ruleset.definition.enforcement)?,"source":source,
+            "createdAt":ruleset.created_at,"updatedAt":ruleset.updated_at,"_rules":rules}));
     }
     connection::slice(ctx, nodes)
-}
-
-pub(super) async fn node(id: i64, request: &RequestContext) -> Result<Value> {
-    let (repo, org) = super::db::graphql::ruleset_owner(&request.state.pool, id).await.map_err(unavailable)?.ok_or_else(missing)?;
-    let owner = match (repo, org) {
-        (Some(repo), None) => { request.authorize(repo, "metadata", false).await?; Owner::Repository(repo) }
-        (None, Some(org)) => { request.authorize_organization(org).await?; Owner::Organization(org) }
-        _ => return Err(missing()),
-    };
-    match rulesets::get_ruleset(&request.state.pool, Some(request.auth.user.id), owner, id, false).await.map_err(unavailable)? {
-        OrganizationOutcome::Applied(row) => object(row.value, request).await,
-        _ => Err(missing()),
-    }
-}
-
-async fn object(ruleset: Ruleset, request: &RequestContext) -> Result<Value> {
-    let source = match ruleset.owner {
-        Owner::Organization(org) => { request.authorize_organization(org).await?; user::organization_by_id(org, request).await? }
-        Owner::Repository(repo) => repository::object(&repository::by_id(repo, request).await?),
-    };
-    let mut rules = Vec::with_capacity(ruleset.definition.rules.len());
-    for rule in &ruleset.definition.rules {
-        rules.push(json!({"__typename":"RepositoryRule","type":upper(rule.name())?}));
-    }
-    let mut value = json!({"__typename":"RepositoryRuleset","id":node_id::encode("RRS",ruleset.id),"databaseId":ruleset.id,
-        "name":ruleset.definition.name,"target":upper(ruleset.definition.target)?,"enforcement":upper(ruleset.definition.enforcement)?,
-        "source":source,"createdAt":ruleset.created_at,"updatedAt":ruleset.updated_at,"_rules":rules});
-    match ruleset.owner {
-        Owner::Repository(repo) => { value["_repo"] = json!(repo); value["_scope"] = json!("metadata"); }
-        Owner::Organization(org) => { value["_ownerKind"] = json!("org"); value["_owner"] = json!(org); }
-    }
-    Ok(value)
 }
 
 /// The rules of one listed ruleset, optionally narrowed to one rule type.

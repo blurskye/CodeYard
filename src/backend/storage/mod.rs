@@ -1,13 +1,12 @@
 //! Where uploaded files live: a directory under the state directory, or an
 //! S3-compatible bucket when the S3_* environment variables are set.
 pub mod local;
-pub mod range;
 pub mod s3;
 
 use anyhow::Result;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::io::AsyncRead;
 use tokio::sync::{OwnedMutexGuard, OwnedSemaphorePermit, Semaphore};
@@ -66,11 +65,10 @@ enum Backend {
 }
 
 pub struct ObjectStore {
-    state_dir: std::path::PathBuf,
     backend: Backend,
     io: Arc<Semaphore>,
     downloads: Arc<Semaphore>,
-    file_locks: crate::backend::locks::KeyedMutex<String>,
+    file_locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
 }
 
 impl ObjectStore {
@@ -80,15 +78,12 @@ impl ObjectStore {
             None => Backend::Local(local::LocalStore::open(&state_dir.join("objects")).await?),
         };
         Ok(Self {
-            state_dir: std::path::absolute(state_dir)?,
             backend,
             io: Arc::new(Semaphore::new(IO_SLOTS)),
             downloads: Arc::new(Semaphore::new(DOWNLOAD_SLOTS)),
-            file_locks: Default::default(),
+            file_locks: Mutex::new(HashMap::new()),
         })
     }
-
-    pub(crate) fn state_directory(&self) -> &Path { &self.state_dir }
 
     /// Start-up check for S3: waits for the store to answer (compose starts it in parallel)
     /// and creates the bucket on first start. Local storage has nothing to prepare.
@@ -100,12 +95,12 @@ impl ObjectStore {
         loop {
             match store.ensure_bucket().await {
                 Ok(()) => return Ok(()),
-                Err(error) if attempt < 10 => {
-                    tracing::warn!(attempt, error = %error, "S3 bucket preparation unavailable");
+                Err(_) if attempt < 10 => {
+                    tracing::warn!(attempt, "S3 bucket preparation unavailable");
                     tokio::time::sleep(Duration::from_secs(3)).await;
                     attempt += 1;
                 }
-                Err(error) => return Err(error.context("S3 bucket preparation failed")),
+                Err(_) => anyhow::bail!("S3 bucket preparation failed"),
             }
         }
     }
@@ -131,7 +126,15 @@ impl ObjectStore {
         if !valid_key(key) {
             return Err(StorageError::Invalid);
         }
-        Ok(self.file_locks.lock(key.to_owned()).await)
+        let lock = {
+            let mut locks = self
+                .file_locks
+                .lock()
+                .unwrap_or_else(|poison| poison.into_inner());
+            locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+            locks.entry(key.to_owned()).or_default().clone()
+        };
+        Ok(lock.lock_owned().await)
     }
 
     /// An I/O slot, or `Unavailable` at once when every slot is busy. Nothing waits for a
@@ -168,7 +171,7 @@ impl ObjectStore {
                 let signed = store
                     .presigned_put(upload, expires_in)
                     .await
-                    .map_err(|error| { tracing::warn!(%error, "S3 upload signing failed"); StorageError::Unavailable })?;
+                    .map_err(|_| StorageError::Unavailable)?;
                 Ok(UploadTarget {
                     url: signed.url,
                     headers: signed.headers,
@@ -180,13 +183,13 @@ impl ObjectStore {
 
     /// Stores bytes sent to this server (local storage only), checking size,
     /// checksum and file signature on the way in.
-    pub(crate) async fn stage_local(
+    pub async fn put_local(
         &self,
         upload: &Upload<'_>,
         reader: impl AsyncRead + Unpin,
-    ) -> Result<local::StagedUpload, StorageError> {
+    ) -> Result<(), StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.stage(upload, reader, Arc::new(self.try_acquire_io()?)).await,
+            Backend::Local(store) => store.put(upload, reader).await,
             Backend::S3(_) => Err(StorageError::Rejected),
         }
     }
@@ -196,9 +199,9 @@ impl ObjectStore {
     /// storage is in use.
     pub async fn put_bytes(&self, upload: &Upload<'_>, bytes: Vec<u8>) -> Result<(), StorageError> {
         match &self.backend {
-            Backend::Local(store) => store.put(upload, bytes.as_slice(), Arc::new(self.try_acquire_io()?)).await,
+            Backend::Local(store) => store.put(upload, bytes.as_slice()).await,
             Backend::S3(store) => store
-                .put_object(upload, bytes, Arc::new(self.try_acquire_io()?))
+                .put_object(upload, bytes)
                 .await
                 .map_err(|_| StorageError::Unavailable),
         }
@@ -230,43 +233,6 @@ impl ObjectStore {
                     .await
                     .map_err(|_| StorageError::Unavailable)?,
             )),
-        }
-    }
-
-    /// Reads exactly the declared object length through one bounded response.
-    pub async fn read_object(&self, key: &str, length: usize) -> Result<Vec<u8>, StorageError> {
-        if !valid_key(key) || length > MAX_OBJECT_BYTES as usize { return Err(StorageError::Invalid); }
-        match &self.backend {
-            Backend::S3(store) => store.read_object(key, length).await.map_err(|_| StorageError::Unavailable),
-            Backend::Local(store) => {
-                use tokio::io::AsyncReadExt;
-                let (file, actual) = store.open_file(key).await?;
-                if actual != length as u64 { return Err(StorageError::Rejected); }
-                let mut bytes = Vec::with_capacity(length.min(64 * 1024));
-                file.take(length as u64 + 1).read_to_end(&mut bytes).await?;
-                if bytes.len() != length { return Err(StorageError::Rejected); }
-                Ok(bytes)
-            }
-        }
-    }
-
-    /// Opens one object range; callers retain the reader and bound each read and send.
-    pub async fn open_range(
-        &self, key: &str, offset: u64, length: u64,
-    ) -> Result<Box<dyn AsyncRead + Unpin + Send>, StorageError> {
-        use tokio::io::{AsyncReadExt, AsyncSeekExt};
-        if !valid_key(key) || length == 0 || offset.checked_add(length).is_none() {
-            return Err(StorageError::Invalid);
-        }
-        match &self.backend {
-            Backend::Local(store) => {
-                let (mut file, size) = store.open_file(key).await?;
-                if offset + length > size { return Err(StorageError::Rejected); }
-                file.seek(std::io::SeekFrom::Start(offset)).await?;
-                Ok(Box::new(file.take(length)))
-            }
-            Backend::S3(store) => store.open_range(key, offset, length).await
-                .map_err(|_| StorageError::Unavailable),
         }
     }
 
@@ -319,10 +285,6 @@ impl ObjectStore {
     }
 }
 
-pub(crate) fn valid_basename(name: &str, limit: usize) -> bool {
-    !name.is_empty() && name.len() <= limit && !matches!(name, "." | "..") && !name.contains(['/', '\\']) && !name.chars().any(char::is_control)
-}
-
 pub(crate) fn attachment_disposition(filename: &str) -> String {
     // A declared name is not a filesystem path or a raw HTTP header value.
     let name = filename
@@ -344,8 +306,7 @@ pub(crate) fn attachment_disposition(filename: &str) -> String {
             }
         })
         .collect();
-    let fallback: String = name.chars().map(|character| if character.is_ascii_alphanumeric() || " ._-".contains(character) { character } else { '_' }).collect();
-    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
+    format!("attachment; filename*=UTF-8''{encoded}")
 }
 
 /// Whether the first bytes match the declared image/PDF type, so a page can't

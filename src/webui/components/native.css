@@ -570,7 +570,7 @@ body {
 .site-navigation > .native-menu-panel { left: 0; right: auto; }
 /* The header stays put, so a menu taller than a short window scrolls inside itself. */
 .site-header .native-menu-panel { max-height: calc(100dvh - var(--site-header-height) - 16px); overflow-y: auto; }
-.site-header .repo-tabs-more > .native-menu-panel, .site-header .repo-watch-menu > .native-menu-panel { max-height: calc(100dvh - 140px); }
+.site-header .repo-tabs-more > .native-menu-panel { max-height: calc(100dvh - 140px); }
 /* A panel clips its corners, which would also clip a select's list opened inside it. */
 .native-menu-panel:has(.app-select-list) { overflow: visible; }
 .site-menu-heading {
@@ -818,15 +818,15 @@ body {
    A dialog taller than the screen scrolls inside its card. */
 .repo-delete-menu > summary { list-style: none; text-align: right; }
 .repo-delete-menu > summary::-webkit-details-marker { display: none; }
-.repo-confirm-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; width: 100%; height: 100%; max-width: none; max-height: none; margin: 0; border: 0; background: transparent; color: inherit; padding: 16px; animation: repo-confirm-in .15s ease; }
+.repo-confirm-modal { position: fixed; inset: 0; z-index: 60; display: grid; place-items: center; padding: 16px; animation: repo-confirm-in .15s ease; }
 /* A dialog with an id is shown by its fragment, for pages that have no disclosure widgets. */
 .repo-confirm-modal[id]:not(:target) { display: none; }
 .repo-confirm-backdrop { position: absolute; inset: 0; background: #000a; cursor: default; }
 .repo-confirm-card { position: relative; display: grid; gap: 12px; width: min(400px, 100%); max-height: calc(100vh - 32px); max-height: calc(100dvh - 32px); overflow-y: auto; overflow-wrap: anywhere; padding: 20px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); box-shadow: 0 24px 70px #0009; text-align: left; white-space: normal; }
 .repo-confirm-card p { color: var(--muted-foreground); font-size: 13px; }
-.repo-confirm-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.repo-confirm-actions { display: flex; justify-content: flex-end; gap: 8px; }
 @keyframes repo-confirm-in { from { opacity: 0; } }
-.repo-ref-create { position: sticky; top: calc(var(--site-header-height) + var(--repo-tabs-height) + 16px); }
+.repo-ref-create { position: sticky; top: 16px; }
 
 .repo-alert { padding: 12px 16px; border: 1px solid var(--border); border-radius: 6px; overflow-wrap: anywhere; }
 .repo-alert strong { display: block; }
@@ -843,7 +843,7 @@ body {
    together without script. Long lines scroll inside the field instead of wrapping. */
 .repo-code-editor-body { display: grid; grid-template-columns: auto minmax(0, 1fr); max-height: 75vh; overflow-y: auto; }
 .repo-code-editor-gutter { margin: 0; padding: 8px 10px; border-right: 1px solid var(--border); background: var(--muted); color: var(--muted-foreground); font: 13px/20px ui-monospace, monospace; text-align: right; user-select: none; }
-.repo-content textarea.repo-editor-textarea { display: block; width: 100%; padding: 8px 12px; border: 0; border-radius: 0; outline-offset: -2px; background: var(--background); font: 13px/20px ui-monospace, monospace; resize: none; overflow-x: auto; overflow-y: auto; white-space: pre; overflow-wrap: normal; tab-size: 4; }
+.repo-content textarea.repo-editor-textarea { display: block; width: 100%; padding: 8px 12px; border: 0; border-radius: 0; outline-offset: -2px; background: var(--background); font: 13px/20px ui-monospace, monospace; resize: none; overflow-x: auto; overflow-y: hidden; white-space: pre; overflow-wrap: normal; tab-size: 4; }
 .repo-editor-stack { position: relative; min-width: 0; background: var(--background); }
 /* The highlight exists only after hydration. Its box matches the field's: the field keeps the 1px
    border and 14px text that style.css gives it, with the 8px 12px padding and 20px lines above. */
@@ -1437,12 +1437,12 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .collaboration-split-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
 .collaboration-split-cell { display: flex; min-width: 0; overflow-x: auto; white-space: pre; }
 .collaboration-split-row > .collaboration-split-cell:first-child { border-right: 1px solid var(--border); }
-.collaboration-split-cell .patch-number { flex: none; width: max(48px, calc(var(--patch-digits, 4) * 1ch + 16px)); padding: 0 8px; text-align: right; color: var(--muted-foreground); user-select: none; }
+.collaboration-split-cell .patch-number { flex: none; width: 48px; padding: 0 8px; text-align: right; color: var(--muted-foreground); user-select: none; }
 .collaboration-split-cell > .patch-add { flex: none; }
 /* The text takes the rest of the half cell, so an added or removed line is tinted across it. */
 .collaboration-split-cell > span { flex: 1 0 auto; }
 .collaboration-split-empty { background: var(--muted, transparent); }
-.collaboration-split-wide { display: block; overflow-x: auto; }
+.collaboration-split-wide { display: block; }
 .collaboration-split-wide > span { display: block; padding: 0 12px; white-space: pre; }
 /* On a phone the two sides stack: a removed line, then its added line, reads as the unified diff.
    The mirrored right side of a context line and the blank sides are hidden. */
@@ -1524,7 +1524,6 @@ label input:not([type="submit"]):not([type="button"]), label select, label texta
 .notification-main { min-width: 0; flex: 1; }
 .notification-title { margin: 0; font-size: 14px; font-weight: 600; line-height: 20px; overflow-wrap: anywhere; }
 .notification-link { color: var(--foreground); text-decoration: none; }
-button.notification-link { padding: 0; border: 0; background: none; font: inherit; text-align: inherit; cursor: pointer; }
 .notification-link::after { content: ""; position: absolute; inset: 0; }
 .notification-link:hover { text-decoration: underline; }
 .notification-preview { margin: 4px 0 0; color: var(--muted-foreground); font-size: 14px; line-height: 20px; overflow-wrap: anywhere; }
@@ -1634,7 +1633,7 @@ button.notification-link { padding: 0; border: 0; background: none; font: inheri
   z-index: 40;
   top: calc(100% + 4px);
   left: 0;
-  width: 100%;
+  min-width: 100%;
   max-width: calc(100vw - 32px);
   max-height: 280px;
   overflow-y: auto;
@@ -1755,7 +1754,7 @@ button.notification-link { padding: 0; border: 0; background: none; font: inheri
 .language-block { display: grid; gap: 10px; min-width: 0; }
 .language-heading { margin: 0 0 8px; font-size: 13px; font-weight: 600; color: var(--foreground); }
 .language-bar { display: flex; height: 8px; overflow: hidden; border-radius: 999px; background: var(--border); }
-.language-bar-segment { flex: 0 0 auto; height: 100%; }
+.language-bar-segment { flex: 0 0 auto; height: 100%; min-width: 2px; }
 .language-legend { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 6px 12px; margin: 0; padding: 0; list-style: none; font-size: 12px; }
 .language-legend li { display: flex; align-items: center; gap: 6px; min-width: 0; }
 .language-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

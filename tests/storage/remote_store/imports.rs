@@ -111,7 +111,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
         let mut forged = import.clone();
         forged.refs.insert(forbidden.into(), tip.clone());
         assert!(remote
-            .import_git_as(&database.pool, repository.id, owner.id, forged, pack.clone())
+            .import_git_as(&database.pool, repository.id, owner.id, forged, &pack)
             .await
             .is_err());
         assert!(local.mirror_refs().await.unwrap().is_empty());
@@ -122,7 +122,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
             repository.id,
             owner.id,
             import.clone(),
-            pack.clone(),
+            &pack,
         )
         .await
         .unwrap();
@@ -154,7 +154,7 @@ async fn remote_imports_attest_the_importer_and_reject_foreign_provenance() {
     // A refused subsequent import does not generate a different publisher epoch.
     import.generation = Uuid::new_v4().to_string();
     assert!(remote
-        .import_git_as(&database.pool, repository.id, owner.id, import, pack)
+        .import_git_as(&database.pool, repository.id, owner.id, import, &pack)
         .await
         .is_err());
     assert_eq!(

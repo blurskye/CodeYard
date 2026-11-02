@@ -11,7 +11,12 @@ use crate::backend::{
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::{cmp::Ordering, io::Read, sync::Arc, time::Duration};
+use std::{
+    cmp::Ordering,
+    io::{Cursor, Read},
+    sync::Arc,
+    time::Duration,
+};
 
 pub const ECOSYSTEMS: &[&str] = &[
     "npm",
@@ -138,20 +143,7 @@ pub struct Range {
     #[serde(default)]
     pub events: Vec<Value>,
 }
-pub(crate) const MAX_AFFECTED_PACKAGES: usize = 2000;
-
-/// The validated catalogue projection paired with its original OSV record.
-pub struct PreparedAdvisory {
-    pub(crate) advisory: Advisory,
-    pub(crate) document: Value,
-}
-
 impl Advisory {
-    pub fn prepare(self) -> Result<PreparedAdvisory> {
-        let document = self.global_document()?;
-        Ok(PreparedAdvisory { advisory: self, document })
-    }
-
     pub fn parse(bytes: &[u8]) -> Result<Self> {
         ensure!(
             bytes.len() <= 4 * 1024 * 1024,
@@ -162,8 +154,7 @@ impl Advisory {
             !record.id.is_empty()
                 && record.id.len() <= 256
                 && !record.id.chars().any(char::is_control)
-                && record.affected.len() <= MAX_AFFECTED_PACKAGES
-                && record.affected.iter().all(|affected| !affected.package.name.contains('\0') && !affected.package.ecosystem.contains('\0')),
+                && record.affected.len() <= 2000,
             "Invalid OSV record"
         );
         Ok(record)
@@ -193,7 +184,6 @@ impl Advisory {
                 .iter()
                 .filter(|r| matches!(r.r#type.as_str(), "SEMVER" | "ECOSYSTEM"))
                 .any(|range| {
-                    let ecosystem = if range.r#type == "SEMVER" { "SEMVER" } else { ecosystem };
                     let mut introduced = None;
                     for event in &range.events {
                         if let Some(start) = event["introduced"].as_str() {
@@ -273,30 +263,22 @@ impl Advisory {
         }
         "unknown".into()
     }
-    pub fn catalogue_id(&self) -> String {
-        use sha2::{Digest, Sha256};
-        if let Some(id) = self.aliases.iter().chain(std::iter::once(&self.id)).find(|id| id.starts_with("GHSA-")) {
-            return id.clone();
-        }
-        let hash = Sha256::digest(self.id.as_bytes());
-        let alphabet = b"23456789cfghjmpqrvwx";
-        let id: String = hash[..12].iter().map(|b| alphabet[*b as usize % alphabet.len()] as char).collect();
-        format!("GHSA-{}-{}-{}", &id[..4], &id[4..8], &id[8..])
-    }
-
     pub fn global_document(&self) -> Result<Value> {
+        use sha2::{Digest, Sha256};
         let mut value = self.document();
-        value["ghsa_id"] = json!(self.catalogue_id());
+        if value["ghsa_id"].is_null() {
+            // OSV records without a GHSA alias need a stable local catalogue identity.
+            let hash = Sha256::digest(self.id.as_bytes());
+            let alphabet = b"23456789cfghjmpqrvwx";
+            let id: String = hash[..12]
+                .iter()
+                .map(|b| alphabet[*b as usize % alphabet.len()] as char)
+                .collect();
+            value["ghsa_id"] = json!(format!("GHSA-{}-{}-{}", &id[..4], &id[4..8], &id[8..]));
+        }
         if self.summary.trim().is_empty() {
             value["summary"] = json!(self.id);
         }
-        let bounded = |text: &str, limit: usize| {
-            let mut end = text.len().min(limit);
-            while !text.is_char_boundary(end) { end -= 1; }
-            text[..end].to_owned()
-        };
-        value["summary"] = json!(bounded(value["summary"].as_str().unwrap_or(&self.id), 1024));
-        value["description"] = json!(bounded(&self.details, 65535));
         value["published_at"] = json!(self.published.unwrap_or(self.modified));
         value["references"] = json!(self
             .references
@@ -306,38 +288,41 @@ impl Advisory {
         if value["cvss"]["vector_string"].is_null() {
             value["cvss"] = Value::Null;
         }
-        let mut vulnerabilities = Vec::new();
-        for affected in &self.affected {
-            let ecosystem = match affected.package.ecosystem.as_str() {
-                "crates.io" => "rust", "PyPI" => "pip", "Go" => "go",
-                "RubyGems" => "rubygems", "Packagist" => "composer", "Maven" => "maven",
-                "NuGet" => "nuget", "Pub" => "pub", "Hex" => "hex", other => other,
-            };
-            let mut entry = |range: String, patched: Option<&str>, kind: &str| {
-                vulnerabilities.push(json!({"package":{"ecosystem":ecosystem,"name":affected.package.name},"vulnerable_version_range":range,"first_patched_version":patched,"vulnerable_functions":[],"osv_range_type":kind}));
-            };
-            for version in &affected.versions {
-                entry(format!("= {version}"), None, "ECOSYSTEM");
-            }
+        value["vulnerabilities"] = json!(self.affected.iter().map(|affected| {
+            let mut ranges: Vec<String> = affected.versions.iter().map(|v| format!("= {v}")).collect();
             for range in &affected.ranges {
-                if !matches!(range.r#type.as_str(), "SEMVER" | "ECOSYSTEM") { continue; }
+                if !matches!(range.r#type.as_str(), "SEMVER" | "ECOSYSTEM") {
+                    continue;
+                }
                 let mut lower = None;
                 for event in &range.events {
                     if let Some(start) = event["introduced"].as_str() {
                         lower = Some(format!(">= {start}"));
                     } else if let Some(start) = lower.take() {
                         if let Some(end) = event["fixed"].as_str().or_else(|| event["limit"].as_str()) {
-                            entry(format!("{start}, < {end}"), event["fixed"].as_str(), &range.r#type);
+                            ranges.push(format!("{start}, < {end}"));
                         } else if let Some(end) = event["last_affected"].as_str() {
-                            entry(format!("{start}, <= {end}"), None, &range.r#type);
+                            ranges.push(format!("{start}, <= {end}"));
                         }
                     }
                 }
-                if let Some(start) = lower { entry(start, None, &range.r#type); }
+                if let Some(start) = lower { ranges.push(start); }
             }
-        }
-        value["vulnerabilities"] = json!(vulnerabilities);
-        db::dependabot_alerts::osv_document(&value)
+            let ecosystem = match affected.package.ecosystem.as_str() {
+                "crates.io" => "rust", "PyPI" => "pip", "Go" => "go",
+                "RubyGems" => "rubygems", "Packagist" => "composer", "Maven" => "maven",
+                "NuGet" => "nuget", "Pub" => "pub", "Hex" => "hex", other => other,
+            };
+            // A GIT range's fix is a commit ID, not a package version.
+            let patched = affected
+                .ranges
+                .iter()
+                .filter(|r| matches!(r.r#type.as_str(), "SEMVER" | "ECOSYSTEM"))
+                .flat_map(|r| &r.events)
+                .find_map(|e| e["fixed"].as_str());
+            json!({"package":{"ecosystem":ecosystem,"name":affected.package.name},"vulnerable_version_range":if ranges.is_empty() {"unknown".into()} else {ranges.join(" || ")},"first_patched_version":patched,"vulnerable_functions":[]})
+        }).collect::<Vec<_>>());
+        db::dependabot_alerts::import_document(&value)
     }
     pub fn document(&self) -> Value {
         let ghsa = self
@@ -354,16 +339,13 @@ impl Advisory {
             .severity
             .iter()
             .find_map(|s| s["score"].as_str().filter(|s| s.starts_with("CVSS:3.")));
-        let vector = vector.filter(|s| db::advisories::cvss_score(s).is_ok());
         let score = vector.and_then(|s| db::advisories::cvss_score(s).ok());
         json!({"ghsa_id":ghsa,"cve_id":cve,"summary":self.summary,"description":self.details,"severity":self.severity(),"identifiers":self.aliases.iter().chain(std::iter::once(&self.id)).filter(|id|id.starts_with("CVE-")||id.starts_with("GHSA-")).map(|id|json!({"type":if id.starts_with("CVE-"){"CVE"}else{"GHSA"},"value":id})).collect::<Vec<_>>(),"references":self.references.iter().filter_map(|r|r["url"].as_str().map(|url|json!({"url":url}))).collect::<Vec<_>>(),"published_at":self.published,"updated_at":self.modified,"withdrawn_at":self.withdrawn,"vulnerabilities":[],"cvss":{"score":score,"vector_string":vector},"cwes":[]})
     }
 }
 
 pub async fn ingest(pool: &db::DbPool, bytes: &[u8]) -> Result<bool> {
-    let bytes = bytes.to_vec();
-    let record = tokio::task::spawn_blocking(move || Advisory::parse(&bytes)?.prepare()).await??;
-    let changed = db::vulnerabilities::upsert(pool, &record).await?;
+    let changed = db::vulnerabilities::upsert(pool, &Advisory::parse(bytes)?).await?;
     if changed {
         db::vulnerabilities::rescan_all(pool).await?;
     }
@@ -389,9 +371,8 @@ pub async fn findings(pool: &db::DbPool, package: &Package) -> Result<Vec<Adviso
         .collect()
 }
 pub async fn scan(state: &AppState, repo: &db::models::Repository, generation: i64) -> Result<()> {
-    let reader = db::dependency_graph::Reader::Scan(generation);
     let reference = format!("refs/heads/{}", repo.default_branch);
-    let (sha, packages) = match dependency_graph::native_inventory(state, &reader, repo, &reference).await {
+    let (sha, packages) = match dependency_graph::native_inventory(state, repo, &reference).await {
         Ok(result) => result,
         Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
             return Ok(())
@@ -415,9 +396,7 @@ pub async fn synchronize(
         .timeout(Duration::from_secs(300))
         .redirect(reqwest::redirect::Policy::none())
         .build()?;
-    let mut failures = Vec::new();
     for ecosystem in enabled {
-        let result = async {
         ensure!(
             ECOSYSTEMS.contains(&ecosystem.as_str()),
             "Unknown OSV ecosystem"
@@ -436,8 +415,9 @@ pub async fn synchronize(
             );
             bytes.extend_from_slice(&chunk);
         }
-        let records = tokio::task::spawn_blocking(move || -> Result<Vec<PreparedAdvisory>> {
-            let mut archive = crate::backend::zip_archives::open(bytes, 1_000_000)?;
+        let records = tokio::task::spawn_blocking(move || -> Result<Vec<Advisory>> {
+            let mut archive = zip::ZipArchive::new(Cursor::new(bytes))?;
+            ensure!(archive.len() <= 1_000_000, "Too many OSV records");
             let mut records = Vec::new();
             let mut expanded = 0u64;
             for i in 0..archive.len() {
@@ -449,18 +429,18 @@ pub async fn synchronize(
                     entry.size() <= 4 * 1024 * 1024,
                     "OSV record exceeds its limit"
                 );
-                let declared = entry.size();
+                expanded += entry.size();
+                ensure!(
+                    expanded <= 2 * 1024 * 1024 * 1024,
+                    "Expanded OSV archive exceeds its limit"
+                );
                 let mut bytes = Vec::new();
-                let remaining = (2u64 * 1024 * 1024 * 1024).saturating_sub(expanded);
                 entry
                     .by_ref()
-                    .take((4 * 1024 * 1024 + 1).min(remaining.saturating_add(1)))
+                    .take(4 * 1024 * 1024 + 1)
                     .read_to_end(&mut bytes)?;
-                expanded = expanded.checked_add(bytes.len() as u64).ok_or_else(|| anyhow::anyhow!("Expanded OSV archive exceeds its limit"))?;
-                ensure!(expanded <= 2 * 1024 * 1024 * 1024, "Expanded OSV archive exceeds its limit");
-                ensure!(bytes.len() as u64 == declared, "OSV archive entry size mismatch");
                 // One record the catalogue cannot hold must not stop the rest of the archive.
-                match Advisory::parse(&bytes).and_then(Advisory::prepare) {
+                match Advisory::parse(&bytes) {
                     Ok(record) => records.push(record),
                     Err(error) => {
                         tracing::warn!(entry = entry.name(), %error, "OSV record was skipped")
@@ -473,23 +453,19 @@ pub async fn synchronize(
         // Repositories are rescanned once per archive, not once per changed record.
         let mut changed = false;
         for record in records {
+            if let Err(error) = record.global_document() {
+                tracing::warn!(advisory = %record.id, %error, "OSV record was skipped");
+                continue;
+            }
             changed |= db::vulnerabilities::upsert(pool, &record).await?;
         }
         if changed {
             db::vulnerabilities::rescan_all(pool).await?;
         }
-        Ok::<_, anyhow::Error>(())
-        }.await;
-        if let Err(error) = result {
-            tracing::warn!(%ecosystem, %error, "OSV ecosystem synchronization failed");
-            failures.push(ecosystem);
-        }
     }
-    ensure!(failures.is_empty(), "OSV synchronization failed for {}", failures.join(", "));
     Ok(())
 }
 pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bool>) {
-    let mut discovered = false;
     let mut interval = tokio::time::interval(Duration::from_secs(30));
     interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -500,10 +476,7 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
                     tracing::warn!(%error,"OSV synchronization failed");
                 }
             }
-            if !discovered {
-                db::vulnerabilities::queue_changed(&state.pool).await?;
-                discovered = true;
-            }
+            db::vulnerabilities::queue_changed(&state.pool).await?;
             for _ in 0..20 {
                 let Some((repo, generation)) = db::vulnerabilities::claim(&state.pool).await?
                 else {
@@ -512,10 +485,8 @@ pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bo
                 if let Some(repo) =
                     db::repositories::records::get_repository_by_id(&state.pool, repo).await?
                 {
-                    match tokio::time::timeout(Duration::from_secs(540), scan(&state, &repo, generation)).await {
-                        Ok(Ok(())) => {}
-                        Ok(Err(error)) => tracing::warn!(repo_id=repo.id,%error,"Dependency vulnerability scan failed"),
-                        Err(_) => tracing::warn!(repo_id=repo.id,"Dependency vulnerability scan exceeded its lease budget"),
+                    if let Err(error) = scan(&state, &repo, generation).await {
+                        tracing::warn!(repo_id=repo.id,%error,"Dependency vulnerability scan failed");
                     }
                 }
             }
@@ -574,11 +545,11 @@ mod tests {
             std::slice::from_ref(&snapshot),
             std::slice::from_ref(&document),
             &osv,
-        ).unwrap();
+        );
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0].0.version, "1.0rc1");
         osv.values_mut().next().unwrap().withdrawn = Some(chrono::Utc::now());
-        assert!(db::dependabot_alerts::matches(&[snapshot], &[document], &osv).unwrap().is_empty());
+        assert!(db::dependabot_alerts::matches(&[snapshot], &[document], &osv).is_empty());
     }
     #[test]
     fn local_maven_advisories_match_namespaced_package_urls() {
@@ -599,7 +570,7 @@ mod tests {
             &[snapshot],
             &[document],
             &std::collections::BTreeMap::new(),
-        ).unwrap();
+        );
         assert_eq!(matches.len(), 1);
     }
     #[test]

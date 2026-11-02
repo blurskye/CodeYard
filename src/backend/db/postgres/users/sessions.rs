@@ -179,7 +179,6 @@ pub async fn rotate_authenticated_session(
     user_id: i64,
     credential: crate::backend::db::users::sessions::SessionCredential<'_>,
     user_agent: Option<&str>,
-    ip_address: Option<&str>,
     expires_at: DateTime<Utc>,
 ) -> Result<Option<BrowserSession>> {
     if !is_hex_token(fresh, 64) || old == Some(fresh) {
@@ -295,8 +294,8 @@ pub async fn rotate_authenticated_session(
     if collision {
         anyhow::bail!("Fresh session identifier collision");
     }
-    let session = sqlx::query_as::<_, BrowserSession>("INSERT INTO sessions (id,user_id,user_agent,ip_address,expires_at) VALUES ($1,$2,$3,$4::inet,LEAST($5,clock_timestamp()+INTERVAL '365 days')) RETURNING id,user_id,expires_at,created_at")
-        .bind(fresh).bind(user_id).bind(user_agent).bind(ip_address).bind(expires_at).fetch_one(&mut *tx).await?;
+    let session = sqlx::query_as::<_, BrowserSession>("INSERT INTO sessions (id,user_id,user_agent,expires_at) VALUES ($1,$2,$3,LEAST($4,clock_timestamp()+INTERVAL '365 days')) RETURNING id,user_id,expires_at,created_at")
+        .bind(fresh).bind(user_id).bind(user_agent).bind(expires_at).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(Some(session))
 }
@@ -422,8 +421,8 @@ pub async fn get_or_create_csrf_token(
 /// can run above this until the next sweep.
 const MAX_ANONYMOUS_SESSIONS: i64 = 100_000;
 
-/// Deletes expired sessions, anonymous sessions, OAuth states and GitHub App tokens, and
-/// clears the password verifier of each processed signup request. An approved request's
+/// Deletes expired sessions, anonymous sessions and OAuth states, and clears the
+/// password verifier of each processed signup request. An approved request's
 /// account already holds the hash it needs, and a rejected one never needs it.
 /// Expiry selects only rows with `expires_at <= now`, the exact complement of the
 /// validity checks above. Then anonymous sessions are capped at
@@ -432,14 +431,10 @@ const MAX_ANONYMOUS_SESSIONS: i64 = 100_000;
 /// rows and commits on its own, so no transaction spans the sweep.
 pub async fn remove_expired_identity_rows(pool: &PgPool) -> Result<u64> {
     const BATCH: i64 = 500;
-    const STATEMENTS: [&str; 6] = [
+    const STATEMENTS: [&str; 4] = [
         "DELETE FROM anonymous_sessions WHERE id IN (SELECT id FROM anonymous_sessions WHERE expires_at <= statement_timestamp() LIMIT $1)",
         "DELETE FROM sessions WHERE id IN (SELECT id FROM sessions WHERE expires_at <= statement_timestamp() LIMIT $1)",
         "DELETE FROM oauth_states WHERE state IN (SELECT state FROM oauth_states WHERE expires_at <= statement_timestamp() LIMIT $1)",
-        // An App token lives an hour; its App and OAuth rows go with it by cascade.
-        "DELETE FROM personal_access_tokens WHERE id IN (SELECT t.id FROM personal_access_tokens t JOIN github_app_tokens g ON g.token_id=t.id WHERE t.expires_at <= statement_timestamp() LIMIT $1)",
-        // Job credentials retain only the one-minute completion grace, never the run's history.
-        "DELETE FROM personal_access_tokens WHERE id IN (SELECT g.token_id FROM actions_github_tokens g JOIN ci_runs r ON r.id=g.run_id WHERE g.revoked_at<FLOOR(EXTRACT(EPOCH FROM statement_timestamp()))::bigint-60 OR r.completed_at<statement_timestamp()-INTERVAL '1 minute' LIMIT $1)",
         "UPDATE signup_requests SET password_hash = '' WHERE id IN (SELECT id FROM signup_requests WHERE status <> 'pending' AND password_hash <> '' LIMIT $1)",
     ];
     let mut changed = 0;
@@ -498,15 +493,6 @@ pub async fn keep_newest_anonymous_sessions(pool: &PgPool, cap: i64) -> Result<u
         }
     }
     Ok(removed as u64)
-}
-
-pub async fn session_page(pool: &PgPool, user: i64, current: &str, before: i64) -> Result<Vec<crate::backend::db::users::sessions::SessionPageRow>> {
-    let mut tx = pool.begin().await?;
-    super::transitions::require_account(&mut tx, user, &crate::backend::db::users::accounts::AccountCredential::Session(current)).await?;
-    let rows = sqlx::query_as("SELECT id,user_id,user_agent,ip_address::text AS ip_address,expires_at,created_at,ordinal FROM sessions WHERE user_id=$1 AND expires_at>clock_timestamp() AND ($2<=0 OR ordinal<=$2) ORDER BY ordinal DESC LIMIT 101")
-        .bind(user).bind(before).fetch_all(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(rows)
 }
 
 pub async fn list_user_sessions(pool: &PgPool, user_id: i64) -> Result<Vec<Session>> {

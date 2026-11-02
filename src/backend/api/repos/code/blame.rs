@@ -6,9 +6,10 @@ use crate::backend::api::repos::chrome::{
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::{repo_store, ErrorKind};
 use crate::webui::pages::repos as view;
-use axum::extract::{OriginalUri, State};
+use axum::extract::{OriginalUri, Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 async fn blame_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Response, Response> {
@@ -80,7 +81,7 @@ pub(in crate::backend::api::repos) async fn page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    Path(params): Path<HashMap<String, String>>,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,

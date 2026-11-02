@@ -30,25 +30,8 @@ pub enum ProtectionWriteRefusal {
     RuleLimit,
 }
 
-/// Maximum actors in a protection allowance list, including combined user, team and app lists.
-pub const MAX_ALLOWANCE_ACTORS: usize = 100;
-
-pub struct ProtectionSnapshot {
-    pub repository_id: i64,
-    pub rules: Vec<BranchProtectionRule>,
-    pub users: std::collections::HashMap<i64, String>,
-    pub teams: std::collections::HashMap<i64, String>,
-}
-
-native_operation!(crate::backend::db::postgres::repositories::protection::read_protection_snapshot,
-    crate::backend::db::sqlite::repositories::protection::read_protection_snapshot,
-    fn read_protection_snapshot(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<ProtectionSnapshot>);
-
 /// Room for the longest server-owned context, `gitserv/workflow/` and a workflow path.
 const MAX_CHECK_BYTES: usize = 512;
-
-/// The most approvals a rule can require, as the GitHub representation allows.
-pub const MAX_REQUIRED_APPROVALS: i32 = 6;
 
 pub fn validate_required_checks(checks: &[String]) -> Result<(), ProtectionWriteRefusal> {
     if checks.len() > 100 || checks.iter().any(|check| check.len() > MAX_CHECK_BYTES) {
@@ -57,36 +40,10 @@ pub fn validate_required_checks(checks: &[String]) -> Result<(), ProtectionWrite
     Ok(())
 }
 
-/// Keep producer selection identical for presentation and enforcement. Identical entries collapse;
-/// conflicting entries are refused instead of giving different readers first/last-wins semantics.
-pub(crate) fn normalize_check_bindings(checks: &mut Vec<serde_json::Value>) -> Result<(), ProtectionWriteRefusal> {
-    if checks.len() > 100 { return Err(ProtectionWriteRefusal::InvalidChecks); }
-    let mut producers = std::collections::BTreeMap::new();
-    for binding in checks.iter() {
-        let context = binding.get("context").and_then(serde_json::Value::as_str)
-            .filter(|context| !context.is_empty() && context.len() <= MAX_CHECK_BYTES && !context.contains('\0'))
-            .ok_or(ProtectionWriteRefusal::InvalidChecks)?;
-        let app = match binding.get("app_id") {
-            None | Some(serde_json::Value::Null) => None,
-            Some(value) => match value.as_i64() {
-                Some(-1) => None,
-                Some(id) if id > 0 => Some(id),
-                _ => return Err(ProtectionWriteRefusal::InvalidChecks),
-            },
-        };
-        if let Some(previous) = producers.insert(context.to_owned(), app) {
-            if previous != app { return Err(ProtectionWriteRefusal::InvalidChecks); }
-        }
-    }
-    *checks = producers.into_iter().map(|(context, app)| serde_json::json!({"context":context,"app_id":app})).collect();
-    Ok(())
-}
-
 /// One rule as an administrator saves it. `Default` is the strictest rule, which is what
 /// an omitted setting means.
 pub struct BranchProtectionRuleUpsert<'a> {
     pub actor_id: i64,
-    pub credential: Option<crate::backend::db::users::accounts::AccountCredential<'a>>,
     pub repo_id: i64,
     pub pattern: &'a str,
     pub require_pull_request: bool,
@@ -112,7 +69,6 @@ impl Default for BranchProtectionRuleUpsert<'_> {
     fn default() -> Self {
         Self {
             actor_id: 0,
-            credential: None,
             repo_id: 0,
             pattern: "",
             require_pull_request: true,
@@ -190,16 +146,8 @@ pub enum ProtectionUpdate {
         /// Producer bindings for the named contexts; a binding for a context replaces its old one.
         bindings: Vec<serde_json::Value>,
     },
-    /// Adds required contexts; `bindings` pins producers for contexts that have none yet.
-    AddContexts {
-        contexts: Vec<String>,
-        bindings: Vec<serde_json::Value>,
-    },
-    /// Replaces the required contexts; `bindings` as for `AddContexts`.
-    SetContexts {
-        contexts: Vec<String>,
-        bindings: Vec<serde_json::Value>,
-    },
+    AddContexts(Vec<String>),
+    SetContexts(Vec<String>),
     RemoveContexts(Vec<String>),
     RemoveStatusChecks,
 }
@@ -210,7 +158,7 @@ impl ProtectionUpdate {
             return Ok(None);
         };
         anyhow::ensure!(
-            ids.len() <= MAX_ALLOWANCE_ACTORS,
+            ids.len() <= 100,
             ProtectionWriteRefusal::InvalidPushAllowances
         );
         Ok(Some(ids.clone()))
@@ -220,7 +168,7 @@ impl ProtectionUpdate {
         let Self::PushTeams(ActorListUpdate::Add(ids) | ActorListUpdate::Set(ids)) = self else {
             return Ok(None);
         };
-        anyhow::ensure!(ids.len() <= MAX_ALLOWANCE_ACTORS, ProtectionWriteRefusal::InvalidPushTeams);
+        anyhow::ensure!(ids.len() <= 100, ProtectionWriteRefusal::InvalidPushTeams);
         let mut ids = ids.clone();
         ids.sort_unstable();
         ids.dedup();
@@ -233,7 +181,7 @@ impl ProtectionUpdate {
             return Ok(None);
         };
         anyhow::ensure!(
-            ids.len() <= MAX_ALLOWANCE_ACTORS,
+            ids.len() <= 100,
             ProtectionWriteRefusal::InvalidPushAllowances
         );
         let mut ids = ids.clone();
@@ -243,15 +191,10 @@ impl ProtectionUpdate {
     }
 }
 
-pub(crate) fn prune_check_bindings(settings: &mut crate::backend::db::models::BranchProtectionSettings, enabled: bool, contexts: &[String]) {
-    settings.checks.retain(|binding| enabled && binding["context"].as_str().is_some_and(|context| contexts.iter().any(|name| name == context)));
-}
-
 pub fn has_review_requirements(rule: &BranchProtectionRule) -> bool {
     rule.require_pull_request
         || rule.required_approving_reviews > 0
         || rule.require_code_owner_review
-        || rule.github_settings.require_last_push_approval
 }
 
 pub(crate) fn apply_protection_update(
@@ -275,7 +218,7 @@ pub(crate) fn apply_protection_update(
             }
             if let Some(value) = input.required_approving_review_count {
                 anyhow::ensure!(
-                    (0..=MAX_REQUIRED_APPROVALS).contains(&value),
+                    (0..=6).contains(&value),
                     ProtectionWriteRefusal::InvalidChecks
                 );
                 rule.required_approving_reviews = value;
@@ -319,7 +262,7 @@ pub(crate) fn apply_protection_update(
                 rule.push_allowances
                     .len()
                     .saturating_add(rule.push_team_allowances.len())
-                    <= MAX_ALLOWANCE_ACTORS
+                    <= 100
                     && rule.push_allowances.iter().all(|id| *id > 0),
                 ProtectionWriteRefusal::InvalidPushAllowances
             );
@@ -339,7 +282,7 @@ pub(crate) fn apply_protection_update(
                 rule.push_team_allowances
                     .len()
                     .saturating_add(rule.push_allowances.len())
-                    <= MAX_ALLOWANCE_ACTORS
+                    <= 100
                     && rule.push_team_allowances.iter().all(|id| *id > 0),
                 ProtectionWriteRefusal::InvalidPushTeams
             );
@@ -368,9 +311,8 @@ pub(crate) fn apply_protection_update(
         ProtectionUpdate::StatusChecks {
             strict,
             contexts,
-            mut bindings,
+            bindings,
         } => {
-            normalize_check_bindings(&mut bindings)?;
             if let Some(strict) = strict {
                 rule.require_up_to_date_branch = strict;
             }
@@ -382,23 +324,14 @@ pub(crate) fn apply_protection_update(
                 .retain(|old| !bindings.iter().any(|new| new["context"] == old["context"]));
             rule.github_settings.checks.extend(bindings);
         }
-        ProtectionUpdate::AddContexts { contexts, mut bindings } => {
-            normalize_check_bindings(&mut bindings)?;
-            rule.required_status_checks.extend(contexts);
-            add_unbound(&mut rule.github_settings.checks, bindings);
-        }
-        ProtectionUpdate::SetContexts { contexts, mut bindings } => {
-            normalize_check_bindings(&mut bindings)?;
-            rule.required_status_checks = contexts;
-            add_unbound(&mut rule.github_settings.checks, bindings);
-        }
+        ProtectionUpdate::AddContexts(contexts) => rule.required_status_checks.extend(contexts),
+        ProtectionUpdate::SetContexts(contexts) => rule.required_status_checks = contexts,
         ProtectionUpdate::RemoveContexts(contexts) => rule
             .required_status_checks
             .retain(|context| !contexts.contains(context)),
         ProtectionUpdate::RemoveStatusChecks => {
             rule.require_status_checks = false;
             rule.required_status_checks.clear();
-            rule.github_settings.checks.clear();
             rule.require_up_to_date_branch = false;
         }
     }
@@ -406,26 +339,14 @@ pub(crate) fn apply_protection_update(
         rule.push_allowances.len()
             + rule.push_team_allowances.len()
             + rule.github_settings.push_apps.len()
-            <= MAX_ALLOWANCE_ACTORS,
+            <= 100,
         ProtectionWriteRefusal::InvalidPushAllowances
     );
     rule.required_status_checks.sort();
     rule.required_status_checks.dedup();
     validate_required_checks(&rule.required_status_checks)?;
-    normalize_check_bindings(&mut rule.github_settings.checks)?;
-    prune_check_bindings(&mut rule.github_settings, rule.require_status_checks, &rule.required_status_checks);
     Ok(())
 }
-
-pub struct CommitStatusPage {
-    pub total: i64,
-    pub counts: Vec<(String, i64)>,
-    pub statuses: Vec<CommitStatus>,
-}
-
-native_operation!(crate::backend::db::postgres::repositories::protection::commit_status_page,
-    crate::backend::db::sqlite::repositories::protection::commit_status_page,
-    fn commit_status_page(pool: &DbPool, viewer: Option<i64>, repo: i64, sha: &str, offset: i64, limit: i64, history: bool) -> Result<Option<CommitStatusPage>>);
 
 pub struct CommitStatusUpsert<'a> {
     pub repo_id: i64,
@@ -442,15 +363,6 @@ const MAX_PATTERN_CHARS: usize = 255;
 
 /// A pattern is a branch name that may hold `*`, `**` and `?`. Git must accept the name
 /// once each wildcard is a letter. A leading `!` is reserved for negated patterns.
-/// Adds the producer bindings for contexts that have none; an existing binding stays.
-fn add_unbound(checks: &mut Vec<serde_json::Value>, bindings: Vec<serde_json::Value>) {
-    for binding in bindings {
-        if !checks.iter().any(|old| old["context"] == binding["context"]) {
-            checks.push(binding);
-        }
-    }
-}
-
 pub fn validate_branch_pattern(pattern: &str) -> Result<(), ProtectionWriteRefusal> {
     let candidate = pattern.replace(['*', '?'], "x");
     if pattern.is_empty()
@@ -463,15 +375,15 @@ pub fn validate_branch_pattern(pattern: &str) -> Result<(), ProtectionWriteRefus
     Ok(())
 }
 
-/// Whether `pattern` names `branch`. A pattern without `*`, `?` or `[` is a plain name and is only
-/// compared (Git ref names cannot contain those characters). A wildcard pattern is matched within `budget`, and running out of it is an error,
+/// Whether `pattern` names `branch`. A pattern without `*` or `?` is a plain name and is only
+/// compared. A wildcard pattern is matched within `budget`, and running out of it is an error,
 /// never a non-match.
 pub(crate) fn branch_pattern_matches(
     pattern: &str,
     branch: &str,
     budget: &mut WorkflowMatchBudget,
 ) -> std::result::Result<bool, WorkflowMatchLimit> {
-    if !pattern.contains(['*', '?', '[']) {
+    if !pattern.contains(['*', '?']) {
         return Ok(pattern == branch);
     }
     github_glob_matches_bounded(pattern, branch, budget)
@@ -502,14 +414,14 @@ native_operation!(crate::backend::db::postgres::repositories::protection::delete
     crate::backend::db::sqlite::repositories::protection::delete_branch_protection_rule,
     fn delete_branch_protection_rule(
     pool: &DbPool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::protection::update_branch_protection_rule,
     crate::backend::db::sqlite::repositories::protection::update_branch_protection_rule,
-    fn update_branch_protection_rule(pool: &DbPool, actor_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, pattern: &str, update: ProtectionUpdate) -> Result<BranchProtectionRule>);
+    fn update_branch_protection_rule(pool: &DbPool, actor_id: i64, repo_id: i64, pattern: &str, update: ProtectionUpdate) -> Result<BranchProtectionRule>);
 
 native_operation!(crate::backend::db::postgres::repositories::protection::branch_redirect,
     crate::backend::db::sqlite::repositories::protection::branch_redirect,
@@ -519,16 +431,11 @@ native_operation!(crate::backend::db::postgres::repositories::protection::rename
     crate::backend::db::sqlite::repositories::protection::rename_branch_settings,
     fn rename_branch_settings(pool: &DbPool, actor: i64, repo: i64, old: &str, new: &str) -> Result<()>);
 
-pub async fn upsert_commit_status(pool: &DbPool, input: CommitStatusUpsert<'_>) -> Result<CommitStatus> {
-    upsert_commit_status_with_token(pool, input, None).await
-}
-
 native_operation!(crate::backend::db::postgres::repositories::protection::upsert_commit_status,
     crate::backend::db::sqlite::repositories::protection::upsert_commit_status,
-    fn upsert_commit_status_with_token(
+    fn upsert_commit_status(
     pool: &DbPool,
     input: CommitStatusUpsert<'_>,
-    token: Option<i64>,
 ) -> Result<CommitStatus>);
 
 native_operation!(crate::backend::db::postgres::repositories::protection::list_commit_statuses,

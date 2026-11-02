@@ -3,29 +3,6 @@ use crate::backend::crypto::{SecretEncryptor, SecretError};
 use crate::backend::db::models::RepoSecretMeta;
 use crate::backend::db::DbPool;
 
-// One bounded sample per encryption domain, from one database snapshot.
-pub(crate) const ENCRYPTION_SAMPLES_SQL: &str = "
-SELECT * FROM (SELECT encrypted_secret,secret_nonce FROM webhooks WHERE encrypted_secret IS NOT NULL LIMIT 1) a
-UNION ALL SELECT * FROM (SELECT encrypted_password,password_nonce FROM webhooks WHERE encrypted_password IS NOT NULL LIMIT 1) b
-UNION ALL SELECT * FROM (SELECT encrypted_secret,secret_nonce FROM github_app_hooks WHERE encrypted_secret IS NOT NULL LIMIT 1) c
-UNION ALL SELECT * FROM (SELECT encrypted_password,password_nonce FROM email_settings WHERE encrypted_password IS NOT NULL LIMIT 1) d
-UNION ALL SELECT * FROM (SELECT totp_secret_encrypted,totp_nonce FROM two_factor_auth LIMIT 1) e
-UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM repo_secrets LIMIT 1) f
-UNION ALL SELECT * FROM (SELECT encrypted_key,nonce FROM repo_actions_keys LIMIT 1) g
-UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM repo_dependabot_secrets LIMIT 1) h
-UNION ALL SELECT * FROM (SELECT encrypted_key,nonce FROM repo_dependabot_keys LIMIT 1) i
-UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM org_dependabot_secrets LIMIT 1) j
-UNION ALL SELECT * FROM (SELECT encrypted_key,nonce FROM org_dependabot_keys LIMIT 1) k
-UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM org_actions_values WHERE kind='secret' LIMIT 1) l
-UNION ALL SELECT * FROM (SELECT encrypted_key,nonce FROM org_actions_keys LIMIT 1) m
-UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM repo_environment_values WHERE kind='secret' LIMIT 1) n
-UNION ALL SELECT * FROM (SELECT encrypted_secret,nonce FROM secret_scanning_alerts LIMIT 1) o
-UNION ALL SELECT * FROM (SELECT encrypted_value,nonce FROM org_private_registries WHERE encrypted_value IS NOT NULL LIMIT 1) p";
-
-native_operation!(crate::backend::db::postgres::secrets::encryption_samples,
-    crate::backend::db::sqlite::secrets::encryption_samples,
-    fn encryption_samples(pool: &DbPool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>>);
-
 #[derive(Clone, Copy)]
 pub enum SecretKind {
     Actions,
@@ -48,9 +25,13 @@ impl SecretKind {
     }
 }
 
-pub use codeyard_actions::values::{MAX_NAME_BYTES as MAX_SECRET_NAME_BYTES,
-    MAX_VALUE_BYTES as MAX_SECRET_VALUE_BYTES, MAX_SCOPE_VALUES as MAX_REPOSITORY_SECRETS,
-    MAX_SECRET_BYTES as MAX_REPOSITORY_SECRETS_BYTES};
+pub const MAX_SECRET_NAME_BYTES: usize = 255;
+pub const MAX_SECRET_VALUE_BYTES: usize = 48 * 1024;
+/// Most repository secrets one CI claim carries.
+pub const MAX_REPOSITORY_SECRETS: usize = 100;
+/// Names and values of one claim together. A claim is one RPC reply of at most 8 MiB, and
+/// JSON escapes a control byte as six bytes, so 1 MiB of secret text stays inside the frame.
+pub const MAX_REPOSITORY_SECRETS_BYTES: usize = 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SecretsError {
@@ -86,16 +67,12 @@ pub enum SecretsError {
 
 impl SecretsError {
     pub(crate) fn authority(error: anyhow::Error) -> Self {
-        if error.is::<super::users::accounts::AccountRestricted>() { return Self::Denied; }
         // Anyhow downcasts also recognize contextual errors; retain typed denial
         // and driver sources without displaying SQL, keys or helper context.
         let error = match error.downcast::<Self>() {
             Ok(error) => return error,
             Err(error) => error,
         };
-        if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
-            return Self::Denied;
-        }
         if matches!(
             error.downcast_ref::<crate::backend::db::discussions::DiscussionWriteRefusal>(),
             Some(crate::backend::db::discussions::DiscussionWriteRefusal::Denied)
@@ -110,13 +87,27 @@ impl SecretsError {
 }
 
 pub fn validate_repository_secret(name: &str, value: &str) -> Result<(), SecretsError> {
-    use codeyard_actions::values::InvalidValue;
-    codeyard_actions::values::validate(name, value).map_err(|error| match error {
-        InvalidValue::Name => SecretsError::InvalidName,
-        InvalidValue::ReservedName => SecretsError::ReservedName,
-        InvalidValue::Nul => SecretsError::ValueContainsNul,
-        InvalidValue::TooLarge => SecretsError::ValueTooLarge,
-    })
+    let mut bytes = name.bytes();
+    let first = bytes.next().ok_or(SecretsError::InvalidName)?;
+    if name.len() > MAX_SECRET_NAME_BYTES
+        || !(first.is_ascii_alphabetic() || first == b'_')
+        || !bytes.all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+    {
+        return Err(SecretsError::InvalidName);
+    }
+    if name
+        .get(.."GITHUB_".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("GITHUB_"))
+    {
+        return Err(SecretsError::ReservedName);
+    }
+    if value.as_bytes().contains(&0) {
+        return Err(SecretsError::ValueContainsNul);
+    }
+    if value.len() > MAX_SECRET_VALUE_BYTES {
+        return Err(SecretsError::ValueTooLarge);
+    }
+    Ok(())
 }
 
 /// Checks the whole set that one CI claim carries: each secret, then the count and the
@@ -129,12 +120,6 @@ pub fn validate_repository_secrets(secrets: &[(String, String)]) -> Result<(), S
 /// The RPC byte bound is unchanged.
 pub fn validate_workflow_secrets(secrets: &[(String, String)]) -> Result<(), SecretsError> {
     validate_secret_set(secrets, MAX_REPOSITORY_SECRETS * 2)
-}
-
-pub(crate) fn ensure_workflow_budget(count: i64, bytes: i64) -> Result<(), SecretsError> {
-    if count > (MAX_REPOSITORY_SECRETS * 2) as i64 { return Err(SecretsError::TooManySecrets); }
-    if bytes > MAX_REPOSITORY_SECRETS_BYTES as i64 { return Err(SecretsError::TotalTooLarge); }
-    Ok(())
 }
 
 fn validate_secret_set(secrets: &[(String, String)], limit: usize) -> Result<(), SecretsError> {
@@ -179,7 +164,6 @@ pub async fn create_or_update_secret(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
-    credential: &super::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     create_or_update_secret_for(
         pool,
@@ -188,7 +172,6 @@ pub async fn create_or_update_secret(
         name,
         value,
         created_by_id,
-        credential,
     )
     .await
 }
@@ -200,7 +183,6 @@ pub async fn create_or_update_secret_for(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
-    credential: &super::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     // Secret names are case-insensitive, as on GitHub, so every writer stores them uppercase.
     let name = &name.to_ascii_uppercase();
@@ -214,7 +196,6 @@ pub async fn create_or_update_secret_for(
                 name,
                 value,
                 created_by_id,
-                credential,
             )
             .await
         }
@@ -226,7 +207,6 @@ pub async fn create_or_update_secret_for(
                 name,
                 value,
                 created_by_id,
-                credential,
             )
             .await
         }
@@ -246,15 +226,14 @@ pub async fn delete_secret(
     actor_id: i64,
     repo_id: i64,
     name: &str,
-    credential: &super::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     // An upgrade keeps an old lowercase name whose uppercase form was taken, so the exact name
     // is deleted first.
     let upper = name.to_ascii_uppercase();
     Ok(
-        delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, name, credential).await?
+        delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, name).await?
             || (upper != name
-                && delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, &upper, credential).await?),
+                && delete_secret_for(pool, SecretKind::Actions, actor_id, repo_id, &upper).await?),
     )
 }
 
@@ -266,7 +245,6 @@ native_operation!(crate::backend::db::postgres::secrets::repository_secret_key,
     encryptor: &SecretEncryptor,
     actor_id: i64,
     repo_id: i64,
-    credential: &super::users::accounts::AccountCredential<'_>,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError>);
 
 native_operation!(crate::backend::db::postgres::secrets::list_secrets,
@@ -280,7 +258,7 @@ native_operation!(crate::backend::db::postgres::secrets::list_secrets,
 
 native_operation!(crate::backend::db::postgres::secrets::delete_secret,
     crate::backend::db::sqlite::secrets::delete_secret,
-    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str, credential: &super::users::accounts::AccountCredential<'_>) -> Result<bool, SecretsError>);
+    fn delete_secret_for(pool: &DbPool, kind: SecretKind, actor_id: i64, repo_id: i64, name: &str) -> Result<bool, SecretsError>);
 
 // A claim with no encryption key must not silently omit configured secrets.
 native_operation!(crate::backend::db::postgres::secrets::repository_has_secrets,

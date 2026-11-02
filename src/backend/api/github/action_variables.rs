@@ -41,9 +41,9 @@ async fn repository(
     owner: &str,
     name: &str,
     write: bool,
-) -> Result<(i64, auth::Authentication)> {
+) -> Result<(i64, i64)> {
     let (repo, auth) = super::repository(state, headers, owner, name, write).await?;
-    Ok((repo.id, auth.ok_or_else(auth::required)?))
+    Ok((repo.id, auth.ok_or_else(auth::required)?.user.id))
 }
 
 async fn list(
@@ -54,7 +54,7 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
-    let variables = db::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
+    let variables = db::variables::list(&state.pool, actor, repo)
         .await
         .map_err(error)?;
     let total = variables.len();
@@ -74,7 +74,7 @@ async fn variable(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, false).await?;
     let name = name.to_ascii_uppercase();
-    let variable = db::variables::list(&state.pool, actor.user.id, &actor.credential(), repo)
+    let variable = db::variables::list(&state.pool, actor, repo)
         .await
         .map_err(error)?
         .into_iter()
@@ -100,8 +100,7 @@ async fn create(
     let Json(body) = body.map_err(|_| Error::invalid("Invalid variable input"))?;
     db::variables::save(
         &state.pool,
-        actor.user.id,
-        &actor.credential(),
+        actor,
         repo,
         None,
         &body.name.to_ascii_uppercase(),
@@ -141,7 +140,7 @@ async fn update(
         .name
         .unwrap_or_else(|| previous.clone())
         .to_ascii_uppercase();
-    db::variables::save(&state.pool, actor.user.id, &actor.credential(), repo, Some(&previous), &name, value)
+    db::variables::save(&state.pool, actor, repo, Some(&previous), &name, value)
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
@@ -153,7 +152,7 @@ async fn remove(
     Path((owner, repo, name)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &repo, true).await?;
-    db::variables::delete(&state.pool, actor.user.id, &actor.credential(), repo, &name.to_ascii_uppercase())
+    db::variables::delete(&state.pool, actor, repo, &name.to_ascii_uppercase())
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)

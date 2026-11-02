@@ -128,11 +128,9 @@ async fn queue_pull_request_workflow_event(
     payload: &serde_json::Value,
 ) -> Result<(), AdmissionError> {
     let target = event == "pull_request_target";
-    if !target && pull.state != "open" && payload["action"] != "closed" {
+    if !target && (pull.is_draft || (pull.state != "open" && payload["action"] != "closed")) {
         return Ok(());
     }
-    // Drafts run only the pull_request workflows that list this activity explicitly.
-    let draft_only_explicit = !target && pull.is_draft;
     let awaiting_approval = !target
         && !manual
         && pull.head_repo_id != Some(repository.id)
@@ -190,13 +188,6 @@ async fn queue_pull_request_workflow_event(
         if !workflow.matches_activity(event, payload["action"].as_str().unwrap_or_default()) {
             continue;
         }
-        if draft_only_explicit
-            && workflow
-                .pull_request_filter(event)
-                .is_none_or(|filter| filter.types.is_empty())
-        {
-            continue;
-        }
         match workflow.matches_event_with_budget(event, &trunk, &mut match_budget) {
             Ok(true) => applicable.push(workflow),
             Ok(false) => {}
@@ -220,7 +211,7 @@ async fn queue_pull_request_workflow_event(
     let message = if target {
         None
     } else {
-        Some(commit_message_for_ref(&store, &pull.head_sha).await.map_err(|_| AdmissionError::Unavailable)?)
+        commit_message_for_ref(&store, &pull.head_sha).await
     };
     if message.as_deref().is_some_and(should_skip_run_from_message) {
         return Ok(());
@@ -318,7 +309,6 @@ async fn queue_pull_request_workflow_event(
                 },
                 access,
                 payload.clone(),
-                None,
             )
             .await
         {
@@ -368,13 +358,20 @@ pub async fn run_pull_request_workflows(
     pool: &db::DbPool,
     ci: &CiRuns,
     actor_id: i64,
-    repository: &db::models::Repository,
+    owner: String,
+    repo: String,
     number: i32,
     request: RunWorkflowsRequest,
 ) -> Result<db::models::PullRequest, OperationError> {
-    // The caller resolved and authorized this repository; a rename must not switch it.
+    let repository = db::repositories::records::get_repository(pool, &owner, &repo)
+        .await
+        .map_err(super::write_error)?
+        .ok_or_else(|| OperationError::Missing {
+            code: "not_found",
+            message: "Repository not found".to_owned(),
+        })?;
     let user = super::actor(pool, actor_id).await?;
-    super::require_write(pool, &user, repository).await?;
+    super::require_write(pool, &user, &repository).await?;
     // Only trusted actors can queue these workflows, so no one else may record an
     // approval for them.
     if !user.is_admin && !ci.config.trusted_actor_ids.contains(&user.id) {
@@ -390,7 +387,7 @@ pub async fn run_pull_request_workflows(
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
-    super::branches::refresh_open_pull_request(pool, repository, ci, user.id, pull.id, None)
+    super::branches::refresh_open_pull_request(pool, &repository, ci, user.id, pull.id, None)
         .await
         .map_err(|_| OperationError::Unavailable {
             code: "git_unavailable",
@@ -429,69 +426,16 @@ pub async fn run_pull_request_workflows(
             message: "Pull request head changed; reload before running workflows".into(),
         });
     }
-    let queued = queue_pull_request_ci(
+    queue_pull_request_ci(
         pool,
         ci,
-        repository,
+        &repository,
         &pull,
         user.id,
         true,
         crate::backend::db::models::AccessLevel::Owner,
     )
-    .await;
-    let released = release_awaiting_runs(pool, ci, repository, &pull, user.id).await;
-    queued.and(released).map_err(workflows_not_queued)?;
+    .await
+    .map_err(workflows_not_queued)?;
     Ok(pull)
-}
-
-/// Approval admits the runs that waited for it again with the event that queued them. The
-/// synchronize request above would skip workflows limited to other activities, such as
-/// `opened`, and leave their runs waiting.
-async fn release_awaiting_runs(
-    pool: &DbPool,
-    ci: &CiRuns,
-    repository: &Repository,
-    pull: &PullRequest,
-    actor_id: i64,
-) -> Result<(), AdmissionError> {
-    let (trunk, _, _) = super::stacks::merge_target(pool, pull)
-        .await
-        .map_err(|_| AdmissionError::Unavailable)?;
-    let runs =
-        db::ci::latest_ci_runs_for_commit(pool, repository.id, &pull.head_sha, pull.id, &trunk)
-            .await?;
-    let mut payloads: Vec<serde_json::Value> = Vec::new();
-    for run in runs {
-        if !run.approval_required
-            || run.status != "queued"
-            || run.event != "pull_request"
-            || run.pull_request_id != Some(pull.id)
-        {
-            continue;
-        }
-        if let Some(payload) = run.event_payload {
-            if payload["action"] != "synchronize" && !payloads.contains(&payload) {
-                payloads.push(payload);
-            }
-        }
-    }
-    let mut first_failure = None;
-    for payload in payloads {
-        if let Err(error) = queue_pull_request_workflow_event(
-            pool,
-            ci,
-            repository,
-            pull,
-            actor_id,
-            true,
-            db::models::AccessLevel::Owner,
-            "pull_request",
-            &payload,
-        )
-        .await
-        {
-            first_failure = first_failure.or(Some(error));
-        }
-    }
-    first_failure.map_or(Ok(()), Err)
 }

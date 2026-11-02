@@ -1,9 +1,0 @@
-name: Docker stages
-description: Docker pre and post entrypoints, saved state and arguments from the args input
-runs:
-  using: docker
-  image: Dockerfile
-  pre-entrypoint: /pre.sh
-  entrypoint: /main.sh
-  post-entrypoint: /post.sh
-  post-if: success()

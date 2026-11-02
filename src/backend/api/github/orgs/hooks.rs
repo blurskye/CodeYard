@@ -8,7 +8,7 @@ use crate::backend::{
     },
     db::{
         models::{Organization, Webhook},
-        webhooks::{self as hooks, DeliveryWindow, HookOwner, HookSettings},
+        webhooks::{self as hooks, HookOwner, HookSettings},
     },
     webhooks::{
         payloads,
@@ -42,7 +42,12 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 fn error(error: HookError) -> Error {
-    super::super::webhooks::owner_error(error, "Must be an organization owner")
+    match error {
+        HookError::Denied => Error::new(StatusCode::FORBIDDEN, "Must be an organization owner"),
+        HookError::NotFound => Error::missing(),
+        HookError::Invalid(message) => Error::invalid(message),
+        HookError::Unavailable => Error::unavailable(error),
+    }
 }
 fn id(params: &Params, name: &str) -> Result<i64> {
     params
@@ -68,20 +73,19 @@ async fn actor(
 async fn snapshot(
     state: &AppState,
     org: i64,
-    actor: &auth::Authentication,
+    actor: i64,
     hook: i64,
     delivery: Option<i64>,
-    history: Option<DeliveryWindow>,
+    history: bool,
 ) -> Result<HookSettings> {
     let settings = hooks::read_settings(
         &state.pool,
         HookOwner::Organization(org),
-        actor.user.id,
-        &actor.credential(),
+        actor,
         Some(hook),
         delivery,
         0,
-        history.unwrap_or_default(),
+        history,
     )
     .await
     .map_err(Error::unavailable)?
@@ -113,7 +117,6 @@ async fn list(
         &state.pool,
         HookOwner::Organization(org.id),
         actor.user.id,
-        &actor.credential(),
         offset as i64,
         (limit + 1) as i64,
     )
@@ -136,10 +139,10 @@ async fn get_hook(
     let snapshot = snapshot(
         &state,
         org.id,
-        &actor,
+        actor.user.id,
         id(&params, "hook_id")?,
         None,
-        None,
+        false,
     )
     .await?;
     Ok(Json(document(&org.name, snapshot.hook.as_ref().unwrap())))
@@ -153,10 +156,10 @@ async fn get_config(
     let snapshot = snapshot(
         &state,
         org.id,
-        &actor,
+        actor.user.id,
         id(&params, "hook_id")?,
         None,
-        None,
+        false,
     )
     .await?;
     Ok(Json(payloads::webhook_config(
@@ -221,8 +224,6 @@ fn parse_patch(value: &Value) -> Result<HookPatch> {
         return Err(Error::validation("Hook", "name", "invalid"));
     }
     let mut patch = config(object.get("config"))?;
-    // A full-hook update clears an omitted secret; config-only PATCH keeps omissions.
-    patch.secret.get_or_insert_with(String::new);
     patch.active = boolean(object, "active")?;
     patch.events = object
         .get("events")
@@ -241,7 +242,7 @@ async fn create(
     body: Body,
 ) -> Result<Response> {
     let (org, actor) = actor(&state, &headers, &name, true).await?;
-    let Json(value) = body.map_err(super::super::json_error)?;
+    let Json(value) = body.map_err(|_| Error::validation("Hook", "body", "invalid"))?;
     let object = object(&value)?;
     if text(object, "name")?.as_deref() != Some("web") {
         return Err(Error::validation("Hook", "name", "invalid"));
@@ -268,13 +269,12 @@ async fn create(
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
         &actor.user,
-        &actor.credential(),
         None,
         &input,
     )
     .await
     .map_err(error)?;
-    let hook = snapshot(&state, org.id, &actor, id, None, None)
+    let hook = snapshot(&state, org.id, actor.user.id, id, None, false)
         .await?
         .hook
         .unwrap();
@@ -292,7 +292,7 @@ async fn update(
     body: Body,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    let Json(value) = body.map_err(super::super::json_error)?;
+    let Json(value) = body.map_err(|_| Error::validation("Hook", "body", "invalid"))?;
     let patch = parse_patch(&value)?;
     let id = id(&params, "hook_id")?;
     settings::update(
@@ -300,7 +300,6 @@ async fn update(
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
         &actor.user,
-        &actor.credential(),
         id,
         &patch,
     )
@@ -308,7 +307,7 @@ async fn update(
     .map_err(error)?;
     Ok(Json(document(
         &org.name,
-        &snapshot(&state, org.id, &actor, id, None, None)
+        &snapshot(&state, org.id, actor.user.id, id, None, false)
             .await?
             .hook
             .unwrap(),
@@ -321,7 +320,7 @@ async fn update_config(
     body: Body,
 ) -> Result<Json<Value>> {
     let (org, actor) = actor(&state, &headers, &params["org"], true).await?;
-    let Json(value) = body.map_err(super::super::json_error)?;
+    let Json(value) = body.map_err(|_| Error::validation("Hook", "body", "invalid"))?;
     let patch = config(Some(&value))?;
     let id = id(&params, "hook_id")?;
     settings::update(
@@ -329,14 +328,13 @@ async fn update_config(
         state.secret_encryptor.as_deref(),
         HookOwner::Organization(org.id),
         &actor.user,
-        &actor.credential(),
         id,
         &patch,
     )
     .await
     .map_err(error)?;
     Ok(Json(payloads::webhook_config(
-        &snapshot(&state, org.id, &actor, id, None, None)
+        &snapshot(&state, org.id, actor.user.id, id, None, false)
             .await?
             .hook
             .unwrap(),
@@ -352,7 +350,6 @@ async fn remove(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
-        &actor.credential(),
         id(&params, "hook_id")?,
     )
     .await
@@ -369,7 +366,6 @@ async fn ping(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
-        &actor.credential(),
         id(&params, "hook_id")?,
     )
     .await
@@ -386,7 +382,6 @@ async fn redeliver(
         &state.pool,
         HookOwner::Organization(org.id),
         &actor.user,
-        &actor.credential(),
         id(&params, "hook_id")?,
         id(&params, "delivery_id")?,
     )
@@ -403,10 +398,10 @@ async fn delivery(
     let snapshot = snapshot(
         &state,
         org.id,
-        &actor,
+        actor.user.id,
         id(&params, "hook_id")?,
         Some(id(&params, "delivery_id")?),
-        None,
+        false,
     )
     .await?;
     Ok(Json(payloads::webhook_delivery(
@@ -422,14 +417,13 @@ async fn deliveries(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (org, actor) = actor(&state, &headers, &params["org"], false).await?;
-    let window = query.window(true)?;
     let snapshot = snapshot(
         &state,
         org.id,
-        &actor,
+        actor.user.id,
         id(&params, "hook_id")?,
         None,
-        Some(window),
+        true,
     )
     .await?;
     let (headers, rows) = delivery_page(snapshot.deliveries, query, &uri)?;

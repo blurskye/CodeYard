@@ -10,8 +10,6 @@ from pathlib import Path
 import re
 import secrets
 import shutil
-import signal
-import sys
 import socket
 import subprocess
 import tempfile
@@ -173,5 +171,4 @@ def main():
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     main()

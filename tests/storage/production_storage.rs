@@ -1100,7 +1100,7 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
     let new = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, new.id).await;
     assert_eq!(
-        db::users::accounts::set_user_avatar(&db.pool, db.user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&db.pool, db.user).await), Some(old.id))
+        db::users::accounts::set_user_avatar(&db.pool, db.user, Some(old.id))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(None)
@@ -1116,7 +1116,7 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .await
         .unwrap();
     assert!(
-        db::users::accounts::set_user_avatar(&db.pool, db.user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&db.pool, db.user).await), Some(new.id))
+        db::users::accounts::set_user_avatar(&db.pool, db.user, Some(new.id))
             .await
             .is_err()
     );
@@ -1134,7 +1134,7 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 
     // Otherwise the old row goes with the change, and its bytes are queued.
     assert_eq!(
-        db::users::accounts::set_user_avatar(&db.pool, db.user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&db.pool, db.user).await), Some(new.id))
+        db::users::accounts::set_user_avatar(&db.pool, db.user, Some(new.id))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(Some(old.id))
@@ -1164,7 +1164,7 @@ async fn pg_a_banned_account_keeps_its_picture() {
         .await
         .unwrap()
         .unwrap();
-    avatars::set_user_avatar(&db.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&db.pool, user.id).await), old.id)
+    avatars::set_user_avatar(&db.pool, &user, old.id)
         .await
         .unwrap();
     sqlx::query("UPDATE users SET is_banned = TRUE WHERE id = $1")
@@ -1173,9 +1173,9 @@ async fn pg_a_banned_account_keeps_its_picture() {
         .await
         .unwrap();
 
-    let changed = avatars::set_user_avatar(&db.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&db.pool, user.id).await), new.id).await;
+    let changed = avatars::set_user_avatar(&db.pool, &user, new.id).await;
     assert_eq!(changed, Err(AvatarError::Denied));
-    let cleared = avatars::remove_user_avatar(&db.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&db.pool, user.id).await)).await;
+    let cleared = avatars::remove_user_avatar(&db.pool, &user).await;
     assert_eq!(cleared, Err(AvatarError::Denied));
     let pointer: Option<Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id = $1")

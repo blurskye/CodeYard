@@ -218,7 +218,7 @@ async fn authority(pg: bool) {
     assert!(gists::update(
         state.clone(),
         alice,
-        GistCredential::Token(token.token.id, String::new()),
+        GistCredential::Token(token.token.id),
         id.clone(),
         edit("Revoked token")
     )

@@ -9,6 +9,3 @@ jobs:
       - run: |
           sleep 65
           echo compat:too-late
-      - run: echo compat:skipped-after-timeout
-      - if: always()
-        run: echo "compat:cleanup-${{ job.status }}"

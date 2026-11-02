@@ -19,7 +19,7 @@ use codeyard::backend::{
     },
     identity::tokens::{self, TokenInput},
     storage::ObjectStore,
-    crypto::hmac_sha256,
+    webhooks::delivery::hmac_sha256,
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
@@ -569,12 +569,12 @@ async fn contract(pg: bool) {
         .unwrap();
     assert!(stored.encrypted_secret.is_none());
     assert!(stored.secret_nonce.is_none());
+    let (ciphertext, nonce) = webhooks::webhook_secret_sample(f.pool())
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(
-        key.decrypt(
-            stored.encrypted_password.as_deref().unwrap(),
-            stored.password_nonce.as_deref().unwrap()
-        )
-        .unwrap(),
+        key.decrypt(&ciphertext, &nonce).unwrap(),
         b"rotated-password"
     );
     let (status, page) = browser

@@ -179,9 +179,9 @@ or unlock repositories. Organization membership alone does not grant export auth
 
 Archives contain bare Git repositories, repository records, issues and comments,
 labels, milestones, pull requests and submitted reviews, releases and release assets.
-Owner-scoped projects with their field configurations, items (content links, draft text,
-field values, order and archive state) and saved views are included unless
-`exclude_owner_projects` or `exclude_metadata` is set. Organization exports also include organization
+Owner-scoped projects and their field configurations are included unless
+`exclude_owner_projects` or `exclude_metadata` is set. Project items are not currently
+represented by native Codeyard projects. Organization exports also include organization
 details, memberships, team parents, and direct team memberships and repository grants;
 inherited access is not flattened into additional grants.
 The exclusion options omit their respective data; `org_metadata_only` requires an empty

@@ -35,7 +35,7 @@ use axum::{
 };
 use std::{net::SocketAddr, sync::Arc};
 use tower_http::{
-    compression::{CompressionLayer, predicate::{DefaultPredicate, NotForContentType, Predicate}},
+    compression::CompressionLayer,
     cors::{AllowOrigin, CorsLayer},
 };
 use tracing::info;
@@ -62,7 +62,6 @@ pub fn create_router(state: AppState) -> Router {
             header::CONTENT_TYPE,
             header::AUTHORIZATION,
             header::COOKIE,
-            header::IF_NONE_MATCH,
             header::HeaderName::from_static("x-csrf-token"),
             header::HeaderName::from_static("x-github-api-version"),
         ])
@@ -101,7 +100,6 @@ pub fn create_router(state: AppState) -> Router {
         .merge(notifications::router())
         .merge(dashboard::router())
         .merge(attestations::router())
-        .merge(packages::browser_router())
         .layer(axum::middleware::from_fn(middleware::bounded_form_body))
         // Git owns token-only auth, outside browser/session/CSRF and request-body layers.
         .merge(git_http::router())
@@ -122,6 +120,7 @@ pub fn create_router(state: AppState) -> Router {
         .with_state(state.clone())
         // Sees every response, including errors. It reads the state, so it sits inside the Extension layer.
         .layer(axum::middleware::from_fn(render::render_page))
+        .layer(axum::middleware::from_fn(http::interaction_proofs::prepare))
         .layer(axum::middleware::from_fn(middleware::no_ai_html))
         .layer(axum::middleware::from_fn(http::traffic::record_views))
         // Outside every handler, so no request keeps a client address that it sent itself.
@@ -131,9 +130,7 @@ pub fn create_router(state: AppState) -> Router {
         .layer(Extension(config))
         .layer(cors)
         // tower-http skips upgrades, encoded responses and HEAD bodies.
-        .layer(CompressionLayer::new().compress_when(DefaultPredicate::new()
-            .and(NotForContentType::const_new("application/x-git-upload-pack-result"))
-            .and(NotForContentType::const_new("application/x-git-receive-pack-result"))))
+        .layer(CompressionLayer::new())
 }
 
 /// Serves until `stop` is set, then waits for in-flight requests and the Git tasks they started.
@@ -142,16 +139,7 @@ pub async fn run_web_server(
     state: AppState,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    run_web_listener(listener, state, stop).await
-}
-
-pub(crate) async fn run_web_listener(
-    listener: tokio::net::TcpListener,
-    state: AppState,
-    stop: tokio::sync::watch::Receiver<bool>,
-) -> Result<()> {
-    let addr = listener.local_addr()?;
+    let traffic_pool = state.pool.clone();
     let dependency_pool = state.pool.clone();
     let dependency_ci = state.ci_runs.clone();
     let dependency_notifications = state.notification_broadcaster.clone();
@@ -161,6 +149,7 @@ pub(crate) async fn run_web_listener(
         cancel_on_shutdown,
     ));
     info!("Git HTTP server starting on http://{}", addr);
+    let listener = tokio::net::TcpListener::bind(addr).await?;
     let mut listener_stop = stop.clone();
     let server = async move {
         axum::serve(
@@ -173,12 +162,19 @@ pub(crate) async fn run_web_listener(
         .await
     };
     let result = {
-        let workers = crate::backend::repositories::dependencies::worker::run(
+        let maintenance =
+            crate::backend::repositories::traffic::maintain(traffic_pool, stop.clone());
+        let dependencies = crate::backend::repositories::dependencies::worker::run(
             dependency_pool,
             dependency_ci,
             dependency_notifications,
             stop.clone(),
         );
+        // Keep polling both workers until both stop. A worker future left unpolled could hold
+        // the pool slot it was waiting for, and starve the request handlers.
+        let workers = async {
+            tokio::join!(maintenance, dependencies);
+        };
         tokio::pin!(server, workers);
         tokio::select! {result=&mut server=>result,()=&mut workers=>server.await}
     };

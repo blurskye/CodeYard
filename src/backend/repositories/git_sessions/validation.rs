@@ -171,7 +171,10 @@ pub(crate) fn parse_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
 }
 
 fn sha(value: &str) -> bool {
-    crate::git_ids::is_full_commit_id(value) && !value.bytes().any(|byte| byte.is_ascii_uppercase())
+    value.len() == 40
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_digit() || matches!(b, b'a'..=b'f'))
 }
 
 #[cfg(test)]

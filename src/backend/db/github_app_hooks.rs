@@ -1,7 +1,7 @@
 //! App-owned webhook settings and delivery history; native repo/org hooks remain unchanged.
 use crate::backend::db::{
     models::{Webhook, WebhookDelivery},
-    webhooks::{NewDelivery, SealedSecret, WebhookPatch},
+    webhooks::{NewDelivery, SealedSecret, WebhookFields},
     DbPool,
 };
 use anyhow::Result;
@@ -24,16 +24,9 @@ pub struct Subscription {
 native_operation!(crate::backend::db::postgres::github_app_hooks::hook,crate::backend::db::sqlite::github_app_hooks::hook,
     fn hook(pool:&DbPool,app:i64)->Result<Option<Webhook>>);
 native_operation!(crate::backend::db::postgres::github_app_hooks::save,crate::backend::db::sqlite::github_app_hooks::save,
-    /// Saves an app's webhook. Fields the patch leaves `None` keep their stored values, so edits
-    /// of different fields never undo each other. Answers false when the app has no webhook yet
-    /// and the patch does not name every field a new one needs.
-    fn save(pool:&DbPool,app:i64,patch:&WebhookPatch,secret:Option<&SealedSecret>,clear:bool)->Result<bool>);
+    fn save(pool:&DbPool,app:i64,fields:&WebhookFields,secret:Option<&SealedSecret>,clear:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::github_app_hooks::for_repository,crate::backend::db::sqlite::github_app_hooks::for_repository,
     fn for_repository(pool:&DbPool,repo:i64)->Result<Vec<Subscription>>);
-native_operation!(crate::backend::db::postgres::github_app_hooks::for_repository_app,crate::backend::db::sqlite::github_app_hooks::for_repository_app,
-    fn for_repository_app(pool:&DbPool,repo:i64,app:i64)->Result<Vec<Subscription>>);
-native_operation!(crate::backend::db::postgres::github_app_hooks::subscription,crate::backend::db::sqlite::github_app_hooks::subscription,
-    fn subscription(pool:&DbPool,repo:i64,app:i64,installation:i64,automatic:bool)->Result<Option<Subscription>>);
 native_operation!(crate::backend::db::postgres::github_app_hooks::insert_delivery,crate::backend::db::sqlite::github_app_hooks::insert_delivery,
     fn insert_delivery(pool:&DbPool,app:i64,record:&NewDelivery,redelivery:bool,installation:Option<i64>,repo:Option<i64>,url:&str)->Result<()>);
 native_operation!(crate::backend::db::postgres::github_app_hooks::deliveries,crate::backend::db::sqlite::github_app_hooks::deliveries,

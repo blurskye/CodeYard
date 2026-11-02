@@ -64,11 +64,11 @@ async fn change_star(
     enabled: bool,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let actor = auth.ok_or_else(auth::required)?.user;
     engagement::change(
         &state.pool,
         &state.notification_broadcaster,
-        auth.database_actor(),
+        actor.id,
         repo.id,
         Engagement::Star,
         enabled,
@@ -160,14 +160,18 @@ async fn list_stars(
     .await
     .map_err(Error::unavailable)?;
     let has_next = rows.len() > limit;
-    let readable = auth::readable_repositories(state, auth.as_ref(), &rows.iter().map(|repo| repo.id).collect::<Vec<_>>(), "metadata").await?;
     let mut items = Vec::new();
-    for repo in rows.iter().take(limit).filter(|repo| readable.contains(&repo.id)) {
-        let value = super::repos::document(state, repo, auth.as_ref()).await?;
+    for repo in rows.iter().take(limit) {
+        let owner = db::repositories::records::repository_owner_name(&state.pool, repo.id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+        let value = payloads::repository(repo, &owner);
         items.push(if timestamps(headers) {
-            let Some(at) = db::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
+            let at = db::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
                 .await
-                .map_err(Error::unavailable)? else { continue; };
+                .map_err(Error::unavailable)?
+                .ok_or_else(|| Error::unavailable(()))?;
             json!({"starred_at": at, "repo": value})
         } else {
             value
@@ -226,9 +230,10 @@ async fn stargazers(
     for user in rows {
         let value = payloads::user(&user);
         items.push(if timestamps(&headers) {
-            let Some(at) = db::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
+            let at = db::repositories::engagement::starred_at(&state.pool, user.id, repo.id)
                 .await
-                .map_err(Error::unavailable)? else { continue; };
+                .map_err(Error::unavailable)?
+                .ok_or_else(|| Error::unavailable(()))?;
             json!({"starred_at": at, "user": value})
         } else {
             value
@@ -252,7 +257,7 @@ async fn star_history(
     }
     let page = Pagination {
         page: query.page,
-        per_page: Some(super::pagination::page_size(query.per_page).min(30)),
+        per_page: Some(query.per_page.unwrap_or(30).min(30)),
     };
     let (offset, limit) = page.window()?;
     let rows = db::repositories::engagement::list_star_history(

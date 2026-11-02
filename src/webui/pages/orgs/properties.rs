@@ -1,5 +1,5 @@
 //! Repository property definitions and owner-only bulk value forms; all forms work without scripts.
-use super::{fields::draft_checked as checked_action, Page};
+use super::Page;
 use crate::webui::{
     components::{DraftCheckbox, DraftInput, DraftSelect, DraftTextarea, SelectOption},
     navigation::NavLink,
@@ -22,7 +22,6 @@ pub struct PropertySummary {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct PropertyDefinition {
-    pub id: i64,
     pub name: String,
     pub value_type: String,
     pub description: String,
@@ -42,6 +41,17 @@ fn value(page: &Page, action: &str, key: &str, fallback: &str) -> String {
         page.draft.get(key).cloned().unwrap_or_default()
     } else {
         fallback.to_owned()
+    }
+}
+fn checked_action(page: &Page, action: &str, key: &str, fallback: bool) -> bool {
+    if page
+        .draft
+        .get("action")
+        .is_some_and(|value| value == action)
+    {
+        page.draft.get(key).is_some_and(|value| value == "true")
+    } else {
+        fallback
     }
 }
 fn checked(page: &Page, key: &str, fallback: bool) -> bool {
@@ -163,7 +173,7 @@ pub(super) fn panel(page: &Page) -> Element {
                     section {class:"org-panel org-danger",header {class:"org-panel-header",h3 {"Delete property"}}
                         div {class:"org-panel-body",p {"Deleting a definition also removes its explicit values from every repository."}
                             form {key:"delete-{name}",method:"post",action:target.clone(),class:"org-form",
-                                {csrf(&page.csrf_token)} {hidden("action","delete-property")} {hidden("property_name",&property.name)} {hidden("definition_id",&property.id.to_string())}
+                                {csrf(&page.csrf_token)} {hidden("action","delete-property")} {hidden("property_name",&property.name)}
                                 label {r#for:"delete-property-confirm","Type the property name to confirm"}
                                 DraftInput {id:Some("delete-property-confirm".into()),name:"confirm",initial_value:value(page,"delete-property","confirm",""),required:true}
                                 button {r#type:"submit",class:"btn btn-danger","Delete property"}

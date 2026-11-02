@@ -120,10 +120,6 @@ pub async fn list_repo_labels(pool: &PgPool, repo_id: i64) -> Result<Vec<Label>>
     Ok(labels)
 }
 
-pub async fn get_repo_label_by_name(pool: &PgPool, repo_id: i64, name: &str) -> Result<Option<Label>> {
-    Ok(sqlx::query_as("SELECT * FROM labels WHERE repo_id=$1 AND LOWER(name)=LOWER($2)").bind(repo_id).bind(name).fetch_optional(pool).await?)
-}
-
 pub async fn get_label_by_id(pool: &PgPool, id: i64) -> Result<Option<Label>> {
     Ok(sqlx::query_as("SELECT * FROM labels WHERE id=$1")
         .bind(id)
@@ -164,34 +160,36 @@ pub async fn list_repo_labels_page(
 /// start from the repository's issues and pull requests, which are indexed by repository.
 pub async fn list_milestone_labels(
     pool: &PgPool,
-    viewer: Option<i64>,
     repo_id: i64,
     milestone_id: i64,
     limit: i64,
     offset: i64,
 ) -> Result<Vec<Label>> {
-    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l WHERE l.repo_id=$1 AND EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$5 WHERE r.id=l.repo_id AND {}) AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=$2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=$2)) ORDER BY lower(l.name),l.id LIMIT $3 OFFSET $4", super::repositories::access::readable_condition()))
-        .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).bind(viewer).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT l.* FROM labels l WHERE l.repo_id=$1 AND (EXISTS (SELECT 1 FROM issue_labels il JOIN issues i ON i.id=il.issue_id WHERE il.label_id=l.id AND i.milestone_id=$2) OR EXISTS (SELECT 1 FROM pr_labels pl JOIN pull_requests p ON p.id=pl.pull_request_id WHERE pl.label_id=l.id AND p.milestone_id=$2)) ORDER BY lower(l.name),l.id LIMIT $3 OFFSET $4")
+        .bind(repo_id).bind(milestone_id).bind(limit).bind(offset).fetch_all(pool).await?)
 }
 
-pub async fn list_label_usage(pool: &PgPool, repo_id: i64, label_ids: &[i64]) -> Result<Vec<(i64, i64)>> {
-    if label_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    // Only the given labels are counted, through the label_id indexes.
-    Ok(sqlx::query_as::<_, (i64, i64)>(
-        r"SELECT l.id,
-            (SELECT COUNT(*) FROM issue_labels il JOIN issues i ON i.id = il.issue_id
-              WHERE il.label_id = l.id AND i.repo_id = $1)
-          + (SELECT COUNT(*) FROM pr_labels pl JOIN pull_requests p ON p.id = pl.pull_request_id
-              WHERE pl.label_id = l.id AND p.repo_id = $1)
+pub async fn list_label_usage(pool: &PgPool, repo_id: i64) -> Result<Vec<(i64, i64)>> {
+    let usage = sqlx::query_as::<_, (i64, i64)>(
+        r"SELECT l.id, COUNT(u.label_id)
         FROM labels l
-        WHERE l.repo_id = $1 AND l.id = ANY($2)",
+        LEFT JOIN (
+            SELECT il.label_id FROM issues i
+            JOIN issue_labels il ON il.issue_id = i.id
+            WHERE i.repo_id = $1
+            UNION ALL
+            SELECT pl.label_id FROM pull_requests p
+            JOIN pr_labels pl ON pl.pull_request_id = p.id
+            WHERE p.repo_id = $1
+        ) u ON u.label_id = l.id
+        WHERE l.repo_id = $1
+        GROUP BY l.id",
     )
     .bind(repo_id)
-    .bind(label_ids)
     .fetch_all(pool)
-    .await?)
+    .await?;
+
+    Ok(usage)
 }
 
 pub async fn update_label(
@@ -203,15 +201,7 @@ pub async fn update_label(
     color: Option<&str>,
     description: Option<&str>,
 ) -> Result<Label> {
-    update_label_checked(pool, actor_id, repo_id, label_id, (name, color, description), None).await
-}
-
-pub async fn update_label_checked(pool: &PgPool, actor_id: i64, repo_id: i64, label_id: i64, (name, color, description): (Option<&str>, Option<&str>, Option<&str>), expected: Option<&str>) -> Result<Label> {
     let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
-    if let Some(expected) = expected {
-        let current: Label = sqlx::query_as("SELECT * FROM labels WHERE repo_id=$1 AND id=$2 FOR UPDATE").bind(repo_id).bind(label_id).fetch_optional(&mut *tx).await?.ok_or(LabelWriteRefusal::InvalidLabels)?;
-        anyhow::ensure!(serde_json::to_string(&(current.name, current.color, current.description.unwrap_or_default()))? == expected, LabelWriteRefusal::Conflict);
-    }
     if let Some(name) = name {
         ensure_name_free(&mut tx, repo_id, name, label_id).await?;
     }
@@ -245,14 +235,6 @@ pub async fn delete_label(
     label_id: i64,
 ) -> Result<bool> {
     let mut tx = begin_label_write(pool, actor_id, repo_id).await?;
-    // Deleting a label removes it from its issues and pull requests, so they get a new revision.
-    for (table, links, column) in [("issues", "issue_labels", "issue_id"), ("pull_requests", "pr_labels", "pull_request_id")] {
-        sqlx::query(&format!("UPDATE {table} SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id IN (SELECT x.{column} FROM {links} x JOIN labels l ON l.id=x.label_id WHERE l.id=$1 AND l.repo_id=$2)"))
-            .bind(label_id)
-            .bind(repo_id)
-            .execute(&mut *tx)
-            .await?;
-    }
     let result = sqlx::query("DELETE FROM labels WHERE id = $1 AND repo_id = $2")
         .bind(label_id)
         .bind(repo_id)
@@ -362,7 +344,6 @@ async fn remove_item_label(
     let (subject, link, column) = target.tables();
     let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
     lock_item_labels(&mut tx, repo_id, target, item_id, &[label_id]).await?;
-    let before = item_labels_snapshot(&mut tx, target, item_id).await?;
     let result = sqlx::query(&format!(
         "DELETE FROM {link} WHERE {column} = $1 AND label_id = $2"
     ))
@@ -372,8 +353,6 @@ async fn remove_item_label(
     .await?;
     if result.rows_affected() > 0 {
         touch_subject(&mut tx, subject, item_id).await?;
-        let after: Vec<_> = before.iter().filter(|label| label.id != label_id).cloned().collect();
-        record_label_changes(&mut tx, repo_id, target, item_id, actor_id, &before, &after).await?;
     }
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
@@ -464,17 +443,15 @@ async fn write_item_labels(
 ) -> Result<Vec<Label>> {
     let mut tx = begin_item_label_write(pool, actor_id, repo_id).await?;
     let labels =
-        write_item_labels_transaction(&mut tx, Some(actor_id), repo_id, target, item_id, label_ids, replace)
+        write_item_labels_transaction(&mut tx, repo_id, target, item_id, label_ids, replace)
             .await?;
     tx.commit().await?;
     Ok(labels)
 }
 
 /// Caller retains live item-metadata authority until this transaction commits.
-#[allow(clippy::too_many_arguments)]
 pub(crate) async fn write_item_labels_transaction(
     tx: &mut Transaction<'_, Postgres>,
-    actor: Option<i64>,
     repo_id: i64,
     target: LabelTarget,
     item_id: i64,
@@ -483,7 +460,6 @@ pub(crate) async fn write_item_labels_transaction(
 ) -> Result<Vec<Label>> {
     let (subject, link, column) = target.tables();
     let ids = lock_item_labels(tx, repo_id, target, item_id, label_ids).await?;
-    let before = item_labels_snapshot(tx, target, item_id).await?;
     let mut changed = false;
     if replace {
         changed |= sqlx::query(&format!("DELETE FROM {link} WHERE {column}=$1"))
@@ -518,31 +494,11 @@ pub(crate) async fn write_item_labels_transaction(
         labels.len() <= crate::backend::db::labels::MAX_ISSUE_LABELS,
         LabelWriteRefusal::InvalidLabels
     );
-    if let Some(actor) = actor {
-        record_label_changes(tx, repo_id, target, item_id, actor, &before, &labels).await?;
-    }
     Ok(labels)
 }
 
-async fn item_labels_snapshot(tx: &mut Transaction<'_, Postgres>, target: LabelTarget, item: i64) -> Result<Vec<Label>> {
-    let (_, link, column) = target.tables();
-    Ok(sqlx::query_as(&format!("SELECT l.* FROM labels l JOIN {link} il ON il.label_id=l.id WHERE il.{column}=$1 ORDER BY l.id"))
-        .bind(item).fetch_all(&mut **tx).await?)
-}
-
-async fn record_label_changes(tx: &mut Transaction<'_, Postgres>, repo: i64, target: LabelTarget, item: i64, actor: i64, before: &[Label], after: &[Label]) -> Result<()> {
-    let subject = match target { LabelTarget::Issue => "issue", LabelTarget::PullRequest => "pull_request" };
-    for (kind, old, new) in [("unlabeled", before, after), ("labeled", after, before)] {
-        for label in old.iter().filter(|label| !new.iter().any(|other| other.id == label.id)) {
-            super::timeline::append(tx, repo, subject, item, actor, kind, &label.name, &label.color).await?;
-        }
-    }
-    Ok(())
-}
-
-/// On a connection, so a list can read its labels in the snapshot it read its rows in.
 pub(crate) async fn get_items_labels(
-    connection: &mut sqlx::PgConnection,
+    pool: &PgPool,
     target: LabelTarget,
     item_ids: &[i64],
 ) -> Result<Vec<ItemLabel>> {
@@ -556,5 +512,5 @@ pub(crate) async fn get_items_labels(
         ids.push_bind(id);
     }
     query.push(format!(") ORDER BY il.{column}, l.name"));
-    Ok(query.build_query_as().fetch_all(connection).await?)
+    Ok(query.build_query_as().fetch_all(pool).await?)
 }

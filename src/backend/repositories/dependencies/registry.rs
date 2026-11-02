@@ -88,7 +88,7 @@ impl Client {
         expected: Option<&str>,
     ) -> Result<npm::Archive> {
         ensure!(
-            crate::backend::npm::dependency_name(name) && version.to_string().len() <= 256,
+            npm::package_name(name) && version.to_string().len() <= 256,
             "Invalid npm package request"
         );
         let mut url = self.registry.clone();
@@ -112,7 +112,7 @@ impl Client {
         ensure!(npm::registry_url(tarball), "Untrusted npm archive URL");
         let bytes = Self::body(
             self.http.get(self.archive_url(tarball)?).send().await?,
-            npm::MAX_ARCHIVE,
+            8 * 1024 * 1024,
         )
         .await?;
         let expected = expected.map(str::to_owned);

@@ -111,12 +111,12 @@ async fn update(
 ) -> Result<Json<PullCap>> {
     let (actor, scope) = actor_scope(&state, &headers, scope, true).await?;
     let Json(input) =
-        input.map_err(super::json_error)?;
+        input.map_err(|_| Error::validation("PullRequestCreationCap", "enabled", "invalid"))?;
     Ok(Json(
         db::pull_caps::update_cap(
             &state.pool,
             actor.user.id,
-            &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+            &AccountCredential::Token(actor.token.id),
             scope,
             &input,
         )
@@ -181,11 +181,11 @@ async fn change_bypass(
     let (actor, scope) =
         actor_scope(&state, &headers, ScopeName::Repository(owner, repo), true).await?;
     let Json(input) =
-        input.map_err(super::json_error)?;
+        input.map_err(|_| Error::validation("PullRequestBypassList", "users", "invalid"))?;
     db::pull_caps::change_bypass(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        &AccountCredential::Token(actor.token.id),
         scope.id(),
         &input.users,
         adding,

@@ -34,7 +34,6 @@ fn fields(draft: &MilestoneDraft) -> Element {
                 DraftTextarea { name: "description", initial_value: draft.description.clone(), rows: 5, class: "collaboration-textarea", placeholder: "What the milestone is for" }
             }
             label { class: "collaboration-form-field", "Due date (optional)"
-                input { r#type: "hidden", name: "original", value: draft.original.clone() }
                 input { r#type: "date", name: "due_date", class: "collaboration-input", value: draft.due_date.clone() }
             }
         }

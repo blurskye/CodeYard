@@ -151,7 +151,7 @@ async fn contributions(d: &Database, repo: i64, actor: i64, issue: i64, pr: i64,
     let before = d.snapshot(repo, issue, pr).await;
     let i = db::issues::create_issue(d.pool(), repo, actor, "Contribution", "Fixture").await;
     let p = new_pr(d.pool(), repo, actor).await;
-    let ic = db::issues::add_issue_comment(d.pool(), repo, issue, actor, "Contribution", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), actor).await)).await;
+    let ic = db::issues::add_issue_comment(d.pool(), issue, actor, "Contribution").await;
     let pc =
         db::pull_requests::reviews::add_pull_request_comment(d.pool(), comment(pr, actor, None))
             .await;
@@ -180,7 +180,6 @@ async fn comment_review_refused(d: &Database, pr: i64, actor: i64) {
             d.pool(),
             pr,
             actor,
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), actor).await),
             "commented",
             Some("Denied"),
             Some(SHA),
@@ -205,7 +204,6 @@ async fn review_denied(
                 d.pool(),
                 pr,
                 actor,
-                &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), actor).await),
                 state,
                 Some("Denied"),
                 Some(SHA),
@@ -337,7 +335,6 @@ async fn contract(pg: bool) {
         d.pool(),
         pr.id,
         writer,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), writer).await),
         "approved",
         None,
         Some(SHA),
@@ -348,7 +345,6 @@ async fn contract(pg: bool) {
         d.pool(),
         public_pr.id,
         writer,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), writer).await),
         "approved",
         None,
         Some(SHA),
@@ -383,7 +379,6 @@ async fn contract(pg: bool) {
         d.pool(),
         personal_pr.id,
         writer,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), writer).await),
         "approved",
         None,
         Some(SHA),
@@ -412,7 +407,7 @@ async fn contract(pg: bool) {
     }
     review_denied(&d, private.id, reader, issue.id, pr.id, review.id, writer).await;
     // Foreign/private and absent targets have identical recognizable refusals at
-    // the actual named DAO boundary, retaining the caller's explicit repository scope.
+    // the actual named DAO boundary, without fabricating a repository scope.
     contributions(
         &d,
         foreign.id,
@@ -422,7 +417,7 @@ async fn contract(pg: bool) {
         false,
     )
     .await;
-    refusal(db::issues::add_issue_comment(d.pool(), private.id, i64::MAX, reader, "Missing", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), reader).await)).await);
+    refusal(db::issues::add_issue_comment(d.pool(), i64::MAX, reader, "Missing").await);
     refusal(
         db::pull_requests::reviews::add_pull_request_comment(
             d.pool(),
@@ -465,7 +460,6 @@ async fn contract(pg: bool) {
         d.pool(),
         pr.id,
         owner,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), owner).await),
         "approved",
         None,
         Some(SHA)
@@ -499,7 +493,6 @@ async fn contract(pg: bool) {
         d.pool(),
         pr.id,
         writer,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), writer).await),
         "commented",
         Some("Reviewed"),
         Some(SHA),
@@ -550,14 +543,13 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    db::issues::add_issue_comment(d.pool(), issue.repo_id, issue.id, reader, "Invalidate revision", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), reader).await))
+    db::issues::add_issue_comment(d.pool(), issue.id, reader, "Invalidate revision")
         .await
         .unwrap();
     db::pull_requests::reviews::add_pull_request_review(
         d.pool(),
         pr.id,
         writer,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), writer).await),
         "commented",
         Some("Reviewed"),
         Some(SHA),
@@ -628,7 +620,6 @@ async fn contract(pg: bool) {
         d.pool(),
         pr.id,
         writer,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(d.pool(), writer).await),
         "approved",
         None,
         Some(SHA)
@@ -1106,7 +1097,6 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
         &f.pool,
         pr.id,
         actor,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&f.pool, actor).await),
         "approved",
         None,
         Some(SHA),
@@ -1138,7 +1128,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
                     .await
                     .map(|_| ()),
                 1 => new_pr(&pool, repo_id, actor).await.map(|_| ()),
-                2 => db::issues::add_issue_comment(&pool, repo_id, issue_id, actor, "Denied", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&pool, actor).await))
+                2 => db::issues::add_issue_comment(&pool, issue_id, actor, "Denied")
                     .await
                     .map(|_| ()),
                 3 => db::pull_requests::reviews::add_pull_request_comment(
@@ -1151,7 +1141,6 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
                     &pool,
                     pr_id,
                     actor,
-                    &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&pool, actor).await),
                     "approved",
                     None,
                     Some(SHA),
@@ -1203,13 +1192,13 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     db::repositories::access::grant_repo_access(&f.pool, actor, f.repo.id, AccessLevel::Read)
         .await
         .unwrap();
-    let accepted = db::issues::add_issue_comment(&f.pool, issue.repo_id, issue.id, actor, "Accepted snapshot", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&f.pool, actor).await))
+    let accepted = db::issues::add_issue_comment(&f.pool, issue.id, actor, "Accepted snapshot")
         .await
         .unwrap();
     db::repositories::access::revoke_repo_access(&f.pool, actor, f.repo.id)
         .await
         .unwrap();
-    refusal(db::issues::add_issue_comment(&f.pool, issue.repo_id, issue.id, actor, "Replay", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&f.pool, actor).await)).await);
+    refusal(db::issues::add_issue_comment(&f.pool, issue.id, actor, "Replay").await);
     assert!(db::issues::list_issue_comments(&f.pool, issue.id, 100, 0)
         .await
         .unwrap()
@@ -1243,9 +1232,9 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
         .await
         .unwrap();
     let pool = f.pool.clone();
-    let (repo_id, issue_id) = (issue.repo_id, issue.id);
+    let issue_id = issue.id;
     let effect = tokio::spawn(async move {
-        db::issues::add_issue_comment(&pool, repo_id, issue_id, actor, "Accepted before revocation", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&pool, actor).await)).await
+        db::issues::add_issue_comment(&pool, issue_id, actor, "Accepted before revocation").await
     });
     wait_until_blocked(&f.raw, blocker, 1).await;
 
@@ -1261,7 +1250,7 @@ async fn postgres_contribution_keeps_its_grant_until_the_effect_commits() {
     let comment = effect.await.unwrap().unwrap();
     assert!(revocation.await.unwrap().unwrap());
     assert_eq!(comment.body, "Accepted before revocation");
-    refusal(db::issues::add_issue_comment(&f.pool, issue.repo_id, issue.id, actor, "Denied after", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&f.pool, actor).await)).await);
+    refusal(db::issues::add_issue_comment(&f.pool, issue.id, actor, "Denied after").await);
     f.finish().await;
 }
 
@@ -1345,9 +1334,9 @@ async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
             }
         }
         let pool = f.pool.clone();
-        let (repo_id, issue_id) = (issue.repo_id, issue.id);
+        let issue_id = issue.id;
         let task = tokio::spawn(async move {
-            db::issues::add_issue_comment(&pool, repo_id, issue_id, actor, "Denied", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&pool, actor).await)).await
+            db::issues::add_issue_comment(&pool, issue_id, actor, "Denied").await
         });
         wait_until_blocked(&f.raw, pid, 1).await;
         revoke.commit().await.unwrap();
@@ -1392,7 +1381,7 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
     db::repositories::access::grant_repo_access(&f.pool, actor, repo.id, AccessLevel::Read)
         .await
         .unwrap();
-    let accepted = db::issues::add_issue_comment(&f.pool, issue.repo_id, issue.id, actor, "Accepted snapshot", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&f.pool, actor).await))
+    let accepted = db::issues::add_issue_comment(&f.pool, issue.id, actor, "Accepted snapshot")
         .await
         .unwrap();
     // Establish committed revocation through an independent writer reservation.
@@ -1406,7 +1395,7 @@ async fn sqlite_contributions_use_reserved_writer_snapshot() {
         .unwrap();
     revoke.commit().await.unwrap();
     let second = f.second_handle().await;
-    refusal(db::issues::add_issue_comment(&second, issue.repo_id, issue.id, actor, "Revoked snapshot", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&second, actor).await)).await);
+    refusal(db::issues::add_issue_comment(&second, issue.id, actor, "Revoked snapshot").await);
     let comments = db::issues::list_issue_comments(&second, issue.id, 100, 0)
         .await
         .unwrap();

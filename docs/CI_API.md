@@ -1,6 +1,6 @@
 # CI API (Actions)
 
-Workflows in `.github/workflows/` run with `codeyard-actions` (the default) or `act` on nodes that have the
+Workflows in `.github/workflows/` run with `act` on nodes that have the
 `runner` role. Runs, jobs and logs are stored in the selected database
 (PostgreSQL or SQLite). Code: `src/backend/ci/` (admission, configuration, queue and
 worker), `src/backend/api/ci/` (JSON and Actions page/native-form adapters).
@@ -52,13 +52,7 @@ uniform job permission and no job environments; use the native runner for job id
 
 ## Starting a run
 
-`POST /api/ci/trigger` requires a live signed-in session cookie. First load the
-same-origin `/{owner}/{repo}/actions` page using that session and read its dispatch
-form's hidden `csrf_token`. Submit that token in `X-CSRF-Token`, with
-`Content-Type: application/json` and the instance's `Origin` header. Keep the same
-session cookie; omitting the synchronizer returns 403.
-
-Its JSON body takes:
+`POST /api/ci/trigger` (signed in) takes:
 
 - `repo_owner`, `repo_name` and `branch` (also accepted as `ref`): the repository and ref
   to run. For `pull_request`, use the base repository and base branch, not the source branch.
@@ -78,14 +72,13 @@ It returns `{job_id, mode, pipeline, workflow_path}`. A workflow runs only when 
 A workflow declares its manual inputs under `on.workflow_dispatch.inputs`, as GitHub does.
 Each input has a `type` (`string` by default, `boolean`, `number`, `choice` or
 `environment`), an optional `description`, `required`, `default` and, for `choice` and
-`environment`, `options`. A workflow may declare at most 25 inputs and a choice at most 25
+`environment`, `options`. A workflow may declare at most ten inputs and a choice at most 25
 options; a file that breaks these rules is not listed and cannot run.
 
 A run with inputs takes exactly the declared names. The server refuses unknown names, a
 missing or empty required input, a value that is not one of the options, a boolean that is
 not `true` or `false`, and a number that is not a finite number. Inputs left out take their
-default; without a default, optional booleans become `false`, numbers `0` and strings
-`""`. The serialized input payload is limited to 65,535 bytes. The run's inputs are stored with it and shown on its page. A run of several
+default. The run's inputs are stored with it and shown on its page. A run of several
 workflows at once takes no inputs, so a workflow that declares inputs must be started on
 its own, with `workflow_path`.
 
@@ -124,8 +117,8 @@ administrator or be listed in `CI_TRUSTED_ACTOR_IDS`. Anyone else gets 403
 repository permission requirement only on user-owned repositories, not organization
 repositories.
 
-When `workflow_path` is supplied with the default `ci` pipeline, its inferred pipeline
-can upgrade the request: case-insensitive substring `full` selects `full`; otherwise `cd`, `deploy`
+When `workflow_path` is supplied, its inferred pipeline replaces even an explicit
+`pipeline`: case-insensitive substring `full` selects `full`; otherwise `cd`, `deploy`
 or `release` selects `cd`; all other paths select `ci`. Without a path, the pipeline
 selects `CI_WORKFLOW_CI`, `CI_WORKFLOW_CD`, or both for `full`. Admission upgrades `ci`
 to `full` if any selected path implies deployment, is `CI_WORKFLOW_CD`, or has a job
@@ -149,7 +142,7 @@ or organization secrets, including after their head repository is deleted.
 Workflow discovery reads only direct regular `.yml` and `.yaml` files in
 `.github/workflows/`. The directory may have at most 64 direct entries, including
 non-workflow files and subdirectories. Exceeding that bound fails the entire listing:
-`GET /api/ci/workflows` returns 503, and automatic discovery queues no runs for that
+`GET /api/ci/workflows` returns 500, and automatic discovery queues no runs for that
 revision even if the push was accepted. Each workflow is limited to 256 KiB; discovery
 skips an oversized file while still considering the others. Explicitly triggering an
 oversized workflow is rejected, not run.
@@ -176,7 +169,7 @@ host-execution authority. Other job-token events cannot start runs.
 
 | Method | Path | Notes |
 | --- | --- | --- |
-| `GET` | `/api/ci/workflows?owner={owner}&repo={repo}` | Workflows that can be run. Both `owner` and `repo` are required. Optional `git_ref` selects the discovery ref; otherwise the default branch is used. |
+| `GET` | `/api/ci/workflows` | Workflows that can be run. |
 | `POST` | `/api/ci/trigger` | Starts a run (see above). |
 | `GET` | `/api/ci/jobs` | Runs. `owner` and `repo` select one repository and must be given together; one alone returns 400. Without them the list is the caller's own runs. `limit` is 1 to 200, default 50. Visibility is applied in the database before the limit. |
 | `GET` | `/api/ci/jobs/{job_id}` | One run. |
@@ -214,17 +207,15 @@ checked (`session_unavailable` and similar). Other 500 responses are internal fa
 - Runs are rows in the `ci_runs` table, and that table is the queue. A node with the
   `runner` role claims queued runs. It executes up to `CI_MAX_ACTIVE_RUNS`
   runs at the same time (default 4).
-- Each job runs under the selected engine: in Podman containers by default (`CI_EXECUTION_MODE=podman`),
+- Each job runs under `act`: in Podman containers by default (`CI_EXECUTION_MODE=podman`),
   or on the host with `CI_EXECUTION_MODE=local`. There is no Kubernetes mode.
-- Output is stored as it arrives. Ordinary lines over 16 KiB are omitted with a warning,
-  not truncated before secret masking. Authenticated native progress has a separate
-  bounded envelope. Log storage/transport failures warn and drop unsent lines rather
-  than cancelling execution. The ordinary run deadline still applies.
+- Output is stored as it arrives. A line over 16 KiB is cut short with a marker, and the run
+  goes on. Database queue write failure can fail execution;
+  remote-core log transport failure is warned and drops unsent lines without
+  cancelling the running workflow. Its ordinary deadline still applies.
 - A worker heartbeats every 10 seconds. A running run with no heartbeat for 90 seconds
   is marked `failed`. Runs are never retried automatically.
-- The effective repository/site Actions timeout stops the run. `CI_RUN_TIMEOUT_SECONDS`
-  (default 3600) is the node fallback only when no effective policy timeout is supplied;
-  it does not cap an explicitly configured Actions timeout.
+- A run is stopped after `CI_RUN_TIMEOUT_SECONDS` (default 3600).
 - Finishing a run writes its status, deployment record, commit status and, for a failed run,
   the starter's notification in one database transaction.
 
@@ -237,13 +228,11 @@ workflows from moving branches. Calls support typed `workflow_call` inputs,
 explicit or inherited secrets, outputs in the caller's `needs`, matrices, and
 `caller / called` job names. There are at most four levels including the caller
 and twenty distinct called workflows. Called token permissions cannot exceed the
-caller's. Called workflows declaring workflow- or job-level concurrency are rejected;
-act job-level concurrency is unsupported and refused rather than silently ignored.
-Private cross-repository calls require a private caller in the same
+caller's. Private cross-repository calls require a private caller in the same
 owner namespace and the actor's read access, checked again at claim time.
 
-The patched `act` engine uses the same pinned files and inherits secrets from the
-immediate caller, preserving its workflow token. act still uses
+The `act` engine uses the same pinned files. Codeyard expands secret inheritance
+into explicit forwarding to avoid act's nested-inheritance bug. act still uses
 one token with the intersection of all job permissions, not per-job credentials.
 In act 0.2.89, a workflow containing only another workflow call does not propagate
 its result or outputs to the outer caller: dependent jobs can be skipped even
@@ -256,12 +245,6 @@ Hydrated Actions refreshes the authorized page model every two seconds while the
 selected run is queued/running; no-JS users have a Refresh link. This is not CI
 WebSocket streaming. The inbox separately polls its page model every 15 seconds.
 
-Native steps publish masked `GITHUB_STEP_SUMMARY` Markdown to the run's Summary
-view. Persistence is best effort, capped at 64 KiB per step and 256 KiB per attempt;
-the page projects the first 128 summaries in execution order. Truncation is logged.
-The Markdown uses the normal sanitized renderer and remains available after runner
-temporary files are removed.
-
 Worker completion and queued cancellation announce notification IDs after commit;
 database-free worker finish goes through core queue RPC. PostgreSQL propagates
 hints to other nodes, and socket delivery rereads live authority/content. Hints
@@ -272,10 +255,7 @@ execution. Runtime explicitly starts/joins the broadcaster listener.
 
 - The run page has a Cancel run button for queued and running runs, for users with write
   access. The API has the same cancel route.
-- Interrupted runs are not automatically retried.
-- Finalized, unexpired artifacts can be downloaded from the run page by repository
-  readers, or through `/api/v3/repos/{owner}/{repo}/actions/artifacts/{artifact_id}/zip`.
-  Artifact deletion requires repository write access and is unavailable when archived.
+- There is no automatic retry and no artifact download.
 
 ## Configuration
 

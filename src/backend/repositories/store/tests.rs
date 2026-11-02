@@ -467,7 +467,7 @@ async fn editor_publications_and_new_branch_saves_schedule_primary_packing() {
             sample += usize::from(oid.as_bytes()[0] == 0x17);
             count += 1;
         }
-        let mut prepared = f
+        let prepared = f
             .store
             .prepare_file(
                 &FileWrite {
@@ -485,15 +485,22 @@ async fn editor_publications_and_new_branch_saves_schedule_primary_packing() {
             .await
             .unwrap();
         if new_branch {
-            prepared.branch = "editor-branch".into();
-            prepared.reference = "refs/heads/editor-branch".into();
-            prepared.expected = None;
-            prepared.new_branch = true;
+            f.store
+                .create_branch_as(
+                    &a.pool,
+                    a.repo_id,
+                    a.actor,
+                    "editor-branch",
+                    &prepared.commit.sha,
+                )
+                .await
+                .unwrap();
+        } else {
+            f.store
+                .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
+                .await
+                .unwrap();
         }
-        f.store
-            .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
-            .await
-            .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
                 if !f.repo.path().join("gc.pid").exists()
@@ -542,7 +549,7 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         let path = destination.clone();
         let task = tokio::spawn(async move {
             entered.send(()).unwrap();
-            super::local::LocalStore::checkout_pack(&path, &"1".repeat(40), "/repository.git", pack, permit, lock)
+            super::local::LocalStore::checkout_pack(&path, &"1".repeat(40), pack, permit, lock)
                 .await
         });
         queued.await.unwrap();
@@ -950,7 +957,8 @@ async fn commit_history_filters_by_author_and_committer_time() {
         author: author.map(str::to_owned),
         since,
         until,
-        ..CommitFilter::default()
+        message: None,
+        author_emails: Vec::new(),
     };
     let shas = |commits: &[CommitInfo]| -> Vec<String> {
         commits.iter().map(|commit| commit.sha.clone()).collect()
@@ -2272,7 +2280,6 @@ async fn merging_moves_the_base_only_when_nothing_changed_since_approval() {
             &request.base,
             &merged,
             MergeMethod::Merge,
-            None,
         )
         .await
         .unwrap();
@@ -2291,8 +2298,7 @@ async fn merging_moves_the_base_only_when_nothing_changed_since_approval() {
             &request.head,
             &request.base,
             &merged,
-            MergeMethod::Merge,
-            None,
+            MergeMethod::Merge
         )
         .await
         .is_err());
@@ -2548,7 +2554,6 @@ async fn publish_refuses_a_merge_method_turned_off_after_preparation() {
             &base,
             &merged,
             MergeMethod::Squash,
-            None,
         )
         .await
         .unwrap_err();
@@ -2945,7 +2950,6 @@ async fn every_ref_change_moves_the_write_version() {
             &base,
             &merged,
             MergeMethod::Merge,
-            None,
         )
         .await
         .unwrap();
@@ -3148,7 +3152,6 @@ async fn a_store_for_the_old_primary_refuses_writes_after_promotion() {
             &base,
             &merged,
             MergeMethod::Merge,
-            None,
         )
         .await;
     assert_write_denied(result);
@@ -3315,7 +3318,7 @@ async fn a_repository_at_the_ref_limit_refuses_new_branches_and_tags() {
         f.repo.reference(&name, f.first, false, "fill").unwrap();
     }
     let path = std::path::Path::new(f.store.location());
-    let held = crate::backend::git::published_refs_in_use(path).unwrap();
+    let held = crate::backend::git::branches_and_tags_in_use(path).unwrap();
     assert_eq!(held.count, MAX_REPOSITORY_REFS);
 
     let error = f

@@ -8,13 +8,12 @@ use arguments::{Cli, Commands, DbAction, KeyAction, RepoAction, UserAction};
 
 use crate::backend::cluster as cluster_runtime;
 use crate::backend::db;
-use crate::backend::fs::private_dir as prepare_state_directory;
 use crate::backend::node;
 use crate::backend::ssh;
 
 use anyhow::{bail, Result};
 use clap::Parser;
-use std::{ffi::OsString, time::Duration};
+use std::{ffi::OsString, path::Path, time::Duration};
 use tracing::info;
 use tracing_subscriber::EnvFilter;
 
@@ -38,6 +37,16 @@ fn set_private_umask() {
 
 #[cfg(not(unix))]
 fn set_private_umask() {}
+
+fn prepare_state_directory(path: &Path) -> Result<()> {
+    std::fs::create_dir_all(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
 
 fn database_url_from_env() -> Result<Option<String>> {
     match std::env::var("DATABASE_URL") {
@@ -182,7 +191,6 @@ pub fn run() -> Result<()> {
     drop(early_cli);
     set_private_umask();
     load_dotenv()?;
-    crate::backend::identity::setup::configured_admin_secret()?;
     crate::backend::git::objects::flush_writes_to_disk();
     let runtime = tokio::runtime::Runtime::new()?;
     let result = runtime.block_on(run_application(arguments));
@@ -236,7 +244,7 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
             return node::serve_worker(&cli.state_dir).await;
         }
         if configured_database_url.is_none() {
-            anyhow::ensure!(roles.single_node() && cluster_runtime::Settings::from_env()?.is_none(),
+            anyhow::ensure!(roles == &node::NodeRoles::default() && cluster_runtime::Settings::from_env()?.is_none(),
                 "a server and the cluster roles require DATABASE_URL (PostgreSQL for a cluster, sqlite://... for a single node); only a runner can run without a database");
         }
     }

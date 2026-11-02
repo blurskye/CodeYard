@@ -2,6 +2,7 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::{access_error, readable_repository};
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
+use crate::backend::db;
 use crate::backend::db::models::User;
 use crate::backend::db::DbPool;
 use crate::backend::repositories::access::AccessError;
@@ -23,8 +24,8 @@ fn add_identity_bytes(total: &mut usize, name: &str, email: &str) -> Result<(), 
     Ok(())
 }
 
-/// The account behind each contributor's email, by email, under the same rules as commit
-/// attribution.
+/// The account behind each contributor's email, by email. Commits made on the forge for an
+/// account without an email carry its no-reply address.
 pub(crate) async fn contributor_accounts(
     pool: &DbPool,
     contributors: &[ContributorInfo],
@@ -33,11 +34,45 @@ pub(crate) async fn contributor_accounts(
         .iter()
         .map(|contributor| contributor.email.clone())
         .collect();
-    let mut users = HashMap::new();
-    for chunk in emails.chunks(512) {
-        users.extend(crate::backend::repositories::reads::commit_authors(pool, chunk).await?);
+    let users = db::users::accounts::get_users_by_emails(pool, &emails).await?;
+    let usernames: Vec<String> = emails
+        .iter()
+        .filter_map(|email| email.strip_suffix("@users.noreply"))
+        .map(str::to_owned)
+        .collect();
+    let noreply_users = if usernames.is_empty() {
+        Vec::new()
+    } else {
+        db::users::accounts::get_users_by_usernames(pool, &usernames).await?
+    };
+    let mut users_by_email: HashMap<String, User> = users
+        .into_iter()
+        .filter_map(|user| user.email.clone().map(|email| (email, user)))
+        .collect();
+    users_by_email.extend(
+        noreply_users
+            .into_iter()
+            .map(|user| (user.noreply_email(), user)),
+    );
+    // A verified secondary address also names its account.
+    let unmatched: Vec<String> = emails
+        .iter()
+        .filter(|email| !users_by_email.contains_key(*email))
+        .cloned()
+        .collect();
+    let owners = db::users::accounts::get_verified_email_owners(pool, &unmatched).await?;
+    let ids: Vec<i64> = owners.iter().map(|(_, id)| *id).collect();
+    let accounts: HashMap<i64, User> = db::users::accounts::get_users_by_ids(pool, &ids)
+        .await?
+        .into_iter()
+        .map(|user| (user.id, user))
+        .collect();
+    for (email, id) in owners {
+        if let Some(user) = accounts.get(&id) {
+            users_by_email.entry(email).or_insert_with(|| user.clone());
+        }
     }
-    Ok(users)
+    Ok(users_by_email)
 }
 
 #[derive(Serialize)]

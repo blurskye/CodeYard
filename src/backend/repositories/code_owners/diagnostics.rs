@@ -136,11 +136,10 @@ pub async fn load_diagnostics(
     commit: &str,
 ) -> Result<Option<Vec<Diagnostic>>, RepoError> {
     let store = repo_store(repository, cluster);
-    let commit = store.commit(commit).await?.sha;
     for path in LOCATIONS {
         match store
             .blob_range(
-                &commit,
+                commit,
                 path,
                 BlobRange::Window {
                     offset: 0,

@@ -18,15 +18,6 @@ pub fn is_hex_token(value: &str, len: usize) -> bool {
     value.len() == len && value.bytes().all(|byte| byte.is_ascii_hexdigit())
 }
 
-/// HMAC-SHA256 bytes; callers own key encoding and wire prefixes.
-pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    use hmac::Mac;
-    let mut mac = <hmac::Hmac<sha2::Sha256> as Mac>::new_from_slice(key)
-        .expect("HMAC accepts any key length");
-    mac.update(message);
-    mac.finalize().into_bytes().into()
-}
-
 pub struct SecretEncryptor {
     cipher: Aes256Gcm,
 }
@@ -66,22 +57,6 @@ impl SecretEncryptor {
             .map_err(|_| SecretError::EncryptionFailed)?;
 
         Ok((ciphertext, nonce_bytes))
-    }
-
-    pub fn generate_sealed_box_key(&self) -> Result<(Vec<u8>, [u8; 12]), SecretError> {
-        let key = crypto_box::SecretKey::generate(&mut rand::thread_rng());
-        self.encrypt(&key.to_bytes())
-    }
-
-    pub fn sealed_box_key(
-        &self,
-        ciphertext: &[u8],
-        nonce: &[u8],
-    ) -> Result<crypto_box::SecretKey, SecretError> {
-        let bytes: [u8; 32] = self.decrypt(ciphertext, nonce)?
-            .try_into()
-            .map_err(|_| SecretError::DecryptionFailed)?;
-        Ok(crypto_box::SecretKey::from(bytes))
     }
 
     pub fn decrypt(&self, ciphertext: &[u8], nonce: &[u8]) -> Result<Vec<u8>, SecretError> {

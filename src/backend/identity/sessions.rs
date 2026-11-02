@@ -13,8 +13,8 @@ pub struct SessionContext<'a> {
     pub initiating: InitiatingSession<'a>,
     pub fresh_id: &'a str,
     pub user_agent: Option<&'a str>,
-    /// The transport's client address, used for admission and retained with the session when
-    /// it is an IP address.
+    /// The request's client address, when the transport knows it. Failed sign-ins are limited
+    /// per address.
     pub client: Option<&'a str>,
     pub expires_at: DateTime<Utc>,
 }
@@ -45,7 +45,7 @@ pub async fn issue_authenticated_session<'a>(
         context.fresh_id,
         user_id,
         credential,
-        stored::SessionClient { user_agent: context.user_agent, ip_address: context.client },
+        context.user_agent,
         context.expires_at,
     )
     .await

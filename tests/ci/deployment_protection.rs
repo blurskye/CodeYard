@@ -61,13 +61,14 @@ async fn app(
     db::github_app_hooks::save(
         f.pool(),
         app.id,
-        &db::webhooks::WebhookPatch {
-            payload_url: Some("http://127.0.0.1:1/blocked".into()),
-            content_type: Some("application/json".into()),
-            events: Some("deployment_protection_rule".into()),
-            active: Some(true),
-            ssl_verify: Some(true),
-            ..Default::default()
+        &db::webhooks::WebhookFields {
+            username: None,
+            password: None,
+            payload_url: "http://127.0.0.1:1/blocked".into(),
+            content_type: "application/json".into(),
+            events: "deployment_protection_rule".into(),
+            active: true,
+            ssl_verify: true,
         },
         None,
         false,
@@ -126,7 +127,7 @@ async fn enqueue(f: &Database, repo: i64, actor: i64, attempt: Option<&CiRun>) -
             None,
         )
         .await
-        .unwrap().0
+        .unwrap()
     } else {
         db::ci::enqueue_ci_run(f.pool(), input, &[actor])
             .await
@@ -312,7 +313,7 @@ async fn contract(pg: bool) {
     assert_eq!(gates.len(), 1);
     assert_eq!(gates[0].app_id, provider.id);
     assert_eq!(gates[0].state, "pending");
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
         .await
         .unwrap()
         .is_none());
@@ -407,7 +408,7 @@ async fn contract(pg: bool) {
     .unwrap()
     .id;
     decide(&f, token, &run, None).await.unwrap();
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
         .await
         .unwrap()
         .is_none());
@@ -417,7 +418,7 @@ async fn contract(pg: bool) {
         matches!(error, Refusal::Conflict)
     });
     assert_eq!(
-        db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
             .await
             .unwrap()
             .unwrap()
@@ -434,12 +435,12 @@ async fn contract(pg: bool) {
         protection::gates(f.pool(), retry.id).await.unwrap()[0].state,
         "pending"
     );
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
         .await
         .unwrap()
         .is_none());
     decide(&f, token, &retry, Some("rejected")).await.unwrap();
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
         .await
         .unwrap()
         .is_none());
@@ -496,7 +497,7 @@ async fn contract(pg: bool) {
         "disabled"
     );
     assert_eq!(
-        db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
             .await
             .unwrap()
             .unwrap()
@@ -517,17 +518,21 @@ async fn contract(pg: bool) {
         decide(&f, token, &unavailable, Some("approved")).await,
         |error| matches!(error, Refusal::Denied),
     );
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
         .await
         .unwrap()
         .is_none());
     db::environments::delete(f.pool(), alice, repo.id, "production")
         .await
         .unwrap();
-    assert!(db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
-        .await
-        .unwrap()
-        .is_none());
+    assert_eq!(
+        db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
+            .await
+            .unwrap()
+            .unwrap()
+            .id,
+        unavailable.id
+    );
     f.finish().await;
 }
 

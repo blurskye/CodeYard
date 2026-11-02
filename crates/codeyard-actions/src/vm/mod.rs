@@ -18,6 +18,7 @@ use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::str::FromStr;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{bail, ensure, Context, Result};
@@ -27,6 +28,7 @@ use tokio::time::{sleep, timeout, timeout_at, Instant};
 
 pub const WORKSPACE: &str = "C:/codeyard/workspace";
 const GUEST_TEMP: &str = "C:/codeyard/tmp";
+static NEXT_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Platform {
@@ -114,15 +116,41 @@ pub enum Stream {
 }
 
 /// Owns all per-job files. Construct this before the first cancellable operation.
-struct JobFiles(tempfile::TempDir);
+struct JobFiles(PathBuf);
 
 impl JobFiles {
     fn create() -> Result<Self> {
-        Ok(Self(crate::fs::private_tempdir("codeyard-vm-", None)?))
+        loop {
+            let id = NEXT_DIRECTORY.fetch_add(1, Ordering::Relaxed);
+            let path =
+                std::env::temp_dir().join(format!("codeyard-vm-{}-{id}", std::process::id()));
+            let mut builder = fs::DirBuilder::new();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::DirBuilderExt;
+                builder.mode(0o700);
+            }
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self(path)),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(error) => return Err(error).context("Creating VM job directory"),
+            }
+        }
     }
 
     fn path(&self, name: &str) -> PathBuf {
-        self.0.path().join(name)
+        self.0.join(name)
+    }
+}
+
+impl Drop for JobFiles {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            eprintln!(
+                "##[warning]Could not remove VM job directory {}: {error}",
+                self.0.display()
+            );
+        }
     }
 }
 
@@ -266,8 +294,8 @@ impl JobVm {
                 "-o",
             ])
             .arg(format!(
-                "UserKnownHostsFile=\"{}\"",
-                self.files.path("known_hosts").to_string_lossy().replace('\\', "\\\\").replace('"', "\\\"")
+                "UserKnownHostsFile={}",
+                self.files.path("known_hosts").display()
             ))
             .args([
                 "-o",
@@ -324,22 +352,20 @@ impl JobVm {
         tokio::spawn(crate::runner::read_lines(
             child.stdout.take().context("SSH stdout is unavailable")?,
             out_sender,
-            false,
         ));
         tokio::spawn(crate::runner::read_lines(
             child.stderr.take().context("SSH stderr is unavailable")?,
             err_sender,
-            true,
         ));
         let (mut out_done, mut err_done) = (false, false);
         while !out_done || !err_done {
             tokio::select! {
                 line = stdout.recv(), if !out_done => match line {
-                    Some(line) => output(Stream::Stdout, &line?.0),
+                    Some(line) => output(Stream::Stdout, &line),
                     None => out_done = true,
                 },
                 line = stderr.recv(), if !err_done => match line {
-                    Some(line) => output(Stream::Stderr, &line?.0),
+                    Some(line) => output(Stream::Stderr, &line),
                     None => err_done = true,
                 },
             }
@@ -359,12 +385,11 @@ impl JobVm {
             .context("Opening workspace to copy into VM")?;
         ensure!(local.is_dir(), "Workspace is not a directory");
         let guest = guest_path(guest_directory)?;
-        let snapshot = tokio::task::spawn_blocking(move || crate::fs::snapshot_tree(&local, crate::fs::SnapshotLinks::Reject)).await??;
         let mut command = self.transport("scp", "-P");
         checked(
             command
                 .arg("-r")
-                .arg(snapshot.path().join("."))
+                .arg(local.join("."))
                 .arg(format!("runner@127.0.0.1:{guest}/")),
         )
         .await
@@ -487,13 +512,7 @@ fn guest_path(path: &str) -> Result<String> {
 }
 
 fn ps_literal(value: &str) -> String {
-    let mut literal = String::from("'");
-    for ch in value.chars() {
-        literal.push(ch);
-        if matches!(ch, '\'' | '\u{2018}' | '\u{2019}' | '\u{201a}' | '\u{201b}') { literal.push(ch); }
-    }
-    literal.push('\'');
-    literal
+    format!("'{}'", value.replace('\'', "''"))
 }
 
 fn step_script(script: &str, env: &BTreeMap<String, String>, directory: &str) -> Result<String> {
@@ -522,7 +541,8 @@ fn step_script(script: &str, env: &BTreeMap<String, String>, directory: &str) ->
 async fn checked(command: &mut Command) -> Result<()> {
     command.kill_on_drop(true).stdin(Stdio::null());
     let description = format!("{command:?}");
-    let output = crate::runner::capture_output(command, Duration::from_secs(300))
+    let output = command
+        .output()
         .await
         .with_context(|| format!("Starting {description}"))?;
     ensure!(
@@ -597,7 +617,7 @@ mod tests {
         let mut directory = PathBuf::new();
         let result: Result<()> = (|| {
             let files = JobFiles::create()?;
-            directory = files.0.path().to_path_buf();
+            directory = files.0.clone();
             for name in ["overlay.qcow2", "id_ed25519", "known_hosts", "seed.iso"] {
                 fs::write(files.path(name), "secret")?;
             }
@@ -610,7 +630,7 @@ mod tests {
     #[tokio::test]
     async fn cancellation_kills_qemu_and_removes_files() {
         let files = JobFiles::create().unwrap();
-        let directory = files.0.path().to_path_buf();
+        let directory = files.0.clone();
         fs::write(files.path("overlay.qcow2"), "overlay").unwrap();
         let child = Command::new("sleep")
             .arg("60")
@@ -648,7 +668,7 @@ mod tests {
     #[tokio::test]
     async fn stop_requests_acpi_and_cleans_files() {
         let files = JobFiles::create().unwrap();
-        let directory = files.0.path().to_path_buf();
+        let directory = files.0.clone();
         let result = tempfile::tempdir().unwrap();
         let received = result.path().join("monitor-command");
         let child = Command::new("sh")
@@ -677,7 +697,7 @@ mod tests {
     #[tokio::test]
     async fn stop_kills_an_unresponsive_guest() {
         let files = JobFiles::create().unwrap();
-        let directory = files.0.path().to_path_buf();
+        let directory = files.0.clone();
         let child = Command::new("sleep")
             .arg("60")
             .stdin(Stdio::piped())
@@ -700,9 +720,9 @@ mod tests {
 
     #[test]
     fn quotes_step_environment_and_directory() {
-        let env = BTreeMap::from([("weird'name".into(), "a'’\n$()".into())]);
+        let env = BTreeMap::from([("weird'name".into(), "a'\n$()".into())]);
         let script = step_script("git status", &env, "C:/some ' dir").unwrap();
-        assert!(script.contains("'weird''name', 'a''’’\n$()', 'Process'"));
+        assert!(script.contains("'weird''name', 'a''\n$()', 'Process'"));
         assert!(script.contains("Set-Location -LiteralPath 'C:/some '' dir'"));
         assert!(script.starts_with("$ErrorActionPreference = 'Stop'\n"));
         assert!(script.ends_with(
@@ -745,7 +765,7 @@ mod tests {
         assert!(fs::read_to_string(destination.path().join("result.txt"))
             .unwrap()
             .contains("copied back"));
-        let files = vm.files.0.path().to_path_buf();
+        let files = vm.files.0.clone();
         vm.stop().await.unwrap();
         assert!(!files.exists());
     }

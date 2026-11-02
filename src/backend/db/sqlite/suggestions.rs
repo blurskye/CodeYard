@@ -24,13 +24,12 @@ pub async fn can_triage(pool: &SqlitePool, repo: i64, actor: i64) -> Result<bool
 pub async fn enabled(pool: &SqlitePool, repo: i64) -> Result<bool> {
     Ok(sqlx::query_scalar("SELECT COALESCE((SELECT enabled FROM repository_issue_suggestions WHERE repo_id=?1),false)").bind(repo).fetch_one(pool).await?)
 }
-pub async fn set_enabled(pool: &SqlitePool, repo: i64, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()> {
+pub async fn set_enabled(pool: &SqlitePool, repo: i64, actor: i64, enabled: bool) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
-    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
     super::issue_attributes::lock_metadata(&mut tx).await?;
     sqlx::query("INSERT INTO repository_issue_suggestions(repo_id,enabled) VALUES (?1,?2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled").bind(repo).bind(enabled).execute(&mut *tx).await?;
     tx.commit().await?;
@@ -175,12 +174,7 @@ async fn prepare(
             } else {
                 reason.into()
             };
-            let duplicate: Option<i64> = sqlx::query_scalar("SELECT duplicate_id FROM issue_duplicates WHERE issue_id=?1")
-                .bind(issue.id).fetch_optional(&mut **tx).await?;
-            let current = issue.state == "closed"
-                && issue.state_reason.as_deref().unwrap_or("completed") == reason
-                && duplicate == target;
-            (Value::String(reason.into()), name, current)
+            (Value::String(reason.into()), name, issue.state == "closed")
         }
     };
     Ok(Prepared {
@@ -203,24 +197,15 @@ pub async fn propose(
     pool: &SqlitePool,
     repo: i64,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     issue: i64,
     p: &Proposal,
-    target_repository: Option<i64>,
 ) -> Result<Suggestion> {
     p.validate()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     super::discussions::require_contribution_authority(&mut tx, actor, repo).await?;
     super::issue_attributes::lock_metadata(&mut tx).await?;
-    super::discussions::lock_issue_contribution(&mut tx, actor, repo, issue).await?;
-    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
+    super::discussions::lock_issue_contribution(&mut tx, actor, issue).await?;
     issue_scope(&mut tx, repo, issue).await?;
-    if let Some(expected) = target_repository {
-        anyhow::ensure!(p.action == Action::CloseIssue, Refusal::Invalid);
-        let current: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM issues WHERE id=?1")
-            .bind(p.target_id).fetch_optional(&mut *tx).await?;
-        anyhow::ensure!(current == Some(expected), Refusal::Missing);
-    }
     let record: Issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1 AND repo_id=?2")
         .bind(issue)
         .bind(repo)
@@ -299,7 +284,6 @@ async fn effect(
         Action::AddLabel => {
             super::labels::write_item_labels_transaction(
                 tx,
-                None,
                 repo,
                 LabelTarget::Issue,
                 id,
@@ -308,15 +292,14 @@ async fn effect(
             )
             .await?;
             super::issue_attributes::touch(tx, id).await?;
-            let (name, color): (String, String) = sqlx::query_as("SELECT name,color FROM labels WHERE id=?1").bind(p.target_id).fetch_one(&mut **tx).await?;
             Ok((
                 Some(
                     super::issue_attributes::event(
                         tx,
                         (repo, id, actor),
                         "labeled",
-                        &name,
-                        &color,
+                        &prepared.name,
+                        "",
                     )
                     .await?,
                 ),
@@ -328,7 +311,6 @@ async fn effect(
             let assignee = p.target_id.ok_or(Refusal::Invalid)?;
             let changed = super::assignees::assign_in_transaction(
                 tx,
-                actor,
                 repo,
                 AssignedItem::Issue(id),
                 assignee,
@@ -340,8 +322,14 @@ async fn effect(
             super::issue_attributes::touch(tx, id).await?;
             Ok((
                 Some(
-                    sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=?1 AND subject_kind='issue' AND subject_id=?2 AND actor_id=?3 AND kind='assigned' ORDER BY id DESC LIMIT 1")
-                        .bind(repo).bind(id).bind(actor).fetch_one(&mut **tx).await?,
+                    super::issue_attributes::event(
+                        tx,
+                        (repo, id, actor),
+                        "assigned",
+                        &prepared.name,
+                        "",
+                    )
+                    .await?,
                 ),
                 Some(assignee),
                 None,
@@ -364,24 +352,18 @@ async fn effect(
             )
             .await?
             .ok_or(Refusal::Invalid)?;
-            // Apply the exact normalized target, clearing an obsolete duplicate link too.
+            // As when closing through the issue page, the duplicate keeps its canonical link.
             if let Some(duplicate) = p.target_id {
                 sqlx::query("INSERT INTO issue_duplicates(issue_id,duplicate_id) VALUES($1,$2) ON CONFLICT(issue_id) DO UPDATE SET duplicate_id=excluded.duplicate_id")
                     .bind(id)
                     .bind(duplicate)
                     .execute(&mut **tx)
                     .await?;
-            } else {
-                sqlx::query("DELETE FROM issue_duplicates WHERE issue_id=?1").bind(id).execute(&mut **tx).await?;
             }
-            let event = if issue.state == "closed" {
-                // A reason/duplicate correction is a new action, never a historical close.
-                super::timeline::append(tx, repo, "issue", id, actor, "closed", prepared.value.as_str().unwrap_or("completed"), issue.state_reason.as_deref().unwrap_or("completed")).await?
-            } else {
-                sqlx::query_scalar("SELECT id FROM timeline_events WHERE repo_id=?1 AND subject_kind='issue' AND subject_id=?2 AND actor_id=?3 AND kind='closed' ORDER BY id DESC LIMIT 1").bind(repo).bind(id).bind(actor).fetch_one(&mut **tx).await?
-            };
             Ok((
-                Some(event),
+                Some(
+                    super::issue_attributes::event(tx, (repo, id, actor), "closed", "", "").await?,
+                ),
                 None,
                 Some(closed),
             ))
@@ -392,7 +374,6 @@ pub async fn resolve(
     pool: &SqlitePool,
     repo: i64,
     actor: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     issue: i64,
     id: i64,
     approve: bool,
@@ -402,7 +383,6 @@ pub async fn resolve(
         super::discussions::lock_triage_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
-    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor, credential, true).await?, Refusal::Denied);
     super::issue_attributes::lock_metadata(&mut tx).await?;
     issue_scope(&mut tx, repo, issue).await?;
     let record: Issue = sqlx::query_as("SELECT * FROM issues WHERE id=?1 AND repo_id=?2")

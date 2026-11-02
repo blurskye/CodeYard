@@ -88,7 +88,7 @@ async fn change(
     identity::blocks::change(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        &AccountCredential::Token(actor.token.id),
         username,
         blocked,
     )

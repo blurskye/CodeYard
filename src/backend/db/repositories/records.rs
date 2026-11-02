@@ -3,14 +3,6 @@ use crate::backend::db::models::{Repository, SharedRepository};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
-/// Forks in the whole network, as GitHub's GraphQL `forkCount` reports it. Only public forks
-/// count, so the number reveals no private repository to any audience.
-pub(crate) const NETWORK_FORK_COUNT: &str = "WITH RECURSIVE ancestors(id,parent) AS (SELECT id,forked_from_id FROM repositories WHERE id=$1 UNION ALL SELECT r.id,r.forked_from_id FROM repositories r JOIN ancestors a ON r.id=a.parent), network(id) AS (SELECT id FROM ancestors WHERE parent IS NULL UNION ALL SELECT r.id FROM repositories r JOIN network n ON r.forked_from_id=n.id) SELECT COUNT(*) FROM network n JOIN repositories r ON r.id=n.id WHERE r.forked_from_id IS NOT NULL AND NOT r.is_private AND NOT r.is_gist";
-
-native_operation!(crate::backend::db::postgres::repositories::records::network_fork_count,
-    crate::backend::db::sqlite::repositories::records::network_fork_count,
-    fn network_fork_count(pool: &DbPool, repo: i64) -> Result<i64>);
-
 native_operation!(crate::backend::db::postgres::repositories::records::create_repository,
     crate::backend::db::sqlite::repositories::records::create_repository,
     fn create_repository(
@@ -24,8 +16,6 @@ native_operation!(crate::backend::db::postgres::repositories::records::create_re
 
 native_operation!(crate::backend::db::postgres::repositories::records::get_repository,
     crate::backend::db::sqlite::repositories::records::get_repository,
-    /// Resolve ASCII-case-insensitive repository coordinates, returning canonical spelling.
-    /// Principal/allowance lookups remain exact; namespace admission reserves case variants.
     fn get_repository(
     pool: &DbPool,
     owner_name: &str,
@@ -74,7 +64,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_user
 
 native_operation!(crate::backend::db::postgres::repositories::records::count_user_repositories,
     crate::backend::db::sqlite::repositories::records::count_user_repositories,
-    fn count_user_repositories(pool: &DbPool, user_id: i64, owner_session: Option<&str>) -> Result<i64>);
+    fn count_user_repositories(pool: &DbPool, user_id: i64, include_private: bool) -> Result<i64>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::list_shared_repositories,
     crate::backend::db::sqlite::repositories::records::list_shared_repositories,
@@ -82,10 +72,10 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_shar
 
 native_operation!(crate::backend::db::postgres::repositories::records::list_user_repository_page,
     crate::backend::db::sqlite::repositories::records::list_user_repository_page,
-    fn list_user_repository_page(pool: &DbPool, user: i64, owner_session: Option<&str>, text: &str, include_archived: bool, limit: i64, offset: i64) -> Result<(Vec<Repository>, i64)>);
+    fn list_user_repository_page(pool: &DbPool, user: i64, include_private: bool, text: &str, limit: i64, offset: i64) -> Result<(Vec<Repository>, i64)>);
 native_operation!(crate::backend::db::postgres::repositories::records::list_shared_repository_page,
     crate::backend::db::sqlite::repositories::records::list_shared_repository_page,
-    fn list_shared_repository_page(pool: &DbPool, user: i64, text: &str, include_archived: bool, limit: i64, offset: i64) -> Result<(Vec<SharedRepository>, i64)>);
+    fn list_shared_repository_page(pool: &DbPool, user: i64, text: &str, limit: i64, offset: i64) -> Result<(Vec<SharedRepository>, i64)>);
 
 /// Order of a public repository list. The limit applies after this order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -144,13 +134,6 @@ native_operation!(crate::backend::db::postgres::repositories::records::list_publ
     limit: i64,
 ) -> Result<Vec<Repository>>);
 
-// The most starred public repositories that `viewer` does not own personally, whose name or
-// description contains `text` as the viewer's own and shared lists match it. The filter runs
-// before the limit, so it never empties the list while other repositories match.
-native_operation!(crate::backend::db::postgres::repositories::records::list_trending_repositories,
-    crate::backend::db::sqlite::repositories::records::list_trending_repositories,
-    fn list_trending_repositories(pool: &DbPool, viewer: i64, text: &str, limit: i64) -> Result<Vec<Repository>>);
-
 native_operation!(crate::backend::db::postgres::repositories::records::search_public_repositories,
     crate::backend::db::sqlite::repositories::records::search_public_repositories,
     fn search_public_repositories(
@@ -182,8 +165,17 @@ pub enum RepositorySettingsRefusal {
 }
 
 pub(crate) fn validate_repository_alias(name: &str) -> Result<()> {
+    // Match the existing accepted byte bound, retaining Unicode alphanumerics.
     anyhow::ensure!(
-        crate::repository_names::valid(name),
+        !name.is_empty()
+            && name.len() <= 100
+            && name != "."
+            && name != ".."
+            // Git URLs strip one trailing `.git`, so such a name would resolve to another repository.
+            && !name.ends_with(".git")
+            && name
+                .chars()
+                .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.')),
         RepositorySettingsRefusal::InvalidName
     );
     Ok(())
@@ -195,7 +187,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::update_re
     /// failed write leaves all three unchanged.
     fn update_repository(
     pool: &DbPool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     description: Option<&str>,
     is_private: impl Into<VisibilityUpdate>,
@@ -213,7 +205,6 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_repos
 #[derive(Debug, Clone, Default, serde::Serialize, serde::Deserialize)]
 #[serde(bound(deserialize = "T: serde::Deserialize<'de>"))]
 pub struct RepositoryChanges<T> {
-    pub token: Option<i64>,
     pub name: Option<T>,
     #[serde(
         default,
@@ -231,8 +222,6 @@ pub struct RepositoryChanges<T> {
     pub visibility_expected: Option<bool>,
     pub archived: Option<bool>,
     pub is_template: Option<bool>,
-    pub wiki: Option<bool>,
-    pub discussions: Option<bool>,
     pub merge_methods: MergeMethodUpdate,
 }
 
@@ -249,12 +238,9 @@ where
 impl RepositoryChanges<&str> {
     pub fn owned(&self) -> RepositoryChanges<String> {
         RepositoryChanges {
-            token: self.token,
             name: self.name.map(str::to_owned),
             description: self.description.map(|value| value.map(str::to_owned)),
             website: self.website.map(|value| value.map(str::to_owned)),
-            wiki: self.wiki,
-            discussions: self.discussions,
             is_private: self.is_private,
             visibility_expected: self.visibility_expected,
             archived: self.archived,
@@ -266,12 +252,9 @@ impl RepositoryChanges<&str> {
 impl RepositoryChanges<String> {
     pub fn borrowed(&self) -> RepositoryChanges<&str> {
         RepositoryChanges {
-            token: self.token,
             name: self.name.as_deref(),
             description: self.description.as_ref().map(|value| value.as_deref()),
             website: self.website.as_ref().map(|value| value.as_deref()),
-            wiki: self.wiki,
-            discussions: self.discussions,
             is_private: self.is_private,
             visibility_expected: self.visibility_expected,
             archived: self.archived,
@@ -288,8 +271,6 @@ impl<T> RepositoryChanges<T> {
             || self.website.is_some()
             || self.is_private.is_some()
             || self.is_template.is_some()
-            || self.wiki.is_some()
-            || self.discussions.is_some()
             || self.merge_methods.merge.is_some()
             || self.merge_methods.squash.is_some()
             || self.merge_methods.rebase.is_some()
@@ -298,12 +279,12 @@ impl<T> RepositoryChanges<T> {
 
 native_operation!(crate::backend::db::postgres::repositories::records::patch_repository,
     crate::backend::db::sqlite::repositories::records::patch_repository,
-    fn patch_repository(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, changes: &RepositoryChanges<&str>) -> Result<Repository>);
+    fn patch_repository(pool: &DbPool, actor: i64, repo_id: i64, changes: &RepositoryChanges<&str>) -> Result<Repository>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::patch_repository_and_default,
     crate::backend::db::sqlite::repositories::records::patch_repository_and_default,
     /// Called under the repository Git lock, after HEAD was changed successfully.
-    fn patch_repository_and_default(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,repo_id:i64,changes:&RepositoryChanges<&str>,name:&str,expected_owner:Option<&str>)->Result<Repository>);
+    fn patch_repository_and_default(pool:&DbPool,actor:i64,repo_id:i64,changes:&RepositoryChanges<&str>,name:&str,expected_owner:Option<&str>)->Result<Repository>);
 
 /// Unconfirmed native saves may keep visibility, but must not change it concurrently.
 pub struct VisibilityUpdate {
@@ -328,19 +309,12 @@ pub struct MergeMethodUpdate {
     pub squash: Option<bool>,
     pub rebase: Option<bool>,
 }
-impl MergeMethodUpdate {
-    pub fn resolve(self, current: (bool, bool, bool)) -> Result<(bool, bool, bool)> {
-        let methods = (self.merge.unwrap_or(current.0), self.squash.unwrap_or(current.1), self.rebase.unwrap_or(current.2));
-        anyhow::ensure!(methods.0 || methods.1 || methods.2, RepositorySettingsRefusal::NoMergeMethod);
-        Ok(methods)
-    }
-}
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_merge_methods,
     crate::backend::db::sqlite::repositories::records::set_merge_methods,
     fn set_merge_methods(
     pool: &DbPool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()>);
@@ -355,7 +329,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::set_repos
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_repository_archived,
     crate::backend::db::sqlite::repositories::records::set_repository_archived,
-    fn set_repository_archived(pool: &DbPool, actor_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, archived: bool) -> Result<bool>);
+    fn set_repository_archived(pool: &DbPool, actor_id: i64, repo_id: i64, archived: bool) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::update_repo_default_branch,
     crate::backend::db::sqlite::repositories::records::update_repo_default_branch,
@@ -366,21 +340,13 @@ native_operation!(crate::backend::db::postgres::repositories::records::advance_c
     /// Advances the version that contributor proofs are keyed to. Pushes call it after the refs move.
     fn advance_contribution_version(pool: &DbPool, repo_id: i64) -> Result<()>);
 
-native_operation!(crate::backend::db::postgres::repositories::records::update_repo_size_at,
-    crate::backend::db::sqlite::repositories::records::update_repo_size_at,
-    fn update_repo_size_at(pool: &DbPool, repo_id: i64, size: i64, node: Option<i64>) -> Result<()>);
-
 native_operation!(crate::backend::db::postgres::repositories::records::update_repo_size,
     crate::backend::db::sqlite::repositories::records::update_repo_size,
     fn update_repo_size(pool: &DbPool, repo_id: i64, size: i64) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::delete_repository,
     crate::backend::db::sqlite::repositories::records::delete_repository,
-    fn delete_repository(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<Repository>);
-
-native_operation!(crate::backend::db::postgres::repositories::records::delete_unattached_advisory_fork,
-    crate::backend::db::sqlite::repositories::records::delete_unattached_advisory_fork,
-    fn delete_unattached_advisory_fork(pool: &DbPool, repo_id: i64) -> Result<Option<Repository>>);
+    fn delete_repository(pool: &DbPool, actor_id: i64, repo_id: i64) -> Result<Repository>);
 
 native_operation!(crate::backend::db::postgres::repositories::records::delete_unwritten_repository,
     crate::backend::db::sqlite::repositories::records::delete_unwritten_repository,
@@ -390,7 +356,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::rename_re
     crate::backend::db::sqlite::repositories::records::rename_repository,
     fn rename_repository(
     pool: &DbPool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository>);
@@ -399,7 +365,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::transfer_
     crate::backend::db::sqlite::repositories::records::transfer_repository,
     fn transfer_repository(
     pool: &DbPool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
 ) -> Result<Repository>);
@@ -408,7 +374,7 @@ native_operation!(crate::backend::db::postgres::repositories::records::transfer_
 // name stable while the ownership transaction commits.
 native_operation!(crate::backend::db::postgres::repositories::records::transfer_repository_checked,
     crate::backend::db::sqlite::repositories::records::transfer_repository_checked,
-    fn transfer_repository_checked(pool:&DbPool,actor_id:impl Into<crate::backend::db::credentials::Actor>,repo_id:i64,target:crate::backend::db::repositories::creation::RepositoryTarget,expected_owner:&str,expected_name:&str)->Result<Repository>);
+    fn transfer_repository_checked(pool:&DbPool,actor_id:i64,repo_id:i64,target:crate::backend::db::repositories::creation::RepositoryTarget,expected_owner:&str)->Result<Repository>);
 
 /// Canonical namespaces for already-selected repositories. This display read does
 /// not grant access; callers retain their visibility filtering before page limits.

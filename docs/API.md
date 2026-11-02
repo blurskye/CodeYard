@@ -219,8 +219,8 @@ organization, and a maximum lifetime. A token waiting for approval reads public 
 
 ## Repositories
 
-- `GET /api/repos`: public repositories, newest first. Accepts `page` (default 1)
-  and `per_page` (default 100, maximum 100); the login state of the caller is not used.
+- `GET /api/repos`: the 100 newest public repositories. Not paginated; the login
+  state of the caller is not used.
 - `POST /api/repos` (signed in): body `name` (1 to 100 bytes: letters, digits,
   `-`, `_`, `.`), `description` (optional, at most 2,000 bytes), `is_private` (default
   `false`) and `owner_org_id` (optional). Returns 201 with the repository.

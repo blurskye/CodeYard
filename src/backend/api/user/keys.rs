@@ -88,7 +88,7 @@ async fn save_key_form(
         .await;
     }
     let public_key = field(&form, "public_key").trim();
-    if db::users::ssh_keys::parse_public_key(public_key).is_err() {
+    if public_key.contains("PRIVATE KEY") {
         // Do not echo a mistakenly pasted private key back to the browser.
         let mut safe = form.clone();
         safe.remove("public_key");
@@ -97,7 +97,7 @@ async fn save_key_form(
             "keys",
             Some(&safe),
             StatusCode::BAD_REQUEST,
-            Some("Paste one valid OpenSSH public key, never a private key."),
+            Some("Paste only your public key, never a private key."),
         )
         .await;
     }

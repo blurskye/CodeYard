@@ -97,7 +97,7 @@ pub async fn list_keys(
 ) -> Result<Json<Vec<DeployKeyResponse>>, (StatusCode, Json<ApiError>)> {
     let actor = get_current_user(&state.pool, &headers).await?;
     let repository = repository_for(&state, &owner, &repo, &headers).await?;
-    let keys = keys::list_keys(&state.pool, &actor, &repository, &extract_session_id(&headers).unwrap_or_default())
+    let keys = keys::list_keys(&state.pool, &actor, &repository)
         .await
         .map_err(json_error)?;
     Ok(Json(
@@ -167,7 +167,6 @@ pub(super) async fn settings_section(
         base: &base,
         action: &action,
         csrf_token: &loaded.chrome.csrf_token,
-        credential: crate::backend::db::deploy_keys::Credential::Session(extract_session_id(&ctx.headers).unwrap_or_default()),
     };
     keys::settings_panel(
         &ctx.state.pool,
@@ -175,8 +174,6 @@ pub(super) async fn settings_section(
         &loaded.repository,
         place,
         ctx.query.get("notice").map(String::as_str),
-        ctx.query.get("keys_after").map(|value| value.parse::<i64>()).transpose()
-            .ok().flatten().filter(|value| *value >= 0).unwrap_or(0),
     )
     .await
     .map(Box::new)

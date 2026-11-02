@@ -329,13 +329,7 @@ class Generator:
             # string or a list of strings. Refusing other kinds in parse rejects bad input before any resolver of the same
             # request runs, as GitHub does.
             if definition.name == 'CustomPropertyValue':
-                checks = ('fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> {\n'
-                          'if <Self as async_graphql::ScalarType>::is_valid(&value) { Ok(Self(value)) } else { Err(async_graphql::InputValueError::custom("expected a string or string array")) }\n}\n'
-                          'fn is_valid(value: &async_graphql::Value) -> bool { match value { async_graphql::Value::String(_) => true, async_graphql::Value::List(values) => values.iter().all(|value| matches!(value, async_graphql::Value::String(_))), _ => false } }\n')
-            elif definition.name == 'GitObjectID':
-                checks = ('fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> {\n'
-                          'if <Self as async_graphql::ScalarType>::is_valid(&value) { Ok(Self(value)) } else { Err(async_graphql::InputValueError::custom("expected a full hexadecimal object ID")) }\n}\n'
-                          'fn is_valid(value: &async_graphql::Value) -> bool { matches!(value, async_graphql::Value::String(value) if value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())) }\n')
+                checks = 'fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> { Ok(Self(value)) }\nfn is_valid(_value: &async_graphql::Value) -> bool { true }\n'
             elif definition.name == 'Date':
                 checks = ('fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> {\n'
                           'if <Self as async_graphql::ScalarType>::is_valid(&value) { Ok(Self(value)) } else { Err(async_graphql::InputValueError::custom("expected a date")) }\n}\n'

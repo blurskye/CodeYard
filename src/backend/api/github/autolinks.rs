@@ -41,14 +41,14 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
+    let actor = actor.ok_or_else(auth::required)?.user;
     let input = NewAutolink::new(
         &input.key_prefix,
         &input.url_template,
         input.is_alphanumeric,
     )
     .map_err(|error| Error::invalid(error.to_string()))?;
-    let row = autolinks::create(&state.pool, actor.database_actor(), repo.id, &input)
+    let row = autolinks::create(&state.pool, actor.id, repo.id, &input)
         .await
         .map_err(failure)?;
     Ok((StatusCode::CREATED, Json(payloads::autolink(&row))).into_response())
@@ -94,8 +94,8 @@ async fn remove(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = actor.ok_or_else(auth::required)?;
-    autolinks::remove(&state.pool, actor.database_actor(), repo.id, id)
+    let actor = actor.ok_or_else(auth::required)?.user;
+    autolinks::remove(&state.pool, actor.id, repo.id, id)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

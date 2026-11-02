@@ -13,7 +13,7 @@ fn row(version: &str, state: &str) -> dependabot_alerts::Alert {
 }
 #[test]
 fn shared_alert_state_and_version_govern_proposal_receipts() {
-    let mut snapshot = project(vec![row("1.2.3", "open")], Vec::new(), "{}").unwrap();
+    let mut snapshot = project(vec![row("1.2.3", "open")], None, "{}").unwrap();
     let key = snapshot.alerts.keys().next().unwrap().clone();
     snapshot.alerts.get_mut(&key).unwrap().update = Some(Update {
         branch: "codeyard/security/test".into(),
@@ -29,26 +29,26 @@ fn shared_alert_state_and_version_govern_proposal_receipts() {
     assert!(!raw.contains("summary"));
     assert!(!raw.contains("packages"));
     assert!(!raw.contains("dismissed"));
-    let dismissed = project(vec![row("1.2.3", "dismissed")], Vec::new(), &raw).unwrap();
+    let dismissed = project(vec![row("1.2.3", "dismissed")], None, &raw).unwrap();
     assert_eq!(dismissed.alerts[&key].state, AlertState::Dismissed);
     assert!(dismissed.alerts[&key].update.is_some());
-    let changed = project(vec![row("1.2.2", "open")], Vec::new(), &raw).unwrap();
+    let changed = project(vec![row("1.2.2", "open")], None, &raw).unwrap();
     assert!(changed.alerts[&key].update.is_none());
     assert!(changed.alerts[&key].manual_reason.is_none());
-    let fixed = project(vec![row("1.2.3", "fixed")], Vec::new(), &raw).unwrap();
+    let fixed = project(vec![row("1.2.3", "fixed")], None, &raw).unwrap();
     assert_eq!(fixed.alerts[&key].state, AlertState::Resolved);
     assert!(fixed.alerts[&key].update.is_some());
 }
 #[test]
 fn changed_advisories_clear_manual_reasons_but_not_published_proposals() {
-    let mut snapshot = project(vec![row("1.2.3", "open")], Vec::new(), "{}").unwrap();
+    let mut snapshot = project(vec![row("1.2.3", "open")], None, "{}").unwrap();
     let key = snapshot.alerts.keys().next().unwrap().clone();
     assert!(snapshot.manual(&key, "1.2.2", "Stale review").is_err());
     snapshot.manual(&key, "1.2.3", "No verified patch").unwrap();
     let raw = receipts(&snapshot).unwrap();
     let mut updated = row("1.2.3", "open");
     updated.vulnerability = serde_json::json!({"first_patched_version":"1.2.5"}).to_string();
-    let snapshot = project(vec![updated], Vec::new(), &raw).unwrap();
+    let snapshot = project(vec![updated], None, &raw).unwrap();
     assert!(snapshot.alerts[&key].manual_reason.is_none());
     assert_eq!(snapshot.alerts[&key].finding.fixed_versions, vec!["1.2.5"]);
 }

@@ -387,7 +387,7 @@ async fn contract(pg: bool) {
     let result = identity::emails::change(
         f.pool(),
         alice,
-        &AccountCredential::Token(i64::MAX, ""),
+        &AccountCredential::Token(i64::MAX),
         &["stale@example.com".into()],
         true,
     )
@@ -397,21 +397,6 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_empty());
-    // The settings listing rechecks the requesting session in its own read.
-    assert!(db::users::emails::list_account_emails(
-        f.pool(),
-        alice,
-        &AccountCredential::Session("ended")
-    )
-    .await
-    .unwrap_err()
-    .is::<db::users::accounts::AccountRestricted>());
-    assert!(
-        db::users::emails::list_account_emails(f.pool(), alice, &AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await))
-            .await
-            .unwrap()
-            .is_empty()
-    );
 }
 
 #[tokio::test]

@@ -1,6 +1,6 @@
 //! Durable OSV data and leases for lockfile snapshot scans.
 use super::DbPool;
-use crate::backend::{dependency_graph::Snapshot, vulnerabilities::PreparedAdvisory};
+use crate::backend::{dependency_graph::Snapshot, vulnerabilities::Advisory};
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 #[derive(Debug, thiserror::Error)]
@@ -15,36 +15,12 @@ pub struct Settings {
     pub base_url: String,
     pub ecosystems: String,
 }
-impl Settings {
-    pub(crate) fn normalized(&self) -> std::result::Result<Self, Refusal> {
-        let url = url::Url::parse(self.base_url.trim()).map_err(|_| Refusal::Invalid)?;
-        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none()
-            || !url.username().is_empty() || url.password().is_some()
-            || url.query().is_some() || url.fragment().is_some() {
-            return Err(Refusal::Invalid);
-        }
-        let ecosystems: Vec<String> = serde_json::from_str(&self.ecosystems).map_err(|_| Refusal::Invalid)?;
-        let mut unique = Vec::new();
-        for ecosystem in ecosystems {
-            if !crate::backend::vulnerabilities::ECOSYSTEMS.contains(&ecosystem.as_str()) {
-                return Err(Refusal::Invalid);
-            }
-            if !unique.contains(&ecosystem) {
-                unique.push(ecosystem);
-            }
-        }
-        if unique.len() > 10 {
-            return Err(Refusal::Invalid);
-        }
-        Ok(Self { base_url: url.into(), ecosystems: serde_json::json!(unique).to_string() })
-    }
-}
 native_operation!(super::postgres::vulnerabilities::settings,super::sqlite::vulnerabilities::settings,
     fn settings(pool:&DbPool)->Result<Settings>);
 native_operation!(super::postgres::vulnerabilities::save_settings,super::sqlite::vulnerabilities::save_settings,
     fn save_settings(pool:&DbPool,actor:i64,session:&str,settings:&Settings)->Result<()>);
 native_operation!(super::postgres::vulnerabilities::upsert,super::sqlite::vulnerabilities::upsert,
-    fn upsert(pool:&DbPool,advisory:&PreparedAdvisory)->Result<bool>);
+    fn upsert(pool:&DbPool,advisory:&Advisory)->Result<bool>);
 native_operation!(super::postgres::vulnerabilities::rescan_all,super::sqlite::vulnerabilities::rescan_all,
     fn rescan_all(pool:&DbPool)->Result<()>);
 native_operation!(super::postgres::vulnerabilities::advisories,super::sqlite::vulnerabilities::advisories,

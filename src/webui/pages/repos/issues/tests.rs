@@ -22,9 +22,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
     use super::page::{IssueAttribute, IssueAttributes};
     let opaque = "\n</textarea><script>alert(1)</script>";
     let kind = IssueAttribute {
-        revision: String::new(),
         id: 1,
-        updated: String::new(),
         kind: "type".into(),
         name: "Bug".into(),
         description: Some(opaque.into()),
@@ -36,9 +34,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
         value: None,
     };
     let number = IssueAttribute {
-        revision: String::new(),
         id: 2,
-        updated: String::new(),
         kind: "field".into(),
         name: "Estimate".into(),
         description: None,
@@ -57,7 +53,6 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
         ..number.clone()
     };
     let data = IssueAttributes {
-        owner_key: "user:1".into(),
         selected_type: Some(1),
         types: vec![kind],
         fields: vec![number, text],
@@ -69,7 +64,6 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
             &repository(),
             "/alice/repo/issues/1",
             &data,
-            1,
         ))
     });
     assert!(
@@ -226,7 +220,6 @@ fn repository() -> Repository {
         name: "repo".into(),
         signed_in: true,
         can_write: true,
-        can_triage: false,
         can_admin: true,
         csrf: "csrf-sentinel".into(),
         viewer: String::new(),
@@ -268,7 +261,6 @@ fn item() -> Item {
         updated: "revision-1".into(),
         labels: vec![],
         comment_count: 0,
-        can_edit: true,
         can_tick: false,
         tasks: Default::default(),
         commit_count: None,
@@ -341,7 +333,6 @@ fn page_modes() -> Vec<Page> {
                     about: "</a><script>choose()</script>".into(),
                 }],
                 blank_allowed: true,
-                draft: Default::default(),
             });
         }
         for preview in [false, true] {
@@ -378,7 +369,6 @@ fn page_modes() -> Vec<Page> {
             kind,
             item: entry,
             comments: CommentPage {
-                can_triage: false,
                 issue_management: None,
                 suggestions: None,
                 attributes: None,
@@ -527,7 +517,6 @@ fn page_modes() -> Vec<Page> {
         pagination: (1, false),
         draft: MilestoneDraft {
             repository_id: None,
-            original: String::new(),
             title: hostile.into(),
             description: "Ship it".into(),
             due_date: "2026-10-20".into(),
@@ -557,8 +546,7 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     repository,
                     templates,
                     blank_allowed,
-                    draft,
-                } => new::chooser(repository, templates, *blank_allowed, draft),
+                } => new::chooser(repository, templates, *blank_allowed),
                 Page::Milestones {
                     repository,
                     state,
@@ -895,7 +883,6 @@ fn editor_preserves_text_and_has_native_csrf_forms() {
 fn discussion_pages_link_to_the_neighbouring_pages() {
     let render = |page, has_more| {
         let comments = CommentPage {
-            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -1076,7 +1063,6 @@ fn stack_card_marks_the_current_layer_and_puts_base_on_its_own_line() {
 fn timeline_rail_marks_only_discussion_entries() {
     crate::webui::tests::in_scope(|| {
         let comments = CommentPage {
-            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -2411,7 +2397,6 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
     moderated.can_delete = true;
     let other = comment_at(33, "today");
     let comments = CommentPage {
-        can_triage: false,
         issue_management: None,
         suggestions: None,
         attributes: None,
@@ -2557,7 +2542,6 @@ fn discussion_merges_reviews_by_time_and_marks_stale_and_dismissed_reviews() {
         dismissed.can_dismiss = true;
         dismissed.dismissed_reason = Some("Superseded".into());
         let comments = CommentPage {
-            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -3627,7 +3611,6 @@ fn timeline_events_show_a_badge_for_their_kind_and_threads_link_to_the_files_tab
             commit: "abc".into(),
         });
         let comments = CommentPage {
-            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -3802,7 +3785,6 @@ fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
             edit: None,
         };
         let comments = CommentPage {
-            can_triage: false,
             issue_management: None,
             events_next: None,
             comments: vec![
@@ -3957,7 +3939,6 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
             (2, true),
             &MilestoneDraft {
                 repository_id: None,
-                original: String::new(),
                 title: "Release".into(),
                 description: "Ship it".into(),
                 due_date: "2026-10-20".into(),

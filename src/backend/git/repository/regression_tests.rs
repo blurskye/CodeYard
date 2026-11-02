@@ -89,7 +89,7 @@ async fn range_and_path_history_share_the_commit_page_budget() {
             1_700_000_001 + index,
         );
     }
-    let error = range_commits(directory.path(), &base.to_string(), &head.to_string(), 0, 10)
+    let error = list_range_commits(directory.path(), &base.to_string(), &head.to_string(), 10)
         .await
         .unwrap_err();
     assert!(error.is::<ObjectTooLarge>());
@@ -119,14 +119,14 @@ async fn range_history_prunes_excluded_ancestors_and_checks_returned_objects() {
     );
     let base = commit(&repo, Some(huge), b"two", "small", 1_700_000_001);
     let head = commit(&repo, Some(base), b"three", "head", 1_700_000_002);
-    let commits = range_commits(directory.path(), &base.to_string(), &head.to_string(), 0, 1)
+    let commits = list_range_commits(directory.path(), &base.to_string(), &head.to_string(), 1)
         .await
         .unwrap();
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0].sha, head.to_string());
     // Objects we actually return still have to fit the same object-size limit.
     assert!(
-        range_commits(directory.path(), &head.to_string(), &huge.to_string(), 0, 1)
+        list_range_commits(directory.path(), &head.to_string(), &huge.to_string(), 1)
             .await
             .unwrap_err()
             .is::<ObjectTooLarge>()
@@ -150,7 +150,7 @@ async fn a_small_pr_does_not_materialize_large_base_history() {
     }
     let base = parent.unwrap();
     let head = commit(&repo, Some(base), b"head", "one change", 1_700_000_301);
-    let commits = range_commits(root.path(), &base.to_string(), &head.to_string(), 0, 50)
+    let commits = list_range_commits(root.path(), &base.to_string(), &head.to_string(), 50)
         .await
         .unwrap();
     assert_eq!(commits.len(), 1);
@@ -268,7 +268,7 @@ async fn file_finder_excludes_gitlinks_but_keeps_blobs_and_symlinks() {
         &[&repo.find_commit(base).unwrap()],
     )
     .unwrap();
-    let paths = list_file_paths(directory.path(), "main", 100, "")
+    let paths = list_file_paths(directory.path(), "main", 100)
         .await
         .unwrap();
     assert_eq!(paths.paths, ["file.txt", "link"]);
@@ -325,7 +325,7 @@ async fn file_finder_streams_a_sorted_prefix_with_a_json_byte_budget() {
         &[],
     )
     .unwrap();
-    let found = list_file_paths(directory.path(), "main", 10_000, "")
+    let found = list_file_paths(directory.path(), "main", 10_000)
         .await
         .unwrap();
     assert!(found.truncated);
@@ -384,21 +384,6 @@ async fn blame_refuses_oversized_and_amplified_summaries() {
 
 // One compressed blob a GiB larger than the default child memory limit, written with fixed
 // memory and shared by the read tests.
-const REGRESSION_MEMORY_MIB: u64 = 256;
-
-async fn memory_regression_child(test: &str) -> bool {
-    const MARKER: &str = "CODEYARD_GIT_MEMORY_REGRESSION";
-    if std::env::var(MARKER).ok().as_deref() == Some(test) { return false; }
-    let module = module_path!().split_once("::").unwrap().1;
-    let status = tokio::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", &format!("{module}::{test}"), "--nocapture"])
-        .env(MARKER, test)
-        .env("GIT_COMMAND_MEMORY_MIB", REGRESSION_MEMORY_MIB.to_string())
-        .status().await.unwrap();
-    assert!(status.success(), "isolated memory regression failed");
-    true
-}
-
 fn oversized_history() -> &'static (tempfile::TempDir, String, String, String) {
     use sha1::{Digest, Sha1};
     use std::{io::Write, sync::OnceLock};
@@ -410,7 +395,7 @@ fn oversized_history() -> &'static (tempfile::TempDir, String, String, String) {
             tempfile::tempfile().unwrap(),
             flate2::Compression::fast(),
         );
-        let mib = REGRESSION_MEMORY_MIB + 128;
+        let mib = process::DEFAULT_COMMAND_MEMORY_MIB + 1024;
         let header = format!("blob {}\0", mib * 1024 * 1024);
         let mut hash = Sha1::new();
         hash.update(header.as_bytes());
@@ -480,7 +465,6 @@ fn oversized_history() -> &'static (tempfile::TempDir, String, String, String) {
 
 #[tokio::test]
 async fn blame_keeps_oversized_historical_blobs_out_of_the_server() {
-    if memory_regression_child("blame_keeps_oversized_historical_blobs_out_of_the_server").await { return; }
     let (directory, _, _, _) = oversized_history();
     let error = blame_file(directory.path(), "main", "file.txt")
         .await
@@ -490,7 +474,6 @@ async fn blame_keeps_oversized_historical_blobs_out_of_the_server() {
 
 #[tokio::test]
 async fn search_refuses_a_blob_larger_than_its_child_memory_limit() {
-    if memory_regression_child("search_refuses_a_blob_larger_than_its_child_memory_limit").await { return; }
     let (directory, huge, _, _) = oversized_history();
     let error = search_code(directory.path(), huge, "absent", 0, 10)
         .await
@@ -503,7 +486,6 @@ async fn search_refuses_a_blob_larger_than_its_child_memory_limit() {
 
 #[tokio::test]
 async fn diff_refuses_blobs_larger_than_its_child_memory_limit() {
-    if memory_regression_child("diff_refuses_blobs_larger_than_its_child_memory_limit").await { return; }
     let (directory, huge, _, _) = oversized_history();
     let error = get_commit_diff(directory.path(), huge).await.unwrap_err();
     assert!(
@@ -514,7 +496,6 @@ async fn diff_refuses_blobs_larger_than_its_child_memory_limit() {
 
 #[tokio::test]
 async fn merge_and_replay_refuse_a_base_larger_than_the_child_memory_limit() {
-    if memory_regression_child("merge_and_replay_refuse_a_base_larger_than_the_child_memory_limit").await { return; }
     let (directory, huge, head, other) = oversized_history();
     let person = checked::Person {
         name: "Test",

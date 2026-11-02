@@ -3,7 +3,7 @@ use crate::backend::db::models::User;
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
-/// Browser operations retain the original session. Trusted local database callers use an ID.
+/// Browser mutations retain the original session. Trusted local database callers use an ID.
 pub struct AdministratorActor {
     pub(crate) user_id: i64,
     pub(crate) session: Option<String>,
@@ -131,14 +131,11 @@ native_operation!(crate::backend::db::postgres::users::transitions::enroll_oauth
     subject: &str,
 ) -> Result<bool>);
 
-native_operation!(crate::backend::db::postgres::users::transitions::password_reset_account,
-    crate::backend::db::sqlite::users::transitions::password_reset_account,
-    fn password_reset_account(pool: &DbPool, token_hash: &str) -> Result<Option<User>>);
 native_operation!(crate::backend::db::postgres::users::transitions::reset_password_with_link,
     crate::backend::db::sqlite::users::transitions::reset_password_with_link,
     /// Uses a reset link and sets the password it was sent for, ending the account's sessions and
     /// tokens. Returns the account, or None when the link is no longer usable.
-    fn reset_password_with_link(pool: &DbPool, token_hash: &str, replacement: &str, expected_hash: &str, expected_temporary: bool) -> Result<Option<i64>>);
+    fn reset_password_with_link(pool: &DbPool, token_hash: &str, replacement: &str) -> Result<Option<i64>>);
 
 native_operation!(crate::backend::db::postgres::users::transitions::compare_exchange_password,
     crate::backend::db::sqlite::users::transitions::compare_exchange_password,

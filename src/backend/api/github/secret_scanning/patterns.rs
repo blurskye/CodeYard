@@ -60,7 +60,7 @@ async fn scope(
     headers: &HeaderMap,
     params: &HashMap<String, String>,
     write: bool,
-) -> Result<(Owner, auth::Authentication)> {
+) -> Result<(Owner, i64)> {
     if let Some(org) = params.get("org") {
         let actor = auth::authenticate(state, headers, true)
             .await?
@@ -69,13 +69,13 @@ async fn scope(
             actor.require_write()?;
         }
         let org = super::super::orgs::target(state, org).await?;
-        Ok((Owner::Organization(org.id), actor))
+        Ok((Owner::Organization(org.id), actor.user.id))
     } else {
         let (repo, actor) =
             repository(state, headers, &params["owner"], &params["repo"], write).await?;
         Ok((
             Owner::Repository(repo.id),
-            actor.ok_or_else(auth::required)?,
+            actor.ok_or_else(auth::required)?.user.id,
         ))
     }
 }
@@ -85,8 +85,8 @@ struct Filters {
     push_protection: Option<String>,
     sort: Option<String>,
     direction: Option<String>,
-    #[serde(flatten)]
-    pagination: super::super::pagination::CursorPagination,
+    page: Option<usize>,
+    per_page: Option<usize>,
 }
 async fn list(
     State(state): State<Arc<AppState>>,
@@ -115,7 +115,7 @@ async fn list(
     {
         return Err(Error::invalid("Invalid custom pattern filter"));
     }
-    let mut patterns = records::list_patterns(&state.pool, actor.user.id, owner)
+    let mut patterns = records::list_patterns(&state.pool, actor, owner)
         .await
         .map_err(error)?;
     patterns.retain(|pattern| {
@@ -139,7 +139,10 @@ async fn list(
     if query.direction.as_deref() != Some("asc") {
         patterns.reverse();
     }
-    let pagination = &query.pagination;
+    let pagination = super::super::pagination::Pagination {
+        page: query.page,
+        per_page: query.per_page,
+    };
     let (offset, limit) = pagination.window()?;
     let has_next = patterns.len() > offset + limit;
     pagination.response(
@@ -164,7 +167,7 @@ async fn create(
     Json(input): Json<CreateMany>,
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
-    let patterns = records::create_patterns(&state.pool, actor.user.id, &actor.credential(), owner, &input.patterns)
+    let patterns = records::create_patterns(&state.pool, actor, owner, &input.patterns)
         .await
         .map_err(error)?;
     Ok((
@@ -181,7 +184,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
     let id = params["pattern_id"].parse().map_err(|_| Error::missing())?;
-    let pattern = records::update_pattern(&state.pool, actor.user.id, &actor.credential(), owner, id, &input)
+    let pattern = records::update_pattern(&state.pool, actor, owner, id, &input)
         .await
         .map_err(error)?;
     Ok(Json(
@@ -209,8 +212,7 @@ async fn remove(
     }
     records::delete_patterns(
         &state.pool,
-        actor.user.id,
-        &actor.credential(),
+        actor,
         owner,
         &input.patterns,
         input.post_delete_action.as_deref() == Some("resolve_alerts"),
@@ -228,7 +230,7 @@ async fn configs(
         return Err(Error::missing());
     };
     Ok(Json(
-        records::pattern_configs(&state.pool, actor.user.id, org)
+        records::pattern_configs(&state.pool, actor, org)
             .await
             .map_err(error)?,
     ))
@@ -242,7 +244,7 @@ async fn configure(
     let (Owner::Organization(org), actor) = scope(&state, &headers, &params, true).await? else {
         return Err(Error::missing());
     };
-    let version = records::configure_patterns(&state.pool, actor.user.id, &actor.credential(), org, &input)
+    let version = records::configure_patterns(&state.pool, actor, org, &input)
         .await
         .map_err(error)?;
     Ok(Json(json!({"pattern_config_version":version})))

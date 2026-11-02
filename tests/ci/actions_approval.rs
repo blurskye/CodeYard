@@ -67,7 +67,7 @@ async fn contract(pg: bool) {
     assert_eq!(pending.head_sha.as_deref(), Some(head.as_str()));
     assert!(pending.is_fork && pending.approval_required);
     assert!(
-        db::ci::claim_ci_run(f.pool(), "blocked", "local", &[alice, bob], &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(f.pool(), "blocked", "local", &[alice, bob])
             .await
             .unwrap()
             .is_none()
@@ -116,7 +116,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(approved, serde_json::json!({}));
-    let released = db::ci::claim_ci_run(f.pool(), "approved", "local", &[alice], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    let released = db::ci::claim_ci_run(f.pool(), "approved", "local", &[alice])
         .await
         .unwrap()
         .unwrap();

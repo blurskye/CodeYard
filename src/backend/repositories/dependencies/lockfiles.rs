@@ -37,7 +37,7 @@ fn add(
         name.to_owned()
     };
     ensure!(
-        !name.is_empty() && name.len() <= 512 && version.len() <= crate::backend::db::dependency_inventory::MAX_VERSION_BYTES && !version.is_empty(),
+        !name.is_empty() && name.len() <= 512 && version.len() <= 256 && !version.is_empty(),
         "Invalid locked dependency"
     );
     ensure!(
@@ -47,10 +47,12 @@ fn add(
             .any(|c| c.is_control() || c.is_whitespace()),
         "Invalid locked dependency"
     );
-    let encode = crate::webui::pages::repos::ref_path::encode_path;
-    if out.iter().any(|package| package.manifest == path && package.ecosystem == ecosystem && package.name == name && package.version == version) {
-        return Ok(());
-    }
+    let encode = |s: &str| {
+        s.split('/')
+            .map(crate::webui::encode_component)
+            .collect::<Vec<_>>()
+            .join("/")
+    };
     out.push(Package {
         manifest: path.into(),
         ecosystem: ecosystem.into(),
@@ -119,7 +121,6 @@ fn requirements(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
         if line.is_empty() || line.starts_with("--hash=") {
             continue;
         }
-        ensure!(!line.starts_with("-r") && !line.starts_with("--requirement") && !line.starts_with("-c") && !line.starts_with("--constraint"), "Requirements includes need a submitted snapshot");
         // Unresolved requirements such as `sphinx>=7` are not installed versions and cannot be
         // matched safely, so they are left out, as unresolved Maven versions are. Whitespace may
         // surround the operator, and pip options and a line continuation follow the requirement
@@ -132,9 +133,12 @@ fn requirements(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
             .take_while(|token| !token.starts_with('-'))
             .filter(|token| *token != "\\")
             .collect();
-        let exact = requirement.split_once("===").or_else(|| requirement.split_once("=="));
-        let Some((name, version)) = exact else { continue; };
-        ensure!(!version.is_empty() && !version.contains(['*', '=', '<', '>', ',']), "Unsupported exact Python requirement");
+        let Some((name, version)) = requirement
+            .split_once("==")
+            .filter(|(_, version)| !version.contains(['*', '=', '<', '>', ',']))
+        else {
+            continue;
+        };
         add(
             out,
             path,
@@ -177,7 +181,7 @@ fn go_mod(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
         if parts.is_empty() {
             continue;
         }
-        ensure!(parts.len() == 2 && !parts.iter().any(|part| part.contains(['\"', '`'])), "Quoted Go requirements need a submitted snapshot");
+        ensure!(parts.len() == 2, "Invalid Go requirement");
         add(
             out,
             path,
@@ -212,10 +216,8 @@ fn gems(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
 }
 fn composer(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
     let value: Value = serde_json::from_str(text)?;
-    ensure!(value["packages"].is_array(), "Missing Composer packages array");
     for section in ["packages", "packages-dev"] {
-        if let Some(packages) = value.get(section) {
-            let packages = packages.as_array().context("Invalid Composer packages array")?;
+        if let Some(packages) = value[section].as_array() {
             for p in packages {
                 let version = field(p, "version")?.trim_start_matches('v');
                 if !version.starts_with("dev-") && !version.ends_with("-dev") {
@@ -244,43 +246,16 @@ fn maven(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
     let mut current = BTreeMap::<String, String>::new();
     let mut declared = Vec::new();
     let mut managed = Vec::new();
-    let mut scalars = Vec::<String>::new();
-    let mut completed = false;
     loop {
         match reader.read_event()? {
             Event::Start(tag) => {
-                let name = String::from_utf8(tag.local_name().as_ref().to_vec())?;
-                if stack.is_empty() { ensure!(!completed && name == "project", "Expected one Maven project root"); }
-                ensure!(!(name == "dependency" && stack.iter().any(|name| name == "profiles")), "Maven profile dependencies need a submitted snapshot");
-                stack.push(name);
-                scalars.push(String::new());
+                stack.push(String::from_utf8(tag.local_name().as_ref().to_vec())?);
                 if stack == DECLARED || stack == MANAGED {
                     current.clear();
                 }
             }
             Event::Text(value) => {
-                if let Some(scalar) = scalars.last_mut() { scalar.push_str(&value.decode()?); }
-            }
-            Event::CData(value) => {
-                if let Some(scalar) = scalars.last_mut() { scalar.push_str(&value.decode()?); }
-            }
-            Event::GeneralRef(value) => {
-                let text = match value.resolve_char_ref()? {
-                    Some(character) => character.to_string(),
-                    None => quick_xml::escape::resolve_xml_entity(&value.decode()?).context("Unsupported XML entity")?.to_owned(),
-                };
-                if let Some(scalar) = scalars.last_mut() { scalar.push_str(&text); }
-            }
-            Event::Empty(tag) => {
-                let name = String::from_utf8(tag.local_name().as_ref().to_vec())?;
-                if stack.is_empty() {
-                    ensure!(!completed && name == "project", "Expected one Maven project root");
-                    completed = true;
-                }
-                ensure!(!(name == "dependency" && stack.iter().any(|name| name == "profiles")), "Maven profile dependencies need a submitted snapshot");
-            }
-            Event::End(_) => {
-                let value = scalars.pop().context("Unexpected Maven closing element")?.trim().to_owned();
+                let value = value.decode()?.trim().to_owned();
                 match stack
                     .iter()
                     .map(String::as_str)
@@ -288,25 +263,22 @@ fn maven(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
                     .as_slice()
                 {
                     ["project", "properties", name] => {
-                        ensure!(value.len() <= 512, "Maven property exceeds coordinate limit");
                         properties.insert((*name).to_owned(), value);
                     }
                     ["project", field @ ("version" | "groupId")] => {
-                        ensure!(value.len() <= 512, "Maven coordinate exceeds its limit");
                         properties.insert(format!("project.{field}"), value);
                     }
                     ["project", "parent", field @ ("version" | "groupId")] => {
-                        ensure!(value.len() <= 512, "Maven coordinate exceeds its limit");
                         properties.insert(format!("project.parent.{field}"), value);
                     }
                     ["project", "dependencies", "dependency", field]
                     | ["project", "dependencyManagement", "dependencies", "dependency", field] => {
-                        ensure!(value.len() <= 512, "Maven coordinate exceeds its limit");
                         current.insert((*field).to_owned(), value);
                     }
                     _ => {}
                 }
-                if stack.len() == 1 { completed = true; }
+            }
+            Event::End(_) => {
                 if stack == DECLARED {
                     declared.push(std::mem::take(&mut current));
                 } else if stack == MANAGED {
@@ -319,10 +291,7 @@ fn maven(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
                 stack.pop();
             }
             Event::DocType(_) => anyhow::bail!("XML document types are not supported"),
-            Event::Eof => {
-                ensure!(completed && stack.is_empty(), "Truncated Maven project document");
-                break;
-            }
+            Event::Eof => break,
             _ => {}
         }
         ensure!(stack.len() <= 64, "Dependency XML is too deep");
@@ -335,44 +304,46 @@ fn maven(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
                 .or_insert(value);
         }
     }
-    let resolve = |value: &str| -> Result<Option<String>> {
-        ensure!(value.len() <= 512, "Maven coordinate exceeds its limit");
+    let resolve = |value: &str| -> Option<String> {
         let mut value = value.to_owned();
         for _ in 0..8 {
-            let Some(start) = value.find("${") else { return Ok(Some(value)); };
-            let Some(end) = value[start..].find('}').map(|end| start + end) else { return Ok(None); };
-            let Some(replacement) = properties.get(&value[start + 2..end]) else { return Ok(None); };
-            ensure!(value.len() - (end + 1 - start) + replacement.len() <= 512, "Maven property expansion exceeds its limit");
-            value.replace_range(start..=end, replacement);
+            let Some(start) = value.find("${") else {
+                return Some(value);
+            };
+            let end = start + value[start..].find('}')?;
+            let replacement = properties.get(&value[start + 2..end])?.clone();
+            value.replace_range(start..=end, &replacement);
         }
-        Ok((!value.contains("${")).then_some(value))
+        (!value.contains("${")).then_some(value)
     };
     // Maven manages a dependency by its group, artifact, type and classifier.
-    let coordinates = |dependency: &BTreeMap<String, String>| -> Result<Option<[String; 4]>> {
-        let mut values = Vec::new();
-        for (key, default) in [("groupId", None), ("artifactId", None), ("type", Some("jar")), ("classifier", Some(""))] {
-            let Some(raw) = dependency.get(key).map(String::as_str).or(default) else { return Ok(None); };
-            let Some(value) = resolve(raw)? else { return Ok(None); };
-            values.push(value);
-        }
-        Ok(Some(values.try_into().expect("four coordinate fields")))
+    let coordinates = |dependency: &BTreeMap<String, String>| -> Option<[String; 4]> {
+        let field =
+            |key: &str, default: &str| resolve(dependency.get(key).map_or(default, String::as_str));
+        Some([
+            resolve(dependency.get("groupId")?.as_str())?,
+            resolve(dependency.get("artifactId")?.as_str())?,
+            field("type", "jar")?,
+            field("classifier", "")?,
+        ])
     };
     let mut versions = std::collections::HashMap::new();
     for entry in &managed {
-        if let (Some(key), Some(version)) = (coordinates(entry)?, entry.get("version")) {
+        if let (Some(key), Some(version)) = (coordinates(entry), entry.get("version")) {
             versions.entry(key).or_insert(version);
         }
     }
     for dependency in &declared {
-        let Some(key) = coordinates(dependency)? else {
+        let Some(key) = coordinates(dependency) else {
             continue;
         };
         let version = dependency
             .get("version")
             .or_else(|| versions.get(&key).copied());
         let [group, name, ..] = key;
-        let Some(version) = version else { continue; };
-        let Some(version) = resolve(version)? else { continue; };
+        let Some(version) = version.and_then(|version| resolve(version.as_str())) else {
+            continue;
+        };
         if !version.contains(['$', '[', ']', '(', ')', ','])
             && !matches!(version.as_str(), "LATEST" | "RELEASE")
         {
@@ -449,26 +420,21 @@ fn yarn(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
     let mut names = Vec::<String>::new();
     for line in text.lines() {
         if !line.starts_with(' ') && line.ends_with(':') {
-            names.clear();
-            for selector in line.trim_end_matches(':').split(", ") {
-                let selector = selector.trim_matches('"');
-                if selector == "__metadata" { continue; }
-                let separator = selector.get(1..).and_then(|s| s.find('@')).map(|index| index + 1).context("Invalid Yarn selector")?;
-                let (name, locator) = selector.split_at(separator);
-                let locator = &locator[1..];
-                let name = if let Some(target) = locator.strip_prefix("npm:") {
-                    target.rsplit_once('@').map_or(name, |(target, _)| target)
-                } else {
-                    ensure!(!locator.contains(':'), "Unsupported Yarn locator needs a submitted snapshot");
-                    name
-                };
-                names.push(name.to_owned());
-            }
-            names.sort();
-            names.dedup();
+            names = line
+                .trim_end_matches(':')
+                .split(", ")
+                .filter_map(|s| {
+                    let s = s.trim_matches('"');
+                    let (name, _) = s.rsplit_once('@')?;
+                    // An npm alias installs the package it names.
+                    let name = name.split_once("@npm:").map_or(name, |(_, target)| target);
+                    Some(name.to_owned())
+                })
+                .collect();
         } else if let Some(version) = line
-            .strip_prefix("  ")
-            .and_then(|line| line.strip_prefix("version ").or_else(|| line.strip_prefix("version:")))
+            .trim()
+            .strip_prefix("version ")
+            .or_else(|| line.trim().strip_prefix("version:"))
         {
             for name in &names {
                 add(out, path, "npm", name, version.trim().trim_matches('"'))?;
@@ -479,24 +445,21 @@ fn yarn(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
 }
 fn pnpm(path: &str, text: &str, out: &mut Vec<Package>) -> Result<()> {
     let value: Value = serde_yaml::from_str(text)?;
-    let version = value["lockfileVersion"].as_str().map(str::to_owned).unwrap_or_else(|| value["lockfileVersion"].to_string());
-    let legacy = version.split('.').next().and_then(|version| version.parse::<u64>().ok()).context("Invalid pnpm lockfile version")? < 6;
-    let packages = match value.get("packages") {
-        Some(packages) => packages.as_object().context("Invalid pnpm packages")?,
-        None => {
-            let importers = value["importers"].as_object().context("Missing pnpm packages or importers")?;
-            ensure!(!importers.is_empty() && importers.values().all(|importer| importer.is_object() && ["dependencies", "devDependencies", "optionalDependencies"].iter().all(|section| importer.get(section).is_none_or(|entries| entries.as_object().is_some_and(|entries| entries.is_empty())))), "Missing pnpm packages for nonempty importers");
-            return Ok(());
-        }
-    };
-    for key in packages.keys() {
+    for key in value["packages"]
+        .as_object()
+        .context("Missing pnpm packages")?
+        .keys()
+    {
         let key = key.trim_start_matches('/').split('(').next().unwrap_or(key);
         // Newer keys put '@' between the name and version, and a scope also starts with '@'. Older
         // keys end in "/version".
-        let (name, version) = if legacy { key.rsplit_once('/') } else { key.rsplit_once('@').filter(|(name, _)| !name.is_empty()) }.context("Invalid pnpm package identity")?;
-        // Legacy peer contexts suffix the version, not the package name or scope.
-        let version = if legacy { version.split('_').next().unwrap_or(version) } else { version };
-        add(out, path, "npm", name, version)?;
+        let pair = key
+            .rsplit_once('@')
+            .filter(|(name, _)| !name.is_empty())
+            .or_else(|| key.rsplit_once('/'));
+        if let Some((name, version)) = pair {
+            add(out, path, "npm", name, version)?;
+        }
     }
     Ok(())
 }

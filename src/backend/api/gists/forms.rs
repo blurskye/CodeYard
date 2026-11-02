@@ -42,7 +42,7 @@ fn submitted(
         .ok()
         .filter(|count| (1..=200).contains(count))
         .ok_or(InvalidInput("Invalid file count. Reload the editor."))?;
-    let description = native_text(field(form, "description").to_owned(), "");
+    let description = field(form, "description").to_owned();
     anyhow::ensure!(
         description.chars().count() <= 65535,
         InvalidInput("Description must be at most 65,535 characters.")
@@ -71,10 +71,9 @@ fn submitted(
     let expected = field(form, "expected").to_owned();
     anyhow::ensure!(
         id.is_none()
-            || crate::git_ids::is_full_commit_id(&expected),
+            || (expected.len() == 40 && expected.bytes().all(|byte| byte.is_ascii_hexdigit())),
         InvalidInput("Reload the gist before editing; its revision is missing.")
     );
-    let too_large = bytes > 2 * EDITOR_BYTES || files.iter().filter_map(|file| file.content.as_ref()).map(|content| content.replace("\r\n", "\n").len()).sum::<usize>() > EDITOR_BYTES;
     Ok(view::Editor {
         id,
         description,
@@ -83,7 +82,7 @@ fn submitted(
         files,
         csrf_token: ctx.csrf_token.clone(),
         // The draft goes back to the editor with this message.
-        message: too_large.then(|| {
+        message: (bytes > EDITOR_BYTES).then(|| {
             "This editor accepts at most 1 MiB of text. Use Git for larger files.".to_owned()
         }),
     })
@@ -176,16 +175,12 @@ pub(super) async fn create(
             return render_editor(&ctx, StatusCode::UNPROCESSABLE_ENTITY, editor);
         }
     }
-    if files.values().map(String::len).sum::<usize>() > EDITOR_BYTES {
-        editor.message = Some("This editor accepts at most 1 MiB of text. Use Git for larger files.".into());
-        return render_editor(&ctx, StatusCode::UNPROCESSABLE_ENTITY, editor);
-    }
     match domain::create(
         ctx.state.clone(),
         ctx.user.as_ref().expect("protected account").id,
         credential(&ctx),
         domain::CreateGist {
-            description: native_text(editor.description.clone(), ""),
+            description: editor.description.clone(),
             is_public: editor.public,
             files,
         },
@@ -239,7 +234,6 @@ pub(super) async fn edit(
             return render_editor(&ctx, status, editor);
         }
     };
-    input.description = input.description.map(|description| native_text(description, &loaded.gist.description));
     // Browsers submit textareas with CRLF; keep each file's own line breaks.
     let store = repo_store(&loaded.repository, ctx.state.cluster.as_ref());
     for (name, change) in input.files.iter_mut() {
@@ -263,10 +257,6 @@ pub(super) async fn edit(
             None => Vec::new(),
         };
         *content = native_text(std::mem::take(content), &String::from_utf8_lossy(&original));
-    }
-    if input.files.values().filter_map(|change| change.as_ref().and_then(|change| change.content.as_ref())).map(String::len).sum::<usize>() > EDITOR_BYTES {
-        editor.message = Some("This editor accepts at most 1 MiB of text. Use Git for larger files.".into());
-        return render_editor(&ctx, StatusCode::UNPROCESSABLE_ENTITY, editor);
     }
     match domain::update(
         ctx.state.clone(),
@@ -314,10 +304,6 @@ async fn detail_error(
         Err(_) => ctx.error(status, &message),
     }
 }
-async fn ready_gist(ctx: &PageContext, id: &str) -> anyhow::Result<db::gists::Gist> {
-    db::gists::get(&ctx.state.pool, id).await?.filter(|gist| gist.ready).ok_or_else(|| db::gists::GistRefusal::Missing.into())
-}
-
 pub(super) async fn star(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -330,15 +316,15 @@ pub(super) async fn star(
         Err(response) => return response,
     };
     gist_context(&mut ctx, &id);
-    let gist = match ready_gist(&ctx, &id).await {
-        Ok(gist) => gist,
+    let loaded = match domain::load(&ctx.state, &id, None).await {
+        Ok(loaded) => loaded,
         Err(failure) => return error(&ctx, failure),
     };
     match db::gists::star(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
-        gist.repo_id,
+        loaded.repository.id,
         field(&form, "add") == "yes",
     )
     .await
@@ -407,8 +393,8 @@ pub(super) async fn comment(
         Err(response) => return response,
     };
     gist_context(&mut ctx, &id);
-    let gist = match ready_gist(&ctx, &id).await {
-        Ok(gist) => gist,
+    let loaded = match domain::load(&ctx.state, &id, None).await {
+        Ok(loaded) => loaded,
         Err(failure) => return error(&ctx, failure),
     };
     let body = field(&form, "body");
@@ -416,15 +402,16 @@ pub(super) async fn comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
-        gist.repo_id,
+        loaded.repository.id,
         body,
     )
     .await
     {
-        Ok(comment) => match db::gists::comment_position(&ctx.state.pool, gist.repo_id, comment.id).await {
-            Ok(position) => ctx.redirect(&format!("/gists/{id}?comments_page={}#comment-{}", position.saturating_sub(1) as usize / PAGE_SIZE + 1, comment.id)),
-            Err(failure) => error(&ctx, failure),
-        },
+        Ok(comment) => ctx.redirect(&format!(
+            "/gists/{id}?comments_page={}#comment-{}",
+            loaded.gist.comments as usize / PAGE_SIZE + 1,
+            comment.id
+        )),
         Err(failure) => {
             detail_error(
                 &ctx,
@@ -451,8 +438,8 @@ pub(super) async fn edit_comment(
         Err(response) => return response,
     };
     gist_context(&mut ctx, &id);
-    let gist = match ready_gist(&ctx, &id).await {
-        Ok(gist) => gist,
+    let loaded = match domain::load(&ctx.state, &id, None).await {
+        Ok(loaded) => loaded,
         Err(failure) => return error(&ctx, failure),
     };
     let body = field(&form, "body");
@@ -460,7 +447,7 @@ pub(super) async fn edit_comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
-        gist.repo_id,
+        loaded.repository.id,
         comment,
         Some(body),
     )
@@ -496,22 +483,22 @@ pub(super) async fn delete_comment(
         Err(response) => return response,
     };
     gist_context(&mut ctx, &id);
-    let gist = match ready_gist(&ctx, &id).await {
-        Ok(gist) => gist,
+    let loaded = match domain::load(&ctx.state, &id, None).await {
+        Ok(loaded) => loaded,
         Err(failure) => return error(&ctx, failure),
     };
     match db::gists::change_comment(
         &ctx.state.pool,
         ctx.user.as_ref().expect("protected account").id,
         &credential(&ctx).borrowed(),
-        gist.repo_id,
+        loaded.repository.id,
         comment,
         None,
     )
     .await
     {
         Ok(_) => {
-            let last = gist.comments.saturating_sub(2) as usize / PAGE_SIZE + 1;
+            let last = loaded.gist.comments.saturating_sub(2) as usize / PAGE_SIZE + 1;
             let page = number(&ctx, "comments_page")
                 .expect("protected pagination")
                 .min(last);

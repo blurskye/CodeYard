@@ -39,7 +39,7 @@ pub fn render(repo: &RepoChrome, path: &str, page: &Page) -> Element {
         if page.rows.is_empty() {p {"No accepted branch changes match these filters."}}
         for row in &page.rows {article {class:"repo-settings-row",
             code {"{row.reference}"} span {"{row.kind}"}
-            if let Some(actor)=&row.actor {NavLink {href:crate::webui::profile_path(actor),"{actor}"}} else {span {"Deleted account"}}
+            if let Some(actor)=&row.actor {NavLink {href:format!("/{}",crate::webui::encode_component(actor)),"{actor}"}} else {span {"Deleted account"}}
             time {"{row.date}"}
             NavLink {href:format!("{}/commit/{}",repo.base(),row.commit),"{row.commit}"}
         }}

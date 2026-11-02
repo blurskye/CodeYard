@@ -2,7 +2,7 @@
 use super::broker::{Gateway, Operation};
 use super::validation::{self, RefUpdate, ZERO_SHA};
 use super::ReceiveCredential;
-use crate::backend::ci::workflows::WorkflowMatchBudget;
+use crate::backend::ci::workflows::{parse_push_workflow, WorkflowMatchBudget};
 use crate::backend::webhooks::ref_changes::{self, RefMove};
 use crate::backend::{
     ci::{self, CiRunRequest},
@@ -10,7 +10,7 @@ use crate::backend::{
         self,
         models::{AccessLevel, Repository, User},
     },
-    git::{published_refs_in_use, ref_listing_bytes, RefsInUse},
+    git::{branches_and_tags_in_use, ref_listing_bytes, RefsInUse},
     repositories::{
         languages,
         protection::{
@@ -46,12 +46,14 @@ async fn quarantine_directory(repository: &Path, claimed: &str) -> Option<PathBu
         .then_some(directory)
 }
 
-/// Each created public ref counts against the same repository quota and reservations.
+/// The branches and tags a push creates. Each one counts against the repository's ref limit.
 fn created_refs(updates: &[RefUpdate]) -> Vec<&str> {
     updates
         .iter()
         .filter(|update| {
-            update.old == ZERO_SHA && crate::backend::git::is_public_ref(&update.reference)
+            update.old == ZERO_SHA
+                && (update.reference.starts_with("refs/heads/")
+                    || update.reference.starts_with("refs/tags/"))
         })
         .map(|update| update.reference.as_str())
         .collect()
@@ -106,7 +108,7 @@ fn admit_updates(
         .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
     let created = created_refs(updates);
     if !created.is_empty() {
-        let held = published_refs_in_use(path)?;
+        let held = branches_and_tags_in_use(path)?;
         let reserved =
             reserved_by_others(&operations, operation, &git2::Repository::open_bare(path)?)?;
         ensure_ref_room(
@@ -131,7 +133,7 @@ fn admit_updates(
     {
         state.previous_refs = crate::backend::git::list_mirror_refs(path)?
             .into_iter()
-            .filter(|(name, _)| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
+            .filter(|(name, _)| !name.starts_with("refs/codeyard/"))
             .map(|(_, oid)| oid)
             .collect();
     }
@@ -299,6 +301,14 @@ impl Gateway {
         };
         self.check_publication_branches(&repo, &identity, updates, &history, via)
             .await?;
+        // Evaluate-mode rulesets only report; a suite that cannot be recorded is not a refusal.
+        if let Err(error) = crate::backend::repositories::rule_suites::record_push(
+            &self.pool, &repo, &identity, updates, &history,
+        )
+        .await
+        {
+            tracing::warn!(%error, "could not record a rule suite");
+        }
         // The stored default can lag behind Git, so the default that Git advertises is
         // protected as well.
         let advertised = crate::backend::git::repository::default_branch(&path).await?;
@@ -322,9 +332,6 @@ impl Gateway {
         } else {
             false
         };
-        let ref_change = crate::backend::repositories::store::begin_ref_change(
-            &self.pool, repo.id, &operation.path, Some(repo.storage_node_id),
-        ).await?;
         let gateway = self.clone();
         let (admitted, admitted_path, admitted_updates) =
             (operation.clone(), path.clone(), updates.to_vec());
@@ -398,9 +405,11 @@ impl Gateway {
         // A failed creation deletes its repository only while no write has reached it, so the
         // version moves before Git takes the push.
         db::repositories::records::advance_contribution_version(&self.pool, current.id).await?;
-        let mut state = operation.state.lock().map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
-        state.ref_change = Some(ref_change);
-        state.publication = Some(publication);
+        operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .publication = Some(publication);
         Ok(())
     }
 
@@ -410,31 +419,18 @@ impl Gateway {
         // Proofs made while this push was in flight saw the old history under the new version.
         // This comes first, so no later bookkeeping failure can leave them current.
         db::repositories::records::advance_contribution_version(&self.pool, repo.id).await?;
-        if let Some(actor) = db::users::accounts::get_user_by_id(&self.pool, operation.actor_id).await? {
-            let history = History::Push { repository: &path, quarantine: None };
-            if let Err(error) = crate::backend::repositories::rule_suites::record_push(&self.pool, &repo, &actor, updates, &history, Some(operation.credential)).await {
-                tracing::warn!(%error, "could not record accepted rule suites");
-            }
-        }
         let bypasses = operation
             .state
             .lock()
             .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
             .secret_bypasses
             .clone();
-        let store = repo_store(&repo, self.ci.cluster.as_ref());
-        let mut consumed = std::collections::HashSet::new();
-        for bypass in bypasses {
-            let mut accepted = false;
-            for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
-                if store.is_ancestor(&bypass.commit, &update.new).await.unwrap_or(false) { accepted = true; break; }
-            }
-            if !accepted || !consumed.insert(bypass.hash.clone()) { continue; }
+        for hash in bypasses {
             db::secret_scanning::use_bypass(
                 &self.pool,
                 repo.id,
                 operation.actor_id,
-                &bypass.hash,
+                &hash,
                 chrono::Utc::now(),
             )
             .await?;
@@ -453,17 +449,9 @@ impl Gateway {
             );
             failed = true;
         }
-        operation.state.lock().map_err(|_| anyhow::anyhow!("operation state unavailable"))?.ref_change.take();
         crate::backend::git::maintenance::after_push(repo.id, path.clone());
-        let mut scan_heads = std::collections::HashSet::new();
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
-            let commit = match store.commit(&update.new).await {
-                Ok(commit) => commit,
-                Err(error) if update.reference.starts_with("refs/tags/") && error.kind == ErrorKind::NotFound => continue,
-                Err(_) => { failed = true; continue; }
-            };
-            if !scan_heads.insert(commit.sha.clone()) { continue; }
-            if db::secret_scanning::enqueue(&self.pool, repo.id, &commit.sha, operation.actor_id)
+            if db::secret_scanning::enqueue(&self.pool, repo.id, &update.new, operation.actor_id)
                 .await
                 .is_err()
             {
@@ -552,11 +540,6 @@ impl Gateway {
             .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
             .previous_refs
             .clone();
-        for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
-            if let Some(branch) = update.reference.strip_prefix("refs/heads/") {
-                languages::refresh_default_branch(self.pool.clone(), repo.id, path.clone(), branch.to_owned(), Some(repo.storage_node_id));
-            }
-        }
         // Optional profile counts share one short budget and identical ranges are walked once.
         let activity = async {
             let mut counts = HashMap::new();
@@ -564,6 +547,13 @@ impl Gateway {
                 let Some(branch) = update.reference.strip_prefix("refs/heads/") else {
                     continue;
                 };
+                languages::refresh_default_branch(
+                    self.pool.clone(),
+                    repo.id,
+                    path.clone(),
+                    branch.to_owned(),
+                    Some(repo.storage_node_id),
+                );
                 let range = (update.old.clone(), update.new.clone());
                 let count = if let Some(count) = counts.get(&range) {
                     *count
@@ -585,7 +575,7 @@ impl Gateway {
             Ok::<_, anyhow::Error>(())
         };
         if !matches!(
-            tokio::time::timeout(crate::backend::git::repository::PUSH_COUNT_TIMEOUT, activity).await,
+            tokio::time::timeout(std::time::Duration::from_secs(2), activity).await,
             Ok(Ok(()))
         ) {
             tracing::warn!(
@@ -593,6 +583,19 @@ impl Gateway {
                 "could not finish optional push activity within its budget"
             );
         }
+        // Live credentials remain mandatory for subsequent CI dispatch.
+        let current_repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
+            .await?
+            .context("repository unavailable")?;
+        let (current_identity, _) = operation
+            .credential
+            .authorize(&self.pool, &current_repo, true)
+            .await?;
+        ensure!(current_identity.id == actor_id, "identity changed");
+        ensure!(
+            self.bare_path(&current_repo).await? == operation.path,
+            "repository location changed"
+        );
         // Remember every accepted commit, even when trust, skip messages or filters prevent CI.
         let store = repo_store(&repo, self.ci.cluster.as_ref());
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
@@ -611,14 +614,6 @@ impl Gateway {
                 Err(_) => failed = true,
             }
         }
-        // Accepted-push facts above are independent of credential liveness.
-        let current_repo = db::repositories::records::get_repository_by_id(&self.pool, repo.id)
-            .await?.context("repository unavailable")?;
-        let current_identity = match operation.credential.authorize(&self.pool, &current_repo, true).await {
-            Ok((identity, _)) if identity.id == actor_id => identity,
-            _ => return if failed { Err(super::PostReceiveFailed.into()) } else { Ok(()) },
-        };
-        ensure!(self.bare_path(&current_repo).await? == operation.path, "repository location changed");
         if !current_identity.is_admin
             && !self
                 .ci
@@ -634,35 +629,60 @@ impl Gateway {
         }
 
         let mut match_budget = WorkflowMatchBudget::new();
-        'updates: for update in updates {
-            if update.reference.starts_with("refs/notes/") { continue; }
-            let revision = if update.new == ZERO_SHA {
-                format!("refs/heads/{}", current_repo.default_branch)
-            } else { update.new.clone() };
-            let commit_sha = match store.commit(&revision).await {
-                Ok(commit) => commit.sha,
-                Err(error) if update.reference.starts_with("refs/tags/") && error.kind == ErrorKind::NotFound => continue,
-                Err(_) => { failed = true; continue; }
+        'updates: for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
+            let immutable_sha = update.new.clone();
+            let workflow_path = path.clone();
+            let loading = operation.clone();
+            let loaded = tokio::task::spawn_blocking(move || {
+                let _operation = loading;
+                let (commit_sha, blobs) =
+                    crate::backend::git::ci::load_push_workflows(&workflow_path, &immutable_sha)?;
+                let mut workflows = Vec::new();
+                for (path, text) in blobs {
+                    match parse_push_workflow(&path, &text) {
+                        Ok(workflow) => workflows.push(workflow),
+                        Err(error) => tracing::warn!(
+                            workflow = %path,
+                            commit = %commit_sha,
+                            %error,
+                            "malformed push workflow skipped"
+                        ),
+                    }
+                }
+                workflows.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)));
+                Ok::<_, anyhow::Error>((commit_sha, workflows))
+            })
+            .await?;
+            let (commit_sha, workflows) = match loaded {
+                Ok(loaded) => loaded,
+                // A tag may name a blob or a tree. There is nothing to run for it.
+                Err(error)
+                    if update.reference.starts_with("refs/tags/")
+                        && crate::backend::git::is_not_a_commit(&error) =>
+                {
+                    continue;
+                }
+                Err(_) => {
+                    failed = true;
+                    continue;
+                }
             };
-            let workflows = match ci::list_workflows_for_ref(&store, &commit_sha).await {
-                Ok(workflows) => workflows,
-                Err(_) => { failed = true; continue; }
-            };
-            let message = match ci::commit_message_for_ref(&repo_store(&repo, self.ci.cluster.as_ref()), &commit_sha).await {
-                Ok(message) => message,
-                Err(_) => { failed = true; continue; }
-            };
+            let message = ci::commit_message_for_ref(
+                &repo_store(&repo, self.ci.cluster.as_ref()),
+                &commit_sha,
+            )
+            .await;
             let ref_update = ci::RefUpdate {
                 reference: update.reference.clone(),
                 old: (update.old != ZERO_SHA).then(|| update.old.clone()),
-                new: update.new.clone(),
+                new: commit_sha.clone(),
                 changed_paths: None,
             };
             let matched = ci::push::matching_push_workflows(
                 &repo_store(&repo, self.ci.cluster.as_ref()),
                 &ref_update,
                 workflows,
-                Some(&message),
+                message.as_deref(),
                 &mut match_budget,
             )
             .await;
@@ -736,7 +756,6 @@ impl Gateway {
                         },
                         access,
                         event.clone(),
-                        None,
                     )
                     .await;
                 if matches!(result, Err(ci::admission::AdmissionError::WorkflowDisabled)) {
@@ -799,7 +818,15 @@ impl Gateway {
             db::repositories::records::update_repo_default_branch(&self.pool, repo.id, &branch)
                 .await?;
         }
-        repo_store(repo, self.ci.cluster.as_ref()).refresh_storage_size(self.pool.clone(), repo.id);
+        let size =
+            tokio::task::spawn_blocking(move || crate::backend::git::stats::directory_size(&path))
+                .await??;
+        db::repositories::records::update_repo_size(
+            &self.pool,
+            repo.id,
+            size.min(i64::MAX as u64) as i64,
+        )
+        .await?;
         Ok(())
     }
 }

@@ -87,7 +87,6 @@ async fn contract(pg: bool) {
         f.pool(),
         db::webhooks::HookOwner::Repository(repo.id),
         alice,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,
@@ -696,7 +695,7 @@ async fn workflow_tokens(
     )
     .await
     .unwrap();
-    let mut run = db::ci::claim_ci_run(pool, "scanner-worker", "local", &[actor], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    let mut run = db::ci::claim_ci_run(pool, "scanner-worker", "local", &[actor])
         .await
         .unwrap()
         .filter(|r| r.id == run.id)

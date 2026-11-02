@@ -612,7 +612,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
     let a_running = enqueue(pool, member, repo_a, false, &[member])
         .await
         .unwrap();
-    let claimed = db::ci::claim_ci_run(pool, "team-worker", "local", &[member], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    let claimed = db::ci::claim_ci_run(pool, "team-worker", "local", &[member])
         .await
         .unwrap()
         .unwrap();

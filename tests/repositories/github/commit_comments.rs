@@ -41,7 +41,6 @@ pub(super) async fn run(
         pool,
         hook_owner,
         alice,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, alice).await),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,
@@ -609,7 +608,6 @@ pub(super) async fn run(
                 pool,
                 records::CommentCreate {
                     actor_id: alice,
-                    token_id: None,
                     repo_id: repo,
                     sha,
                     body: &format!("page-marker-{number}"),
@@ -648,7 +646,7 @@ pub(super) async fn run(
     assert!(!notices
         .iter()
         .any(|notice| notice.metadata["commit_comment_id"] == second["id"]));
-    assert!(db::webhooks::delete_webhook(pool, hook_owner, alice, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, alice).await), hook)
+    assert!(db::webhooks::delete_webhook(pool, hook_owner, alice, hook)
         .await
         .unwrap()
         .unwrap());
@@ -659,7 +657,6 @@ pub(super) async fn run(
         pool,
         records::CommentCreate {
             actor_id: bob,
-            token_id: None,
             repo_id: repo,
             sha,
             body: "revoked read access",

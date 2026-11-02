@@ -40,7 +40,10 @@ pub async fn change(
     let mut emails = Vec::new();
     for address in input {
         let address = address.trim().to_ascii_lowercase();
-        if super::credentials::validate_email(&address).is_err() {
+        if super::credentials::validate_email(&address).is_err()
+            || address.parse::<lettre::Address>().is_err()
+            || address.contains(['\r', '\n', '\0'])
+        {
             return Err(EmailError::Invalid);
         }
         emails.push(address);

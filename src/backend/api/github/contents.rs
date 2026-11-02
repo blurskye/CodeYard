@@ -19,7 +19,12 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
-pub(super) use crate::webui::pages::repos::ref_path::encode_path as path_url;
+pub(super) fn path_url(path: &str) -> String {
+    path.split('/')
+        .map(crate::webui::encode_component)
+        .collect::<Vec<_>>()
+        .join("/")
+}
 
 pub(super) fn store_error(error: RepoError) -> Error {
     if error.is_write_denied() || error.is_protected_branch() {
@@ -110,16 +115,30 @@ pub(super) fn entry(
         path_url(path),
         crate::webui::encode_component(reference)
     );
-    let base = format!("{}/{}/{}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(owner), crate::webui::encode_component(repo));
-    let html = crate::webui::pages::repos::ref_path::file_url(&base, if kind == "dir" { "tree" } else { "blob" }, reference, path);
+    let html = format!(
+        "{}/{}/{}/{}/{}/{}",
+        crate::backend::api::http::config::link_origin(),
+        crate::webui::encode_component(owner),
+        crate::webui::encode_component(repo),
+        if kind == "dir" { "tree" } else { "blob" },
+        crate::webui::encode_component(reference),
+        path_url(path)
+    );
     let git_url = format!(
         "{}/git/{}/{sha}",
         repo_url(owner, repo),
         if kind == "dir" { "trees" } else { "blobs" }
     );
-    // REST clients can follow this URL with the same bearer credential. Native raw URLs
-    // remain available for browser-session downloads.
-    let download = (kind == "file").then(|| format!("{url}&raw=1"));
+    let download = (kind == "file").then(|| {
+        format!(
+            "{}/{}/{}/raw/{}/{}",
+            crate::backend::api::http::config::link_origin(),
+            crate::webui::encode_component(owner),
+            crate::webui::encode_component(repo),
+            crate::webui::encode_component(reference),
+            path_url(path)
+        )
+    });
     json!({
         "type": kind, "name": path.rsplit('/').next().unwrap_or(path), "path": path,
         "sha": sha, "size": size, "url": url, "html_url": html, "git_url": git_url,
@@ -129,33 +148,29 @@ pub(super) fn entry(
 
 pub(super) use crate::backend::webhooks::payloads::git_commit as commit_json;
 
-pub(super) async fn blob_response(
+pub(super) fn blob_response(
     headers: &HeaderMap,
     owner: &str,
     name: &str,
     reference: &str,
     path: &str,
     blob: crate::backend::repositories::store::BlobBytes,
-) -> Result<Response> {
+) -> Response {
     if headers
         .get(header::ACCEPT)
         .and_then(|value| value.to_str().ok())
         .is_some_and(|value| value.contains("application/vnd.github.raw"))
     {
-        return Ok((
+        return (
             [(header::CONTENT_TYPE, "application/octet-stream")],
             blob.bytes,
-        ).into_response());
-    }
-    if headers.get(header::ACCEPT).and_then(|value| value.to_str().ok()).is_some_and(|value| value.contains("application/vnd.github.html")) {
-        let text = String::from_utf8(blob.bytes).map_err(|_| Error::invalid("HTML representation requires a text file"))?;
-        let references = crate::webui::components::references::References { owner: owner.to_owned(), repo: name.to_owned(), ..Default::default() };
-        return super::meta::render(text, references).await;
+        )
+            .into_response();
     }
     let mut value = entry(owner, name, reference, path, &blob.id, blob.size, "file");
     value["encoding"] = json!("base64");
     value["content"] = json!(STANDARD.encode(&blob.bytes));
-    Ok(Json(value).into_response())
+    Json(value).into_response()
 }
 
 async fn readme(
@@ -187,24 +202,19 @@ async fn readme(
         .blob_bytes(&revision, &path)
         .await
         .map_err(store_error)?;
-    auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
-    blob_response(&headers, owner, name, &revision, &path, blob).await
+    Ok(blob_response(&headers, owner, name, reference, &path, blob))
 }
 
 async fn read(
     State(state): State<Arc<AppState>>,
-    mut headers: HeaderMap,
+    headers: HeaderMap,
     Path(params): Path<HashMap<String, String>>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Result<Response> {
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, _) = repository(&state, &headers, owner, name, false).await?;
     let reference = query.get("ref").unwrap_or(&repo.default_branch);
-    let response = async {
     let path = params.get("path").map(String::as_str).unwrap_or("");
-    if query.get("raw").is_some_and(|value| value == "1") {
-        headers.insert(header::ACCEPT, axum::http::HeaderValue::from_static("application/vnd.github.raw"));
-    }
     let store = repo_store(&repo, state.cluster.as_ref());
     // Pin both file and directory reads so a moving branch cannot mix revisions.
     let revision = store.commit(reference).await.map_err(store_error)?.sha;
@@ -217,9 +227,9 @@ async fn read(
                 if let Some(resolved) = link_target(path, &target) {
                     match store.blob_bytes(&revision, &resolved).await {
                         Ok(file) if file.mode != SYMLINK_MODE => {
-                            return blob_response(
-                                &headers, owner, name, &revision, &resolved, file,
-                            ).await;
+                            return Ok(blob_response(
+                                &headers, owner, name, reference, &resolved, file,
+                            ));
                         }
                         Ok(_) => {}
                         Err(error)
@@ -228,12 +238,12 @@ async fn read(
                         Err(error) => return Err(store_error(error)),
                     }
                 }
-                let mut value = entry(owner, name, &revision, path, &blob.id, blob.size, "symlink");
+                let mut value = entry(owner, name, reference, path, &blob.id, blob.size, "symlink");
                 value["target"] = json!(target);
                 return Ok(Json(value).into_response());
             }
             Ok(blob) => {
-                return blob_response(&headers, owner, name, &revision, path, blob).await;
+                return Ok(blob_response(&headers, owner, name, reference, path, blob));
             }
             Err(error) if error.reason == Some(RepoErrorReason::NotFile) => {
                 // A submodule is a commit entry, not a directory to list.
@@ -253,13 +263,8 @@ async fn read(
                         Err(error) if error.kind == ErrorKind::MissingPath => None,
                         Err(error) => return Err(store_error(error)),
                     };
-                    let mut value = entry(owner, name, &revision, path, &link.sha, 0, "submodule");
+                    let mut value = entry(owner, name, reference, path, &link.sha, 0, "submodule");
                     value["submodule_git_url"] = json!(url);
-                    value["git_url"] = Value::Null;
-                    value["html_url"] = Value::Null;
-                    value["download_url"] = Value::Null;
-                    value["_links"]["git"] = Value::Null;
-                    value["_links"]["html"] = Value::Null;
                     return Ok(Json(value).into_response());
                 }
             }
@@ -270,13 +275,14 @@ async fn read(
         .tree_metadata(&revision, path)
         .await
         .map_err(store_error)?;
-    let entries = entries
+    Ok(Json(
+        entries
             .into_iter()
             .map(|item| {
                 entry(
                     owner,
                     name,
-                    &revision,
+                    reference,
                     &item.path,
                     &item.sha,
                     item.size.unwrap_or(0),
@@ -287,18 +293,13 @@ async fn read(
                     },
                 )
             })
-            .collect::<Vec<_>>();
-    let value = if headers.get(header::ACCEPT).and_then(|value| value.to_str().ok()).is_some_and(|value| value.contains("application/vnd.github.object")) { json!({"entries": entries}) } else { json!(entries) };
-    Ok(Json(value).into_response())
-    }.await?;
-    auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
-    Ok(response)
+            .collect::<Vec<_>>(),
+    )
+    .into_response())
 }
 
 #[derive(Deserialize)]
 struct Write {
-    #[serde(flatten)]
-    identities: crate::backend::repositories::store::CommitIdentities,
     message: String,
     content: Option<String>,
     sha: Option<String>,
@@ -314,8 +315,7 @@ async fn save(
 ) -> Result<Response> {
     let (owner, name, path) = (&params["owner"], &params["repo"], &params["path"]);
     let (repo, auth) = repository(&state, &headers, owner, name, true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let authority = auth.database_actor();
+    let actor = auth.ok_or_else(auth::required)?.user;
     let branch = input.branch.as_deref().unwrap_or(&repo.default_branch);
     let store = repo_store(&repo, state.cluster.as_ref());
     let refs = store.refs_from_primary().await.map_err(store_error)?;
@@ -325,7 +325,7 @@ async fn save(
         return Err(Error::missing());
     }
     let blob = match expected {
-        Some(revision) => match store.blob_range(revision, path, crate::backend::repositories::store::BlobRange::Window { offset: 0, length: 0 }).await {
+        Some(revision) => match store.blob_bytes(revision, path).await {
             Ok(blob) => Some(blob),
             Err(error) if error.kind == ErrorKind::MissingPath => None,
             Err(error) => return Err(store_error(error)),
@@ -347,10 +347,15 @@ async fn save(
             .content
             .as_deref()
             .ok_or_else(|| Error::invalid("content is required"))?;
-        files::decode_base64(content, MAX_EDITOR_BYTES).map_err(|error| match error {
-            files::WriteFailure::TooLarge => Error::new(StatusCode::PAYLOAD_TOO_LARGE, "File exceeds 1 MiB"),
-            _ => Error::invalid("Invalid base64 content"),
-        })?
+        if content.len() > MAX_EDITOR_BYTES.div_ceil(3) * 4 {
+            return Err(Error::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "File exceeds 1 MiB",
+            ));
+        }
+        STANDARD
+            .decode(content)
+            .map_err(|_| Error::invalid("Invalid base64 content"))?
     };
     let write = FileWrite {
         branch: branch.to_owned(),
@@ -365,12 +370,11 @@ async fn save(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
-            authority,
+            actor.id,
             owner,
             repo.id,
             write,
             None,
-            input.identities,
         )
         .await
     } else {
@@ -378,12 +382,11 @@ async fn save(
             &state.pool,
             state.cluster.as_ref(),
             &state.ci_runs,
-            authority,
+            actor.id,
             owner,
             repo.id,
             write,
             bytes,
-            input.identities,
         )
         .await
     }
@@ -404,7 +407,7 @@ async fn save(
     };
     Ok((
         status,
-        Json(json!({"content": content, "commit": commit_json(&saved.commit, owner, name, repo.id)})),
+        Json(json!({"content": content, "commit": commit_json(&saved.commit, owner, name)})),
     )
         .into_response())
 }

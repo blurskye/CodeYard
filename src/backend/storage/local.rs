@@ -19,41 +19,9 @@ pub struct LocalStore {
     root: PathBuf,
 }
 
-type IoGuard = std::sync::Arc<tokio::sync::OwnedSemaphorePermit>;
-struct TemporaryUpload(Option<tempfile::NamedTempFile>, IoGuard);
-
-impl Drop for TemporaryUpload {
-    fn drop(&mut self) {
-        if let Some(temporary) = self.0.take() {
-            let guard = self.1.clone();
-            tokio::task::spawn_blocking(move || { let _guard = guard; drop(temporary); });
-        }
-    }
-}
-
-/// Checked bytes waiting in the staging directory. `publish` renames them into place;
-/// dropping the upload removes them.
-pub(crate) struct StagedUpload {
-    temporary: TemporaryUpload,
-    target: PathBuf,
-}
-impl StagedUpload {
-    pub(crate) async fn publish(mut self) -> Result<(), StorageError> {
-        let target = self.target.clone();
-        let guard = self.temporary.1.clone();
-        let temporary = self.temporary.0.take().ok_or(StorageError::Unavailable)?;
-        tokio::task::spawn_blocking(move || {
-            let _guard = guard;
-            temporary.persist(&target).map_err(std::io::Error::other)?;
-            std::fs::File::open(target.parent().ok_or(std::io::ErrorKind::InvalidInput)?)?.sync_all()
-        }).await.map_err(|_| StorageError::Unavailable)??;
-        Ok(())
-    }
-}
-
 impl LocalStore {
     pub async fn open(root: &Path) -> Result<Self> {
-        create_directories(root, None)
+        create_directories(root)
             .await
             .with_context(|| format!("create object directory {}", root.display()))?;
         let root = tokio::fs::canonicalize(root).await?;
@@ -69,37 +37,27 @@ impl LocalStore {
 
     /// Streams into a temporary file and renames it into place only after the
     /// size, checksum and file signature check out.
-    pub(super) async fn put(
-        &self,
-        upload: &Upload<'_>,
-        reader: impl AsyncRead + Unpin,
-        guard: IoGuard,
-    ) -> Result<(), StorageError> {
-        self.stage(upload, reader, guard).await?.publish().await
-    }
-
-    pub(crate) async fn stage(
+    pub async fn put(
         &self,
         upload: &Upload<'_>,
         mut reader: impl AsyncRead + Unpin,
-        guard: IoGuard,
-    ) -> Result<StagedUpload, StorageError> {
+    ) -> Result<(), StorageError> {
         if !(0..=MAX_OBJECT_BYTES).contains(&upload.bytes) {
             return Err(StorageError::Invalid);
         }
         let path = self.path(upload.key)?;
         let parent = path.parent().ok_or(StorageError::Invalid)?;
-        create_directories(parent, Some(guard.clone())).await?;
+        create_directories(parent).await?;
         // Partial files share one directory, so the cleanup finds the ones a crash leaves.
         let staging = self.root.join(STAGING_DIR);
-        create_directories(&staging, Some(guard.clone())).await?;
+        create_directories(&staging).await?;
         // tempfile is synchronous; keep a stalled disk off the async workers.
         let (temporary, file) = tokio::task::spawn_blocking(move || {
             let temporary = tempfile::Builder::new()
                 .prefix(TEMP_PREFIX)
                 .tempfile_in(staging)?;
             let file = temporary.reopen()?;
-            std::io::Result::Ok((TemporaryUpload(Some(temporary), guard), file))
+            std::io::Result::Ok((temporary, file))
         })
         .await
         .map_err(|_| StorageError::Unavailable)??;
@@ -135,7 +93,13 @@ impl LocalStore {
         }
         output.flush().await?;
         output.sync_all().await?;
-        Ok(StagedUpload { temporary, target: path })
+        let target = path.clone();
+        tokio::task::spawn_blocking(move || temporary.persist(target).map(drop).map_err(drop))
+            .await
+            .map_err(|_| StorageError::Unavailable)?
+            .map_err(|_| StorageError::Unavailable)?;
+        sync_directory(parent).await?;
+        Ok(())
     }
 
     /// Bytes are checked on the way in, so existence and size are enough here.
@@ -190,46 +154,36 @@ async fn sync_directory(path: &Path) -> std::io::Result<()> {
 }
 
 /// Flush only entries we create, not unrelated ancestors of an existing store.
-async fn create_directories(path: &Path, io: Option<IoGuard>) -> std::io::Result<()> {
-    static CREATION: std::sync::OnceLock<std::sync::Arc<tokio::sync::Mutex<Vec<PathBuf>>>> = std::sync::OnceLock::new();
-    let guard = CREATION.get_or_init(|| std::sync::Arc::new(tokio::sync::Mutex::new(Vec::new()))).clone().lock_owned().await;
-    let path = path.to_owned();
-    // The blocking job owns serialization through parent fsync, including if its request is
-    // cancelled. Another put must not observe a directory before its parent entry is durable.
-    tokio::task::spawn_blocking(move || {
-        let _io = io;
-        let mut pending = guard;
-        for directory in pending.iter() {
-            std::fs::File::open(directory)?.sync_all()?;
-            std::fs::File::open(directory.parent().unwrap_or(Path::new(".")))?.sync_all()?;
-        }
-        pending.clear();
-        let mut missing = Vec::new();
-        let mut directory = path.as_path();
-        loop {
-            match std::fs::metadata(directory) {
-                Ok(metadata) if metadata.is_dir() => break,
-                Ok(_) => return Err(std::io::Error::from(std::io::ErrorKind::NotADirectory)),
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                    missing.push(directory.to_owned());
-                    directory = directory.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
-                }
-                Err(error) => return Err(error),
+async fn create_directories(path: &Path) -> std::io::Result<()> {
+    let mut missing = Vec::new();
+    let mut directory = path;
+    loop {
+        match tokio::fs::metadata(directory).await {
+            Ok(metadata) if metadata.is_dir() => break,
+            Ok(_) => return Err(std::io::Error::from(std::io::ErrorKind::NotADirectory)),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                missing.push(directory);
+                directory = directory
+                    .parent()
+                    .filter(|p| !p.as_os_str().is_empty())
+                    .unwrap_or_else(|| Path::new("."));
             }
+            Err(error) => return Err(error),
         }
-        for directory in missing.into_iter().rev() {
-            match std::fs::create_dir(&directory) {
-                Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => return Err(error),
-                _ => {}
-            }
-            pending.push(directory.clone());
-            std::fs::File::open(&directory)?.sync_all()?;
-            let parent = directory.parent().filter(|p| !p.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
-            std::fs::File::open(parent)?.sync_all()?;
-            pending.pop();
+    }
+    for directory in missing.into_iter().rev() {
+        match tokio::fs::create_dir(directory).await {
+            Err(error) if error.kind() != std::io::ErrorKind::AlreadyExists => return Err(error),
+            _ => {}
         }
-        Ok(())
-    }).await.map_err(std::io::Error::other)?
+        sync_directory(directory).await?;
+        let parent = directory
+            .parent()
+            .filter(|p| !p.as_os_str().is_empty())
+            .unwrap_or_else(|| Path::new("."));
+        sync_directory(parent).await?;
+    }
+    Ok(())
 }
 
 /// Removes files in `dir` whose names start with `TEMP_PREFIX` and that nothing has written
@@ -270,10 +224,6 @@ mod tests {
     use super::*;
     use std::time::SystemTime;
 
-    fn io_guard() -> IoGuard {
-        std::sync::Arc::new(std::sync::Arc::new(tokio::sync::Semaphore::new(1)).try_acquire_owned().unwrap())
-    }
-
     fn upload<'a>(key: &'a str, bytes: &[u8], sha: &'a str) -> Upload<'a> {
         Upload {
             key,
@@ -290,7 +240,7 @@ mod tests {
         let png = b"\x89PNG\r\n\x1a\nrest";
         let sha = hex::encode(Sha256::digest(png));
         let key = "uploads/one";
-        store.put(&upload(key, png, &sha), &png[..], io_guard()).await.unwrap();
+        store.put(&upload(key, png, &sha), &png[..]).await.unwrap();
         store.verify(&upload(key, png, &sha)).await.unwrap();
         let (_, bytes) = store.open_file(key).await.unwrap();
         assert_eq!(bytes, png.len() as u64);
@@ -298,16 +248,16 @@ mod tests {
         let fake = b"<html>not png";
         let fake_sha = hex::encode(Sha256::digest(fake));
         assert!(store
-            .put(&upload("uploads/two", fake, &fake_sha), &fake[..], io_guard())
+            .put(&upload("uploads/two", fake, &fake_sha), &fake[..])
             .await
             .is_err());
         assert!(store
-            .put(&upload("uploads/three", png, &fake_sha), &png[..], io_guard())
+            .put(&upload("uploads/three", png, &fake_sha), &png[..])
             .await
             .is_err());
         let mut short = upload("uploads/four", png, &sha);
         short.bytes -= 1;
-        assert!(store.put(&short, &png[..], io_guard()).await.is_err());
+        assert!(store.put(&short, &png[..]).await.is_err());
         assert!(store
             .verify(&upload("uploads/two", fake, &fake_sha))
             .await
@@ -352,7 +302,7 @@ mod tests {
                 assert_eq!(libc::setrlimit(libc::RLIMIT_FSIZE, &limit), 0);
             }
             assert!(store
-                .put(&upload("uploads/full", png, &sha), &png[..], io_guard())
+                .put(&upload("uploads/full", png, &sha), &png[..])
                 .await
                 .is_err());
             assert!(!root.path().join("uploads/full").exists());
@@ -369,7 +319,7 @@ mod tests {
         png.extend(vec![b'x'; 256 * 1024]);
         let sha = hex::encode(Sha256::digest(&png));
         store
-            .put(&upload("uploads/new", &png, &sha), png.as_slice(), io_guard())
+            .put(&upload("uploads/new", &png, &sha), png.as_slice())
             .await
             .unwrap();
         let (mut file, size) = store.open_file("uploads/new").await.unwrap();

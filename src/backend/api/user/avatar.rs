@@ -1,12 +1,10 @@
 //! Upload or remove a user's picture through native settings forms.
 
 use crate::backend::api::http::context::PageContext;
-use crate::backend::api::http::session;
 use crate::backend::api::pictures;
 use crate::backend::api::user::profile::settings_response;
 use crate::backend::api::user::responses::{require_account, Fields};
 use crate::backend::app::AppState;
-use crate::backend::db::users::accounts::AccountCredential;
 use crate::backend::identity::avatars;
 use crate::backend::identity::avatars::AvatarError;
 use axum::extract::multipart::MultipartRejection;
@@ -87,9 +85,7 @@ async fn upload(
         )
         .await;
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = AccountCredential::Session(&session);
-    match avatars::upload_user_avatar(&ctx.state.pool, &ctx.state.storage, &user, &credential, bytes).await {
+    match avatars::upload_user_avatar(&ctx.state.pool, &ctx.state.storage, &user, bytes).await {
         Ok(()) => ctx.redirect("/settings?tab=profile&saved=avatar"),
         Err(error) => refused(&ctx, avatar_status(&error).0, &error.to_string()).await,
     }
@@ -112,8 +108,7 @@ async fn remove_form(
         Ok(user) => user.clone(),
         Err(response) => return response,
     };
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    match avatars::remove_user_avatar(&ctx.state.pool, &user, &AccountCredential::Session(&session)).await {
+    match avatars::remove_user_avatar(&ctx.state.pool, &user).await {
         Ok(()) => ctx.redirect("/settings?tab=profile&saved=avatar-removed"),
         Err(error) => refused(&ctx, avatar_status(&error).0, &error.to_string()).await,
     }

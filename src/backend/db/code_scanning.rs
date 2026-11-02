@@ -27,15 +27,8 @@ pub struct Upload {
     pub sarif: String,
     pub checkout_uri: Option<String>,
     pub processing_status: String,
-    pub claim_id: Option<String>,
     pub error: Option<String>,
     pub created_at: DateTime<Utc>,
-}
-
-#[derive(sqlx::FromRow)]
-pub struct UploadStatus {
-    pub processing_status: String,
-    pub error: Option<String>,
 }
 
 #[derive(Clone, Copy)]
@@ -78,14 +71,7 @@ pub struct AlertFilters<'a> {
     pub tool_guid: Option<&'a str>,
     pub state: Option<&'a str>,
     pub severity: Option<&'a str>,
-    pub pull_request: Option<i32>,
     pub sort: AlertSort,
-}
-
-/// `reference`, `pull_request`, and `default` are native SQL expressions, never user input.
-/// The explicit reference intersects a PR's head/merge refs instead of falling back to main.
-pub(crate) fn instance_condition(reference: &str, pull_request: &str, default: &str) -> String {
-    format!("((CAST({pull_request} AS BIGINT) IS NULL AND i.ref_name=COALESCE({reference},{default})) OR (CAST({pull_request} AS BIGINT) IS NOT NULL AND (CAST({reference} AS TEXT) IS NULL OR i.ref_name={reference}) AND i.ref_name IN ('refs/pull/' || CAST({pull_request} AS TEXT) || '/head','refs/pull/' || CAST({pull_request} AS TEXT) || '/merge')))")
 }
 
 #[derive(sqlx::FromRow)]
@@ -101,15 +87,8 @@ impl BranchAlert {
     }
 }
 
-pub struct OrganizationAlert {
-    pub alert: Alert,
-    pub repository: super::models::Repository,
-    pub instance: Instance,
-    pub dismissed_by: Option<super::models::User>,
-}
-
 pub struct NewUpload<'a> {
-    pub actor: super::credentials::Actor,
+    pub actor: i64,
     pub repo: i64,
     pub ref_name: &'a str,
     pub commit_sha: &'a str,
@@ -214,66 +193,12 @@ pub struct NewFinding {
     pub total_count: i64,
 }
 
-pub struct AlertSelection<'a> {
-    pub repo: i64,
-    pub number: Option<i64>,
-    pub filters: &'a AlertFilters<'a>,
-    /// Only instances from this analysis category, when set.
-    pub category: Option<&'a str>,
-    pub offset: i64,
-    pub limit: i64,
-}
-
-pub struct AlertSnapshot {
-    pub rows: Vec<Alert>,
-    pub instances: std::collections::HashMap<i64, Instance>,
-}
-
-native_operation!(super::postgres::code_scanning::security_read_allowed, super::sqlite::code_scanning::security_read_allowed,
-    fn security_read_allowed(pool: &DbPool, actor: i64, session: &str, repo: i64) -> Result<bool>);
-
-native_operation!(super::postgres::code_scanning::read_alert_snapshot, super::sqlite::code_scanning::read_alert_snapshot,
-    fn read_alert_snapshot(pool: &DbPool, actor: i64, session: &str, selection: &AlertSelection<'_>) -> Result<AlertSnapshot>);
-
-pub struct PullSelection<'a> {
-    pub repo: i64,
-    pub head: &'a str,
-    pub base: &'a str,
-    pub number: i32,
-    pub branch: Option<&'a str>,
-    pub base_branch: &'a str,
-    pub merge_commits: &'a [String],
-}
-
-pub struct PullGroup {
-    pub analysis: Analysis,
-    pub baseline: Option<i64>,
-    pub incomplete: bool,
-    pub total: i64,
-    pub findings: Vec<NewFinding>,
-}
-
-#[derive(Default)]
-pub struct PullSnapshot {
-    pub groups: Vec<PullGroup>,
-    pub more: bool,
-    pub processing: Vec<(String, String, Option<String>)>,
-}
-
-native_operation!(super::postgres::code_scanning::pull_snapshot, super::sqlite::code_scanning::pull_snapshot,
-    fn pull_snapshot(pool: &DbPool, actor: i64, session: &str, selection: &PullSelection<'_>) -> Result<PullSnapshot>);
-native_operation!(super::postgres::code_scanning::pull_merge_candidates, super::sqlite::code_scanning::pull_merge_candidates,
-    fn pull_merge_candidates(pool: &DbPool, actor: i64, session: &str, repo: i64, number: i32) -> Result<Vec<String>>);
-
 pub struct Change {
     pub alert: Alert,
     pub action: &'static str,
-    pub instance: Option<Instance>,
 }
 
-pub(crate) fn changes(before: &[(i64, String)], after: Vec<Alert>, instances: Vec<Instance>) -> Vec<Change> {
-    let mut snapshots = std::collections::HashMap::new();
-    for instance in instances { snapshots.entry(instance.alert_id).or_insert(instance); }
+pub(crate) fn changes(before: &[(i64, String)], after: Vec<Alert>) -> Vec<Change> {
     let before: std::collections::HashMap<_, _> = before
         .iter()
         .map(|(id, state)| (*id, state.as_str()))
@@ -288,8 +213,7 @@ pub(crate) fn changes(before: &[(i64, String)], after: Vec<Alert>, instances: Ve
                 Some(_) if alert.state == "fixed" => "fixed",
                 Some(_) => "reopened",
             };
-            let instance = snapshots.remove(&alert.id);
-            Some(Change { alert, action, instance })
+            Some(Change { alert, action })
         })
         .collect()
 }
@@ -334,8 +258,8 @@ native_operation!(super::postgres::code_scanning::new_findings, super::sqlite::c
     fn new_findings(pool: &DbPool, analysis: i64, baseline: Option<i64>) -> Result<Vec<NewFinding>>);
 native_operation!(super::postgres::code_scanning::enqueue, super::sqlite::code_scanning::enqueue,
     fn enqueue(pool: &DbPool, input: &NewUpload<'_>) -> Result<Upload>);
-native_operation!(super::postgres::code_scanning::upload_status, super::sqlite::code_scanning::upload_status,
-    fn upload_status(pool: &DbPool, repo: i64, id: &str) -> Result<Option<UploadStatus>>);
+native_operation!(super::postgres::code_scanning::upload, super::sqlite::code_scanning::upload,
+    fn upload(pool: &DbPool, repo: i64, id: &str) -> Result<Option<Upload>>);
 native_operation!(super::postgres::code_scanning::pending, super::sqlite::code_scanning::pending,
     fn pending(pool: &DbPool) -> Result<Option<Upload>>);
 native_operation!(super::postgres::code_scanning::finish, super::sqlite::code_scanning::finish,
@@ -350,19 +274,13 @@ native_operation!(super::postgres::code_scanning::analysis_sarif, super::sqlite:
     fn analysis_sarif(pool: &DbPool, repo: i64, id: i64) -> Result<Option<String>>);
 native_operation!(super::postgres::code_scanning::alert_page, super::sqlite::code_scanning::alert_page,
     fn alert_page(pool: &DbPool, scope: AlertScope, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<Alert>>);
-native_operation!(super::postgres::code_scanning::organization_alert_page, super::sqlite::code_scanning::organization_alert_page,
-    fn organization_alert_page(pool: &DbPool, actor: i64, org: i64, filters: &AlertFilters<'_>, offset: i64, limit: i64) -> Result<Vec<OrganizationAlert>>);
 native_operation!(super::postgres::code_scanning::alert, super::sqlite::code_scanning::alert,
     fn alert(pool: &DbPool, repo: i64, number: i64) -> Result<Option<Alert>>);
-native_operation!(super::postgres::code_scanning::instance_filtered, super::sqlite::code_scanning::instance_filtered,
-    fn instance_filtered(pool: &DbPool, alert: i64, reference: Option<&str>, pull_request: Option<i32>) -> Result<Option<Instance>>);
-native_operation!(super::postgres::code_scanning::instances_filtered, super::sqlite::code_scanning::instances_filtered,
-    fn instances_filtered(pool: &DbPool, alert: i64, reference: Option<&str>, pull_request: Option<i32>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
 native_operation!(super::postgres::code_scanning::instance, super::sqlite::code_scanning::instance,
     fn instance(pool: &DbPool, alert: i64, reference: Option<&str>) -> Result<Option<Instance>>);
 native_operation!(super::postgres::code_scanning::instances, super::sqlite::code_scanning::instances,
     fn instances(pool: &DbPool, alert: i64, reference: Option<&str>, offset: i64, limit: i64) -> Result<Vec<Instance>>);
 native_operation!(super::postgres::code_scanning::dismiss, super::sqlite::code_scanning::dismiss,
-    fn dismiss(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
+    fn dismiss(pool: &DbPool, actor: i64, repo: i64, number: i64, input: &Dismissal<'_>) -> Result<Alert>);
 native_operation!(super::postgres::code_scanning::delete_analysis, super::sqlite::code_scanning::delete_analysis,
-    fn delete_analysis(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);
+    fn delete_analysis(pool: &DbPool, actor: i64, repo: i64, id: i64, confirm: bool) -> Result<Option<i64>>);

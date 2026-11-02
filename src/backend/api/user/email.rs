@@ -236,13 +236,8 @@ pub(crate) async fn notifications_post(
         Err(response) => return response,
     };
     let wanted = field(&form, "email_notifications") == "yes";
-    let session = session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
-    match db::email::set_email_notifications(&ctx.state.pool, user.id, &credential, wanted).await {
+    match db::email::set_email_notifications(&ctx.state.pool, user.id, wanted).await {
         Ok(()) => ctx.redirect("/settings?tab=email&saved=email-notifications"),
-        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => ctx.error(
-            StatusCode::FORBIDDEN, "A live unrestricted account session is required.",
-        ),
         Err(_) => ctx.error(
             StatusCode::SERVICE_UNAVAILABLE,
             "Unable to save your notification setting.",

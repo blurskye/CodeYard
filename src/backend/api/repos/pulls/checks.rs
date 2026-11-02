@@ -68,13 +68,9 @@ async fn render_checks(
             }
             .to_owned(),
             description: run.data.title.clone().or(run.conclusion),
-            // The view links only absolute HTTP(S) addresses.
             target_url: Some(format!(
-                "{}/{}/{}/runs/{}",
-                crate::backend::api::http::config::link_origin(),
-                repo.view.owner,
-                repo.record.name,
-                run.id
+                "/{}/{}/runs/{}",
+                repo.view.owner, repo.record.name, run.id
             )),
             context: run.name,
         });

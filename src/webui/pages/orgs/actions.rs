@@ -1,6 +1,5 @@
 use crate::webui::components::{DraftInput, DraftSelect, DraftTextarea, SelectOption};
 use dioxus::prelude::*;
-use std::collections::HashMap;
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Panel {
@@ -28,7 +27,7 @@ pub struct Value {
 }
 fn tokens(panel: &Panel) -> Element {
     rsx! {
-        {crate::webui::pages::fields::csrf(&panel.csrf_token)}
+        input { r#type: "hidden", name: "csrf_token", value: panel.csrf_token.clone() }
         input { r#type: "hidden", name: "org_id", value: "{panel.org_id}" }
     }
 }
@@ -45,24 +44,7 @@ fn access(visibility: &str, repositories: &str) -> Element {
         }
     }
 }
-/// The value a rejected variable form submitted for `key`, or `stored` when the page did not
-/// come back from that form. `previous` names the edited variable. Secrets are never drafted.
-fn kept(
-    draft: &HashMap<String, String>,
-    action: &str,
-    previous: Option<&str>,
-    key: &str,
-    stored: &str,
-) -> String {
-    let rejected = action.starts_with("variable-")
-        && draft.get("action").map(String::as_str) == Some(action)
-        && previous.is_none_or(|name| draft.get("previous").map(String::as_str) == Some(name));
-    match draft.get(key) {
-        Some(value) if rejected => value.clone(),
-        _ => stored.to_owned(),
-    }
-}
-pub fn section(panel: &Panel, draft: &HashMap<String, String>) -> Element {
+pub fn section(panel: &Panel) -> Element {
     let base = format!("/settings/organizations/{}/actions", panel.org_id);
     rsx! {
         section { class: "org-section repo-settings-section panel",
@@ -109,10 +91,10 @@ pub fn section(panel: &Panel, draft: &HashMap<String, String>) -> Element {
                             input { r#type: "hidden", name: "previous", value: value.name.clone() }
                             if value.secret { input { r#type: "hidden", name: "name", value: value.name.clone() } }
                             else {
-                                label { class: "repo-field", span { "Variable name" } DraftInput { name: "name", initial_value: kept(draft, "variable-save", Some(&value.name), "name", &value.name), maxlength: Some(255), required: true } }
-                                label { class: "repo-field", span { "Value" } DraftTextarea { name: "value", initial_value: kept(draft, "variable-save", Some(&value.name), "value", &value.value), rows: 3, maxlength: Some(49152) } }
+                                label { class: "repo-field", span { "Variable name" } DraftInput { name: "name", initial_value: value.name.clone(), maxlength: Some(255), required: true } }
+                                label { class: "repo-field", span { "Value" } DraftTextarea { name: "value", initial_value: value.value.clone(), rows: 3, maxlength: Some(49152) } }
                             }
-                            {access(&kept(draft, if value.secret {"secret-access"} else {"variable-save"}, Some(&value.name), "visibility", &value.visibility), &kept(draft, if value.secret {"secret-access"} else {"variable-save"}, Some(&value.name), "repositories", &value.repositories))}
+                            {access(&value.visibility, &value.repositories)}
                             button { class: "btn", r#type: "submit", if value.secret {"Update secret access"} else {"Update variable"} }
                         }
                         form { method: "post", action: format!("{base}/{}", if value.secret {"secret-delete"} else {"variable-delete"}),
@@ -132,9 +114,9 @@ pub fn section(panel: &Panel, draft: &HashMap<String, String>) -> Element {
                     {tokens(panel)}
                     header { class: "repo-section-heading", h3 { if secret {"New or replacement organization secret"} else {"New organization variable"} } }
                     div { class: "repo-form-body",
-                        label { class: "repo-field", span { "Name" } DraftInput { name: "name", initial_value: kept(draft, if secret {"secret-save"} else {"variable-create"}, None, "name", ""), maxlength: Some(255), required: true } }
-                        label { class: "repo-field", span { if secret {"Secret"} else {"Value"} } DraftTextarea { name: "value", initial_value: kept(draft, if secret {"secret-save"} else {"variable-create"}, None, "value", ""), rows: 3, maxlength: Some(49152) } }
-                        {access(&kept(draft, if secret {"secret-save"} else {"variable-create"}, None, "visibility", "private"), &kept(draft, if secret {"secret-save"} else {"variable-create"}, None, "repositories", ""))}
+                        label { class: "repo-field", span { "Name" } DraftInput { name: "name", initial_value: String::new(), maxlength: Some(255), required: true } }
+                        label { class: "repo-field", span { if secret {"Secret"} else {"Value"} } DraftTextarea { name: "value", initial_value: String::new(), rows: 3, maxlength: Some(49152) } }
+                        {access("private", "")}
                     }
                     div { class: "repo-form-actions", button { class: "btn btn-primary", r#type: "submit", if secret {"Save secret"} else {"Add variable"} } }
                 }

@@ -26,8 +26,6 @@ pub enum Page {
     },
     Contributors {
         rows: Vec<Contributor>,
-        #[serde(default)]
-        omitted: usize,
     },
     Community {
         health_percentage: usize,
@@ -44,8 +42,6 @@ pub enum Page {
         rows: Vec<DependencyRow>,
         page: i64,
         has_more: bool,
-        reference: String,
-        revision: Option<String>,
     },
     Forks {
         rows: Vec<Fork>,
@@ -167,7 +163,7 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
             ul {for check in checks {li {class:"repo-settings-row",strong {"{check.name}"} span {if check.present {"Present"} else {"Missing"}} if let Some(href)=check.href {NavLink {href,"View file"}}}}}
             p {"Add missing files with the repository editor. Public .github repositories can supply shared community files."}
         }},
-        Page::Contributors { rows, omitted } => contributors(&rows, omitted),
+        Page::Contributors { rows } => contributors(&rows),
         Page::CodeFrequency { weeks } => code_frequency(repo, &weeks),
         Page::Actions { days, workflows } => actions(repo, &path, days, &workflows),
         Page::Forks {
@@ -179,9 +175,7 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
             rows,
             page,
             has_more,
-            reference,
-            revision,
-        } => dependencies(repo, &path, &rows, page, has_more, &reference, revision.as_deref()),
+        } => dependencies(repo, &path, &rows, page, has_more),
     };
     chrome(
         repo,
@@ -207,14 +201,10 @@ fn dependencies(
     rows: &[DependencyRow],
     page: i64,
     has_more: bool,
-    reference: &str,
-    revision: Option<&str>,
 ) -> Element {
-    let page_url = |page| format!("{path}?page={page}&ref={}&sha={}", encode_component(reference), encode_component(revision.unwrap_or_default()));
     rsx! {
-        {heading("Dependency graph", "Latest stored dependency submissions at one revision. Storage need not be online; this is not a live inventory or vulnerability scan.", None)}
-        if let Some(revision) = revision { p { "Stored revision: " code { "{revision}" } " · {reference}" } }
-        p { a { href: format!("{}/dependency-graph/sbom", repo.base()), "Export current branch SPDX SBOM (requires storage)" } }
+        {heading("Dependency graph", "Dependencies submitted for the default branch. This list is not a vulnerability scan.", None)}
+        p { a { href: format!("/api/v3/repos/{}/{}/dependency-graph/sbom", encode_component(&repo.owner), encode_component(&repo.name)), "Export SPDX SBOM" } }
         if rows.is_empty() {
             {empty("No dependencies have been submitted for this page.")}
         } else {
@@ -229,8 +219,8 @@ fn dependencies(
             }
         }
         nav { class: "repo-pagination", aria_label: "Dependency pages",
-            if page > 1 && revision.is_some() { NavLink { href: page_url(page - 1), "Previous" } }
-            if has_more && revision.is_some() { NavLink { href: page_url(page + 1), "Next" } }
+            if page > 1 { NavLink { href: format!("{path}?page={}", page - 1), "Previous" } }
+            if has_more { NavLink { href: format!("{path}?page={}", page + 1), "Next" } }
         }
     }
 }
@@ -256,9 +246,9 @@ fn pulse(path: &str, days: i32, activity: &[DailyActivity]) -> Element {
     }
 }
 
-fn contributors(rows: &[Contributor], omitted: usize) -> Element {
+fn contributors(rows: &[Contributor]) -> Element {
     let top = rows.first().map_or(1, |row| row.commits.max(1));
-    let hidden = omitted.saturating_add(rows.len().saturating_sub(CONTRIBUTORS_SHOWN));
+    let hidden = rows.len().saturating_sub(CONTRIBUTORS_SHOWN);
     rsx! {
         {heading("Contributors", "Authors of the commits on every branch, by number of commits.", None)}
         if rows.is_empty() {

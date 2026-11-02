@@ -100,9 +100,6 @@ The same command copies PostgreSQL back to SQLite, but refuses while any reposit
 cluster placement (`repositories.storage_node_id` is not NULL). With all nodes stopped,
 first consolidate the current repository directories on the standalone machine at their
 stored `disk_path` locations, then remove placement by setting `storage_node_id` to NULL.
-While all nodes remain stopped, also run `UPDATE node_configuration SET cluster_enabled = false;`
-on PostgreSQL after consolidating storage and clearing placement, before copying. The copy
-preserves this flag; SQLite cannot start with cluster mode enabled.
 Copy only after that preparation; the command does not move storage or clear placement.
 SQLite cannot serve clustered repositories, even if their directories are present locally.
 Start the SQLite installation without cluster settings.

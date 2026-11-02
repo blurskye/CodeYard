@@ -41,7 +41,8 @@ async fn approve(
         &state.pool,
         &state.ci_runs,
         actor,
-        &repo,
+        owner,
+        name,
         pull.number,
         RunWorkflowsRequest {
             expected_head: run.head_sha.ok_or_else(Error::missing)?,

@@ -9,7 +9,7 @@ use crate::backend::{
         protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
         pull_requests,
         store::{
-            repo_store, CommitIdentities, CommitInfo, ErrorKind, FileWrite, PreparedFile, RepoError, RepoStore,
+            repo_store, CommitInfo, ErrorKind, FileWrite, PreparedFile, RepoError, RepoStore,
             UploadWrite, MAX_EDITOR_BYTES,
         },
     },
@@ -31,27 +31,6 @@ pub enum WriteFailure {
     TooLarge,
     Encoding,
     SavedFollowupFailed,
-}
-
-/// Decode Git content with bounded normalization, accepting conventional base64 whitespace.
-pub fn decode_base64(content: &str, limit: usize) -> Result<Vec<u8>, WriteFailure> {
-    use base64::Engine;
-    let encoded_limit = limit.div_ceil(3).saturating_mul(4);
-    let mut normalized = Vec::with_capacity(content.len().min(encoded_limit));
-    for character in content.chars().filter(|character| !character.is_whitespace()) {
-        if normalized.len() >= encoded_limit {
-            return Err(WriteFailure::TooLarge);
-        }
-        if !character.is_ascii() {
-            return Err(WriteFailure::Encoding);
-        }
-        normalized.push(character as u8);
-    }
-    let bytes = base64::engine::general_purpose::STANDARD.decode(&normalized).map_err(|_| WriteFailure::Encoding)?;
-    if bytes.len() > limit {
-        return Err(WriteFailure::TooLarge);
-    }
-    Ok(bytes)
 }
 
 #[derive(Debug)]
@@ -133,9 +112,6 @@ fn native_file_bytes(content: String, original: &str) -> Vec<u8> {
 
 pub(crate) fn native_text(content: String, original: &str) -> String {
     let content = content.replace("\r\n", "\n").replace('\r', "\n");
-    if content == original.replace("\r\n", "\n").replace('\r', "\n") {
-        return original.to_owned();
-    }
     let newline = original.find(['\r', '\n']).map(|index| &original[index..]);
     match newline {
         Some(rest) if rest.starts_with("\r\n") => content.replace('\n', "\r\n"),
@@ -148,10 +124,10 @@ enum FileContent {
     Text(String),
     Bytes(Vec<u8>),
 }
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 enum CommitOrigin {
     Web,
-    Api(CommitIdentities),
+    Api,
 }
 
 async fn check_web_signoff(
@@ -187,7 +163,7 @@ pub async fn write_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: i64,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -250,15 +226,16 @@ pub fn free_branch_name(username: &str, refs: &HashMap<String, String>) -> Strin
         end -= 1;
     }
     let username = &username[..end];
-    // Usernames have no path separators. Each occupied branch (or directory of branches)
-    // therefore excludes at most one candidate, and all candidates share this one index.
-    let occupied: std::collections::HashSet<&str> = refs.keys()
-        .filter_map(|reference| reference.strip_prefix("refs/heads/"))
-        .map(|branch| branch.split('/').next().unwrap_or(branch))
-        .collect();
     (1..)
         .map(|number| format!("{username}-patch-{number}"))
-        .find(|name| !occupied.contains(name.as_str()))
+        .find(|name| {
+            let reference = format!("refs/heads/{name}");
+            // A name also conflicts with a branch that lives under it as a directory.
+            !refs.contains_key(&reference)
+                && !refs
+                    .keys()
+                    .any(|existing| existing.starts_with(&format!("{reference}/")))
+        })
         .unwrap_or_default()
 }
 
@@ -326,12 +303,11 @@ pub async fn write_file_bytes(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: i64,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
     content: Vec<u8>,
-    identities: CommitIdentities,
 ) -> Result<FileSave, WriteError> {
     // The caller passes the repository it authorized, so a rename cannot retarget the write.
     save_file(
@@ -344,7 +320,7 @@ pub async fn write_file_bytes(
         input,
         FileContent::Bytes(content),
         None,
-        CommitOrigin::Api(identities),
+        CommitOrigin::Api,
     )
     .await
 }
@@ -359,12 +335,11 @@ pub async fn delete_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: i64,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
     new_branch: Option<&str>,
-    identities: CommitIdentities,
 ) -> Result<FileSave, WriteError> {
     save_file(
         pool,
@@ -376,7 +351,7 @@ pub async fn delete_file(
         input,
         FileContent::Bytes(Vec::new()),
         new_branch,
-        CommitOrigin::Api(identities),
+        CommitOrigin::Api,
     )
     .await
 }
@@ -390,7 +365,7 @@ pub async fn delete_file_web(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
+    actor_id: i64,
     owner: &str,
     repository_id: i64,
     input: FileWrite,
@@ -496,16 +471,14 @@ async fn save_file(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
-    _owner: &str,
+    actor_id: i64,
+    owner: &str,
     repository_id: i64,
     mut input: FileWrite,
     content: FileContent,
     new_branch: Option<&str>,
     origin: CommitOrigin,
 ) -> Result<FileSave, WriteError> {
-    let authority = actor_id.into();
-    let actor_id = authority.user_id;
     if input.message.trim().is_empty() {
         input.message = default_commit_message(&input);
     }
@@ -524,7 +497,6 @@ async fn save_file(
         guard_revision,
         || {
             input.validate().map_err(write_error)?;
-            if let CommitOrigin::Api(identities) = &origin { identities.validate().map_err(write_error)?; }
             if let Some(name) = new_branch {
                 check_new_branch_name(name)?;
             }
@@ -580,10 +552,8 @@ async fn save_file(
         });
     }
     let email = user.commit_email();
-    let defaults = CommitIdentities::default();
-    let identities = match &origin { CommitOrigin::Web => &defaults, CommitOrigin::Api(identities) => identities };
     let mut prepared = store
-        .prepare_file_with_identities(&input, &content, &user.username, &email, identities)
+        .prepare_file(&input, &content, &user.username, &email)
         .await
         .map_err(|error| {
             if error.is_branch_missing() {
@@ -593,11 +563,11 @@ async fn save_file(
             }
         })?;
     prepared.web_commit = matches!(origin, CommitOrigin::Web);
-    prepared.authority = Some(authority);
     publish_commit(
         pool,
         &store,
         ci,
+        owner,
         &repository,
         user,
         &prepared,
@@ -617,31 +587,18 @@ async fn publish_commit(
     pool: &db::DbPool,
     store: &RepoStore,
     ci: &CiRuns,
+    owner: &str,
     repository: &db::models::Repository,
     user: db::models::User,
     prepared: &PreparedFile,
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
-    let (pool, store, ci, repository, prepared, new_branch) = (
-        pool.clone(), store.clone(), ci.clone(), repository.clone(),
-        prepared.clone(), new_branch.map(str::to_owned),
-    );
-    // Once publication starts, client cancellation must not abandon accepted-write follow-ups.
-    tokio::spawn(async move {
-    let (pool, store, ci, repository, prepared, new_branch) = (
-        &pool, &store, &ci, &repository, &prepared, new_branch.as_deref(),
-    );
-    let mut accepted_followup_failed = false;
     let (branch, commit, old) = match new_branch {
         None => {
-            let commit = match store.publish_file_as(pool, repository.id, user.id, prepared).await {
-                Ok(commit) => commit,
-                Err(error) if error.is_applied_followup_failed() => {
-                    accepted_followup_failed = true;
-                    prepared.commit.clone()
-                }
-                Err(error) => return Err(write_error(error)),
-            };
+            let commit = store
+                .publish_file_as(pool, repository.id, user.id, prepared)
+                .await
+                .map_err(write_error)?;
             (prepared.branch.as_str(), commit, prepared.expected.clone())
         }
         Some(name) => {
@@ -658,23 +615,17 @@ async fn publish_commit(
             publication.reference = format!("refs/heads/{name}");
             publication.expected = None;
             publication.new_branch = true;
-            let commit = match store.publish_file_as(pool, repository.id, user.id, &publication).await {
-                Ok(commit) => commit,
-                Err(error) if error.is_applied_followup_failed() => {
-                    accepted_followup_failed = true;
-                    publication.commit.clone()
-                }
-                Err(error) => return Err(write_error(error)),
-            };
+            let commit = store
+                .publish_file_as(pool, repository.id, user.id, &publication)
+                .await
+                .map_err(write_error)?;
             (name, commit, None)
         }
     };
     // The branch moved: pull requests that use it follow, and push workflows run.
-    let current = access::current_repository_with_owner(pool, repository.id).await;
-    let followup_repository = current.as_ref().map(|(repo, _)| repo).unwrap_or(repository);
     let refreshed = pull_requests::refresh_open_pull_requests(
         pool,
-        followup_repository,
+        repository,
         Some(&[branch][..]),
         ci,
         user.id,
@@ -682,35 +633,28 @@ async fn publish_commit(
     )
     .await
     .is_ok();
-    if let Ok((repository, owner)) = current {
-        ci.queue_push_runs(
-            &repository,
-            &owner,
-            user.id,
-            RefUpdate {
-                reference: format!("refs/heads/{branch}"),
-                old,
-                new: commit.sha.clone(),
-                changed_paths: None,
-            },
-        ).await;
-    } else {
-        accepted_followup_failed = true;
-    }
-    if !refreshed || accepted_followup_failed {
+    ci.queue_push_runs(
+        repository,
+        owner,
+        user.id,
+        RefUpdate {
+            reference: format!("refs/heads/{branch}"),
+            old,
+            new: commit.sha.clone(),
+            changed_paths: None,
+        },
+    )
+    .await;
+    if !refreshed {
         return Err(WriteError {
             kind: WriteFailure::SavedFollowupFailed,
-            message: "The change was saved, but repository follow-up failed. Check the repository before retrying.".into(),
+            message: "The change was saved, but pull request refresh failed. Check the repository before retrying.".into(),
         });
     }
     Ok(FileSave {
         commit,
         actor: user,
     })
-    }).await.map_err(|_| WriteError {
-        kind: WriteFailure::SavedFollowupFailed,
-        message: "File publication was interrupted; check the branch before retrying.".into(),
-    })?
 }
 
 /// Adds or replaces every file of an upload in one commit. `content` holds the files' bytes
@@ -723,15 +667,13 @@ pub async fn upload_files(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor_id: impl Into<db::credentials::Actor>,
-    _owner: &str,
+    actor_id: i64,
+    owner: &str,
     repository_id: i64,
     write: UploadWrite,
     content: Vec<u8>,
     new_branch: Option<&str>,
 ) -> Result<FileSave, WriteError> {
-    let authority = actor_id.into();
-    let actor_id = authority.user_id;
     let (guard_branch, guard_revision) = match new_branch {
         Some(name) => (name, "unborn"),
         None => (write.branch.as_str(), write.expected_revision.as_str()),
@@ -765,11 +707,11 @@ pub async fn upload_files(
             }
         })?;
     prepared.web_commit = true;
-    prepared.authority = Some(authority);
     publish_commit(
         pool,
         &store,
         ci,
+        owner,
         &repository,
         user,
         &prepared,

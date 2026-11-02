@@ -49,8 +49,7 @@ const ACTIONS: [(&str, &str); 8] = [
     ("user.two_factor_reset", "Two-factor resets"),
     ("signup.", "Sign-up requests"),
     ("node.", "Site settings and nodes"),
-    // Both org.* and organization.* are persisted action namespaces.
-    ("org", "Organizations"),
+    ("org.", "Organizations"),
 ];
 
 /// The audit log address for the filters and a page. Pages after the first keep their number.

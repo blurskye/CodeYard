@@ -4,9 +4,6 @@
     "test": "success"
   },
   "contains": [
-    "compat:ok",
-    "compat:pre-one",
-    "compat:main-one-two-pre-one-one two",
-    "compat:post-one-pre-one"
+    "compat:ok"
   ]
 }

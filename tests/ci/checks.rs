@@ -442,19 +442,15 @@ async fn contract(pg: bool) {
         StatusCode::CREATED,
     )
     .await;
-    let app = db::github_apps::register(
+    let app = db::oauth_apps::register(
         f.pool(),
         alice,
         &owner.session,
-        &db::github_apps::App {
-            id: 0, owner_id: alice, bot_id: 0, is_public: true,
-            client_id: "checks-client".into(), slug: "check-publisher".into(),
-            name: "Check publisher".into(), description: String::new(),
-            homepage: "https://example.com".into(), public_key: String::new(),
-            permissions: "{\"checks\":\"write\"}".into(), events: "[]".into(),
-            access_level: 2, created_at: chrono::Utc::now(),
-        },
+        "checks-client",
         "secret-hash",
+        "Check publisher",
+        "https://example.com",
+        "https://example.com/callback",
     )
     .await
     .unwrap()

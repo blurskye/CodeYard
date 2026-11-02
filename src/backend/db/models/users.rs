@@ -152,9 +152,6 @@ pub struct OAuthState {
 #[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
 pub struct PersonalAccessToken {
     pub id: i64,
-    #[sqlx(default)]
-    #[serde(skip)]
-    pub token_hash: String,
     #[serde(skip_serializing)]
     pub user_id: i64,
     pub name: String,

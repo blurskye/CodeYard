@@ -2,10 +2,7 @@
 use super::{chrome::load_database, collection::load_choices};
 use crate::{
     backend::{
-        api::{
-            http::{context::PageContext, session},
-            user::responses::field,
-        },
+        api::http::{context::PageContext, session},
         app::AppState,
         db,
         repositories::{
@@ -26,6 +23,10 @@ use axum::{
     Form,
 };
 use std::{collections::HashMap, sync::Arc};
+
+fn field<'a>(form: &'a HashMap<String, String>, key: &str) -> &'a str {
+    form.get(key).map(String::as_str).unwrap_or_default()
+}
 
 fn source_credentials(form: &HashMap<String, String>) -> Option<imports::Credentials> {
     let username = field(form, "source_username");

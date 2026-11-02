@@ -2,7 +2,6 @@
 //! the tokens it has approved.
 use super::{fields, Page};
 use crate::webui::components::{compact_date, DraftCheckbox, DraftInput};
-use crate::webui::navigation::NavLink;
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -15,8 +14,6 @@ pub struct TokenPanel {
     pub max_lifetime_days: String,
     pub pending: Vec<TokenGrant>,
     pub active: Vec<TokenGrant>,
-    pub pending_next: Option<String>,
-    pub active_next: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -35,7 +32,15 @@ pub struct TokenGrant {
 }
 
 fn checkbox(page: &Page, key: &str, label: &str, current: bool) -> Element {
-    let checked = super::fields::draft_checked(page, "token-policy", key, current);
+    let checked = if page
+        .draft
+        .get("action")
+        .is_some_and(|value| value == "token-policy")
+    {
+        page.draft.get(key).is_some_and(|value| value == "true")
+    } else {
+        current
+    };
     rsx! { label { class: "org-confirm", DraftCheckbox { name: key.to_owned(), submission_value: "true", initial_checked: checked } span { "{label}" } } }
 }
 
@@ -112,7 +117,6 @@ pub(super) fn panel(page: &Page) -> Element {
                         }
                     }
                 }
-                if let Some(next) = &tokens.pending_next { NavLink { class: "org-pagination", href: next.clone(), "Next pending requests" } }
             }
             section { class: "org-panel", header { class: "org-panel-header", h3 { "Active tokens" } }
                 ul { class: "org-list",
@@ -132,7 +136,6 @@ pub(super) fn panel(page: &Page) -> Element {
                         }
                     }
                 }
-                if let Some(next) = &tokens.active_next { NavLink { class: "org-pagination", href: next.clone(), "Next active tokens" } }
             }
         }
     }

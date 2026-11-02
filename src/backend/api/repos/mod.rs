@@ -35,7 +35,6 @@ pub mod pulls;
 pub mod refs;
 pub mod releases;
 pub mod repository;
-mod repository_discussions;
 pub mod responses;
 pub mod secret_scanning;
 pub mod security;
@@ -77,9 +76,6 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(pulls::json_router())
         .merge(releases::json_router())
         .route_layer(axum::middleware::from_fn(
-            super::http::interaction_proofs::prepare,
-        ))
-        .route_layer(axum::middleware::from_fn(
             crate::backend::api::http::middleware::require_node_access,
         ))
         .route_layer(axum::middleware::from_fn(
@@ -110,7 +106,9 @@ pub fn router() -> Router<Arc<AppState>> {
         .nest(
             LEGACY_PREFIX,
             page_router()
-                .merge(super::ci::repository_router())
+                .layer(axum::middleware::from_fn(
+                    super::http::interaction_proofs::prepare,
+                ))
                 .layer(axum::middleware::from_fn(
                     super::http::middleware::bounded_legacy_repository_body,
                 ))
@@ -149,7 +147,6 @@ fn page_router() -> Router<Arc<AppState>> {
         .merge(insights::page_router())
         .merge(security::page_router())
         .merge(dependabot::page_router())
-        .merge(repository_discussions::page_router())
         .merge(secret_scanning::page_router())
         .merge(dependency_graph::page_router())
         .merge(dependencies::page_router())
@@ -157,7 +154,7 @@ fn page_router() -> Router<Arc<AppState>> {
         .merge(advisories::page_router())
         .merge(disclosure::page_router())
         .merge(checks::router())
-        .layer(axum::extract::DefaultBodyLimit::max(code::contents::EDITOR_FORM_BODY_LIMIT))
+        .layer(axum::extract::DefaultBodyLimit::max(4 * 1024 * 1024))
         .merge(code::upload_router())
         .merge(code::download_router())
         .merge(refs::commits::router())
@@ -166,5 +163,4 @@ fn page_router() -> Router<Arc<AppState>> {
         .merge(milestones::page_router())
         .merge(labels::page_router())
         .merge(releases::upload_router())
-        .layer(axum::middleware::from_fn(super::http::interaction_proofs::prepare))
 }

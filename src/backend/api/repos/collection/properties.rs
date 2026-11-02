@@ -23,7 +23,7 @@ pub(super) fn drafts(
             if values.property_values.len() < data::MAX_DEFINITIONS {
                 values
                     .property_values
-                    .insert(name.to_owned(), super::draft_value(form, key, data::MAX_FORM_VALUE_BYTES));
+                    .insert(name.to_owned(), super::draft_value(form, key, 205000));
             }
         }
         if let Some(name) = key
@@ -41,7 +41,7 @@ pub(super) fn drafts(
     for (key, value) in form {
         if let Some(name) = key.strip_prefix("property_value_") {
             count += 1;
-            if !data::valid_name(name) || value.len() > data::MAX_FORM_VALUE_BYTES {
+            if !data::valid_name(name) || value.len() > 205000 {
                 return Err((None, "Invalid repository property input."));
             }
         }
@@ -97,12 +97,9 @@ pub(super) async fn populate(
         Ok(_) => return Ok(()),
         Err(_) => return Err(StatusCode::SERVICE_UNAVAILABLE),
     };
-    data::checked_catalog_bytes(definitions.iter().map(|definition| &definition.fields))
-        .map_err(|_| StatusCode::PAYLOAD_TOO_LARGE)?;
     let owner = matches!(
-        orgs::get_organization_role(&ctx.state.pool, actor, org).await
-            .map_err(|_| StatusCode::SERVICE_UNAVAILABLE)?,
-        Applied(OrgRole::Owner)
+        orgs::get_organization_role(&ctx.state.pool, actor, org).await,
+        Ok(Applied(OrgRole::Owner))
     );
     form.properties_owner_org_id = org.to_string();
     form.property_values.retain(|name, _| {
@@ -126,23 +123,20 @@ pub(super) async fn populate(
                 allowed_values: fields.allowed_values.clone().unwrap_or_default(),
                 required: fields.needs_explicit_value(),
                 editable: owner || fields.values_editable_by == data::EditableBy::OrgAndRepoActors,
-                default_preview: fields
-                    .default_value
-                    .as_ref()
-                    .map(|value| crate::webui::excerpt(&value.form_value(), 256)),
+                default_preview: fields.default_value.as_ref().map(|value| {
+                    let text = value.form_value();
+                    let mut chars = text.chars();
+                    let mut preview: String = chars.by_ref().take(256).collect();
+                    if chars.next().is_some() {
+                        preview.push('…');
+                    }
+                    preview
+                }),
             }
         })
         .collect();
     Ok(())
 }
-pub(super) fn failure_message(status: StatusCode) -> &'static str {
-    if status == StatusCode::PAYLOAD_TOO_LARGE {
-        "The property catalog exceeds the native form limit. Ask an organization owner to reduce it before continuing."
-    } else {
-        "Repository properties are temporarily unavailable."
-    }
-}
-
 pub(super) async fn values(
     ctx: &PageContext,
     actor: i64,

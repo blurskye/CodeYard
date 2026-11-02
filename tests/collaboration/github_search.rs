@@ -70,14 +70,13 @@ async fn search(pg: bool) {
     )
     .await
     .unwrap();
-    db::issues::add_issue_comment(f.pool(), second.repo_id, second.id, bob, "Discussion café search", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), bob).await))
+    db::issues::add_issue_comment(f.pool(), second.id, bob, "Discussion café search")
         .await
         .unwrap();
     db::pull_requests::reviews::add_pull_request_review(
         f.pool(),
         pull.id,
         alice,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice).await),
         "commented",
         Some("reviewvisible"),
         Some(&pull.head_sha),

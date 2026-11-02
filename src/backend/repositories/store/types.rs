@@ -1,20 +1,8 @@
 //! The values that cross the store boundary: Git sessions, blob reads, merge requests and
 //! the size limits that apply to them.
-use crate::backend::db::{self, models::Repository};
+use crate::backend::db::models::Repository;
 use crate::backend::git::{MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_DIRECTORY_ENTRIES};
 use serde::{Deserialize, Serialize};
-
-/// The initiating reader of a pull head; remote publication retains token bounds.
-#[derive(Clone, Copy, Debug)]
-pub struct PullHeadActor {
-    pub user: i64,
-    pub token: Option<i64>,
-}
-impl From<i64> for PullHeadActor {
-    fn from(user: i64) -> Self {
-        Self { user, token: None }
-    }
-}
 
 /// The two Git server programs a session can run.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -75,17 +63,19 @@ pub struct BlobBytes {
     pub offset: u64,
     /// The Git file mode of the entry, such as 0o100644 or 0o120000.
     pub mode: u32,
-    #[serde(default)]
-    pub preview: Option<BlobPreviewMetadata>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct BlobPreviewMetadata {
-    pub first_line: usize,
-    pub previous: Option<u64>,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BlobRange {
+    #[default]
+    Full,
+    /// A preview window. An offset beyond EOF produces an empty window at EOF.
+    Window { offset: u64, length: u64 },
+    /// An HTTP byte range with an inclusive optional end.
+    Bytes { start: u64, end: Option<u64> },
+    /// The final `length` bytes.
+    Suffix { length: u64 },
 }
-
-pub use crate::backend::storage::range::ByteRange as BlobRange;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub(crate) struct BlobMetadata {
@@ -94,8 +84,6 @@ pub(crate) struct BlobMetadata {
     pub size: u64,
     pub offset: u64,
     pub mode: u32,
-    #[serde(default)]
-    pub preview: Option<BlobPreviewMetadata>,
 }
 
 pub const MAX_BLOB_RESPONSE_BYTES: usize = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES;
@@ -181,9 +169,6 @@ pub struct PullBranchUpdate {
     pub base: String,
     pub name: String,
     pub email: String,
-    /// The token the request came with, for the workflows permission; `None` for a session.
-    #[serde(default)]
-    pub token: Option<i64>,
 }
 
 /// Merge `head_branch` into `base_branch`, as approved when the branches were at
@@ -223,7 +208,6 @@ pub struct RevertRequest {
 /// all the way to the owning storage node. Older peers must reject, not ignore, this authority.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AsyncMergePublication {
-    pub policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     pub uuid: String,
     pub token_id: i64,
     pub pull_request_id: i64,
@@ -236,18 +220,16 @@ pub struct AsyncMergePublication {
 
 /// A prepared, direct branch merge. Both mutable branches are pinned independently of the
 /// merge commit's identity. Unlike pull-request publication, this must pass direct-write policy.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BranchMergePublication {
     pub base_branch: String,
     pub base: String,
     pub head_branch: Option<String>,
     pub head: String,
     pub result: String,
-    pub authority: db::credentials::Actor,
 }
 
 /// One branch that a restack moves: the commit it must still be at, and the commit it moves to.
-/// Equal commits hold a branch the restack built on without moving it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RestackMove {
     pub branch: String,

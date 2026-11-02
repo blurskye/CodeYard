@@ -10,7 +10,6 @@ fn page(values: HashMap<String, String>) -> Page {
             required: true,
         }],
         selected: Some(PropertyDefinition {
-            id: 7,
             name: "environment".into(),
             value_type: "multi_select".into(),
             description: "<script>description</script>".into(),

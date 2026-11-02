@@ -16,7 +16,7 @@ mod blocks;
 mod branch_operations;
 mod branches;
 mod catalog_search;
-pub(crate) mod checks;
+pub(in crate::backend::api) mod checks;
 mod code_scanning;
 mod code_security;
 mod comments;
@@ -71,7 +71,6 @@ mod meta;
 mod migrations;
 mod milestones;
 pub(crate) mod node_id;
-mod optional_json;
 mod orgs;
 mod packages;
 mod pagination;
@@ -129,35 +128,16 @@ use std::{collections::HashMap, sync::Arc};
 pub(super) struct Error(StatusCode, String, Option<Value>);
 pub(super) type Result<T> = std::result::Result<T, Error>;
 
-/// Preserve Axum's transport/syntax/data classification inside the GitHub envelope.
-pub(super) fn json_error(error: axum::extract::rejection::JsonRejection) -> Error {
-    Error::new(error.status(), error.body_text())
-}
-
-pub(super) fn json_bytes_error(error: axum::Error) -> Error {
-    let mut source: Option<&(dyn std::error::Error + 'static)> = Some(&error);
-    while let Some(error) = source {
-        if error.is::<http_body_util::LengthLimitError>() { return Error::new(StatusCode::PAYLOAD_TOO_LARGE, "Request body is too large"); }
-        source = error.source();
-    }
-    Error::new(StatusCode::BAD_REQUEST, "Failed to read request body")
-}
-
-/// Byte-buffered endpoints intentionally keep their optional-body and media-type policies.
-pub(super) fn json_parse_error(error: serde_json::Error) -> Error {
-    let status = if error.is_data() { StatusCode::UNPROCESSABLE_ENTITY } else { StatusCode::BAD_REQUEST };
-    Error::new(status, error.to_string())
-}
-
 impl Error {
     pub(super) fn graphql(self) -> async_graphql::Error {
+        use async_graphql::ErrorExtensions;
         let kind = match self.0 {
             StatusCode::NOT_FOUND => "NOT_FOUND",
             StatusCode::FORBIDDEN | StatusCode::UNAUTHORIZED => "FORBIDDEN",
             StatusCode::SERVICE_UNAVAILABLE => "INTERNAL",
             _ => "UNPROCESSABLE",
         };
-        super::graphql::error(self.1, kind)
+        async_graphql::Error::new(self.1).extend_with(|_, e| e.set("type", kind))
     }
 
     fn new(status: StatusCode, message: impl Into<String>) -> Self {
@@ -168,8 +148,7 @@ impl Error {
         Self::new(StatusCode::NOT_FOUND, "Not Found")
     }
 
-    fn unavailable<E: std::fmt::Debug>(error: E) -> Self {
-        tracing::warn!(?error, "GitHub API dependency unavailable");
+    fn unavailable<E>(_: E) -> Self {
         Self::new(StatusCode::SERVICE_UNAVAILABLE, "Service unavailable")
     }
 
@@ -305,12 +284,8 @@ async fn get_repository(
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     Ok(Json(
-        repos::document(&state, &repo, auth.as_ref()).await?,
+        repos::document(&state, &repo, auth.as_ref().map(|auth| &auth.user)).await?,
     ))
-}
-
-pub(super) fn empty(status: StatusCode) -> Response {
-    (status, [(header::CONTENT_LENGTH, "0")]).into_response()
 }
 
 async fn missing() -> Error {
@@ -344,7 +319,6 @@ async fn responses(request: Request, next: Next) -> Response {
         .headers_mut()
         .entry(header::CACHE_CONTROL)
         .or_insert_with(|| "no-store".parse().unwrap());
-    response.headers_mut().append(header::VARY, "Accept".parse().unwrap());
     response.headers_mut().insert(
         "x-github-api-version-selected",
         "2022-11-28".parse().unwrap(),
@@ -514,10 +488,8 @@ pub fn router() -> Router<Arc<AppState>> {
             axum::routing::post(code_scanning::databases::upload)
                 .layer(axum::extract::DefaultBodyLimit::disable()),
         )
-        .layer(axum::middleware::from_fn(super::http::interaction_proofs::prepare))
         .layer(axum::middleware::from_fn(auth::authorize_request))
         .layer(axum::middleware::from_fn(rate_limits::enforce))
-        .layer(axum::middleware::from_fn(auth::request_context))
         .layer(axum::middleware::from_fn(
             super::http::middleware::bounded_form_body,
         ))

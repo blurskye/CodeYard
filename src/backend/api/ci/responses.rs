@@ -38,7 +38,7 @@ pub fn map_job_info(run: db::models::CiRun) -> JobInfo {
         mode: run.mode,
         pipeline: run.pipeline,
         // Pull request bases are literal branch names, not full refs.
-        branch: if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
+        branch: if run.event == "pull_request" {
             run.branch
         } else {
             crate::backend::ci::branch_name(&run.branch).to_owned()
@@ -77,7 +77,7 @@ pub(crate) fn map_run(
     // Runs stored before short branch names were used still have the full ref.
     let branch = head_branch
         .unwrap_or_else(|| {
-            if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
+            if run.event == "pull_request" {
                 &run.branch
             } else {
                 crate::backend::ci::branch_name(&run.branch)

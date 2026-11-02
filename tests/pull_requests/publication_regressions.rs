@@ -652,7 +652,6 @@ async fn refs_prefixed_base(pg: bool) {
                     inputs: None,
                     repo_id: None,
                 },
-                None,
             )
             .await
             .unwrap();

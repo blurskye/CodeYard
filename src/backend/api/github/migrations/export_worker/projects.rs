@@ -69,38 +69,6 @@ pub(super) async fn append(
                     break;
                 }
             }
-            // Items keep their content links, draft text, field values, order and archive
-            // state; views keep their saved configuration. Items in repositories the exporter
-            // cannot read are left out, as the project page leaves them out.
-            let mut values = Vec::new();
-            for item in db::projects::items(&state.pool, Some(actor), project.id)
-                .await
-                .map_err(Error::unavailable)?
-            {
-                let mut value = serde_json::to_value(&item).map_err(Error::unavailable)?;
-                value["project"] = json!(url);
-                value["content_type"] = json!(item.content_type());
-                value["field_values"] =
-                    serde_json::from_str(&item.field_values).map_err(Error::unavailable)?;
-                values.push(value);
-            }
-            archive
-                .records("project_item", values)
-                .map_err(Error::unavailable)?;
-            let mut values = Vec::new();
-            for view in db::projects::views(&state.pool, Some(actor), project.id)
-                .await
-                .map_err(Error::unavailable)?
-            {
-                let mut value = serde_json::to_value(&view).map_err(Error::unavailable)?;
-                value["project"] = json!(url);
-                value["configuration"] =
-                    serde_json::from_str(&view.configuration).map_err(Error::unavailable)?;
-                values.push(value);
-            }
-            archive
-                .records("project_view", values)
-                .map_err(Error::unavailable)?;
         }
         archive
             .records("project", values)

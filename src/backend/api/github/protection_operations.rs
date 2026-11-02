@@ -59,8 +59,8 @@ struct Checks {
 }
 
 #[derive(Deserialize)]
-pub(super) struct Check {
-    pub(super) context: String,
+struct Check {
+    context: String,
     app_id: Option<i64>,
 }
 
@@ -86,7 +86,7 @@ struct Protection {
 }
 
 fn valid_names(names: &[String]) -> Result<()> {
-    if names.len() > protection::MAX_ALLOWANCE_ACTORS
+    if names.len() > 100
         || names
             .iter()
             .any(|name| name.is_empty() || name.len() > 255 || name.chars().any(char::is_control))
@@ -96,11 +96,9 @@ fn valid_names(names: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// The accounts named by a protection allowance list. Usernames are exact, as the native
-/// account namespace stores and compares them.
-pub(super) async fn user_ids(state: &AppState, names: &[String]) -> Result<Vec<i64>> {
+async fn user_ids(state: &AppState, names: &[String]) -> Result<Vec<i64>> {
     valid_names(names)?;
-    let mut names = names.to_vec();
+    let mut names: Vec<_> = names.iter().map(|name| name.to_ascii_lowercase()).collect();
     names.sort_unstable();
     names.dedup();
     let users = db::users::accounts::get_users_by_usernames(&state.pool, &names)
@@ -120,11 +118,20 @@ async fn app_ids(state: &AppState, repo: i64, names: &[String]) -> Result<Vec<i6
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(|| Error::invalid("Unknown app"))?;
-        if db::github_apps::repository_installation(&state.pool, app.id, repo, true, None)
+        let installations = db::github_apps::installations(&state.pool, Some(app.id), None)
             .await
-            .map_err(Error::unavailable)?
-            .is_none()
-        {
+            .map_err(Error::unavailable)?;
+        let mut allowed = false;
+        for installation in installations {
+            if db::github_apps::has_repository(&state.pool, installation.id, repo, true)
+                .await
+                .map_err(Error::unavailable)?
+            {
+                allowed = true;
+                break;
+            }
+        }
+        if !allowed {
             return Err(Error::invalid("App is not installed on this repository"));
         }
         ids.push(app.id);
@@ -148,7 +155,7 @@ pub(super) async fn app_documents(state: &AppState, ids: &[i64]) -> Result<Vec<V
 }
 
 async fn actor_document(state: &AppState, repo: i64, actors: Actors) -> Result<Value> {
-    if actors.users.len() + actors.teams.len() + actors.apps.len() > protection::MAX_ALLOWANCE_ACTORS {
+    if actors.users.len() + actors.teams.len() + actors.apps.len() > 100 {
         return Err(Error::invalid("Supply at most 100 actors"));
     }
     let ids = user_ids(state, &actors.users).await?;
@@ -176,14 +183,11 @@ async fn review_update(
     repo: i64,
     input: Reviews,
 ) -> Result<ReviewProtectionUpdate> {
-    let max_approvals = crate::backend::db::repositories::protection::MAX_REQUIRED_APPROVALS;
     if input
         .required_approving_review_count
-        .is_some_and(|count| !(0..=max_approvals).contains(&count))
+        .is_some_and(|count| !(0..=6).contains(&count))
     {
-        return Err(Error::invalid(format!(
-            "Review count must be between 0 and {max_approvals}"
-        )));
+        return Err(Error::invalid("Review count must be between 0 and 6"));
     }
     Ok(ReviewProtectionUpdate {
         dismiss_stale_reviews: input.dismiss_stale_reviews,
@@ -208,9 +212,8 @@ async fn update(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = &auth.user;
-    if !access::can_admin(&state.pool, actor, &repo)
+    let actor = auth.ok_or_else(super::auth::required)?.user;
+    if !access::can_admin(&state.pool, &actor, &repo)
         .await
         .map_err(Error::unavailable)?
     {
@@ -226,7 +229,7 @@ async fn update(
     }
     let Json(value) = Json::<Value>::from_request(request, &state)
         .await
-        .map_err(super::json_error)?;
+        .map_err(|_| Error::invalid_simple("Invalid branch protection"))?;
     for field in [
         "required_status_checks",
         "enforce_admins",
@@ -247,7 +250,6 @@ async fn update(
     };
     let mut upsert = BranchProtectionRuleUpsert {
         actor_id: actor.id,
-        credential: Some(auth.credential()),
         repo_id: repo.id,
         pattern: &branch,
         require_pull_request: input.required_pull_request_reviews.is_some(),
@@ -263,13 +265,16 @@ async fn update(
     if let Some(checks) = input.required_status_checks {
         upsert.require_status_checks = true;
         upsert.require_up_to_date_branch = checks.strict;
-        settings.checks = check_bindings(&state, repo.id, &checks.contexts, &checks.checks, &[])
-            .await
-            .map_err(Error::simple)?;
         upsert.required_status_checks = checks.contexts;
-        upsert
-            .required_status_checks
-            .extend(checks.checks.into_iter().map(|check| check.context));
+        for check in checks.checks {
+            check_app_exists(&state, check.app_id)
+                .await
+                .map_err(Error::simple)?;
+            settings.checks.push(
+                json!({"context":check.context,"app_id":check.app_id.filter(|id| *id != -1)}),
+            );
+            upsert.required_status_checks.push(check.context);
+        }
         upsert.required_status_checks.sort();
         upsert.required_status_checks.dedup();
     }
@@ -305,7 +310,7 @@ async fn update(
         repo_url(&owner, &name),
         crate::webui::encode_component(&branch)
     );
-    Ok(Json(document(&state, &rule, &url, actor.id).await?))
+    Ok(Json(document(&state, &rule, &url).await?))
 }
 
 async fn reviews(
@@ -389,7 +394,7 @@ async fn apps(
     if !read_method(&method) {
         let Json(input) = Json::<Apps>::from_request(request, &state)
             .await
-            .map_err(super::json_error)?;
+            .map_err(|_| Error::invalid("Expected app slugs"))?;
         let (Apps::Array(names) | Apps::Object { apps: names }) = input;
         let ids = if method == Method::DELETE {
             valid_names(&names)?;
@@ -505,55 +510,17 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
     ]
 }
 
-/// Producer bindings for required checks. An explicit `app_id` pins that known App and -1 allows
-/// any producer. An omitted one, and a deprecated `contexts` entry without an existing binding,
-/// pins the most recent App producer, or allows any producer when no App has reported it.
-pub(super) async fn check_bindings(
-    state: &AppState,
-    repo: i64,
-    contexts: &[String],
-    checks: &[Check],
-    existing: &[Value],
-) -> Result<Vec<Value>> {
-    if contexts.len() + checks.len() > 100 {
-        return Err(Error::invalid("Supply at most 100 status checks"));
-    }
-    let mut bindings: Vec<Value> = Vec::new();
-    let bound = |bindings: &[Value], context: &str| {
-        bindings
-            .iter()
-            .chain(existing)
-            .any(|binding| binding["context"] == context)
-    };
-    for check in checks {
-        let app = match check.app_id {
-            Some(-1) => None,
-            Some(id) => {
-                db::github_apps::app(&state.pool, &id.to_string())
-                    .await
-                    .map_err(Error::unavailable)?
-                    .filter(|app| app.id == id)
-                    .ok_or_else(|| Error::invalid("Unknown app"))?;
-                Some(id)
-            }
-            None => recent_producer(state, repo, &check.context).await?,
-        };
-        bindings.push(json!({"context": check.context, "app_id": app}));
-    }
-    for context in contexts {
-        if bound(&bindings, context) {
-            continue;
-        }
-        if let Some(app) = recent_producer(state, repo, context).await? {
-            bindings.push(json!({"context": context, "app_id": app}));
+/// A status check may name the app that reports it, but only an installed app. The branch
+/// protection update lists the refusal as a plain string, as GitHub documents for it.
+pub(super) async fn check_app_exists(state: &AppState, app_id: Option<i64>) -> Result<()> {
+    if let Some(id) = app_id.filter(|id| *id != -1) {
+        if db::github_apps::app(&state.pool, &id.to_string())
+            .await
+            .map_err(Error::unavailable)?
+            .is_none()
+        {
+            return Err(Error::invalid("Unknown app"));
         }
     }
-    protection::normalize_check_bindings(&mut bindings).map_err(|refusal| write_error(refusal.into()))?;
-    Ok(bindings)
-}
-
-async fn recent_producer(state: &AppState, repo: i64, context: &str) -> Result<Option<i64>> {
-    db::checks::recent_app(&state.pool, repo, context)
-        .await
-        .map_err(Error::unavailable)
+    Ok(())
 }

@@ -31,16 +31,6 @@ pub(super) struct Comment {
     updated_at: DateTime<Utc>,
 }
 
-impl From<db::issues::ConversationComment> for Comment {
-    fn from(row: db::issues::ConversationComment) -> Self {
-        Self { id: row.id, item: if row.pull_request { AssignedItem::PullRequest(row.item_id) } else { AssignedItem::Issue(row.item_id) }, number: row.number, author_id: row.author_id, body: row.body, created_at: row.created_at, updated_at: row.updated_at }
-    }
-}
-
-fn item_key(item: AssignedItem) -> (bool, i64) {
-    match item { AssignedItem::Issue(id) => (false, id), AssignedItem::PullRequest(id) => (true, id) }
-}
-
 pub(super) async fn find(pool: &db::DbPool, repo_id: i64, id: i64) -> Result<Comment> {
     if id < 2 {
         return Err(Error::missing());
@@ -95,94 +85,44 @@ pub(super) async fn document(
     owner: &str,
     comment: &Comment,
 ) -> Result<Value> {
-    documents(pool, repo, owner, std::slice::from_ref(comment)).await?.pop().ok_or_else(Error::missing)
-}
-
-async fn documents(pool: &db::DbPool, repo: &db::models::Repository, owner: &str, comments: &[Comment]) -> Result<Vec<Value>> {
-    if comments.len() > 100 { return Err(Error::unavailable("Comment page exceeds its bound")); }
-    if comments.is_empty() { return Ok(Vec::new()); }
-    let mut pins = HashMap::new();
-    for pull in [false, true] {
-        let mut ids: Vec<_> = comments.iter().map(|comment| item_key(comment.item)).filter(|(kind, _)| *kind == pull).map(|(_, id)| id).collect();
-        ids.sort_unstable();
-        ids.dedup();
-        for pin in db::pins::get_pins(pool, pull, &ids).await.map_err(Error::unavailable)? { pins.insert((pull, pin.item_id), pin.pin); }
-    }
-    let mut authors: Vec<_> = comments.iter().map(|comment| comment.author_id).collect();
-    authors.sort_unstable();
-    authors.dedup();
-    let associations = crate::backend::repositories::access::author_associations(pool, repo, &authors).await.map_err(Error::unavailable)?;
-    let mut ids = authors;
-    ids.extend(pins.values().filter_map(|pin| pin.pinned_by));
-    ids.sort_unstable();
-    ids.dedup();
-    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(pool, &ids).await.map_err(Error::unavailable)?.into_iter().map(|user| (user.id, user)).collect();
-    let mut values = Vec::with_capacity(comments.len());
-    for comment in comments {
-        let user = users.get(&comment.author_id).ok_or_else(|| Error::unavailable(()))?;
-        let author = payloads::Person::of(user);
-        let mut value = payloads::conversation_comment(comment.id, &comment.body, &author, (comment.created_at, comment.updated_at), payloads::Scope { repo, owner, sender: &author }, comment.number, matches!(comment.item, AssignedItem::PullRequest(_)));
-        value["user"] = payloads::user(user);
-        value["author_association"] = serde_json::json!(associations.get(&user.id).map_or("NONE", String::as_str));
-        value["pin"] = pins.get(&item_key(comment.item)).filter(|pin| pin.comment_id == comment.id).map_or(Value::Null, |pin| payloads::comment_pin(pin, pin.pinned_by.and_then(|id| users.get(&id))));
-        values.push(value);
-    }
-    Ok(values)
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Representation { Raw, Text, Html, Full }
-
-fn representation(headers: &HeaderMap) -> Representation {
-    let mut selected = (0.0_f32, Representation::Raw);
-    for header in headers.get_all(axum::http::header::ACCEPT).iter() {
-        let Ok(header) = header.to_str() else { continue };
-        for range in header.split(',') {
-            let mut parts = range.split(';').map(str::trim);
-            let media = parts.next().unwrap_or("").to_ascii_lowercase();
-            let profile = match media.as_str() {
-                "application/vnd.github.text+json" | "application/vnd.github.v3.text+json" => Representation::Text,
-                "application/vnd.github.html+json" | "application/vnd.github.v3.html+json" => Representation::Html,
-                "application/vnd.github.full+json" | "application/vnd.github.v3.full+json" => Representation::Full,
-                "application/vnd.github.raw+json" | "application/vnd.github.v3.raw+json" | "application/vnd.github+json" | "application/json" | "*/*" => Representation::Raw,
-                _ => continue,
+    let user = db::users::accounts::get_user_by_id(pool, comment.author_id)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(|| Error::unavailable(()))?;
+    let author = payloads::Person::of(&user);
+    let mut value = payloads::conversation_comment(
+        comment.id,
+        &comment.body,
+        &author,
+        (comment.created_at, comment.updated_at),
+        payloads::Scope {
+            repo,
+            owner,
+            sender: &author,
+        },
+        comment.number,
+        matches!(comment.item, AssignedItem::PullRequest(_)),
+    );
+    value["user"] = payloads::user(&user);
+    value["author_association"] =
+        serde_json::json!(super::pulls::association(pool, repo, user.id).await?);
+    value["pin"] = match db::pins::get_pin(pool, comment.item)
+        .await
+        .map_err(Error::unavailable)?
+        .filter(|pin| pin.comment_id == comment.id)
+    {
+        Some(pin) => {
+            let pinner = match pin.pinned_by {
+                Some(id) => db::users::accounts::get_user_by_id(pool, id)
+                    .await
+                    .map_err(Error::unavailable)?,
+                None => None,
             };
-            let weight = parts.find_map(|part| part.strip_prefix("q=")).map_or(1.0, |weight| weight.parse::<f32>().unwrap_or(0.0));
-            if weight > selected.0 && weight <= 1.0 { selected = (weight, profile); }
+            payloads::comment_pin(&pin, pinner.as_ref())
         }
-    }
-    selected.1
-}
-
-async fn represent(state: &AppState, headers: &HeaderMap, repo: &db::models::Repository, owner: &str, mut values: Vec<Value>) -> Result<Vec<Value>> {
-    let profile = representation(headers);
-    if profile == Representation::Raw { return Ok(values); }
-    let html = matches!(profile, Representation::Html | Representation::Full);
-    let text = matches!(profile, Representation::Text | Representation::Full);
-    let references = if html {
-        let authentication = auth::authenticate(state, headers, false).await?;
-        let texts: Vec<_> = values.iter().filter_map(|value| value["body"].as_str()).collect();
-        super::meta::resolve_references(state, authentication.as_ref(), repo, owner, &repo.name, &texts, false).await?
-    } else { Default::default() };
-    tokio::task::spawn_blocking(move || {
-        let mut size = 0_usize;
-        for value in &mut values {
-            let body = value["body"].as_str().unwrap_or_default();
-            let rendered_html = html.then(|| crate::webui::components::parse_markdown(body, &references));
-            let rendered_text = text.then(|| crate::webui::components::markdown_text(body));
-            size = size.saturating_add(if profile == Representation::Full { body.len() } else { 0 }).saturating_add(rendered_html.as_ref().map_or(0, String::len)).saturating_add(rendered_text.as_ref().map_or(0, String::len));
-            if size > 16 * 1024 * 1024 { return Err(Error::new(StatusCode::PAYLOAD_TOO_LARGE, "Rendered comment page is too large")); }
-            if profile != Representation::Full { value.as_object_mut().ok_or_else(|| Error::unavailable(()))?.remove("body"); }
-            if let Some(html) = rendered_html { value["body_html"] = Value::String(html); }
-            if let Some(text) = rendered_text { value["body_text"] = Value::String(text); }
-        }
-        Ok(values)
-    }).await.map_err(Error::unavailable)?
-}
-
-async fn response_document(state: &AppState, headers: &HeaderMap, repo: &db::models::Repository, owner: &str, comment: &Comment) -> Result<Value> {
-    let value = document(&state.pool, repo, owner, comment).await?;
-    represent(state, headers, repo, owner, vec![value]).await?.pop().ok_or_else(Error::missing)
+        None => Value::Null,
+    };
+    Ok(value)
 }
 
 async fn read(
@@ -198,7 +138,7 @@ async fn read(
     )
     .await?;
     Ok(Json(
-        response_document(&state, &headers, &repo, &p["owner"], &comment).await?,
+        document(&state.pool, &repo, &p["owner"], &comment).await?,
     ))
 }
 
@@ -214,8 +154,7 @@ async fn create(
     Json(input): Json<Body>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let (actor, credential) = (&auth.user, auth.credential());
+    let actor = auth.ok_or_else(auth::required)?.user;
     let item = labels::item(&state.pool, repo.id, &p["issue_number"]).await?;
     let number = p["issue_number"].parse().map_err(|_| Error::missing())?;
     let (id, pull) = match item {
@@ -224,7 +163,6 @@ async fn create(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
-                &credential,
                 p["owner"].clone(),
                 repo.name.clone(),
                 number,
@@ -275,7 +213,7 @@ async fn create(
     .await?;
     Ok((
         StatusCode::CREATED,
-        Json(response_document(&state, &headers, &repo, &p["owner"], &comment).await?),
+        Json(document(&state.pool, &repo, &p["owner"], &comment).await?),
     ))
 }
 
@@ -286,8 +224,7 @@ async fn update(
     Json(input): Json<Body>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let (actor, credential) = (&auth.user, auth.credential());
+    let actor = auth.ok_or_else(auth::required)?.user;
     let api_id = p["comment_id"].parse().map_err(|_| Error::missing())?;
     let comment = find(&state.pool, repo.id, api_id).await?;
     let target = CommentTarget {
@@ -302,7 +239,6 @@ async fn update(
                 &state.pool,
                 &state.notification_broadcaster,
                 actor.id,
-                &credential,
                 target,
                 CreateCommentRequest {
                     body: input.body,
@@ -329,7 +265,7 @@ async fn update(
     }
     let comment = find(&state.pool, repo.id, api_id).await?;
     Ok(Json(
-        response_document(&state, &headers, &repo, &p["owner"], &comment).await?,
+        document(&state.pool, &repo, &p["owner"], &comment).await?,
     ))
 }
 
@@ -339,8 +275,7 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let (actor, credential) = (&auth.user, auth.credential());
+    let actor = auth.ok_or_else(auth::required)?.user;
     let comment = find(
         &state.pool,
         repo.id,
@@ -355,12 +290,7 @@ async fn remove(
     };
     match comment.item {
         AssignedItem::Issue(_) => {
-            crate::backend::issues::comments::delete_issue_comment(
-                &state.pool,
-                actor.id,
-                &credential,
-                target,
-            )
+            crate::backend::issues::comments::delete_issue_comment(&state.pool, actor.id, target)
                 .await
                 .map_err(issues::operation_error)?
         }
@@ -427,9 +357,16 @@ async fn list(
     .await
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
-    let comments: Vec<Comment> = rows.into_iter().take(limit).map(Comment::from).collect();
-    let items = documents(&state.pool, &repo, &p["owner"], &comments).await?;
-    let items = represent(&state, &headers, &repo, &p["owner"], items).await?;
+    let mut items = Vec::new();
+    for (id, pull) in rows {
+        let comment = find(
+            &state.pool,
+            repo.id,
+            payloads::conversation_comment_id(id, pull),
+        )
+        .await?;
+        items.push(document(&state.pool, &repo, &p["owner"], &comment).await?);
+    }
     page.response(&uri, items, next)
 }
 

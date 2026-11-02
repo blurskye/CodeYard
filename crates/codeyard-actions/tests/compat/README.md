@@ -22,15 +22,13 @@ The small examples exercise the behavior described in GitHub's documentation:
 - [Contexts](https://docs.github.com/en/actions/learn-github-actions/contexts):
   `contexts`, `env`, `outputs`, `needs`, `continue-on-error`.
 - [Workflow commands](https://docs.github.com/en/actions/using-workflows/workflow-commands-for-github-actions):
-  `file-commands`, `workflow-commands`, `command-parsing`, `problem-matchers`, `masking`,
-  `local-node`.
+  `file-commands`, `workflow-commands`, `problem-matchers`, `masking`, `local-node`.
 - [OIDC](https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect):
   `oidc-permissions` checks per-job request credentials; `tests/ci/oidc.rs` checks the issuer and signatures on both databases.
 - [Matrices](https://docs.github.com/en/actions/using-jobs/using-a-matrix-for-your-jobs):
   `matrix`, `dynamic-matrix`.
 - [Workflow syntax](https://docs.github.com/en/actions/writing-workflows/workflow-syntax-for-github-actions):
-  `defaults`, `shells`, `step-timeout`, `job-timeout`, `cancellation` (cleanup steps
-  after a fail-fast cancel).
+  `defaults`, `shells`, `step-timeout`, `job-timeout`.
 - [Reusable workflows](https://docs.github.com/en/actions/using-workflows/reusing-workflows):
   `reusable-workflows`, `reusable-validation` check typed inputs, secrets, outputs,
   matrices, four-level nesting and refused contracts.
@@ -40,8 +38,7 @@ The small examples exercise the behavior described in GitHub's documentation:
   `local-node` checks pre/main/post, inputs, outputs and state.
 - [Docker actions](https://docs.github.com/en/actions/creating-actions/creating-a-docker-container-action)
   and [service containers](https://docs.github.com/en/actions/using-containerized-services/about-service-containers):
-  `local-docker` (also pre/post entrypoints and the `args` input), `job-container`,
-  `services`.
+  `local-docker`, `job-container`, `services`.
 
 Timeout workflows use a real one-minute timeout, rather than a fractional timeout
 that GitHub's integer fields do not support. They run concurrently in the test

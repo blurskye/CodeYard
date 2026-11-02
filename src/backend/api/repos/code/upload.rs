@@ -14,7 +14,7 @@ use crate::webui::pages::repos::ref_path::{branch_url, compare_url};
 use axum::{
     extract::{
         multipart::{Multipart, MultipartError, MultipartRejection},
-        OriginalUri, State,
+        OriginalUri, Path, State,
     },
     http::{HeaderMap, StatusCode},
     response::Response,
@@ -122,13 +122,14 @@ async fn read_parts(mut multipart: Multipart) -> Result<UploadParts, UploadFormE
             }
             form.files.push((file_name, form.content.len() - start));
         } else {
-            let value = crate::backend::api::http::multipart::bounded_text(
-                &mut part,
-                MAX_FIELD_BYTES,
-            )
-            .await
-            .map_err(read_error)?
-            .ok_or(UploadFormError::Unreadable)?;
+            let mut bytes = Vec::new();
+            while let Some(chunk) = part.chunk().await.map_err(read_error)? {
+                if bytes.len() + chunk.len() > MAX_FIELD_BYTES {
+                    return Err(UploadFormError::Unreadable);
+                }
+                bytes.extend_from_slice(&chunk);
+            }
+            let value = String::from_utf8(bytes).map_err(|_| UploadFormError::Unreadable)?;
             form.fields.insert(name, value);
         }
     }
@@ -214,7 +215,7 @@ pub(in crate::backend::api::repos) async fn page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    Path(params): Path<HashMap<String, String>>,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
@@ -241,7 +242,7 @@ pub(in crate::backend::api::repos) async fn post(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    Path(params): Path<HashMap<String, String>>,
     multipart: Result<Multipart, MultipartRejection>,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
@@ -266,22 +267,26 @@ pub(in crate::backend::api::repos) async fn post(
     // Each upload is held in memory until its commit lands, so only a few run at once. The slot
     // is taken before the body is read, so a busy server reads nothing from the request.
     let Ok(_slot) = ctx.state.upload_reads.clone().try_acquire_owned() else {
-        return ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Uploads are busy. Try again in a moment.");
+        return refusal(
+            &ctx,
+            &loaded,
+            form,
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Uploads are busy. Try again in a moment.",
+        );
     };
     let Ok(multipart) = multipart else {
-        return ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read. Open the upload page again.");
+        return refusal(
+            &ctx,
+            &loaded,
+            form,
+            StatusCode::BAD_REQUEST,
+            "The upload could not be read. Choose the files again.",
+        );
     };
     let parts = match read(multipart).await {
         Ok(parts) => parts,
-        Err(error) => return ctx.error(error.status(), error.message()),
-    };
-    // Multipart bodies may take minutes. Authenticate the original cookie and its current
-    // synchronizer again, rather than retaining the authority cached before the upload.
-    let ctx = match PageContext::load(ctx.state.clone(), ctx.headers.clone(), &uri).await {
-        Ok(current) if current.user.as_ref().map(|user| user.id) == ctx.user.as_ref().map(|user| user.id)
-            && current.user.is_some() => current,
-        Ok(_) => return ctx.error(StatusCode::UNAUTHORIZED, "Your session expired. Sign in again."),
-        Err(response) => return response,
+        Err(error) => return refusal(&ctx, &loaded, form, error.status(), error.message()),
     };
     if let Err(response) = ctx.check_csrf(&parts.fields) {
         return response;
@@ -351,7 +356,7 @@ pub(in crate::backend::api::repos) async fn post(
         expected_revision: form.expected_revision.clone(),
         files,
     };
-    let actor = ctx.database_actor(ctx.user.as_ref().expect("authenticated upload").id);
+    let actor = ctx.user.as_ref().expect("authenticated upload").id;
     let saved = files::upload_files(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),

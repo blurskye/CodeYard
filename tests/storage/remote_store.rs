@@ -237,7 +237,6 @@ async fn direct_branch_merges(
         head_branch: Some("direct-head".into()),
         head: head.into(),
         result: result.clone(),
-        authority: actor.into(),
     };
     db::repositories::protection::upsert_branch_protection_rule(
         pool,
@@ -379,13 +378,13 @@ async fn compare_reads(remote: &RepoStore, local: &RepoStore, sha: &str) {
         local.commit_diff(sha).await.unwrap(),
     );
     let parent = local.commit(sha).await.unwrap().parents[0].clone();
-    let (count, commits) = remote.pull_request_commits(&parent, sha, 0, 250).await.unwrap();
+    let (count, commits) = remote.pull_request_commits(&parent, sha).await.unwrap();
     assert_eq!(count, 1);
     assert_eq!(commits.len(), 1);
     assert_eq!(commits[0].sha, sha);
     equal(
         (count, commits),
-        local.pull_request_commits(&parent, sha, 0, 250).await.unwrap(),
+        local.pull_request_commits(&parent, sha).await.unwrap(),
     );
     equal(
         remote.diff(sha, "main").await.unwrap(),
@@ -757,7 +756,6 @@ async fn repository_rpc_admits_bodies_and_git_sessions_with_separate_limits() {
         write: write("main", path, revision),
         author: "RPC author".into(),
         email: "rpc@example.invalid".into(),
-        identities: Default::default(),
     };
 
     for (caller, request, message) in [
@@ -1514,7 +1512,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
-            None,
             git::objects::ObjectWrite::Blob,
             b"remote object\0",
         )
@@ -1527,7 +1524,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
-            None,
             git::objects::ObjectWrite::Blob,
             &large_blob,
         )
@@ -1545,7 +1541,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
-            None,
             git::objects::ObjectWrite::Blob,
             &vec![0; git::objects::MAX_BLOB_WRITE_BYTES + 1]
         )
@@ -1557,7 +1552,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
-            None,
             git::objects::ObjectWrite::Tree {
                 base_tree: Some(initial.tree_sha.clone()),
                 tree: vec![git::objects::TreeChange {
@@ -1586,7 +1580,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
-            None,
             git::objects::ObjectWrite::Commit {
                 message: "Remote detached commit".into(),
                 tree,
@@ -1604,7 +1597,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
-            None,
             git::objects::ObjectWrite::Tag {
                 tag: "detached".into(),
                 message: "Remote tag object".into(),
@@ -1639,7 +1631,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
-            None,
             git::objects::ObjectWrite::Commit {
                 message: "Signed remote\n".into(),
                 tree: unsigned.tree_sha,
@@ -1673,7 +1664,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             owner.id,
-            None,
             git::objects::ObjectWrite::Tag {
                 tag: "signed-remote".into(),
                 message: format!("Signed remote tag\n{signature}"),
@@ -2053,7 +2043,6 @@ async fn remote_web_contract() {
             &database.pool,
             repository.id,
             late_writer.id,
-            None,
             git::objects::ObjectWrite::Blob,
             b"revoked object writer"
         )
@@ -2310,7 +2299,6 @@ async fn remote_web_contract() {
             &workflow.sha,
             &prepared,
             MergeMethod::Merge,
-            None,
         )
         .await
         .unwrap();
@@ -2388,8 +2376,7 @@ async fn remote_web_contract() {
             &merge.head,
             &merge.base,
             &merged,
-            MergeMethod::Merge,
-            None
+            MergeMethod::Merge
         )
         .await
         .is_err());
@@ -2532,7 +2519,6 @@ async fn remote_web_contract() {
         base: upstream.sha.clone(),
         name: "Tester".into(),
         email: "tester@example.invalid".into(),
-        token: None,
     };
     let updated = remote
         .update_pull_branch_as(
@@ -2712,7 +2698,6 @@ async fn remote_web_contract() {
             base: base.sha.clone(),
             name: "Tester".into(),
             email: "tester@example.invalid".into(),
-            token: None,
         };
         let updated = fork_store
             .update_pull_branch_as(
@@ -2943,7 +2928,7 @@ async fn remote_web_contract() {
         repository: uuid,
         operation: Operation::CreateBranch {
             name: "actorless".into(),
-            sha: public_head.sha.clone().into(),
+            sha: public_head.sha.clone(),
         },
         actor: None,
         ci_run: None,
@@ -2959,7 +2944,6 @@ async fn remote_web_contract() {
     let actorless_pull = Request {
         repository: uuid,
         operation: Operation::FetchPullHead {
-            token: None,
             source: uuid,
             number: 99,
             head: public_head.sha.clone(),

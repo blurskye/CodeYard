@@ -52,8 +52,8 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let keys = keys::list_keys(&state.pool, &auth.user, &repo, db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()))
+    let actor = auth.ok_or_else(auth::required)?.user;
+    let keys = keys::list_keys(&state.pool, &actor, &repo)
         .await
         .map_err(key_error)?;
     let (offset, limit) = page.window()?;
@@ -71,8 +71,8 @@ async fn read(
     Path((owner, name, id)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let auth = auth.ok_or_else(auth::required)?;
-    let keys = keys::list_keys(&state.pool, &auth.user, &repo, db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()))
+    let actor = auth.ok_or_else(auth::required)?.user;
+    let keys = keys::list_keys(&state.pool, &actor, &repo)
         .await
         .map_err(key_error)?;
     let key = keys
@@ -113,7 +113,7 @@ async fn create(
     let key = keys::add_key(
         &state.pool,
         &auth.user,
-        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
+        db::deploy_keys::Credential::Token(auth.token.id),
         &repo,
         &title,
         &input.key,
@@ -138,7 +138,7 @@ async fn remove(
     keys::remove_key(
         &state.pool,
         &auth.user,
-        db::deploy_keys::Credential::Token(auth.token.id, auth.token.token_hash.clone()),
+        db::deploy_keys::Credential::Token(auth.token.id),
         &repo,
         id,
     )

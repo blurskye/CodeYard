@@ -1,45 +1,39 @@
 use super::*;
 
 impl LocalStore {
-    /// Boxed with an explicit `Send` bound. This rename and `publish_file` each spawn a future
-    /// whose call graph reaches the other, so proving either one `Send` would need the other's
-    /// type, a cycle the compiler rejects.
-    pub(in crate::backend::repositories::store) fn rename_branch(
+    pub(in crate::backend::repositories::store) async fn rename_branch(
         &self,
         pool: &db::DbPool,
         repo: i64,
-        authority: db::credentials::Actor,
+        actor: i64,
         old: &str,
         new: &str,
-    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<String, RepoError>> + Send>> {
+    ) -> Result<String, RepoError> {
         let (store, pool, old, new) = (self.clone(), pool.clone(), old.to_owned(), new.to_owned());
-        Box::pin(async move {
-            // Finish metadata and HEAD updates even if the HTTP client leaves after the ref moves.
-            tokio::spawn(async move {
-                store
-                    .rename_branch_owned(&pool, repo, authority, &old, &new)
-                    .await
-            })
-            .await
-            .map_err(|_| RepoError::applied_followup_failed())?
+        // Finish metadata and HEAD updates even if the HTTP client leaves after the ref moves.
+        tokio::spawn(async move {
+            store
+                .rename_branch_owned(&pool, repo, actor, &old, &new)
+                .await
         })
+        .await
+        .map_err(|_| RepoError::applied_followup_failed())?
     }
 
     async fn rename_branch_owned(
         &self,
         pool: &db::DbPool,
         repo: i64,
-        authority: db::credentials::Actor,
+        actor: i64,
         old: &str,
         new: &str,
     ) -> Result<String, RepoError> {
-        let actor = authority.user_id;
         let old_ref = git::branch_ref(old).ok_or_else(|| super::super::invalid_ref("branch"))?;
         let new_ref = git::branch_ref(new).ok_or_else(|| super::super::invalid_ref("branch"))?;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        let user = self.rename_authority(pool, repo, &authority, old, new).await?;
+        let user = self.rename_authority(pool, repo, actor, old, new).await?;
         let refs = self.refs().await?;
         let target = refs
             .get(&old_ref)
@@ -51,16 +45,16 @@ impl LocalStore {
         if refs.contains_key(&new_ref) || rules.iter().any(|rule| rule.pattern == new) {
             return Err(RepoError::new(ErrorKind::Invalid, "Branch already exists"));
         }
-        // Pull-request branch columns and protection patterns both hold at most 255 characters.
-        // Validate before publication even when this branch has no exact protection rule.
-        if new.chars().count() > 255 {
+        // A protection pattern holds at most 255 characters. Refuse a longer name before any ref
+        // moves, instead of moving the branch and failing to carry the rule over.
+        if new.chars().count() > 255 && rules.iter().any(|rule| rule.pattern == old) {
             return Err(RepoError::new(
                 ErrorKind::Invalid,
-                "Branch names are limited to 255 characters",
+                "Protected branch names are limited to 255 characters",
             ));
         }
         // The new name counts against the ref-name budget in place of the old one.
-        let mut held = self.blocking(git::published_refs_in_use).await?;
+        let mut held = self.blocking(git::branches_and_tags_in_use).await?;
         held.count = held.count.saturating_sub(1);
         held.bytes = held.bytes.saturating_sub(git::ref_listing_bytes(&old_ref));
         super::ensure_ref_room(held, &[&new_ref])?;
@@ -93,7 +87,7 @@ impl LocalStore {
             )
         })
         .await?;
-        self.rename_authority(pool, repo, &authority, old, new).await?;
+        self.rename_authority(pool, repo, actor, old, new).await?;
         publication
             .scope(git::publish_branch_rename(self.path(), old, new, &target))
             .await
@@ -125,11 +119,10 @@ impl LocalStore {
         &self,
         pool: &db::DbPool,
         repo: i64,
-        authority: &db::credentials::Actor,
+        actor: i64,
         old: &str,
         new: &str,
     ) -> Result<db::models::User, RepoError> {
-        let actor = authority.user_id;
         let (repository, user) = access::check_write(pool, repo, actor)
             .await
             .map_err(|error| match error {
@@ -157,13 +150,6 @@ impl LocalStore {
             .map_err(|_| RepoError::authority_unavailable())?
             .is_empty();
         }
-        // Renaming a protected or default branch needs a token's administration permission.
-        if let Some(token) = authority.token_id() {
-            if !crate::backend::identity::tokens::repository_scope(pool, token, actor, repo, if protected { "administration" } else { "contents" }, true).await
-                .map_err(|_| RepoError::authority_unavailable())? {
-                return Err(RepoError::write_denied());
-            }
-        }
         if protected
             && !access::can_admin(pool, &user, &repository)
                 .await
@@ -171,7 +157,6 @@ impl LocalStore {
         {
             return Err(RepoError::write_denied());
         }
-        access::check_publication_actor(pool, authority, &repository).await.map_err(RepoError::from)?;
         Ok(user)
     }
 
@@ -182,12 +167,11 @@ impl LocalStore {
         actor: i64,
         source: (i64, &LocalStore),
         branch: &str,
-        token: Option<i64>,
     ) -> Result<super::super::UpstreamMerge, RepoError> {
         use super::super::{UpstreamMerge, UpstreamMergeType};
         let reference =
             git::branch_ref(branch).ok_or_else(|| super::super::invalid_ref("branch"))?;
-        self.upstream_authority(pool, repo, actor, source, token).await?;
+        self.upstream_authority(pool, repo, actor, source).await?;
         let target = git::repository::current_branch_head(source.1.path(), branch)
             .await
             .map_err(RepoError::from)?
@@ -195,7 +179,7 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        self.upstream_authority(pool, repo, actor, source, token).await?;
+        self.upstream_authority(pool, repo, actor, source).await?;
         let old = git::repository::current_branch_head(self.path(), branch)
             .await
             .map_err(RepoError::from)?
@@ -247,21 +231,7 @@ impl LocalStore {
                 Some(prepared.path()),
             )
             .await?;
-        self.upstream_authority(pool, repo, actor, source, token).await?;
-        self.check_publication_grant(
-            pool,
-            repo,
-            actor,
-            token,
-            vec![(old.clone(), target.clone())],
-            Some(prepared.path().to_owned()),
-        )
-        .await?;
-        let repository = access::current_repository(pool, repo).await.map_err(|_| RepoError::write_denied())?;
-        let quarantine = prepared.path().join("objects");
-        let bypasses = crate::backend::repositories::secret_scanning::push_protection::refuse_blocked_secrets(
-            pool, &repository, actor, self.path(), Some(&quarantine), std::slice::from_ref(&target),
-        ).await.map_err(RepoError::from)?;
+        self.upstream_authority(pool, repo, actor, source).await?;
         publication
             .scope(git::repository::publish_pull_branch_update(
                 self.path(),
@@ -289,9 +259,7 @@ impl LocalStore {
             &target,
         )
         .await;
-        let bypass_followup = record_secret_bypasses(pool, repo, actor, bypasses).await;
         followup?;
-        bypass_followup?;
         Ok(UpstreamMerge {
             old,
             sha: target,
@@ -305,7 +273,6 @@ impl LocalStore {
         repo: i64,
         actor: i64,
         source: (i64, &LocalStore),
-        token: Option<i64>,
     ) -> Result<(), RepoError> {
         let (repository, _) = access::check_write(pool, repo, actor)
             .await
@@ -326,15 +293,6 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await?;
-        if let Some(token) = token {
-            let credential = crate::backend::repositories::git_sessions::ReceiveCredential::Token(token);
-            let upstream = access::current_repository(pool, source.0).await.map_err(|_| RepoError::write_denied())?;
-            for (repository, write) in [(&repository, true), (&upstream, false)] {
-                let (user, _) = credential.authorize(pool, repository, write).await.map_err(|_| RepoError::write_denied())?;
-                if user.id != actor { return Err(RepoError::write_denied()); }
-            }
-        }
-        Ok(())
+        live_read(pool, source.0, actor, source.1.path(), source.1.node_id).await
     }
 }

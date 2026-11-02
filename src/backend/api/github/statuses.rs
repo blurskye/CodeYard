@@ -4,7 +4,7 @@ use crate::backend::{
     app::AppState,
     db::{self, models::CommitStatus, repositories::protection},
     repositories::store::repo_store,
-    webhooks::{self, payloads},
+    webhooks::payloads,
 };
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -17,15 +17,20 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-async fn documents(state: &AppState, owner: &str, name: &str, rows: Vec<CommitStatus>) -> Result<Vec<Value>> {
-    let mut ids: Vec<_> = rows.iter().filter_map(|row| row.creator_id).collect();
-    ids.sort_unstable();
-    ids.dedup();
-    let users = db::users::accounts::get_users_by_ids(&state.pool, &ids).await.map_err(Error::unavailable)?;
-    let users: std::collections::HashMap<_, _> = users.into_iter().map(|user| (user.id, payloads::person(&payloads::Person::of(&user)))).collect();
-    Ok(rows.into_iter().map(|status| {
-        let creator = status.creator_id.and_then(|id| users.get(&id));
-        json!({
+async fn document(
+    state: &AppState,
+    owner: &str,
+    name: &str,
+    status: CommitStatus,
+) -> Result<Value> {
+    let creator = match status.creator_id {
+        Some(id) => db::users::accounts::get_user_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?
+            .map(|user| payloads::person(&payloads::Person::of(&user))),
+        None => None,
+    };
+    Ok(json!({
         "id": status.id,
         "node_id": super::node_id::encode("CS", status.id),
         "avatar_url": creator.as_ref().map(|value| &value["avatar_url"]),
@@ -33,8 +38,7 @@ async fn documents(state: &AppState, owner: &str, name: &str, rows: Vec<CommitSt
         "state": status.state, "context": status.context, "description": status.description,
         "target_url": status.target_url, "creator": creator,
         "created_at": status.created_at, "updated_at": status.updated_at,
-        })
-    }).collect())
+    }))
 }
 
 #[derive(Deserialize)]
@@ -52,8 +56,7 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = auth.user.id;
+    let actor = auth.ok_or_else(super::auth::required)?.user.id;
     if !crate::backend::git::is_full_commit_id(&sha) {
         return Err(Error::invalid("sha must be a full commit ID"));
     }
@@ -65,10 +68,11 @@ async fn create(
         ));
     }
     let sha = sha.to_ascii_lowercase();
-    let store = repo_store(&repo, state.cluster.as_ref());
-    let commit = store.commit(&sha).await.map_err(store_error)?;
-    if commit.sha != sha { return Err(Error::invalid("sha must name an existing commit object")); }
-    let saved = protection::upsert_commit_status_with_token(
+    repo_store(&repo, state.cluster.as_ref())
+        .commit(&sha)
+        .await
+        .map_err(store_error)?;
+    let saved = protection::upsert_commit_status(
         &state.pool,
         protection::CommitStatusUpsert {
             repo_id: repo.id,
@@ -79,7 +83,6 @@ async fn create(
             target_url: input.target_url.as_deref(),
             creator_id: Some(actor),
         },
-        Some(auth.token.id),
     )
     .await
     .map_err(
@@ -91,10 +94,9 @@ async fn create(
             None => Error::unavailable(()),
         },
     )?;
-    webhooks::statuses::emit_status(&state.pool, &store, &repo, &saved, &commit, actor).await;
     Ok((
         StatusCode::CREATED,
-        Json(documents(&state, &owner, &name, vec![saved]).await?.remove(0)),
+        Json(document(&state, &owner, &name, saved).await?),
     )
         .into_response())
 }
@@ -106,7 +108,7 @@ async fn read(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let sha = repo_store(&repo, state.cluster.as_ref())
         .commit(&reference)
         .await
@@ -114,15 +116,45 @@ async fn read(
         .sha;
     let (offset, limit) = page.window()?;
     let history = uri.path().ends_with("/statuses");
-    let page_rows = protection::commit_status_page(&state.pool, auth.as_ref().map(|auth| auth.user.id), repo.id, &sha, offset as i64, limit as i64, history)
-        .await.map_err(Error::unavailable)?.ok_or_else(Error::missing)?;
-    if let Some(auth) = auth.as_ref() {
-        if db::users::tokens::token_user(&state.pool, auth.token.id, false).await.map_err(Error::unavailable)?
-            .is_none_or(|user| user.id != auth.user.id) { return Err(super::auth::required()); }
-        auth.repository_scope(&state.pool, repo.id, "statuses", false).await.map_err(super::auth::scope_error)?;
+    let counts = if history {
+        Vec::new()
+    } else {
+        protection::commit_status_counts(&state.pool, repo.id, &sha)
+            .await
+            .map_err(Error::unavailable)?
+    };
+    let total: i64 = if history {
+        protection::commit_status_history_count(&state.pool, repo.id, &sha)
+            .await
+            .map_err(Error::unavailable)?
+    } else {
+        counts.iter().map(|(_, count)| count).sum()
+    };
+    let rows = if history {
+        protection::list_commit_status_history_page(
+            &state.pool,
+            repo.id,
+            &sha,
+            offset as i64,
+            limit as i64,
+        )
+        .await
+    } else {
+        protection::list_commit_statuses_page(
+            &state.pool,
+            repo.id,
+            &sha,
+            offset as i64,
+            limit as i64,
+            true,
+        )
+        .await
     }
-    let protection::CommitStatusPage { total, counts, statuses } = page_rows;
-    let items = documents(&state, &owner, &name, statuses).await?;
+    .map_err(Error::unavailable)?;
+    let mut items = Vec::with_capacity(rows.len());
+    for status in rows {
+        items.push(document(&state, &owner, &name, status).await?);
+    }
     let has_next = total > (offset + limit) as i64;
     if history {
         return page.response(&uri, items, has_next);

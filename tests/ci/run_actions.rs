@@ -91,7 +91,7 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    let claimed = db::ci::claim_ci_run(f.pool(), "log-worker", "local", &[alice_id, bob_id], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    let claimed = db::ci::claim_ci_run(f.pool(), "log-worker", "local", &[alice_id, bob_id])
         .await
         .unwrap()
         .unwrap();
@@ -246,13 +246,13 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains(&format!("action=\"{cancel}\"")));
 
-    // Readers cannot re-run or cancel; any repository writer may cancel.
+    // A reader cannot re-run or cancel, and a writer who did not start the run cannot cancel it.
     let (status, page) = dave.form(&rerun, &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
     let (status, page) = dave.form(&cancel, &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
     let (status, page) = bob.form(&cancel, &[]).await;
-    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
+    assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
 
     // Another writer can re-run a manual commit displaced by an unrelated branch reset.
     {
@@ -710,7 +710,7 @@ async fn pull_request_run_is_run_again(pg: bool) {
 
     // The run fails on its worker, which then records the result.
     let worker = "node/slot-1";
-    let claimed = db::ci::claim_ci_run(f.pool(), worker, "local", &[alice_id, bob_id], &codeyard::backend::ci::CiConfig::default().platform_labels())
+    let claimed = db::ci::claim_ci_run(f.pool(), worker, "local", &[alice_id, bob_id])
         .await
         .unwrap()
         .expect("the run is claimed");

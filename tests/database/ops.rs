@@ -27,7 +27,7 @@ async fn long_branch_activity(pool: &DbPool) {
         db::activity::record_repository_push(pool, repo.id, user.id, &branch, 1)
             .await
             .unwrap();
-        let rows = db::activity::list_user_activity(pool, user.id, None, 20, 0)
+        let rows = db::activity::list_user_activity(pool, user.id, Some(user.id), 20, 0)
             .await
             .unwrap();
         assert!(rows

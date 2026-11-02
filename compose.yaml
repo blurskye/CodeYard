@@ -87,13 +87,7 @@ services:
       ADMIN_SECRET: ${ADMIN_SECRET:-}
       # Never inject an empty key or generate a new key over encrypted records.
       SECRETS_MASTER_KEY: ${SECRETS_MASTER_KEY:?Set the existing durable 64-hex master key (generate once only for a new installation)}
-      GIT_SESSION_LIMIT: ${GIT_SESSION_LIMIT:-0}
-      GIT_COMMAND_MEMORY_MIB: ${GIT_COMMAND_MEMORY_MIB:-4096}
-      GIT_SESSION_WAIT_SECONDS: ${GIT_SESSION_WAIT_SECONDS:-30}
-      SEARCH_TIME_BUDGET_SECONDS: ${SEARCH_TIME_BUDGET_SECONDS:-}
       CI_EXECUTION_MODE: ${CI_EXECUTION_MODE:-podman}
-      CI_WORK_ROOT: ${CI_WORK_ROOT:-/var/lib/codeyard-runner}
-      TMPDIR: ${CI_WORK_ROOT:-/var/lib/codeyard-runner}
       CI_TRUSTED_ACTOR_IDS: ${CI_TRUSTED_ACTOR_IDS:-}
       CI_MAX_ACTIVE_RUNS: ${CI_MAX_ACTIVE_RUNS:-4}
       CI_RUN_TIMEOUT_SECONDS: ${CI_RUN_TIMEOUT_SECONDS:-3600}
@@ -136,8 +130,6 @@ services:
       CLUSTER_TCP_ADVERTISE: ${CLUSTER_TCP_ADVERTISE:-}
     volumes:
       - ${GIT_SERV_DATA_ROOT:-./data}/server:/data:Z
-      # Runner workspaces, caches and temporary bind sources must exist at the same host path.
-      - ${CI_WORK_ROOT:-/var/lib/codeyard-runner}:${CI_WORK_ROOT:-/var/lib/codeyard-runner}:z
       # Keep the socket at the same path on host/server: act passes that path
       # back to the host daemon when creating job containers.
       - ${CI_PODMAN_SOCKET:-/run/user/1000/podman/podman.sock}:${CI_PODMAN_SOCKET:-/run/user/1000/podman/podman.sock}:ro

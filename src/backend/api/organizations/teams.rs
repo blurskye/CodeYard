@@ -444,7 +444,6 @@ pub(super) async fn public_show(
         member_count,
         repository_count,
         manage,
-        ..
     } = public;
     let title = format!("{} / {}", org.name, team.name);
     let model = view::TeamPage {

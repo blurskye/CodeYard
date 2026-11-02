@@ -17,7 +17,7 @@ env_file=$(mktemp)
 trap 'rm -f "$env_file"' EXIT
 master_key=$(printf 'a%.0s' {1..64})
 resolve() {
-  env -u GITSERV_NODE_ROLES -u SSH_TRUSTED_PROXY_IPS -u NODE_KEY_FILE -u CLUSTER_NODES_FILE \
+  env -u GITSERV_NODE_ROLES -u SSH_TRUSTED_PROXY_IPS \
     PUBLIC_URL=http://localhost \
     DATABASE_URL=postgres://gitserv:gitserv@postgres:5432/gitserv \
     S3_PUBLIC_ENDPOINT=http://objects.localhost:11002 \

@@ -1,9 +1,12 @@
+use super::inbox::inbox_error;
 use super::inbox::invalid_query;
-use super::inbox::json_action;
 use super::inbox::native_action;
+use super::inbox::notification_session_denied;
 use super::inbox::BulkUpdateResponse;
 use super::inbox::ListParams;
 use crate::backend::api::http::error::ApiError;
+use crate::backend::api::http::session::extract_session_id;
+use crate::backend::api::http::session::get_current_user;
 use crate::backend::app::AppState;
 use crate::backend::db::notifications::records::NotificationInboxAction;
 use axum::extract::OriginalUri;
@@ -24,13 +27,21 @@ pub async fn mark_all_notifications_done(
     headers: axum::http::HeaderMap,
     Query(fields): Query<HashMap<String, String>>,
 ) -> Result<Json<BulkUpdateResponse>, (StatusCode, Json<ApiError>)> {
-    let inbox = json_action(&state, &headers, || {
-        let params = ListParams::parse(&fields).map_err(invalid_query)?;
-        Ok(NotificationInboxAction::DoneAll {
+    let user = get_current_user(&state.pool, &headers).await?;
+
+    let params = ListParams::parse(&fields).map_err(invalid_query)?;
+    let session_id = extract_session_id(&headers).ok_or_else(notification_session_denied)?;
+    let inbox = crate::backend::notifications::inbox::inbox(
+        &state.pool,
+        &state.notification_broadcaster,
+        &session_id,
+        user.id,
+        NotificationInboxAction::DoneAll {
             filter: params.filter(),
-        })
-    })
-    .await?;
+        },
+    )
+    .await
+    .map_err(inbox_error)?;
 
     Ok(Json(BulkUpdateResponse {
         updated: inbox.updated,

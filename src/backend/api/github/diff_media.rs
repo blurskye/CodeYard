@@ -31,17 +31,18 @@ pub(super) fn requested(headers: &HeaderMap) -> Option<Media> {
 }
 
 /// Each file's patch already starts with its `diff --git` and file headers from Git.
-fn diff(files: &[DiffFileInfo]) -> Vec<u8> {
-    let mut bytes = Vec::new();
+fn diff(files: &[DiffFileInfo]) -> String {
+    let mut text = String::new();
     for file in files {
-        let patch = if file.patch_bytes.is_empty() { file.patch.as_bytes() } else { &file.patch_bytes };
-        bytes.extend_from_slice(patch);
-        if !patch.is_empty() && !patch.ends_with(b"\n") { bytes.push(b'\n'); }
+        text.push_str(&file.patch);
+        if !file.patch.is_empty() && !file.patch.ends_with('\n') {
+            text.push('\n');
+        }
     }
-    bytes
+    text
 }
 
-fn patch(commit: &CommitInfo, files: &[DiffFileInfo]) -> Vec<u8> {
+fn patch(commit: &CommitInfo, files: &[DiffFileInfo]) -> String {
     let date = chrono::DateTime::from_timestamp(commit.timestamp, 0)
         .unwrap_or_default()
         .to_rfc2822();
@@ -57,12 +58,13 @@ fn patch(commit: &CommitInfo, files: &[DiffFileInfo]) -> Vec<u8> {
     } else {
         format!("{body}\n")
     };
-    let mut bytes = format!(
-        "From {} Mon Sep 17 00:00:00 2001\nFrom: {} <{}>\nDate: {date}\nSubject: [PATCH] {subject}\n\n{body}---\n",
-        commit.sha, commit.author_name, commit.author_email,
-    ).into_bytes();
-    bytes.extend_from_slice(&diff(files));
-    bytes
+    format!(
+        "From {} Mon Sep 17 00:00:00 2001\nFrom: {} <{}>\nDate: {date}\nSubject: [PATCH] {subject}\n\n{body}---\n{}",
+        commit.sha,
+        commit.author_name,
+        commit.author_email,
+        diff(files)
+    )
 }
 
 /// The largest patch series answered in one response.
@@ -82,10 +84,10 @@ pub(super) async fn series(
             "The patch series is too large; fetch the commits instead",
         ));
     }
-    let mut text = Vec::new();
+    let mut text = String::new();
     for commit in commits.iter().filter(|commit| commit.parents.len() <= 1) {
         let diff = store.commit_diff(&commit.sha).await?;
-        text.extend_from_slice(&patch(commit, &diff.files));
+        text.push_str(&patch(commit, &diff.files));
         if text.len() > MAX_SERIES_BYTES {
             return Err(RepoError::new(
                 ErrorKind::Invalid,
@@ -93,7 +95,7 @@ pub(super) async fn series(
             ));
         }
     }
-    Ok(([(header::CONTENT_TYPE, "text/plain")], text).into_response())
+    Ok(([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response())
 }
 
 /// The files as a plain-text diff, or as a patch headed by `commit` for the patch type.
@@ -102,5 +104,5 @@ pub(super) fn response(media: Media, commit: &CommitInfo, files: &[DiffFileInfo]
         Media::Diff => diff(files),
         Media::Patch => patch(commit, files),
     };
-    ([(header::CONTENT_TYPE, "text/plain")], text).into_response()
+    ([(header::CONTENT_TYPE, "text/plain; charset=utf-8")], text).into_response()
 }

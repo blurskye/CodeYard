@@ -10,27 +10,11 @@ pub(super) fn object(repo: &db::models::Repository) -> Value {
         "name":repo.name,"description":repo.description,"isPrivate":repo.is_private,"isFork":repo.is_fork,
         "isArchived":repo.is_archived,"visibility":if repo.is_private {"PRIVATE"} else {"PUBLIC"},
         "createdAt":repo.created_at,"updatedAt":repo.updated_at,
-        "stargazerCount":repo.stars_count,
+        "stargazerCount":repo.stars_count,"forkCount":repo.forks_count,
         "homepageUrl":repo.website,"isInOrganization":repo.owner_kind=="org","hasIssuesEnabled":true,
         "hasProjectsEnabled":true,"autoMergeAllowed":true,"deleteBranchOnMerge":false,
         "mergeCommitAllowed":repo.allow_merge_commit,"squashMergeAllowed":repo.allow_squash_merge,
         "rebaseMergeAllowed":repo.allow_rebase_merge})
-}
-
-pub(super) async fn optional_authority(id: i64, scope: &str, request: &RequestContext) -> Result<bool> {
-    match request.authorize(id, scope, false).await {
-        Ok(()) => Ok(true),
-        Err(error) if matches!(error.extensions.as_ref().and_then(|e| e.get("type")),
-            Some(async_graphql::Value::String(kind)) if kind == "NOT_FOUND" || kind == "FORBIDDEN") => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-pub(super) async fn shared_read_scope(id: i64, scopes: &[&'static str], request: &RequestContext) -> Result<&'static str> {
-    for scope in scopes {
-        if optional_authority(id, scope, request).await? { return Ok(*scope); }
-    }
-    Err(missing())
 }
 
 pub(super) async fn by_id(id: i64, request: &RequestContext) -> Result<db::models::Repository> {
@@ -85,23 +69,6 @@ pub(super) fn label(label: &db::models::Label) -> Value {
     json!({"__typename":"Label","_repo":label.repo_id,"id":node_id::encode("L",label.id),"name":label.name,"color":label.color.trim_start_matches('#'),"description":label.description,"createdAt":label.created_at,"updatedAt":label.updated_at.unwrap_or(label.created_at),"isDefault":false})
 }
 
-pub(super) fn label_connection(ctx: &Arguments, mut labels: Vec<db::models::Label>, scope: &str) -> Result<Value> {
-    let order = ctx.args.get("orderBy").filter(|value| !value.is_null()).map(|value| value.object()).transpose()?;
-    let name = order.as_ref().map(|order| order.try_get("field")?.enum_name()).transpose()? == Some("NAME");
-    labels.sort_by(|a, b| {
-        if name { a.name.cmp(&b.name).then(a.id.cmp(&b.id)) }
-        else { a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)) }
-    });
-    if order.as_ref().map(|order| order.try_get("direction")?.enum_name()).transpose()? == Some("DESC") {
-        labels.reverse();
-    }
-    connection::slice(ctx, labels.iter().map(|row| {
-        let mut value = label(row);
-        value["_scope"] = json!(scope);
-        value
-    }).collect())
-}
-
 pub(super) async fn label_url(parent: &Value, request: &RequestContext) -> Result<Value> {
     let repo = by_id(parent["_repo"].as_i64().ok_or_else(missing)?, request).await?;
     let name = parent["name"].as_str().ok_or_else(missing)?;
@@ -131,7 +98,6 @@ pub(super) async fn resolve(
     let repo = by_id(id, request).await?;
     let pool = &request.state.pool;
     match field {
-        "forkCount" => Ok(json!(db::repositories::records::network_fork_count(pool, repo.id).await.map_err(unavailable)?)),
         "hasWikiEnabled" => Ok(json!(db::repositories::records::repository_wiki(
             pool, repo.id
         )
@@ -152,14 +118,13 @@ pub(super) async fn resolve(
         }
         "nameWithOwner" | "url" | "sshUrl" => {
             let name = format!("{}/{}", owner(&repo, request).await?, repo.name);
-            let ssh = super::super::http::config::ssh_clone_base();
             Ok(json!(match field {
                 "nameWithOwner" => name,
                 "url" => url(&format!("/{name}")),
-                // sshUrl is non-null in the schema; with SSH off there is no remote to
-                // advertise, and a bare "/owner/repo.git" would be a local path.
-                _ if ssh.trim().is_empty() => String::new(),
-                _ => format!("{}/{name}.git", ssh.trim_end_matches('/')),
+                _ => format!(
+                    "{}/{name}.git",
+                    super::super::http::config::ssh_clone_base().trim_end_matches('/')
+                ),
             }))
         }
         "discussion" | "discussions" | "discussionCategories" | "hasDiscussionsEnabled" => {
@@ -184,9 +149,7 @@ pub(super) async fn resolve(
                 {
                     return Ok(Value::Null);
                 }
-                if !optional_authority(id, "metadata", request).await? {
-                    return Ok(Value::Null);
-                }
+                request.authorize(id, "metadata", false).await?;
                 Ok(object(&parent))
             }
             None => Ok(Value::Null),
@@ -253,11 +216,7 @@ pub(super) async fn resolve(
             .await
             .map_err(unavailable)?;
             let reference = format!("refs/heads/{default}");
-            request.charge(refs.iter().map(|(name, oid)| name.len() + oid.len() + 64).sum())?;
-            match refs.get(&reference) {
-                Some(oid) => super::git_objects::reference_at(&repo, &reference, oid, request).await,
-                None => Ok(Value::Null),
-            }
+            Ok(refs.get(&reference).map(|oid| json!({"__typename":"Ref","_repo":id,"id":node_id::reference(id, &reference),"prefix":"refs/heads/","name":default,"target":{"__typename":"Commit","oid":oid,"_repo":id}})).unwrap_or(Value::Null))
         }
         "issue" | "issueOrPullRequest" => {
             let number = ctx.args.try_get("number")?.i64()? as i32;

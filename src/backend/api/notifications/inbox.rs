@@ -175,7 +175,7 @@ impl ListParams {
         {
             return Err("Search text is too long");
         }
-        let unread_only = !matches!(view, NotificationView::Done) && text("unread_only").is_some_and(|value| value == "1" || value == "true");
+        let unread_only = text("unread_only").is_some_and(|value| value == "1" || value == "true");
         let before = decode_cursor(fields.get("before").map(String::as_str))
             .map_err(|()| "Invalid notification cursor")?;
         Ok(Self {
@@ -228,42 +228,28 @@ pub(crate) fn invalid_query(message: &str) -> (StatusCode, Json<ApiError>) {
     )
 }
 
-/// Runs one inbox action for a JSON request: the signed-in user first, then the request's own
-/// input through `action`, then the action under the session the request came with.
-pub(crate) async fn json_action(
-    state: &AppState,
-    headers: &HeaderMap,
-    action: impl FnOnce() -> Result<NotificationInboxAction, (StatusCode, Json<ApiError>)>,
-) -> Result<NotificationInbox, (StatusCode, Json<ApiError>)> {
-    let user = get_current_user(&state.pool, headers).await?;
-    let action = action()?;
-    let session_id = extract_session_id(headers).ok_or_else(notification_session_denied)?;
-    crate::backend::notifications::inbox::inbox(
-        &state.pool,
-        &state.notification_broadcaster,
-        &session_id,
-        user.id,
-        action,
-    )
-    .await
-    .map_err(inbox_error)
-}
-
 pub async fn list_notifications(
     State(state): State<Arc<AppState>>,
     headers: axum::http::HeaderMap,
     Query(fields): Query<HashMap<String, String>>,
 ) -> Result<Json<NotificationsListResponse>, (StatusCode, Json<ApiError>)> {
-    let inbox = json_action(&state, &headers, || {
-        let params = ListParams::parse(&fields).map_err(invalid_query)?;
-        let limit = limit_field(&fields).map_err(invalid_query)?;
-        Ok(NotificationInboxAction::List {
+    let user = get_current_user(&state.pool, &headers).await?;
+    let params = ListParams::parse(&fields).map_err(invalid_query)?;
+    let limit = limit_field(&fields).map_err(invalid_query)?;
+    let session_id = extract_session_id(&headers).ok_or_else(notification_session_denied)?;
+    let inbox = crate::backend::notifications::inbox::inbox(
+        &state.pool,
+        &state.notification_broadcaster,
+        &session_id,
+        user.id,
+        NotificationInboxAction::List {
             filter: params.filter(),
             limit,
-            before: params.before,
-        })
-    })
-    .await?;
+            before: params.before.clone(),
+        },
+    )
+    .await
+    .map_err(inbox_error)?;
     let NotificationInbox {
         notifications,
         next_cursor,
@@ -514,7 +500,6 @@ pub(crate) async fn native_action(
         Err(message) => return ctx.error(StatusCode::BAD_REQUEST, message),
     };
     let action = action(&params);
-    let opening = matches!(&action, NotificationInboxAction::Read { .. }) && form.get("open").is_some_and(|value| value == "yes");
     // A bulk change can empty the page it came from, so it returns to the first page.
     let before = if matches!(action, NotificationInboxAction::DoneAll { .. }) {
         None
@@ -538,14 +523,7 @@ pub(crate) async fn native_action(
     )
     .await;
     match result {
-        Ok(inbox) if !must_match || !inbox.notifications.is_empty() => {
-            if opening {
-                match inbox.notifications.first().and_then(|notification| notification.link.as_deref()).filter(|link| crate::webui::navigation::safe_page_target(link)) {
-                    Some(link) => ctx.redirect(link),
-                    None => ctx.error(StatusCode::NOT_FOUND, "The notification destination is no longer available."),
-                }
-            } else { ctx.redirect(&target) }
-        },
+        Ok(inbox) if !must_match || !inbox.notifications.is_empty() => ctx.redirect(&target),
         Ok(_) => ctx.error(
             StatusCode::NOT_FOUND,
             "Notification not found for your account.",

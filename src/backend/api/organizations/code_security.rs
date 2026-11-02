@@ -2,7 +2,7 @@ use crate::{
     backend::{
         api::http::{context::PageContext, render::redirect_response},
         app::AppState,
-        db::code_security as records,
+        db::{self, code_security as records},
     },
     webui::{app::Page, pages::orgs::code_security as view},
 };
@@ -63,22 +63,19 @@ async fn show(
         Ok(user) => user.id,
         Err(response) => return response,
     };
-    let before = match ctx.query.get("before") {
-        None => None,
-        Some(value) => match value.parse::<i64>() {
-            Ok(id) if id > 0 => Some(id),
-            _ => return ctx.error(StatusCode::BAD_REQUEST, "Invalid configuration page."),
-        },
+    let rows = match records::list(&ctx.state.pool, actor, org).await {
+        Ok(rows) => rows,
+        Err(error) => return failure(&ctx, error),
     };
-    let Some(session) = ctx.session_id.as_deref() else {
-        return ctx.error(StatusCode::FORBIDDEN, "A live account session is required.");
-    };
-    let loaded = match records::settings_page(&ctx.state.pool, actor, session, org, before).await {
-        Ok(page) => page,
+    let org = match db::organizations::profiles::get_public_organization_by_id(&ctx.state.pool, org)
+        .await
+    {
+        Ok(Some(org)) => org,
+        Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
         Err(error) => return failure(&ctx, error),
     };
     let mut configurations = Vec::new();
-    for row in loaded.configurations {
+    for row in rows {
         let value: serde_json::Value = match serde_json::from_str(&row.settings) {
             Ok(value) => value,
             Err(error) => return failure(&ctx, error.into()),
@@ -102,13 +99,10 @@ async fn show(
     ctx.page_model(
         "Code security configurations",
         Page::CodeSecurity(view::Page {
-            org_id: org,
-            org_name: loaded.organization_name,
+            org_id: org.id,
+            org_name: org.name,
             csrf_token: ctx.csrf_token.clone(),
             configurations,
-            writable: loaded.writable,
-            before,
-            next_before: loaded.next_before,
         }),
     )
 }
@@ -130,7 +124,6 @@ async fn post(
         Ok(user) => user.id,
         Err(response) => return response,
     };
-    let actor = ctx.database_actor(actor);
     let id = values
         .get("configuration_id")
         .map(|id| id.parse::<i64>())

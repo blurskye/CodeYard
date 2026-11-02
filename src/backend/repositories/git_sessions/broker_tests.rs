@@ -151,7 +151,7 @@ impl Broker {
         let helper =
             private_files::trusted_executable(&std::fs::canonicalize(helper).unwrap(), uid)
                 .unwrap();
-        let directory = codeyard_actions::fs::private_tempdir("openssh-broker-", None).unwrap();
+        let directory = private_files::private_tempdir("openssh-broker-").unwrap();
         let root = directory.path().join("repos");
         std::fs::create_dir(&root).unwrap();
         let socket = directory.path().join("broker.sock");
@@ -796,7 +796,7 @@ async fn real_keys_private_clone_streamed_fetch_push_and_protected_multi_ref() {
     std::fs::create_dir_all(source_path.join(".github/workflows")).unwrap();
     std::fs::write(
         source_path.join(".github/workflows/deploy.yml"),
-        "name: deploy\non: push\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo deploy\n",
+        "name: deploy\non: push\njobs: {}\n",
     )
     .unwrap();
     let mut index = source.index().unwrap();
@@ -1412,8 +1412,9 @@ impl PushFixture {
         tokio::sync::watch::Sender<bool>,
         tokio::task::JoinHandle<Result<()>>,
     ) {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let address = listener.local_addr().unwrap();
+        drop(listener);
         let (stop, stopped) = tokio::sync::watch::channel(false);
         let state = self.state.clone();
         let mut server = if ssh {
@@ -1431,9 +1432,9 @@ impl PushFixture {
         };
         let running = tokio::spawn(async move {
             if let Some(server) = server.as_mut() {
-                server.run_listener(listener, stopped).await
+                server.run(address, stopped).await
             } else {
-                crate::backend::api::run_web_listener(listener, state, stopped).await
+                crate::backend::api::run_web_server(address, state, stopped).await
             }
         });
         timeout(Duration::from_secs(5), async {

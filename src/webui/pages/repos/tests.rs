@@ -46,7 +46,6 @@ fn fixtures() -> Vec<Page> {
         content: "<script>alert(1)</script>".into(),
         binary: false,
         size: 29,
-        download_limit: Some((32 * 1024 * 1024, "32 MiB".into())),
         offset: 0,
         first_line: Some(1),
         next: Some(256),
@@ -312,10 +311,6 @@ fn fixtures() -> Vec<Page> {
                 saved: false,
                 viewer: String::new(),
                 force_push_suggestions: Vec::new(),
-                immutable_enforced: false,
-                environment_page: 0,
-                environments_more: false,
-                git_unavailable: false,
             }),
         },
         Page::BranchMerge {
@@ -365,7 +360,6 @@ fn fixtures() -> Vec<Page> {
                     body: "Notes".into(),
                     author: "alice".into(),
                     target: "main".into(),
-                    archive_revision: "refs/tags/v1.0".into(),
                     created_at: "2026-10-01T00:00:00Z".into(),
                     published_at: Some("2026-10-02T00:00:00Z".into()),
                     draft: false,
@@ -376,39 +370,6 @@ fn fixtures() -> Vec<Page> {
                 assets: Vec::new(),
                 reactions: Vec::new(),
                 can_write: false,
-            },
-        },
-        Page::Discussions {
-            repo: repo.clone(),
-            page: super::discussions::Page::Index {
-                discussions: vec![super::discussions::Discussion {
-                    number: 1,
-                    title: "<script>alert(1)</script>".into(),
-                    body: "Discussion body".into(),
-                    author: "alice".into(),
-                }],
-                page: 1,
-                more: true,
-            },
-        },
-        Page::Discussions {
-            repo: repo.clone(),
-            page: super::discussions::Page::Detail {
-                discussion: super::discussions::Discussion {
-                    number: 1,
-                    title: "Discussion".into(),
-                    body: "<script>alert(1)</script>".into(),
-                    author: "alice".into(),
-                },
-                comments: vec![super::discussions::Comment {
-                    id: 1,
-                    body: "<script>alert(1)</script>".into(),
-                    author: "alice".into(),
-                    reply_to: None,
-                }],
-                thread: None,
-                page: 1,
-                more: false,
             },
         },
     ];
@@ -424,8 +385,6 @@ fn fixtures() -> Vec<Page> {
             summary: Some("**Summary**".into()),
             text: None,
             details_url: Some("https://example.com/check".into()),
-            images: vec![],
-            actions: vec![],
             annotations: vec![super::checks::Annotation {
                 path: "<script>path</script>".into(),
                 location: "line 1".into(),
@@ -448,8 +407,6 @@ fn fixtures() -> Vec<Page> {
         repo: insights_repo.clone(),
         page: super::dependency_graph::Page {
             sha: "a".repeat(40),
-            previous: None,
-            next: None,
             packages: vec![super::dependency_graph::Dependency {
                 name: "<script>".into(),
                 version: "1.0.0".into(),
@@ -517,7 +474,6 @@ fn fixtures() -> Vec<Page> {
         pages.push(Page::Advisories {
             repo: insights_repo.clone(),
             page: Box::new(super::advisories::Page {
-                can_administer: true,
                 rows: vec![row.clone()],
                 detail: detail.then(|| super::advisories::Detail {
                     row,
@@ -646,7 +602,6 @@ fn insight_pages() -> Vec<InsightsPage> {
             ],
         },
         InsightsPage::Contributors {
-            omitted: 0,
             rows: vec![
                 Contributor {
                     name: hostile.into(),
@@ -787,7 +742,6 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
     crate::webui::tests::in_scope(|| {
         for page in fixtures() {
             let expected = match &page {
-                Page::Discussions { repo, page } => super::discussions::render(repo, page),
                 Page::Tree { repo, page } => tree(repo, page),
                 Page::BranchMerge { repo, form } => super::merge::merge(repo, form),
                 Page::Blob { repo, page } => blob(repo, page),
@@ -1754,7 +1708,6 @@ fn label_colours_reach_a_style_only_when_they_are_valid_hex() {
         name: "project".into(),
         signed_in: true,
         can_write: true,
-        can_triage: false,
         can_admin: true,
         csrf: "csrf-fixture".into(),
         viewer: "alice".into(),

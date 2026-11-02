@@ -73,9 +73,9 @@ fn content_observations_strip_referral_secrets_and_bound_titles() {
     );
 }
 #[test]
-fn retained_window_includes_today_and_thirteen_completed_utc_days() {
+fn retained_window_includes_today_and_fourteen_completed_utc_days() {
     let window = Window::at(NaiveDate::from_ymd_opt(2026, 10, 12).unwrap());
     assert_eq!(window.today, "2026-10-12");
     assert_eq!(window.yesterday, "2026-10-11");
-    assert_eq!(window.first, "2026-09-29");
+    assert_eq!(window.first, "2026-09-28");
 }

@@ -15,10 +15,13 @@ use chrono::{Datelike, TimeZone, Utc};
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 
-fn document(jobs: Vec<db::action_jobs::Usage>, elapsed: Option<i64>) -> Value {
-    let details = elapsed.is_some();
+fn document(jobs: Vec<db::action_jobs::Usage>, details: bool) -> Value {
     let mut platforms: BTreeMap<&str, Vec<Value>> = BTreeMap::new();
+    let mut runs = BTreeMap::new();
     for job in jobs {
+        if let Some((start, end)) = job.run_started_at.zip(job.run_completed_at) {
+            runs.insert(job.run_id, (end - start).num_milliseconds().max(0));
+        }
         let labels: Vec<_> = job
             .labels
             .iter()
@@ -57,8 +60,8 @@ fn document(jobs: Vec<db::action_jobs::Usage>, elapsed: Option<i64>) -> Value {
         })
         .collect();
     let mut value = json!({"billable":billable});
-    if let Some(elapsed) = elapsed {
-        value["run_duration_ms"] = json!(elapsed);
+    if details {
+        value["run_duration_ms"] = json!(runs.values().sum::<i64>());
     }
     value
 }
@@ -79,9 +82,7 @@ async fn run_usage(
     )
     .await
     .map_err(Error::unavailable)?;
-    let elapsed = db::action_jobs::elapsed(&state.pool, repo.id, run.workflow_run_id.unwrap_or(run.id))
-        .await.map_err(Error::unavailable)?;
-    Ok(Json(document(jobs, Some(elapsed))))
+    Ok(Json(document(jobs, true)))
 }
 
 async fn workflow_usage(
@@ -99,7 +100,7 @@ async fn workflow_usage(
     let jobs = db::action_jobs::usage(&state.pool, repo.id, None, Some(&workflow.path), since)
         .await
         .map_err(Error::unavailable)?;
-    Ok(Json(document(jobs, None)))
+    Ok(Json(document(jobs, false)))
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

@@ -33,15 +33,7 @@ issue_payload!(
     UpdateIssueIssueTypePayloadResolver,
     "UpdateIssueIssueTypePayload"
 );
-impl gql::AddSubIssuePayloadResolver for Object {
-    fields!("AddSubIssuePayload"; client_mutation_id()->Option<String>;issue()->Option<gql::Issue>;sub_issue()->Option<gql::Issue>;);
-}
-impl gql::RemoveSubIssuePayloadResolver for Object {
-    fields!("RemoveSubIssuePayload"; client_mutation_id()->Option<String>;issue()->Option<gql::Issue>;sub_issue()->Option<gql::Issue>;);
-}
-impl gql::AddBlockedByPayloadResolver for Object {
-    fields!("AddBlockedByPayload"; client_mutation_id()->Option<String>;issue()->Option<gql::Issue>;blocking_issue()->Option<gql::Issue>;);
-}
-impl gql::RemoveBlockedByPayloadResolver for Object {
-    fields!("RemoveBlockedByPayload"; client_mutation_id()->Option<String>;issue()->Option<gql::Issue>;blocking_issue()->Option<gql::Issue>;);
-}
+issue_payload!(AddSubIssuePayloadResolver, "AddSubIssuePayload");
+issue_payload!(RemoveSubIssuePayloadResolver, "RemoveSubIssuePayload");
+issue_payload!(AddBlockedByPayloadResolver, "AddBlockedByPayload");
+issue_payload!(RemoveBlockedByPayloadResolver, "RemoveBlockedByPayload");

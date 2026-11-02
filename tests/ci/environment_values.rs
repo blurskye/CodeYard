@@ -50,7 +50,7 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert_eq!(
-        values::environments(f.pool(), owner, repo.id, 0)
+        values::environments(f.pool(), owner, repo.id)
             .await
             .unwrap(),
         vec!["Production"]

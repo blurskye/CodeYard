@@ -333,7 +333,6 @@ pub fn repo_engagement(repo: &RepoChrome, class: &str) -> Element {
                 } else {
                     form { method: "post", action: repo.action("fork"),
                         {csrf(&repo.csrf_token)}
-                        {repository_id(repo.id)}
                         button { class: "repo-engagement-button", r#type: "submit",
                             {engagement_content("fork", "Fork", repo.forks)}
                         }
@@ -412,7 +411,6 @@ fn watch_menu(repo: &RepoChrome) -> Element {
             div { class: "native-menu-panel repo-watch-panel",
                 form { method: "post", action: repo.action("watch-level"),
                     {csrf(&repo.csrf_token)}
-                    {repository_id(repo.id)}
                     strong { "Notifications" }
                     for (value, title, hint) in choices {
                         label { class: "repo-watch-choice",

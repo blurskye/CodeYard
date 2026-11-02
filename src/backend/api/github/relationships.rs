@@ -30,16 +30,16 @@ pub(super) fn error(error: anyhow::Error) -> Error {
 async fn root(pool: &db::DbPool, repo: i64, p: &Params) -> Result<i64> {
     issues::required_issue(pool, repo, &p["issue_number"]).await
 }
-/// A linked issue may sit in another repository, which the credential must reach as well.
-async fn document(state: &AppState, auth: Option<&auth::Authentication>, id: i64) -> Result<Value> {
+async fn document(state: &AppState, viewer: Option<i64>, id: i64) -> Result<Value> {
     let issue = db::issues::get_issue_by_id(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    if auth::readable_repositories(state, auth, &[issue.repo_id], "issues")
-        .await?
-        .is_empty()
-    {
+    let visible =
+        db::repositories::access::readable_repository_ids(&state.pool, viewer, &[issue.repo_id])
+            .await
+            .map_err(Error::unavailable)?;
+    if visible.is_empty() {
         return Err(Error::missing());
     }
     let repo = db::repositories::records::get_repository_by_id(&state.pool, issue.repo_id)
@@ -51,7 +51,6 @@ async fn document(state: &AppState, auth: Option<&auth::Authentication>, id: i64
         .map_err(Error::unavailable)?;
     issues::document(
         &state.pool,
-        issues::Reader::Request(state, auth),
         &repo,
         owners.get(&repo.id).ok_or_else(Error::missing)?,
         AssignedItem::Issue(id),
@@ -59,16 +58,14 @@ async fn document(state: &AppState, auth: Option<&auth::Authentication>, id: i64
     .await
 }
 fn kind(uri: &Uri) -> Kind {
-    // Only the operation and its optional numeric target follow the discussion number.
-    // Namespace segments are user-controlled and must never select the operation.
-    let tail: Vec<_> = uri.path().rsplit('/').take(2).collect();
-    if tail.contains(&"blocked_by") {
+    let path = uri.path();
+    if path.ends_with("/blocked_by") || path.contains("/blocked_by/") {
         Kind::BlockedBy
-    } else if tail[0] == "blocking" {
+    } else if path.ends_with("/blocking") {
         Kind::Blocking
-    } else if tail.contains(&"relates_to") {
+    } else if path.ends_with("/relates_to") || path.contains("/relates_to/") {
         Kind::Related
-    } else if tail[0] == "parent" {
+    } else if path.ends_with("/parent") {
         Kind::Parent
     } else {
         Kind::Children
@@ -86,40 +83,32 @@ async fn list(
     let root = root(&state.pool, repo.id, &p).await?;
     let kind = kind(&uri);
     let (offset, limit) = page.window()?;
-    let mut rows = Vec::new();
-    let (mut scanned, mut skipped) = (0, 0);
-    loop {
-        let batch = db::relationships::list(&state.pool, viewer, root, kind, scanned, 100)
-            .await.map_err(Error::unavailable)?;
-        let done = batch.len() < 100;
-        scanned += batch.len() as i64;
-        let mut ids: Vec<_> = batch.iter().map(|link| link.repo_id).collect();
-        ids.sort_unstable();
-        ids.dedup();
-        let readable = auth::readable_repositories(&state, auth.as_ref(), &ids, "issues").await?;
-        for row in batch.into_iter().filter(|link| readable.contains(&link.repo_id)) {
-            if kind != Kind::Parent && skipped < offset {
-                skipped += 1;
-                continue;
-            }
-            rows.push(row);
-            if rows.len() > limit || kind == Kind::Parent {
-                break;
-            }
-        }
-        if done || rows.len() > limit || kind == Kind::Parent {
-            break;
-        }
-    }
-    let next = rows.len() > limit;
-    rows.truncate(limit);
+    let rows = db::relationships::list(
+        &state.pool,
+        viewer,
+        root,
+        kind,
+        if kind == Kind::Parent {
+            0
+        } else {
+            offset as i64
+        },
+        if kind == Kind::Parent {
+            1
+        } else {
+            (limit + 1) as i64
+        },
+    )
+    .await
+    .map_err(Error::unavailable)?;
     if kind == Kind::Parent {
         let link = rows.first().ok_or_else(Error::missing)?;
-        return Ok(Json(document(&state, auth.as_ref(), link.id).await?).into_response());
+        return Ok(Json(document(&state, viewer, link.id).await?).into_response());
     }
+    let next = rows.len() > limit;
     let mut values = Vec::new();
-    for link in rows {
-        values.push(document(&state, auth.as_ref(), link.id).await?);
+    for link in rows.into_iter().take(limit) {
+        values.push(document(&state, viewer, link.id).await?);
     }
     page.response(&uri, values, next)
 }
@@ -133,7 +122,7 @@ struct Input {
     after_id: Option<i64>,
 }
 fn input(body: &[u8]) -> Result<Input> {
-    serde_json::from_slice(body).map_err(super::json_parse_error)
+    serde_json::from_slice(body).map_err(|_| Error::validation("Issue", "relationship", "invalid"))
 }
 async fn apply(
     state: &AppState,
@@ -142,18 +131,16 @@ async fn apply(
     mutation: Mutation,
 ) -> Result<Value> {
     let (repo, auth) = repository(state, headers, &p["owner"], &p["repo"], true).await?;
-    let auth = auth.ok_or_else(auth::required)?;
+    let actor = auth.ok_or_else(auth::required)?.user;
     let root = root(&state.pool, repo.id, p).await?;
     let other = match mutation {
         Mutation::Add { other, .. } | Mutation::Remove { other, .. } => other,
         Mutation::Move { child, .. } => child,
     };
-    // The linked issue's repository must be within the credential's reach before the change.
-    document(state, Some(&auth), other).await?;
-    db::relationships::change_with_token(&state.pool, auth.user.id, repo.id, root, mutation, Some(auth.token.id))
+    db::relationships::change(&state.pool, actor.id, repo.id, root, mutation)
         .await
         .map_err(error)?;
-    document(state, Some(&auth), other).await
+    document(state, Some(actor.id), other).await
 }
 async fn add(
     State(state): State<Arc<AppState>>,

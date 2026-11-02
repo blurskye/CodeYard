@@ -1,14 +1,11 @@
 //! JWT discovery and installation management, backed by native account consent.
-use super::super::{
-    api_url, auth, optional_json::OptionalJson, pagination::Pagination, repos, Error, Result,
-};
+use super::super::{api_url, auth, pagination::Pagination, repos, Error, Result};
 use super::{access_token, application};
 use crate::backend::{
     app::AppState,
     db::{
         self,
-        github_apps::{App, Installation, InstallationFilter, RepositoryChange},
-        models::PersonalAccessToken,
+        github_apps::{App, Installation},
     },
     identity::{github_apps as apps, oauth_apps, tokens::token_hash},
     webhooks::payloads,
@@ -46,7 +43,7 @@ async fn account(state: &AppState, installation: &Installation) -> Result<Value>
     .map_err(Error::unavailable)?
     .ok_or_else(Error::missing)?;
     Ok(
-        json!({"login":org.name,"id":org.id,"node_id":super::super::node_id::encode("O",org.id),"avatar_url":payloads::organization_avatar(&org),"gravatar_id":"","url":api_url(&format!("/orgs/{}",org.name)),"html_url":format!("{}{}",crate::backend::api::http::config::link_origin(),crate::webui::profile_path(&org.name)),"followers_url":api_url(&format!("/users/{}/followers",org.name)),"following_url":api_url(&format!("/users/{}/following{{/other_user}}",org.name)),"gists_url":api_url(&format!("/users/{}/gists{{/gist_id}}",org.name)),"starred_url":api_url(&format!("/users/{}/starred{{/owner}}{{/repo}}",org.name)),"subscriptions_url":api_url(&format!("/users/{}/subscriptions",org.name)),"organizations_url":api_url(&format!("/users/{}/orgs",org.name)),"repos_url":api_url(&format!("/orgs/{}/repos",org.name)),"events_url":api_url(&format!("/users/{}/events{{/privacy}}",org.name)),"received_events_url":api_url(&format!("/users/{}/received_events",org.name)),"type":"Organization","site_admin":false}),
+        json!({"login":org.name,"id":org.id,"node_id":super::super::node_id::encode("O",org.id),"avatar_url":format!("{}/orgs/{}/avatar",crate::backend::api::http::config::link_origin(),org.name),"gravatar_id":"","url":api_url(&format!("/orgs/{}",org.name)),"html_url":format!("{}/{}",crate::backend::api::http::config::link_origin(),org.name),"followers_url":api_url(&format!("/users/{}/followers",org.name)),"following_url":api_url(&format!("/users/{}/following{{/other_user}}",org.name)),"gists_url":api_url(&format!("/users/{}/gists{{/gist_id}}",org.name)),"starred_url":api_url(&format!("/users/{}/starred{{/owner}}{{/repo}}",org.name)),"subscriptions_url":api_url(&format!("/users/{}/subscriptions",org.name)),"organizations_url":api_url(&format!("/users/{}/orgs",org.name)),"repos_url":api_url(&format!("/orgs/{}/repos",org.name)),"events_url":api_url(&format!("/users/{}/events{{/privacy}}",org.name)),"received_events_url":api_url(&format!("/users/{}/received_events",org.name)),"type":"Organization","site_admin":false}),
     )
 }
 pub(in crate::backend::api::github) async fn app_document(
@@ -57,20 +54,17 @@ pub(in crate::backend::api::github) async fn app_document(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let filter = InstallationFilter {
-        app: Some(app.id),
-        ..InstallationFilter::default()
-    };
-    let (installations, _) = db::github_apps::installations(&state.pool, &filter, 0, 0)
+    let installations = db::github_apps::installations(&state.pool, Some(app.id), None)
         .await
-        .map_err(Error::unavailable)?;
+        .map_err(Error::unavailable)?
+        .len();
     app_value(app, &owner, installations)
 }
 /// An app's document from rows already loaded, for responses that cannot read the database.
 pub(in crate::backend::api::github) fn app_value(
     app: &App,
     owner: &db::models::User,
-    installations: i64,
+    installations: usize,
 ) -> Result<Value> {
     Ok(
         json!({"id":app.id,"slug":app.slug,"node_id":super::super::node_id::encode("APP",app.id),"owner":payloads::user(owner),"name":app.name,"description":app.description,"external_url":app.homepage,"html_url":format!("{}/apps/{}",crate::backend::api::http::config::link_origin(),app.slug),"created_at":app.created_at,"updated_at":app.created_at,"permissions":serde_json::from_str::<Value>(&app.permissions).map_err(Error::unavailable)?,"events":app.events.split(',').filter(|s|!s.is_empty()).collect::<Vec<_>>(),"installations_count":installations,"client_id":app.client_id}),
@@ -80,9 +74,7 @@ pub(in crate::backend::api::github) async fn document(
     state: &AppState,
     installation: &Installation,
 ) -> Result<Value> {
-    // The request already sees this installation, so an app whose owner is no longer
-    // active is still described rather than failing the page.
-    let app = db::github_apps::app_by_id(&state.pool, installation.app_id)
+    let app = db::github_apps::app(&state.pool, &installation.app_id.to_string())
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -159,14 +151,12 @@ pub(super) async fn get_by_slug(
         .map_err(Error::unavailable)?
         .filter(|app| app.slug == slug)
         .ok_or_else(Error::missing)?;
-    let owner = match &authenticated {
-        // A credential bound to another app does not carry its user's view of this one.
-        Some(auth) if auth.user.id == app.owner_id => user_app(&state, auth)
-            .await?
-            .is_none_or(|bound| bound == app.id),
-        _ => false,
-    };
-    if !app.is_public && !jwt_app.as_ref().is_some_and(|jwt| jwt.id == app.id) && !owner {
+    if !app.is_public
+        && !jwt_app.as_ref().is_some_and(|jwt| jwt.id == app.id)
+        && !authenticated
+            .as_ref()
+            .is_some_and(|auth| auth.user.id == app.owner_id)
+    {
         return Err(Error::missing());
     }
     Ok(Json(app_document(&state, &app).await?))
@@ -178,37 +168,16 @@ pub(super) async fn list_installations(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let app = jwt(&state, &headers).await?;
-    let filter = InstallationFilter {
-        app: Some(app.id),
-        ..InstallationFilter::default()
-    };
+    let rows = db::github_apps::installations(&state.pool, Some(app.id), None)
+        .await
+        .map_err(Error::unavailable)?;
     let (offset, limit) = page.window()?;
-    let (total, rows) = installation_page(&state, &filter, offset, limit).await?;
+    let has_next = rows.len() > offset + limit;
     let mut values = vec![];
-    for row in &rows {
-        values.push(document(&state, row).await?);
+    for row in rows.into_iter().skip(offset).take(limit) {
+        values.push(document(&state, &row).await?);
     }
-    page.response(&uri, values, more(total, offset, limit))
-}
-/// A page of installations from `installations`, with GitHub's usize window.
-pub(in crate::backend::api::github) async fn installation_page(
-    state: &AppState,
-    filter: &InstallationFilter,
-    offset: usize,
-    limit: usize,
-) -> Result<(i64, Vec<Installation>)> {
-    db::github_apps::installations(
-        &state.pool,
-        filter,
-        i64::try_from(offset).map_err(Error::unavailable)?,
-        i64::try_from(limit).map_err(Error::unavailable)?,
-    )
-    .await
-    .map_err(Error::unavailable)
-}
-/// Whether rows remain past a page.
-pub(in crate::backend::api::github) fn more(total: i64, offset: usize, limit: usize) -> bool {
-    usize::try_from(total).is_ok_and(|total| total > offset.saturating_add(limit))
+    page.response(&uri, values, has_next)
 }
 pub(super) async fn get_installation(
     State(state): State<Arc<AppState>>,
@@ -226,31 +195,46 @@ pub(super) async fn find_installation(
     Path(params): Path<HashMap<String, String>>,
 ) -> Result<Json<Value>> {
     let app = jwt(&state, &headers).await?;
-    let found = if let (Some(owner), Some(repo)) = (params.get("owner"), params.get("repo")) {
-        let repo = db::repositories::records::get_repository(&state.pool, owner, repo)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        db::github_apps::repository_installation(&state.pool, app.id, repo.id, false, None).await
-    } else if let Some(org) = params.get("org") {
-        let org = db::organizations::profiles::get_public_organization(&state.pool, org)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        db::github_apps::account_installation(&state.pool, app.id, None, Some(org.id)).await
+    let repo = if let (Some(owner), Some(repo)) = (params.get("owner"), params.get("repo")) {
+        Some(
+            db::repositories::records::get_repository(&state.pool, owner, repo)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?,
+        )
     } else {
-        // The generated router canonicalizes this username parameter to user_id.
-        let name = params.get("user_id").ok_or_else(Error::missing)?;
-        let user = db::users::accounts::get_user_by_username(&state.pool, name)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
-        db::github_apps::account_installation(&state.pool, app.id, Some(user.id), None).await
+        None
     };
-    let installation = found
+    for row in db::github_apps::installations(&state.pool, Some(app.id), None)
+        .await
         .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
-    Ok(Json(document(&state, &installation).await?))
+    {
+        let found = if let Some(repo) = &repo {
+            db::github_apps::has_repository(&state.pool, row.id, repo.id, false)
+                .await
+                .map_err(Error::unavailable)?
+        } else {
+            let account = account(&state, &row).await?;
+            if let Some(org) = params.get("org") {
+                row.org_id.is_some()
+                    && account["login"]
+                        .as_str()
+                        .is_some_and(|name| name == org.as_str())
+            } else {
+                // The generated router canonicalizes this username parameter to user_id.
+                params.get("user_id").is_some_and(|user| {
+                    row.user_id.is_some()
+                        && account["login"]
+                            .as_str()
+                            .is_some_and(|name| name == user.as_str())
+                })
+            }
+        };
+        if found {
+            return Ok(Json(document(&state, &row).await?));
+        }
+    }
+    Err(Error::missing())
 }
 async fn change(
     state: &AppState,
@@ -290,14 +274,6 @@ pub(super) async fn unsuspend(
     change(&state, &headers, id, "unsuspend").await
 }
 
-/// A token `issue` stored, before any response is built from it.
-struct Issued {
-    value: String,
-    token: PersonalAccessToken,
-    permissions: Value,
-    repositories: Vec<i64>,
-    all_repositories: bool,
-}
 async fn issue(
     state: &AppState,
     app: &App,
@@ -305,7 +281,7 @@ async fn issue(
     actor: Option<i64>,
     body: &Value,
     parent: Option<&db::github_apps::Token>,
-) -> Result<Issued> {
+) -> Result<Value> {
     if installation.suspended_at.is_some() {
         return Err(Error::new(StatusCode::FORBIDDEN, "Installation suspended"));
     }
@@ -318,7 +294,11 @@ async fn issue(
         .get("permissions")
         .map_or_else(|| Some(grant.clone()), |value| apps::subset(value, &grant))
         .ok_or_else(|| Error::invalid("Permissions exceed the app grant"))?;
-    let parent_repos = parent.map(selection).transpose()?.unwrap_or_default();
+    let parent_repos: Vec<i64> = parent
+        .map(|t| serde_json::from_str(&t.repositories))
+        .transpose()
+        .map_err(Error::unavailable)?
+        .unwrap_or_default();
     if body.get("repository_ids").is_some() && body.get("repositories").is_some() {
         return Err(Error::invalid("Choose repository names or IDs, not both"));
     }
@@ -328,7 +308,7 @@ async fn issue(
     } else if let Some(names) = body.get("repositories") {
         let names = serde_json::from_value::<Vec<String>>(names.clone())
             .map_err(|_| Error::invalid("Invalid repository names"))?;
-        if names.len() > MAX_SELECTED {
+        if names.len() > 500 {
             return Err(Error::invalid("Select at most 500 repositories"));
         }
         let owner = account(state, installation).await?;
@@ -345,7 +325,7 @@ async fn issue(
     } else {
         parent_repos.clone()
     };
-    if ids.len() > MAX_SELECTED {
+    if ids.len() > 500 {
         return Err(Error::invalid("Select at most 500 repositories"));
     }
     ids.sort_unstable();
@@ -361,11 +341,11 @@ async fn issue(
     {
         return Err(Error::invalid("Select at least one repository"));
     }
-    let value = if actor.is_some() {
-        format!("ghu_{}", oauth_apps::random())
-    } else {
-        crate::backend::identity::tokens::installation_token()
-    };
+    let value = format!(
+        "{}_{}",
+        if actor.is_some() { "ghu" } else { "ghs" },
+        oauth_apps::random()
+    );
     let source = body
         .get("access_token")
         .and_then(Value::as_str)
@@ -384,50 +364,45 @@ async fn issue(
     .await
     .map_err(Error::unavailable)?
     .ok_or_else(|| Error::invalid("Installation changed or repositories are unavailable"))?;
-    Ok(Issued {
-        value,
-        token,
-        permissions,
-        all_repositories: installation.all_repos && ids.is_empty(),
-        repositories: ids,
-    })
-}
-/// The most repositories one token may select, as on GitHub.
-const MAX_SELECTED: usize = 500;
-/// The repositories a token's bounds select; empty means its whole installation.
-fn selection(token: &db::github_apps::Token) -> Result<Vec<i64>> {
-    serde_json::from_str(&token.repositories).map_err(Error::unavailable)
+    let mut response = json!({"token":value,"expires_at":token.expires_at,"permissions":permissions,"repository_selection":if installation.all_repos&&ids.is_empty(){"all"}else{"selected"}});
+    if !ids.is_empty() {
+        let mut repositories = vec![];
+        for repo in db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?
+        {
+            if repo.owner_user_id == installation.user_id && installation.user_id.is_some()
+                || repo.owner_org_id == installation.org_id && installation.org_id.is_some()
+            {
+                repositories.push(repos::document(state, &repo, None).await?);
+            }
+        }
+        response["repositories"] = json!(repositories);
+    }
+    Ok(response)
 }
 pub(super) async fn create_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(id): Path<i64>,
-    OptionalJson(body): OptionalJson<Value>,
+    body: Option<Json<Value>>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let app = jwt(&state, &headers).await?;
     let installation = owned(&state, app.id, id).await?;
-    let issued = issue(
-        &state,
-        &app,
-        &installation,
-        None,
-        &body.unwrap_or_else(|| json!({})),
-        None,
-    )
-    .await?;
-    let mut response = json!({"token":issued.value,"expires_at":issued.token.expires_at,"permissions":issued.permissions,"repository_selection":if issued.all_repositories{"all"}else{"selected"}});
-    if !issued.repositories.is_empty() {
-        let mut repositories = vec![];
-        for repo in
-            db::repositories::records::get_repositories_by_ids(&state.pool, &issued.repositories)
-                .await
-                .map_err(Error::unavailable)?
-        {
-            repositories.push(repos::document(&state, &repo, None).await?);
-        }
-        response["repositories"] = json!(repositories);
-    }
-    Ok((StatusCode::CREATED, Json(response)))
+    Ok((
+        StatusCode::CREATED,
+        Json(
+            issue(
+                &state,
+                &app,
+                &installation,
+                None,
+                &body.map_or_else(|| json!({}), |body| body.0),
+                None,
+            )
+            .await?,
+        ),
+    ))
 }
 
 pub(super) async fn installation_token(
@@ -451,49 +426,58 @@ pub(super) async fn list_repositories(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (auth, token) = installation_token(&state, &headers).await?;
-    let installation = db::github_apps::installation(&state.pool, token.installation_id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
     repository_list(
         &state,
-        &installation,
-        &selection(&token)?,
-        &auth,
-        None,
+        token.installation_id,
+        Some(&token),
+        Some(&auth.user),
         &uri,
         &page,
     )
     .await
 }
-/// A page of an installation's repositories among `selected`, or all of them when that is
-/// empty. A user `viewer` sees only the ones they reach explicitly, as on GitHub.
 async fn repository_list(
     state: &AppState,
-    installation: &Installation,
-    selected: &[i64],
-    auth: &auth::Authentication,
-    viewer: Option<i64>,
+    id: i64,
+    token: Option<&db::github_apps::Token>,
+    user: Option<&db::models::User>,
     uri: &axum::http::Uri,
     page: &Pagination,
 ) -> Result<Response> {
-    let (offset, limit) = page.window()?;
-    let (total, rows) = db::github_apps::installation_repositories(
-        &state.pool,
-        installation.id,
-        viewer,
-        selected,
-        i64::try_from(offset).map_err(Error::unavailable)?,
-        i64::try_from(limit).map_err(Error::unavailable)?,
-    )
-    .await
-    .map_err(Error::unavailable)?;
-    let mut values = vec![];
-    for repo in &rows {
-        values.push(repos::document(state, repo, Some(auth)).await?);
-    }
+    let selected: Vec<i64> = token
+        .map(|t| serde_json::from_str(&t.repositories))
+        .transpose()
+        .map_err(Error::unavailable)?
+        .unwrap_or_default();
+    let installation = db::github_apps::installation(&state.pool, id)
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     let all_repositories = installation.all_repos && selected.is_empty();
-    Ok((page.headers(uri,more(total, offset, limit))?,Json(json!({"total_count":total,"repository_selection":if all_repositories{"all"}else{"selected"},"repositories":values}))).into_response())
+    let mut rows = db::github_apps::repositories(&state.pool, id)
+        .await
+        .map_err(Error::unavailable)?;
+    rows.retain(|repo| selected.is_empty() || selected.contains(&repo.id));
+    if let Some(user) = user {
+        // Check read access a page of repositories at a time rather than one by one.
+        let mut readable = std::collections::HashSet::new();
+        for chunk in rows.chunks(100) {
+            let ids: Vec<i64> = chunk.iter().map(|repo| repo.id).collect();
+            readable.extend(
+                db::repositories::access::readable_repository_ids(&state.pool, Some(user.id), &ids)
+                    .await
+                    .map_err(Error::unavailable)?,
+            );
+        }
+        rows.retain(|repo| readable.contains(&repo.id));
+    }
+    let total = rows.len();
+    let (offset, limit) = page.window()?;
+    let mut values = vec![];
+    for repo in rows.iter().skip(offset).take(limit) {
+        values.push(repos::document(state, repo, user).await?);
+    }
+    Ok((page.headers(uri,total>offset+limit)?,Json(json!({"total_count":total,"repository_selection":if all_repositories{"all"}else{"selected"},"repositories":values}))).into_response())
 }
 pub(super) async fn revoke_token(
     State(state): State<Arc<AppState>>,
@@ -506,7 +490,6 @@ pub(super) async fn revoke_token(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// The app a credential is bound to: an App token's, or a GitHub App's user token's.
 async fn user_app(state: &AppState, auth: &auth::Authentication) -> Result<Option<i64>> {
     if let Some(token) = db::github_apps::token(&state.pool, auth.token.id)
         .await
@@ -539,23 +522,24 @@ pub(super) async fn user_installations(
     let auth = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
-    let token = db::github_apps::token(&state.pool, auth.token.id)
+    let app = user_app(&state, &auth).await?;
+    let mut rows = db::github_apps::installations(&state.pool, app, Some(auth.user.id))
         .await
         .map_err(Error::unavailable)?;
-    let filter = InstallationFilter {
-        app: user_app(&state, &auth).await?,
-        actor: Some(auth.user.id),
-        id: token.map(|token| token.installation_id),
-        ..InstallationFilter::default()
-    };
+    if let Some(token) = db::github_apps::token(&state.pool, auth.token.id)
+        .await
+        .map_err(Error::unavailable)?
+    {
+        rows.retain(|row| row.id == token.installation_id);
+    }
+    let total = rows.len();
     let (offset, limit) = page.window()?;
-    let (total, rows) = installation_page(&state, &filter, offset, limit).await?;
     let mut values = vec![];
-    for row in &rows {
-        values.push(document(&state, row).await?);
+    for row in rows.into_iter().skip(offset).take(limit) {
+        values.push(document(&state, &row).await?);
     }
     Ok((
-        page.headers(&uri, more(total, offset, limit))?,
+        page.headers(&uri, total > offset + limit)?,
         Json(json!({"total_count":total,"installations":values})),
     )
         .into_response())
@@ -570,6 +554,15 @@ pub(super) async fn user_repositories(
     let auth = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
+    let app = user_app(&state, &auth).await?;
+    if !db::github_apps::installations(&state.pool, app, Some(auth.user.id))
+        .await
+        .map_err(Error::unavailable)?
+        .iter()
+        .any(|i| i.id == id && i.suspended_at.is_none())
+    {
+        return Err(Error::missing());
+    }
     let token = db::github_apps::token(&state.pool, auth.token.id)
         .await
         .map_err(Error::unavailable)?;
@@ -579,33 +572,7 @@ pub(super) async fn user_repositories(
     {
         return Err(Error::missing());
     }
-    let filter = InstallationFilter {
-        app: user_app(&state, &auth).await?,
-        actor: Some(auth.user.id),
-        id: Some(id),
-        ..InstallationFilter::default()
-    };
-    let (_, rows) = installation_page(&state, &filter, 0, 1).await?;
-    let installation = rows
-        .into_iter()
-        .next()
-        .filter(|installation| installation.suspended_at.is_none())
-        .ok_or_else(Error::missing)?;
-    // An organization that refuses classic tokens refuses this listing of its repositories.
-    if let Some(org) = installation.org_id {
-        auth::refuse_classic(&state, auth.token.id, org).await?;
-    }
-    let selected = token.as_ref().map(selection).transpose()?.unwrap_or_default();
-    repository_list(
-        &state,
-        &installation,
-        &selected,
-        &auth,
-        Some(auth.user.id),
-        &uri,
-        &page,
-    )
-    .await
+    repository_list(&state, id, token.as_ref(), Some(&auth.user), &uri, &page).await
 }
 async fn change_repository(
     state: &AppState,
@@ -632,19 +599,13 @@ async fn change_repository(
     if let Some(app) = user_app(state, &auth).await? {
         owned(state, app, id).await?;
     }
-    match db::github_apps::change_repository(&state.pool, auth.database_actor(), id, repo, add)
+    if !db::github_apps::change_repository(&state.pool, auth.user.id, id, repo, add)
         .await
         .map_err(Error::unavailable)?
     {
-        RepositoryChange::Changed => Ok(StatusCode::NO_CONTENT),
-        RepositoryChange::Missing => Err(Error::missing()),
-        RepositoryChange::AllRepositories => Err(Error::invalid(
-            "The installation already covers all repositories",
-        )),
-        RepositoryChange::LastRepository => Err(Error::invalid(
-            "An organization installation keeps at least one repository",
-        )),
+        return Err(Error::missing());
     }
+    Ok(StatusCode::NO_CONTENT)
 }
 pub(super) async fn add_repository(
     State(state): State<Arc<AppState>>,
@@ -660,60 +621,6 @@ pub(super) async fn remove_repository(
 ) -> Result<StatusCode> {
     change_repository(&state, &headers, id, repo, false).await
 }
-/// The installation a scoped token targets, named by account ID, login or both. User and
-/// organization IDs can coincide, so an ID that names both needs the login too.
-async fn target_installation(state: &AppState, app: i64, body: &Value) -> Result<Installation> {
-    let id = body
-        .get("target_id")
-        .or_else(|| body.get("account_id"))
-        .map(|id| id.as_i64().ok_or_else(|| Error::invalid("Invalid target ID")))
-        .transpose()?;
-    let login = body
-        .get("target")
-        .or_else(|| body.get("account"))
-        .map(|login| login.as_str().ok_or_else(|| Error::invalid("Invalid target")))
-        .transpose()?;
-    let user = match (login, id) {
-        (Some(login), _) => db::users::accounts::get_user_by_username(&state.pool, login).await,
-        (None, Some(id)) => db::users::accounts::get_user_by_id(&state.pool, id).await,
-        (None, None) => Ok(None),
-    }
-    .map_err(Error::unavailable)?
-    .filter(|user| id.is_none_or(|id| id == user.id));
-    let org = match (login, id) {
-        (Some(login), _) => {
-            db::organizations::profiles::get_public_organization(&state.pool, login).await
-        }
-        (None, Some(id)) => {
-            db::organizations::profiles::get_public_organization_by_id(&state.pool, id).await
-        }
-        (None, None) => Ok(None),
-    }
-    .map_err(Error::unavailable)?
-    .filter(|org| id.is_none_or(|id| id == org.id));
-    let mut found = vec![];
-    if let Some(user) = user {
-        found.extend(
-            db::github_apps::account_installation(&state.pool, app, Some(user.id), None)
-                .await
-                .map_err(Error::unavailable)?,
-        );
-    }
-    if let Some(org) = org {
-        found.extend(
-            db::github_apps::account_installation(&state.pool, app, None, Some(org.id))
-                .await
-                .map_err(Error::unavailable)?,
-        );
-    }
-    match found.len() {
-        0 => Err(Error::invalid("Choose an accessible target account")),
-        1 => Ok(found.remove(0)),
-        _ => Err(Error::invalid(
-            "Account IDs overlap; select the target by login",
-        )),
-    }
-}
 pub(super) async fn scope_token(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -726,12 +633,35 @@ pub(super) async fn scope_token(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    // A scoped source keeps its bounds even after its installation is gone, so it can never
-    // be scoped again as if it were unbounded.
-    let parent = db::github_apps::token_bounds(&state.pool, source.id)
+    let parent = db::github_apps::token(&state.pool, source.id)
         .await
         .map_err(Error::unavailable)?;
-    let installation = target_installation(&state, app.id, &body).await?;
+    let mut target = None;
+    for installation in
+        db::github_apps::installations(&state.pool, Some(app.id), Some(source.user_id))
+            .await
+            .map_err(Error::unavailable)?
+    {
+        let account = account(&state, &installation).await?;
+        let id = body.get("target_id").or_else(|| body.get("account_id"));
+        let name = body.get("target").or_else(|| body.get("account"));
+        if (id.is_some() || name.is_some())
+            && id.is_none_or(|id| *id == account["id"])
+            && name.is_none_or(|name| *name == account["login"])
+            && parent
+                .as_ref()
+                .is_none_or(|parent| parent.installation_id == installation.id)
+        {
+            if target.is_some() {
+                return Err(Error::invalid(
+                    "Account IDs overlap; select the target by login",
+                ));
+            }
+            target = Some(installation);
+        }
+    }
+    let installation =
+        target.ok_or_else(|| Error::invalid("Choose an accessible target account"))?;
     if parent
         .as_ref()
         .is_some_and(|parent| parent.installation_id != installation.id)
@@ -747,14 +677,15 @@ pub(super) async fn scope_token(
         parent.as_ref(),
     )
     .await?;
-    let details = super::authorization(&state, &issued.token).await?;
+    let value = issued["token"]
+        .as_str()
+        .ok_or_else(|| Error::unavailable(()))?;
+    let token = db::users::tokens::find_token(&state.pool, &token_hash(value))
+        .await
+        .map_err(Error::unavailable)?
+        .ok_or_else(Error::missing)?;
     Ok((
         StatusCode::OK,
-        Json(super::document(
-            &oauth_app,
-            &issued.token,
-            &issued.value,
-            &details,
-        )),
+        Json(super::document(&state, &oauth_app, &token, value).await?),
     ))
 }

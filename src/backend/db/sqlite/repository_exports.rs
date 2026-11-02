@@ -25,11 +25,10 @@ async fn selected(
     actor: i64,
     org: Option<i64>,
     ids: &[i64],
-    allow_deleted: bool,
 ) -> Result<bool> {
     for id in ids {
-        let owned: Option<bool> = sqlx::query_scalar("SELECT COALESCE((($3 IS NULL AND owner_kind='user' AND owner_user_id=$2) OR (owner_kind='org' AND owner_org_id=$3)),false) FROM repositories WHERE id=$1").bind(id).bind(actor).bind(org).fetch_optional(&mut *connection).await?;
-        if owned != Some(true) && !(allow_deleted && owned.is_none()) {
+        let owned: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND (($3 IS NULL AND owner_kind='user' AND owner_user_id=$2) OR (owner_kind='org' AND owner_org_id=$3)))").bind(id).bind(actor).bind(org).fetch_one(&mut *connection).await?;
+        if !owned {
             return Ok(false);
         }
     }
@@ -49,13 +48,6 @@ async fn scoped(
     Ok(row)
 }
 
-/// Export enumeration is pinned by a descending ID cursor, never a shifting offset.
-pub async fn discussion_ids(pool: &SqlitePool, repo: i64, pulls: bool, before: i64, limit: i64) -> Result<Vec<i64>> {
-    anyhow::ensure!(before > 0 && (1..=100).contains(&limit), ExportRefusal::Invalid);
-    let table = if pulls { "pull_requests" } else { "issues" };
-    Ok(sqlx::query_scalar(&format!("SELECT id FROM {table} WHERE repo_id=$1 AND id<$2 ORDER BY id DESC LIMIT $3")).bind(repo).bind(before).bind(limit).fetch_all(pool).await?)
-}
-
 pub async fn create(
     pool: &SqlitePool,
     actor: i64,
@@ -68,7 +60,7 @@ pub async fn create(
     anyhow::ensure!(
         ids.len() <= 100
             && ids.iter().collect::<std::collections::BTreeSet<_>>().len() == ids.len()
-            && selected(&mut tx, actor, org, ids, false).await?
+            && selected(&mut tx, actor, org, ids).await?
             && (!ids.is_empty() || options.org_metadata_only)
             && (!options.org_metadata_only || (org.is_some() && ids.is_empty())),
         ExportRefusal::Invalid
@@ -116,7 +108,7 @@ pub async fn by_guid(
         None
     };
     if let Some(row) = &row {
-        if !selected(&mut tx, actor, row.owner_org_id, &row.repository_ids()?, row.state == "exported").await? {
+        if !selected(&mut tx, actor, row.owner_org_id, &row.repository_ids()?).await? {
             return Ok(None);
         }
     }
@@ -146,7 +138,7 @@ pub async fn finish(pool: &SqlitePool, id: i64, state: &str) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let changed = sqlx::query("UPDATE repository_exports SET state=$2,updated_at=$3 WHERE id=$1 AND NOT archive_deleted AND state IN ('pending','exporting')").bind(id).bind(state).bind(chrono::Utc::now().timestamp()).execute(&mut *tx).await?.rows_affected();
     if state == "exported" && changed == 1 {
-        sqlx::query("INSERT INTO pending_object_deletions(object_key,delete_after) SELECT 'migrations/' || guid,strftime('%Y-%m-%dT%H:%M:%f000Z','now','+7 days') FROM repository_exports WHERE id=$1 ON CONFLICT(object_key) DO UPDATE SET delete_after=excluded.delete_after").bind(id).execute(&mut *tx).await?;
+        sqlx::query("DELETE FROM pending_object_deletions WHERE object_key=(SELECT 'migrations/' || guid FROM repository_exports WHERE id=$1)").bind(id).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -169,7 +161,7 @@ pub async fn delete_archive(
         row.state == "exported" || row.state == "failed" || stale,
         ExportRefusal::Archive
     );
-    sqlx::query("UPDATE repository_exports SET archive_deleted=TRUE,state=CASE WHEN state IN ('pending','exporting') THEN 'failed' ELSE state END,updated_at=$2 WHERE id=$1")
+    sqlx::query("UPDATE repository_exports SET archive_deleted=TRUE,updated_at=$2 WHERE id=$1")
         .bind(id)
         .bind(chrono::Utc::now().timestamp())
         .execute(&mut *tx)
@@ -199,7 +191,7 @@ pub async fn lock_repository(
         row.actor_id == Some(actor)
             && matches!(row.state.as_str(), "pending" | "exporting")
             && row.repository_ids()?.contains(&repo)
-            && selected(&mut tx, actor, row.owner_org_id, &[repo], false).await?,
+            && selected(&mut tx, actor, row.owner_org_id, &[repo]).await?,
         ExportRefusal::Invalid
     );
     let held: Option<i64> =
@@ -227,9 +219,8 @@ pub async fn unlock_repository(
     let Some(row) = scoped(&mut tx, actor, org, migration).await? else {
         return Ok(false);
     };
-    let ids = row.repository_ids()?;
-    let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id IN (SELECT value FROM json_each($4)) AND LOWER(name)=LOWER($1) AND (($3 IS NULL AND owner_user_id=$2) OR owner_org_id=$3) ORDER BY (name=$1) DESC,id LIMIT 1").bind(name).bind(actor).bind(org).bind(serde_json::to_string(&ids)?).fetch_optional(&mut *tx).await?;
-    let Some(repo) = repo
+    let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE LOWER(name)=LOWER($1) AND (($3 IS NULL AND owner_user_id=$2) OR owner_org_id=$3)").bind(name).bind(actor).bind(org).fetch_optional(&mut *tx).await?;
+    let Some(repo) = repo.filter(|repo| row.repository_ids().is_ok_and(|ids| ids.contains(repo)))
     else {
         return Ok(false);
     };

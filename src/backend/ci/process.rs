@@ -1,20 +1,20 @@
 //! Running CI commands: own process group, deadline, cancellation and
 //! line-by-line output streaming.
-use anyhow::Result;
-use codeyard_actions::process::ProcessGroup;
+use anyhow::{bail, Result};
 use futures_util::FutureExt;
 use std::future::Future;
+use std::io;
 use std::process::{ExitStatus, Stdio};
-use std::time::Duration;
-#[cfg(test)]
-use std::time::Instant;
-use tokio::io::{AsyncRead, BufReader};
-use tokio::process::Command;
+use std::time::{Duration, Instant};
+use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncReadExt, BufReader};
+use tokio::process::{Child, Command};
 use tokio::sync::watch;
 
 const MAX_LINE: usize = 16 * 1024;
-#[cfg(test)]
-use codeyard_actions::process::{OMITTED_LINE, KILL_GRACE};
+const TRUNCATED_MARK: &str = " … [line truncated]";
+const TERM_GRACE: Duration = Duration::from_secs(3);
+const KILL_GRACE: Duration = Duration::from_secs(2);
+const GROUP_POLL: Duration = Duration::from_millis(20);
 
 /// A command with a minimal environment in its own process group.
 pub(super) fn command(program: impl AsRef<std::ffi::OsStr>) -> Command {
@@ -58,47 +58,28 @@ pub(super) enum Stopped {
     TimedOut,
 }
 
-pub(super) async fn run_with_grace<F, Fut>(
-    mut command: Command, timeout: Duration, grace: Duration,
-    scope: Option<&codeyard_actions::process::Cgroup>, force: watch::Receiver<bool>,
-    cancel: watch::Receiver<bool>, on_line: F,
+/// Runs `command`, passing each output line to `on_line(line, is_stderr)`.
+/// Every return path terminates descendants left in the command's process group.
+pub(super) async fn run<F, Fut>(
+    mut command: Command,
+    timeout: Duration,
+    cancel: watch::Receiver<bool>,
+    on_line: F,
 ) -> Result<ExitStatus>
 where
     F: Fn(String, bool) -> Fut,
     Fut: Future<Output = Result<()>>,
 {
-    if *cancel.borrow() || *force.borrow() {
-        return Err(Stopped::Cancelled.into());
-    }
-    if timeout.is_zero() {
-        return Err(Stopped::TimedOut.into());
-    }
     let mut child = command.spawn()?;
-    let mut group = ProcessGroup::new(child.id(), grace);
+    let mut group = ProcessGroup::new(child.id());
     let stdout = child.stdout.take();
     let stderr = child.stderr.take();
     // Output is read until the group is gone, also while a cancelled or timed-out command shuts
     // down: closing the pipes first would hand its handlers SIGPIPE before they could run.
-    let (error_tx, mut error_rx) = tokio::sync::mpsc::channel(1);
-    let failed = std::sync::atomic::AtomicBool::new(false);
-    let callback = |line, stderr| {
-        let error_tx = &error_tx;
-        let failed = &failed;
-        let on_line = &on_line;
-        async move {
-            if !failed.load(std::sync::atomic::Ordering::Relaxed) {
-                if let Err(error) = on_line(line, stderr).await {
-                    failed.store(true, std::sync::atomic::Ordering::Relaxed);
-                    let _ = error_tx.try_send(error);
-                }
-            }
-            Ok(())
-        }
-    };
     let forwarding = async {
         tokio::try_join!(
-            forward(stdout, false, &callback),
-            forward(stderr, true, &callback)
+            forward(stdout, false, &on_line),
+            forward(stderr, true, &on_line)
         )
     }
     .fuse();
@@ -106,9 +87,8 @@ where
     let work = async {
         let (_, status) = tokio::try_join!(&mut forwarding, async {
             let status = child.wait().await?;
-            // Kill independently grouped descendants before waiting for inherited output pipes.
-            if let Some(scope) = scope { group.disarm(); scope.kill()?; }
-            else { group.stop(&mut child).await?; }
+            // Descendants can inherit the output pipes after the runner exits.
+            stop_process_group(&mut child, group.pid()).await?;
             Ok::<_, anyhow::Error>(status)
         })?;
         Ok::<_, anyhow::Error>(status)
@@ -119,24 +99,8 @@ where
             Err(_) => Err(Stopped::TimedOut.into()),
         },
         _ = cancelled(cancel) => Err(Stopped::Cancelled.into()),
-        _ = cancelled(force.clone()) => Err(Stopped::Cancelled.into()),
-        Some(error) = error_rx.recv() => Err(error),
     };
-    let stopping = async {
-        let graceful = async {
-            if let Some(scope) = scope { scope.stop(&mut child, &mut group, grace).await }
-            else { group.stop(&mut child).await.map_err(anyhow::Error::from) }
-        };
-        tokio::select! {
-            result = graceful => return result,
-            _ = cancelled(force) => {}
-        }
-        if let Some(scope) = scope { group.disarm(); scope.kill()?; }
-        else if child.id().is_some() { group.kill(); }
-        else { group.disarm(); }
-        tokio::time::timeout(codeyard_actions::process::KILL_GRACE, child.wait()).await??;
-        Ok(())
-    };
+    let stopping = stop_process_group(&mut child, group.pid());
     tokio::pin!(stopping);
     loop {
         tokio::select! {
@@ -147,9 +111,7 @@ where
             _ = &mut forwarding => {}
         }
     }
-    if result.is_ok() {
-        if let Ok(error) = error_rx.try_recv() { return Err(error); }
-    }
+    group.disarm();
     result
 }
 
@@ -163,6 +125,114 @@ pub(super) async fn cancelled(mut cancel: watch::Receiver<bool>) {
     }
 }
 
+struct ProcessGroup(Option<u32>);
+
+impl ProcessGroup {
+    fn new(pid: Option<u32>) -> Self {
+        Self(pid)
+    }
+
+    fn pid(&self) -> Option<u32> {
+        self.0
+    }
+
+    fn disarm(&mut self) {
+        self.0 = None;
+    }
+}
+
+impl Drop for ProcessGroup {
+    fn drop(&mut self) {
+        let Some(pid) = self.0.take() else {
+            return;
+        };
+        let _ = signal_group(pid, libc::SIGTERM);
+        if std::thread::Builder::new()
+            .name("ci-process-cleanup".into())
+            .spawn(move || stop_process_group_blocking(pid))
+            .is_err()
+        {
+            let _ = signal_group(pid, libc::SIGKILL);
+        }
+    }
+}
+
+async fn stop_process_group(child: &mut Child, pid: Option<u32>) -> Result<()> {
+    let Some(pid) = pid else {
+        return Ok(());
+    };
+    if !group_alive(pid)? {
+        let _ = child.try_wait();
+        return Ok(());
+    }
+    signal_group(pid, libc::SIGTERM)
+        .map_err(|_| anyhow::anyhow!("could not stop CI process group"))?;
+    if wait_for_group(child, pid, TERM_GRACE).await? {
+        return Ok(());
+    }
+    signal_group(pid, libc::SIGKILL)
+        .map_err(|_| anyhow::anyhow!("could not kill CI process group"))?;
+    if wait_for_group(child, pid, KILL_GRACE).await? {
+        return Ok(());
+    }
+    bail!("CI process group did not stop in time")
+}
+
+async fn wait_for_group(child: &mut Child, pid: u32, duration: Duration) -> Result<bool> {
+    let deadline = Instant::now() + duration;
+    loop {
+        child
+            .try_wait()
+            .map_err(|_| anyhow::anyhow!("could not reap CI process"))?;
+        if !group_alive(pid)? {
+            return Ok(true);
+        }
+        if Instant::now() >= deadline {
+            return Ok(false);
+        }
+        tokio::time::sleep(GROUP_POLL).await;
+    }
+}
+
+fn stop_process_group_blocking(pid: u32) {
+    let deadline = Instant::now() + TERM_GRACE;
+    while Instant::now() < deadline {
+        if matches!(group_alive(pid), Ok(false)) {
+            return;
+        }
+        std::thread::sleep(GROUP_POLL);
+    }
+    let _ = signal_group(pid, libc::SIGKILL);
+}
+
+fn group_alive(pid: u32) -> Result<bool> {
+    let pid = i32::try_from(pid).map_err(|_| anyhow::anyhow!("invalid CI process group"))?;
+    // SAFETY: signal zero only checks whether the process group still exists.
+    if unsafe { libc::kill(-pid, 0) } == 0 {
+        return Ok(true);
+    }
+    match io::Error::last_os_error().raw_os_error() {
+        Some(libc::ESRCH) => Ok(false),
+        Some(libc::EPERM) => Ok(true),
+        _ => bail!("could not inspect CI process group"),
+    }
+}
+
+fn signal_group(pid: u32, signal: i32) -> io::Result<()> {
+    let pid = i32::try_from(pid)
+        .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "invalid process group"))?;
+    // SAFETY: a negative pid addresses the process group created for this command.
+    if unsafe { libc::kill(-pid, signal) } == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(error)
+    }
+}
+
 async fn forward<R, F, Fut>(reader: Option<R>, stderr: bool, on_line: &F) -> Result<()>
 where
     R: AsyncRead + Unpin,
@@ -173,36 +243,58 @@ where
         return Ok(());
     };
     let mut reader = BufReader::new(reader);
-    while let Some(line) = codeyard_actions::process::read_line(
-        &mut reader, MAX_LINE, Some((b"::codeyard-progress::", 1024 * 1024)),
-    ).await? {
-        on_line(line, stderr).await?;
+    let mut line = Vec::new();
+    loop {
+        line.clear();
+        let read = (&mut reader)
+            .take(MAX_LINE as u64 + 1)
+            .read_until(b'\n', &mut line)
+            .await?;
+        if read == 0 {
+            return Ok(());
+        }
+        // An over-long line has more input after this read, which is dropped below.
+        let cut = line.len() > MAX_LINE && !line.ends_with(b"\n");
+        if cut {
+            skip_line(&mut reader).await?;
+        }
+        let mut text = String::from_utf8_lossy(&line)
+            .trim_end_matches(['\r', '\n'])
+            .to_owned();
+        // Lossy decoding can make the text longer than the bytes read, so the limit applies to
+        // the text. The cut moves back to a character boundary, so no character is split.
+        if cut || text.len() > MAX_LINE {
+            let mut end = text.len().min(MAX_LINE - TRUNCATED_MARK.len());
+            while !text.is_char_boundary(end) {
+                end -= 1;
+            }
+            text.truncate(end);
+            text.push_str(TRUNCATED_MARK);
+        }
+        on_line(text, stderr).await?;
     }
-    Ok(())
+}
+
+/// Drops input through the next newline. It reads a bounded piece at a time, so the rest of a
+/// very long line is never held in memory.
+async fn skip_line<R: AsyncRead + Unpin>(reader: &mut BufReader<R>) -> io::Result<()> {
+    let mut piece = Vec::new();
+    loop {
+        piece.clear();
+        let read = (&mut *reader)
+            .take(MAX_LINE as u64)
+            .read_until(b'\n', &mut piece)
+            .await?;
+        if read == 0 || piece.ends_with(b"\n") {
+            return Ok(());
+        }
+    }
 }
 
 #[cfg(test)]
-pub(super) mod tests {
+mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
-
-    const TERM_GRACE: Duration = Duration::from_secs(3);
-
-    /// Runs `command` with a three-second stop grace and no forced stop, passing each output
-    /// line to `on_line(line, is_stderr)`.
-    pub(in crate::backend::ci) async fn run<F, Fut>(
-        command: Command,
-        timeout: Duration,
-        cancel: watch::Receiver<bool>,
-        on_line: F,
-    ) -> Result<ExitStatus>
-    where
-        F: Fn(String, bool) -> Fut,
-        Fut: Future<Output = Result<()>>,
-    {
-        let (_tx, force) = watch::channel(false);
-        run_with_grace(command, timeout, TERM_GRACE, None, force, cancel, on_line).await
-    }
 
     #[tokio::test]
     async fn streams_lines_and_kills_the_group_on_timeout() {
@@ -238,7 +330,7 @@ pub(super) mod tests {
     }
 
     #[tokio::test]
-    async fn a_line_over_the_limit_is_omitted_and_the_run_goes_on() {
+    async fn a_line_over_the_limit_is_cut_with_a_marker_and_the_run_goes_on() {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let (_tx, cancel) = watch::channel(false);
         let mut long = command("/bin/sh");
@@ -257,7 +349,8 @@ pub(super) mod tests {
         let seen = lines.lock().unwrap().clone();
         // The rest of the long line is dropped, not split into lines of its own.
         assert_eq!(seen.len(), 2, "{seen:?}");
-        assert_eq!(seen[0].0, OMITTED_LINE);
+        assert_eq!(seen[0].0.len(), MAX_LINE);
+        assert!(seen[0].0.starts_with("aaaa") && seen[0].0.ends_with(TRUNCATED_MARK));
         assert_eq!(seen[1], ("after".to_string(), false));
     }
 
@@ -278,7 +371,7 @@ pub(super) mod tests {
         let seen = lines.lock().unwrap().clone();
         assert_eq!(seen.len(), 2, "{seen:?}");
         assert!(seen[0].len() <= MAX_LINE, "{}", seen[0].len());
-        assert_eq!(seen[0], OMITTED_LINE);
+        assert!(seen[0].starts_with('é') && seen[0].ends_with(TRUNCATED_MARK));
         assert_eq!(seen[1], "after");
     }
 
@@ -319,7 +412,7 @@ pub(super) mod tests {
             .await
             .unwrap();
             let _cleanup =
-                crate::backend::git::repository::process::ProcessGroup::new(Some(numbers[0] as u32), Duration::ZERO);
+                crate::backend::git::repository::process::ProcessGroup(Some(numbers[0] as u32));
             if matches!(reason, "cancel" | "abort") {
                 for &pid in &numbers {
                     assert_eq!(

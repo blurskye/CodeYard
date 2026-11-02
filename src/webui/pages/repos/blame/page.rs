@@ -66,8 +66,7 @@ pub fn blame(repo: &RepoChrome, page: &BlamePage) -> Element {
     let url = file_url(&base, "blob", &page.reference, &page.path);
     let raw = file_url(&base, "raw", &page.reference, &page.path);
     let blame_url = file_url(&base, "blame", &page.reference, &page.path);
-    let display_name = crate::git_paths::display(page.path.rsplit('/').next().unwrap_or_default());
-    let name = display_name.as_str();
+    let name = page.path.rsplit('/').next().unwrap_or_default();
     let language = language_of_path(&page.path);
     // Git counts lines by newline alone, so a carriage return is dropped rather than shown as
     // a line break inside a table cell.
@@ -110,7 +109,7 @@ pub fn blame(repo: &RepoChrome, page: &BlamePage) -> Element {
                                 if let Some(hunk) = row.hunk {
                                     td { class: "repo-blame-hunk", rowspan: "{hunk.line_count}",
                                         div { class: "repo-blame-commit",
-                                            Avatar { name: hunk.author.clone(), size: 20, account: false }
+                                            Avatar { name: hunk.author.clone(), size: 20 }
                                             div { class: "repo-blame-who",
                                                 span { class: "repo-blame-author", "{hunk.author}" }
                                                 span { class: "repo-blame-meta",

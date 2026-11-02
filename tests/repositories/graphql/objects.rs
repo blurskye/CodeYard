@@ -26,7 +26,7 @@ pub(super) async fn exercise(
         "main",
         &db::releases::ReleaseFields {
             name: Some("GraphQL release".into()),
-            make_latest: true.into(),
+            make_latest: true,
             ..Default::default()
         },
     )
@@ -52,7 +52,6 @@ pub(super) async fn exercise(
     let asset = db::releases::add_release_asset(
         pool,
         actor,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await),
         repo,
         release.id,
         &db::releases::NewReleaseAsset {

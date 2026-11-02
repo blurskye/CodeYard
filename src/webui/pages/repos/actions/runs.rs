@@ -94,7 +94,15 @@ pub fn query_url(base: &str, query: &BTreeMap<String, String>, changes: &[(&str,
 }
 
 pub fn workflow_name(path: &str) -> String {
-    crate::webui::workflow_filename(path.split(',').next().unwrap_or(path))
+    path.split(',')
+        .next()
+        .unwrap_or(path)
+        .rsplit('/')
+        .next()
+        .unwrap_or(path)
+        .trim_end_matches(".yaml")
+        .trim_end_matches(".yml")
+        .to_string()
 }
 
 pub fn matches_filters(run: &Run, query: &BTreeMap<String, String>) -> bool {
@@ -341,12 +349,18 @@ pub(in crate::webui::pages::repos) fn run_row(
 
 #[component]
 pub(in crate::webui::pages) fn ActionsView(model: ActionsPage) -> Element {
+    let active = model.selected.as_ref().is_some_and(|selected| {
+        matches!(
+            logs::normalize_status(&selected.run.status),
+            "running" | "queued"
+        )
+    });
     // Keep the run's log editor/search/details mounted across status transitions.
-    // The timer drains outstanding log pages after terminal metadata arrives,
-    // then stops itself without discarding unsubmitted local controls.
+    // Only the timer component is removed on terminal status, which cancels its
+    // use_future task without discarding the user's unsubmitted local controls.
     rsx! {
-        if let Some(selected) = &model.selected {
-            super::polling::ActiveRunPoll { key: "{selected.run.id}", run_id: selected.run.id.clone() }
+        if active {
+            super::polling::ActiveRunPoll { key: "{model.selected.as_ref().unwrap().run.id}", run_id: model.selected.as_ref().unwrap().run.id.clone() }
         }
         {actions_page(model)}
     }
@@ -391,8 +405,6 @@ pub fn actions_page(mut model: ActionsPage) -> Element {
     }
     // A repository with no workflows shows the heading and the get-started panel only.
     let needs_setup = model.workflows.is_empty()
-        && model.runs.is_empty()
-        && ["workflow", "status", "branch", "event", "before"].iter().all(|name| model.value(name).is_empty())
         && model.repository.is_some()
         && model.workflow_warning.is_none();
     // The Run workflow menu only appears when a workflow can be started by hand.

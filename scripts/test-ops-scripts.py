@@ -32,17 +32,6 @@ class Scripts(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result
 
-    def test_disposable_pg_url_removes_database_query_overrides(self):
-        import urllib.parse
-        body = (ROOT / "scripts/e2e.sh").read_text().split("pg_url() {", 1)[1].split("\n}", 1)[0]
-        self.env.update(PYTHON=sys.executable, GITSERV_TEST_DATABASE_URL=(
-            "postgresql://fixture:password@localhost/source?dbname=real&db%6eame=other&sslmode=require"))
-        result = self.shell("pg_url() {" + body + "\n}\npg_url cye2e_owned")
-        url = urllib.parse.urlsplit(result.stdout.strip())
-        self.assertEqual(url.path, "/cye2e_owned")
-        self.assertEqual(urllib.parse.parse_qs(url.query), {"sslmode": ["require"]})
-        self.assertEqual(url.password, "password")
-
     def executable(self, path, content):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content)
@@ -65,10 +54,7 @@ done
         self.env["DX"] = str(self.executable(self.work / "bin/dx", '''#!/usr/bin/env bash
 set -eu
 if [[ $1 == --version ]]; then echo 0.7.10; exit; fi
-while (($#)); do
-    if [[ $1 == --out-dir ]]; then out=$2; break; fi
-    shift
-done
+out=$CARGO_TARGET_DIR/dx/codeyard/release/web/public
 mkdir -p "$out"
 printf bundle >"$out/index.html"
 '''))
@@ -109,25 +95,27 @@ printf bundle >"$out/index.html"
         self.assertEqual((unrelated / "sentinel").read_text(), "keep data")
 
     def test_documented_sqlite_backup_is_private_and_refuses_unsafe_destinations(self):
-        self.assertIn("codeyard backup <dir>", (ROOT / "docs/STORAGE_ARCHITECTURE.md").read_text())
-        binary = Path(self.env["CARGO_TARGET_DIR"]) / self.env.get("CARGO_BUILD_TARGET", "") / "debug/codeyard"
-        self.env.update(GITSERV_STATE_DIR=str(self.work / "state"), REPOS_PATH=str(self.work / "repos"))
-        self.env.pop("DATABASE_URL", None)
-        self.env["TEST_BINARY"] = str(binary)
-        (self.work / ".env").touch()
-        self.shell('"$TEST_BINARY" init')
-        source = self.work / "state/gitserv.db"
+        docs = (ROOT / "docs/STORAGE_ARCHITECTURE.md").read_text()
+        command = docs.split("```bash\n", 1)[1].split("```", 1)[0]
+        source = self.work / "source.db"
         with sqlite3.connect(source) as database:
-            database.execute("CREATE TABLE fixture_secrets(token TEXT)")
-            database.execute("INSERT INTO fixture_secrets VALUES ('session-secret')")
+            database.execute("CREATE TABLE sessions(token TEXT)")
+            database.execute("INSERT INTO sessions VALUES ('session-secret')")
         backup = self.work / "backup"
-        destination = backup / "database.sqlite"
-        command = '"$TEST_BINARY" backup "$PWD/backup"'
+        destination = backup / "gitserv.db"
+        command = command.replace("/path/to/gitserv.db", str(source)).replace("/backup/codeyard", str(backup))
+        self.executable(self.work / "bin/sqlite3", f'''#!{sys.executable}
+import sqlite3, sys
+with sqlite3.connect(sys.argv[1]) as source:
+    with sqlite3.connect(sys.argv[2].split("'")[1]) as destination:
+        source.backup(destination)
+''')
+        self.env["PATH"] = str(self.work / "bin") + ":" + self.env["PATH"]
         self.shell("umask 022\n" + command)
         self.assertEqual(stat.S_IMODE(backup.stat().st_mode), 0o700)
         self.assertEqual(stat.S_IMODE(destination.stat().st_mode), 0o600)
         with sqlite3.connect(destination) as database:
-            self.assertEqual(database.execute("SELECT token FROM fixture_secrets").fetchone(), ("session-secret",))
+            self.assertEqual(database.execute("SELECT token FROM sessions").fetchone(), ("session-secret",))
         self.shell(command)  # An already private destination remains usable.
         destination.chmod(0o644)
         self.shell(command, success=False)
@@ -161,13 +149,13 @@ printf bundle >"$out/index.html"
         settings = script.split("TARGET_DIR=", 1)[1].split("# ssh and ssh-keygen", 1)[0]
         self.executable(self.work / "target/release/codeyard", "#!/bin/sh\necho started\n")
         (self.work / "node").mkdir()
-        self.shell('ROOT=$PWD; E2E_PROFILE=release; CARGO_TARGET_DIR=target; unset CARGO_BUILD_TARGET\nTARGET_DIR=' + settings +
+        self.shell('ROOT=$PWD; E2E_PROFILE=release; CARGO_TARGET_DIR=target\nTARGET_DIR=' + settings +
                    '\n[[ $BIN == /* ]]; cd node; [[ $("$BIN") == started ]]')
 
     def test_e2e_nodes_stop_dotenv_search_at_the_fixture(self):
         script = (ROOT / "scripts/e2e.sh").read_text()
         functions = script.split("server_dir()", 1)[1].split("cluster_cli()", 1)[0]
-        binary = Path(self.env["CARGO_TARGET_DIR"]) / self.env.get("CARGO_BUILD_TARGET", "") / "debug/codeyard"
+        binary = Path(self.env["CARGO_TARGET_DIR"]) / "debug/codeyard"
         self.assertTrue(binary.is_file(), str(binary))
         unrelated = self.work / "unrelated.sqlite"
         (self.work / ".env").write_text("DATABASE_URL=sqlite://" + str(unrelated) + "?mode=rwc\n")

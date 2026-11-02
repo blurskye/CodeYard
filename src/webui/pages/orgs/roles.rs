@@ -61,7 +61,7 @@ pub(super) fn panel(page: &Page) -> Element {
             for user in &panel.users {
                 li {class:"org-row",key:"{user.id}",
                     div {class:"org-row-main",
-                        h3 {NavLink {class:"org-row-link",href:crate::webui::profile_path(&user.username),"{user.username}"}}
+                        h3 {NavLink {class:"org-row-link",href:format!("/{}",crate::webui::encode_component(&user.username)),"{user.username}"}}
                         if user.direct {p {"Directly assigned"}}
                         for team in &user.teams {p {key:"{team.id}","Inherited from " NavLink {href:format!("/settings/organizations/{}?tab=teams&team={}",org.id,team.id),"{team.name}"}}}
                     }
@@ -84,7 +84,7 @@ pub(super) fn panel(page: &Page) -> Element {
                     }
                     if !org.suspended {div {class:"org-row-actions",
                         for all in [false,true] {form {class:"org-form",method:"post",action:target.clone(),key:"{all}",
-                            input {r#type:"hidden",name:"team_id",value:team.id.to_string()}
+                            input {r#type:"hidden",name:"team_slug",value:team.slug.clone()}
                             if !all {input {r#type:"hidden",name:"role_id",value:selected.id.to_string()}}
                             {fields::hidden_controls(page,if all {"revoke-all-team-roles"}else{"revoke-team-role"})}
                             label {input {r#type:"checkbox",name:"confirm",value:"true",required:true} if all {" Remove all team role assignments"}else{" Remove this team role assignment"}}

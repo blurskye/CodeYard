@@ -16,8 +16,7 @@ pub async fn list_suites(
     let reference = filter.reference.as_deref();
     let short_ref = reference.filter(|r| !r.starts_with("refs/"));
     let enforcement = enforcement(filter);
-    let columns = StoredSuite::SUMMARY_COLUMNS;
-    let rows:Vec<StoredSuite>=sqlx::query_as(&format!("SELECT {columns} FROM repository_rule_suites s JOIN repositories r ON r.id=s.repo_id JOIN users u ON u.id=$2 WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND {readable} AND s.created_at>=$3 AND ($4::text IS NULL OR s.ref_name=$4 OR s.ref_name='refs/heads/'||$5::text OR s.ref_name='refs/tags/'||$5::text) AND ($6::text IS NULL OR lower(s.repository_name)=lower($6)) AND ($7::text IS NULL OR lower(s.actor_name)=lower($7)) AND ($8::text IS NULL OR s.result=$8) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(s.evaluations::jsonb) e WHERE e->>'enforcement'=$9)) ORDER BY s.id DESC LIMIT $10 OFFSET $11"))
+    let rows:Vec<StoredSuite>=sqlx::query_as(&format!("SELECT s.* FROM repository_rule_suites s JOIN repositories r ON r.id=s.repo_id JOIN users u ON u.id=$2 WHERE s.org_id=$1 AND r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND {readable} AND s.created_at>=$3 AND ($4::text IS NULL OR s.ref_name=$4 OR s.ref_name='refs/heads/'||$5::text OR s.ref_name='refs/tags/'||$5::text) AND ($6::text IS NULL OR lower(s.repository_name)=lower($6)) AND ($7::text IS NULL OR lower(s.actor_name)=lower($7)) AND ($8::text IS NULL OR s.result=$8) AND ($9::text IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(s.evaluations::jsonb) e WHERE e->>'enforcement'=$9)) ORDER BY s.id DESC LIMIT $10 OFFSET $11"))
         .bind(org).bind(actor).bind(filter.since).bind(reference).bind(short_ref)
         .bind(&filter.repository_name).bind(&filter.actor_name).bind(filter.result.map(|r|r.as_str())).bind(enforcement)
         .bind(page.limit).bind(page.offset).fetch_all(&mut *tx).await?;
@@ -85,7 +84,7 @@ pub async fn list_repository_suites(
     }
     let reference = filter.reference.as_deref();
     let short_ref = reference.filter(|r| !r.starts_with("refs/"));
-    let rows: Vec<StoredSuite> = sqlx::query_as(&format!("SELECT {} FROM repository_rule_suites s WHERE s.repo_id=$1 AND s.created_at>=$2 AND ($3::text IS NULL OR s.ref_name=$3 OR s.ref_name='refs/heads/'||$4::text OR s.ref_name='refs/tags/'||$4::text) AND ($5::text IS NULL OR lower(s.actor_name)=lower($5)) AND ($6::text IS NULL OR s.result=$6) AND ($7::text IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(s.evaluations::jsonb) e WHERE e->>'enforcement'=$7)) ORDER BY s.id DESC LIMIT $8 OFFSET $9", StoredSuite::SUMMARY_COLUMNS))
+    let rows: Vec<StoredSuite> = sqlx::query_as("SELECT * FROM repository_rule_suites s WHERE s.repo_id=$1 AND s.created_at>=$2 AND ($3::text IS NULL OR s.ref_name=$3 OR s.ref_name='refs/heads/'||$4::text OR s.ref_name='refs/tags/'||$4::text) AND ($5::text IS NULL OR lower(s.actor_name)=lower($5)) AND ($6::text IS NULL OR s.result=$6) AND ($7::text IS NULL OR EXISTS(SELECT 1 FROM jsonb_array_elements(s.evaluations::jsonb) e WHERE e->>'enforcement'=$7)) ORDER BY s.id DESC LIMIT $8 OFFSET $9")
         .bind(repo)
         .bind(filter.since)
         .bind(reference)

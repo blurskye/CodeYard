@@ -93,11 +93,9 @@ impl History<'_> {
                 git::repository::introduced_signatures(repository, None, old, new).await?
             }
         };
-        let mut signers = crate::backend::identity::signatures::Signers::default();
         for commit in &commits {
             let reason = crate::backend::identity::signatures::check(
                 pool,
-                &mut signers,
                 crate::backend::identity::signatures::Signed {
                     signature: commit.signature.as_deref(),
                     payload: commit.payload.as_deref(),
@@ -264,10 +262,7 @@ pub async fn check_branch_write_with(
         } else {
             false
         };
-        let app_allowed = if rule.restrict_pushes
-            && !rule.push_allowances.contains(&actor.id)
-            && !team_allowed
-        {
+        let app_allowed = if rule.restrict_pushes {
             app_allows_actor(
                 pool,
                 repository.id,
@@ -348,11 +343,10 @@ async fn app_allows_actor(pool: &db::DbPool, repo: i64, actor: i64, ids: &[i64])
         if app.bot_id != actor {
             continue;
         }
-        if db::github_apps::repository_installation(pool, app.id, repo, true, None)
-            .await?
-            .is_some()
-        {
-            return Ok(true);
+        for installation in db::github_apps::installations(pool, Some(app.id), None).await? {
+            if db::github_apps::has_repository(pool, installation.id, repo, true).await? {
+                return Ok(true);
+            }
         }
     }
     Ok(false)
@@ -440,14 +434,7 @@ fn refusal(
             return Some(DELETION_BLOCKED);
         }
     }
-    // Creating a branch is limited by push restrictions only when the rule blocks creations.
-    let creation_allowed =
-        write.old.is_none() && write.new.is_some() && !rule.github_settings.block_creations;
-    if rule.restrict_pushes
-        && !creation_allowed
-        && !rule.push_allowances.contains(&actor_id)
-        && !team_allowed
-    {
+    if rule.restrict_pushes && !rule.push_allowances.contains(&actor_id) && !team_allowed {
         return Some(PUSHER_NOT_ALLOWED);
     }
     None

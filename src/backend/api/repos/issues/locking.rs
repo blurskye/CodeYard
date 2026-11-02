@@ -36,7 +36,7 @@ pub(crate) async fn native_lock(
     let reason = field(&form, "lock_reason");
     db::discussions::set_lock(
         &ctx.state.pool,
-        ctx.database_actor(ctx.require_user()?.id),
+        ctx.require_user()?.id,
         repo.record.id,
         item,
         locked,
@@ -47,7 +47,7 @@ pub(crate) async fn native_lock(
         |error| match error.downcast_ref::<db::discussions::LockRefusal>() {
             Some(db::discussions::LockRefusal::Denied) => ctx.error(
                 StatusCode::FORBIDDEN,
-                "Triage access is required to lock this conversation.",
+                "Write access is required to lock this conversation.",
             ),
             Some(db::discussions::LockRefusal::Missing) => {
                 ctx.error(StatusCode::NOT_FOUND, "Discussion not found.")

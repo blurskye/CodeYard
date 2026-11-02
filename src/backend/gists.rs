@@ -51,11 +51,6 @@ pub fn text_preview(bytes: &[u8], limit: usize) -> Option<&str> {
     Some(&text[..length])
 }
 
-/// Database-only operations need a published gist, not an available Git storage node.
-pub async fn metadata(pool: &db::DbPool, id: &str) -> Result<db::gists::Gist> {
-    db::gists::get(pool, id).await?.filter(|gist| gist.ready).ok_or_else(|| GistRefusal::Missing.into())
-}
-
 pub async fn load(state: &AppState, id: &str, revision: Option<&str>) -> Result<LoadedGist> {
     let gist = db::gists::get(&state.pool, id)
         .await?
@@ -80,9 +75,6 @@ pub async fn load(state: &AppState, id: &str, revision: Option<&str>) -> Result<
 /// Recover accepted initial publications even if a disconnected creator never received the ID.
 /// Bound each owner-list request; storage failures remain failures, not an empty list.
 pub async fn recover_owned(state: &AppState, owner: i64) -> Result<()> {
-    for repo in db::gists::orphaned_for_owner(&state.pool, owner).await? {
-        discard(state, repo, true).await?;
-    }
     for id in db::gists::unready_for_owner(&state.pool, owner).await? {
         if let Err(error) = load(state, &id, None).await {
             let Some(gist) = db::gists::get(&state.pool, &id).await? else {
@@ -93,9 +85,9 @@ pub async fn recover_owned(state: &AppState, owner: i64) -> Result<()> {
                     .await?
                     .is_none()
             {
-                discard(state, gist.repo_id, false).await?;
+                discard(state, gist.repo_id).await?;
             } else {
-                tracing::warn!(gist_id = %id, %error, "Pending gist recovery deferred");
+                return Err(error);
             }
         }
     }
@@ -126,9 +118,11 @@ async fn complete<T: Send + 'static>(
         .await
         .map_err(|_| RepoError::authority_unavailable())?
 }
-async fn discard(state: &AppState, repo: i64, orphan_only: bool) -> Result<bool> {
-    if let Some(repository) = db::gists::discard(&state.pool, repo, orphan_only).await? {
-        lifecycle::remove_deleted_repository(state.cluster.as_ref(), &repository).await?;
+async fn discard(state: &AppState, repo: i64) -> Result<bool> {
+    if let Some(repository) = db::gists::discard(&state.pool, repo).await? {
+        repo_store(&repository, state.cluster.as_ref())
+            .remove()
+            .await?;
         Ok(true)
     } else {
         Ok(false)
@@ -190,7 +184,7 @@ pub async fn create(
         )
         .await
         {
-            discard(&work, repo.id, false).await?;
+            discard(&work, repo.id).await?;
             return Err(error);
         }
         let store = repo_store(&repo, work.cluster.as_ref());
@@ -201,7 +195,7 @@ pub async fn create(
             if let Ok(loaded) = load(&work, &id, None).await {
                 return Ok(loaded);
             }
-            if !discard(&work, repo.id, false).await? {
+            if !discard(&work, repo.id).await? {
                 return Err(GistSaved { id }.into());
             }
             return Err(error.into());
@@ -243,7 +237,6 @@ pub async fn fork(
 ) -> Result<LoadedGist> {
     let work = state.clone();
     complete(&state, async move {
-        recover_owned(&work, actor).await?;
         let source = load(&work, &id, None).await?;
         ensure!(source.gist.owner_id != actor, GistRefusal::Invalid);
         let id = uuid::Uuid::new_v4().simple().to_string();
@@ -272,7 +265,7 @@ pub async fn fork(
         )
         .await
         {
-            discard(&work, repo.id, false).await?;
+            discard(&work, repo.id).await?;
             return Err(error);
         }
         confirm_saved(&work, id).await
@@ -292,8 +285,10 @@ pub async fn delete(
             .ok_or(GistRefusal::Missing)?;
         let repository =
             db::gists::delete(&work.pool, actor, &credential.borrowed(), gist.repo_id).await?;
-        lifecycle::remove_deleted_repository(work.cluster.as_ref(), &repository)
-            .await.map_err(|_| GistDeleted)?;
+        repo_store(&repository, work.cluster.as_ref())
+            .retire()
+            .await
+            .map_err(|_| GistDeleted)?;
         Ok(())
     })
     .await

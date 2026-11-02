@@ -61,7 +61,7 @@ impl From<RepoError> for AdmissionError {
 }
 
 pub fn is_safe_owner(value: &str) -> bool {
-    crate::backend::identity::credentials::validate_namespace(value, 3).is_ok()
+    crate::backend::identity::credentials::validate_username(value).is_ok()
         // Also accept the names the repository rules allow, such as short or dotted namespaces.
         || crate::backend::repositories::lifecycle::validate_name(value).is_ok()
 }
@@ -186,7 +186,7 @@ pub(super) async fn resolve(
     )
     .await??
     .ok_or(AdmissionError::Unavailable)?;
-    if !rerun && actor.username == db::ci_tokens::BOT
+    if actor.username == db::ci_tokens::BOT
         && !matches!(
             request.event.as_str(),
             "workflow_dispatch" | "repository_dispatch"
@@ -223,7 +223,9 @@ pub(super) async fn resolve(
     )
     .await??;
     if !enabled {
-        return Err(AdmissionError::WorkflowDisabled);
+        return Err(AdmissionError::Conflict(
+            "Actions are turned off for this repository",
+        ));
     }
     // Never trust the caller's repository name.
     request.repo_name = repo.name.clone();
@@ -285,7 +287,6 @@ pub(super) async fn resolve(
     } else {
         false
     };
-    let accepted_event = event_payload.is_some() && super::events::is_repository_event(&request.event) && request.head_sha.is_some();
     let configured_cd = config.workflow_cd.clone();
     if pr_revision && request.head_sha.is_none() {
         return Err(AdmissionError::Invalid(
@@ -297,13 +298,13 @@ pub(super) async fn resolve(
     let store = repo_store(&repo, context);
     let commit = store
         .resolve_ci_commit(
-            if accepted_push || accepted_event || pr_revision || pr_target || rerun {
+            if accepted_push || pr_revision || pr_target || rerun {
                 &reference
             } else {
                 &request.branch
             },
             request.head_sha.as_deref(),
-            !accepted_push && !accepted_event && !pr_revision && !rerun,
+            !accepted_push && !pr_revision && !rerun,
         )
         .await?;
     // Inputs belong to one workflow, so a run of several cannot take any.
@@ -346,7 +347,6 @@ pub(super) async fn resolve(
             environment,
             scheduling: requirements,
             concurrency,
-            yaml,
         } = parse_admission_workflow(
             path.clone(),
             file.content.clone(),
@@ -374,7 +374,7 @@ pub(super) async fn resolve(
             }
         }
         if let Some(concurrency) = concurrency {
-            if scheduling.concurrency_expression.is_some() || request.workflow_paths.len() != 1 {
+            if scheduling.concurrency.is_some() || request.workflow_paths.len() != 1 {
                 return Err(AdmissionError::Invalid(
                     "Concurrency requires a run of one workflow",
                 ));
@@ -411,12 +411,7 @@ pub(super) async fn resolve(
                                 | dispatch_inputs::InputKind::Number
                         )
                     ) {
-                        if kind == Some(dispatch_inputs::InputKind::Number) {
-                            value.parse::<f64>().ok().and_then(serde_json::Number::from_f64)
-                                .map(serde_json::Value::Number).unwrap_or(serde_json::Value::Null)
-                        } else {
-                            serde_json::Value::Bool(value == "true")
-                        }
+                        serde_json::from_str(value).unwrap_or(serde_json::Value::Null)
                     } else {
                         serde_json::Value::String(value.clone())
                     };
@@ -463,7 +458,7 @@ pub(super) async fn resolve(
                     ),
                 ]),
             };
-            scheduling.concurrency_expression = Some((concurrency, contexts));
+            scheduling.concurrency = Some(super::concurrency::resolve(&concurrency, &contexts)?);
         }
         // Pull request filters name the base branch itself, even when it looks like a ref.
         let event_ref = if pr_revision || pr_target {
@@ -486,12 +481,13 @@ pub(super) async fn resolve(
                 "CI workflow does not support requested event/ref",
             ));
         }
-        let registration = [(path.to_owned(), definition.name.clone())];
         tokio::time::timeout(
             lookup_timeout,
-            db::action_workflows::register_workflows(pool, repo.id, &registration, false),
+            db::action_workflows::register_workflow(pool, repo.id, path, &definition.name, false),
         )
         .await??;
+        let yaml = super::workflows::parse_yaml(file.content.as_bytes())
+            .map_err(|_| AdmissionError::Invalid("CI workflow YAML is invalid"))?;
         let has_calls = yaml
             .get("jobs")
             .and_then(serde_yaml::Value::as_mapping)
@@ -505,14 +501,13 @@ pub(super) async fn resolve(
                     commit.sha.clone(),
                     path.clone(),
                     file.content,
-                    Some(yaml),
                     0,
                     None,
                 ),
             )
             .await??;
             request.environment = called.environment.clone();
-            if request.environment.is_some() && !request.pipeline.includes_cd() {
+            if request.environment.is_some() {
                 request.pipeline = CiPipelineKind::Full;
             }
             snapshot
@@ -522,9 +517,6 @@ pub(super) async fn resolve(
         blobs.insert(path.clone(), snapshot);
     }
     merge_scheduling(&mut scheduling, called.scheduling)?;
-    if called.files.keys().any(|path| blobs.contains_key(path)) {
-        return Err(AdmissionError::Invalid("Called workflow path collides with root workflow"));
-    }
     blobs.extend(called.files);
     if serde_json::to_vec(&blobs)
         .map_err(|_| AdmissionError::Unavailable)?
@@ -539,8 +531,9 @@ pub(super) async fn resolve(
         request.environment = Some("production".to_owned());
     }
     if !pr_revision && !pr_target {
-        // Tags retain their full names; storage accommodates every admitted public ref.
-        if commit.full_ref.len() > crate::backend::git::ref_names::MAX_REF_BYTES {
+        // A tag is stored under its full name, which can pass the column size when its short
+        // name does not.
+        if super::push::branch_name(&commit.full_ref).chars().count() > 255 {
             return Err(AdmissionError::Invalid("CI ref name is too long"));
         }
         request.branch = commit.full_ref;
@@ -581,7 +574,6 @@ pub(super) struct ParsedWorkflow {
     pub environment: Option<String>,
     pub scheduling: db::runners::Scheduling,
     pub(super) concurrency: Option<serde_yaml::Value>,
-    pub(super) yaml: serde_yaml::Value,
 }
 
 pub(super) async fn parse_admission_workflow(
@@ -606,15 +598,7 @@ pub(super) async fn parse_admission_workflow(
                 "CI workflow requires one to 128 jobs",
             ));
         }
-        for id in jobs.keys() {
-            if !id.as_str().is_some_and(codeyard_actions::workflow::valid_identifier) {
-                return Err(AdmissionError::Invalid("CI job identifier is invalid"));
-            }
-        }
         for job in jobs.values() {
-            if job.get("steps").and_then(serde_yaml::Value::as_sequence).is_some_and(|steps| steps.len() > codeyard_actions::workflow::MAX_JOB_STEPS) {
-                return Err(AdmissionError::Invalid("CI job has too many steps"));
-            }
             if let Some(value) = job.get("environment") {
                 let name = value
                     .as_str()
@@ -649,7 +633,6 @@ pub(super) async fn parse_admission_workflow(
             environment,
             scheduling,
             concurrency: yaml.get("concurrency").cloned(),
-            yaml,
         })
     })
     .await
@@ -663,6 +646,7 @@ pub fn is_safe_ref(value: &str) -> bool {
         format!("refs/heads/{value}")
     };
     !value.starts_with('-')
+        && super::push::branch_name(&reference).chars().count() <= 255
         && crate::backend::git::ref_names::is_canonical_ref(&reference)
 }
 
@@ -715,7 +699,7 @@ mod tests {
         assert!(is_safe_ref("feature/c++"));
         assert!(is_safe_ref("refs/tags/v1.2.3+build.1"));
         assert!(is_safe_ref(&format!("refs/heads/{}", "a".repeat(255))));
-        assert!(is_safe_ref(&format!("refs/heads/{}", "a".repeat(256))));
+        assert!(!is_safe_ref(&format!("refs/heads/{}", "a".repeat(256))));
         assert!(!is_safe_ref("refs/heads/a.lock"));
         assert!(!is_safe_owner("a b"));
         assert!(!is_safe_ref("refs/heads/a b"));

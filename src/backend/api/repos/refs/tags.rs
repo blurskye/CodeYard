@@ -45,7 +45,6 @@ pub async fn list_tags(
         .collect();
     responses.sort_by(|a, b| a.name.cmp(&b.name));
 
-    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Json(responses))
 }
 
@@ -60,7 +59,7 @@ pub async fn create_tag(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        actor.id,
         &owner,
         super::repository_id(&state, &owner, &repo).await?,
         &req.name,
@@ -85,7 +84,7 @@ pub async fn delete_tag(
     crate::backend::repositories::refs::delete_tag(
         &state.pool,
         state.cluster.as_ref(),
-        crate::backend::db::credentials::Actor::from((actor.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default())),
+        actor.id,
         super::repository_id(&state, &owner, &repo).await?,
         &name,
     )

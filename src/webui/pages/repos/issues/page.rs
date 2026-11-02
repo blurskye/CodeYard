@@ -52,8 +52,6 @@ pub struct Repository {
     pub name: String,
     pub signed_in: bool,
     pub can_write: bool,
-    #[serde(default)]
-    pub can_triage: bool,
     pub can_admin: bool,
     pub csrf: String,
     /// The signed-in viewer's username; empty when nobody is signed in.
@@ -180,10 +178,7 @@ pub struct Item {
     /// The comments on the issue or pull request, for the counts in the lists and tabs.
     #[serde(default)]
     pub comment_count: i64,
-    /// Presentation of author-or-writer title/body authority; mutations recheck live admission.
-    #[serde(default)]
-    pub can_edit: bool,
-    /// Whether the viewer may tick the task boxes of the body.
+    /// Whether the viewer may tick the task boxes of the body: a writer.
     #[serde(default)]
     pub can_tick: bool,
     /// The task boxes in the body and how many are ticked. Lists show it; the detail page does not.
@@ -252,8 +247,6 @@ impl Milestone {
 /// The milestone form as typed, kept when a submission is refused.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct MilestoneDraft {
-    #[serde(default)]
-    pub original: String,
     #[serde(default)]
     pub repository_id: Option<String>,
     pub title: String,
@@ -387,8 +380,6 @@ pub struct CommentEdit {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct SuggestionDraft {
-    pub repository_id: Option<i64>,
-    pub issue_id: Option<i64>,
     pub change: String,
     pub target: String,
     pub value: String,
@@ -430,10 +421,6 @@ pub struct IssueSelectOption {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IssueAttribute {
     pub id: i64,
-    #[serde(default)]
-    pub revision: String,
-    #[serde(default)]
-    pub updated: String,
     pub kind: String,
     pub name: String,
     pub description: Option<String>,
@@ -446,8 +433,6 @@ pub struct IssueAttribute {
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct IssueAttributes {
-    #[serde(default)]
-    pub owner_key: String,
     pub selected_type: Option<i64>,
     pub types: Vec<IssueAttribute>,
     pub fields: Vec<IssueAttribute>,
@@ -478,8 +463,6 @@ pub struct PinnedComment {
 /// One page of discussion comments and reviews, oldest first. `page` counts from 1.
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CommentPage {
-    #[serde(default)]
-    pub can_triage: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub issue_management: Option<Box<IssueManagement>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -555,8 +538,6 @@ pub enum Page {
         repository: Repository,
         templates: Vec<TemplateCard>,
         blank_allowed: bool,
-        #[serde(default)]
-        draft: NewDraft,
     },
     New {
         repository: Repository,
@@ -731,8 +712,7 @@ pub fn render(page: Page) -> Element {
             repository,
             templates,
             blank_allowed,
-            draft,
-        } => chooser(&repository, &templates, blank_allowed, &draft),
+        } => chooser(&repository, &templates, blank_allowed),
         Page::New {
             repository,
             kind,

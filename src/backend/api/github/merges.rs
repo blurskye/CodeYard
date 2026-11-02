@@ -48,15 +48,15 @@ async fn merge(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.ok_or_else(super::auth::required)?.user.id;
     let Json(input) = Json::<Input>::from_request(request, &state)
         .await
-        .map_err(super::json_error)?;
+        .map_err(|error| Error::new(error.status(), "Invalid merge request"))?;
     let result = merges::merge_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        auth.database_actor(),
+        actor,
         repo.id,
         &owner,
         BranchMerge {

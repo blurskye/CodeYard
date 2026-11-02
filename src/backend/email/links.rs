@@ -6,7 +6,7 @@ use crate::backend::api::http::config::public_origin;
 use crate::backend::db::{self, models::User, DbPool};
 use crate::backend::identity::admission::{self, AdmissionError};
 use rand::{rngs::OsRng, RngCore};
-use crate::backend::identity::tokens::token_hash as hash;
+use sha2::{Digest, Sha256};
 use tracing::warn;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,6 +53,10 @@ fn new_token() -> String {
     let mut bytes = [0u8; 32];
     OsRng.fill_bytes(&mut bytes);
     hex::encode(bytes)
+}
+
+fn hash(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
 }
 
 fn unavailable(error: anyhow::Error) -> LinkError {
@@ -162,7 +166,7 @@ pub async fn send_password_reset(
     if !config::is_configured(pool).await {
         return Err(LinkError::NotConfigured);
     }
-    let key = hash(&address.to_lowercase());
+    let key = hex::encode(Sha256::digest(address.to_lowercase().as_bytes()));
     admission::admit_mail(pool, client, &key).await?;
     let user = db::users::accounts::get_user_by_email(pool, address)
         .await
@@ -192,20 +196,14 @@ pub async fn is_valid(pool: &DbPool, purpose: Purpose, token: &str) -> Result<bo
     Ok(valid)
 }
 
-pub(crate) async fn password_reset_account(pool: &DbPool, token: &str) -> Result<Option<User>, LinkError> {
-    db::users::transitions::password_reset_account(pool, &hash(token)).await.map_err(unavailable)
-}
-
 /// Uses up a reset link and sets the account's new password hash, in one transaction. Returns the
 /// account the link was for, or None when the link is no longer usable.
 pub async fn use_reset_link(
     pool: &DbPool,
     token: &str,
     password_hash: &str,
-    expected: &User,
 ) -> Result<Option<i64>, LinkError> {
-    let Some(expected_hash) = expected.password_hash.as_deref() else { return Ok(None) };
-    db::users::transitions::reset_password_with_link(pool, &hash(token), password_hash, expected_hash, expected.must_change_password)
+    db::users::transitions::reset_password_with_link(pool, &hash(token), password_hash)
         .await
         .map_err(unavailable)
 }

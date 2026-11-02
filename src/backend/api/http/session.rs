@@ -23,7 +23,10 @@ fn parse_bool_env(value: &str) -> bool {
 pub(crate) fn secure_cookie() -> bool {
     // A pinned HTTPS deployment origin cannot be downgraded by an accidental
     // COOKIE_SECURE=false setting. Never infer transport from forwarded headers.
-    if super::config::public_url().ok().flatten().is_some_and(|url| url.scheme() == "https")
+    if std::env::var("PUBLIC_URL")
+        .ok()
+        .and_then(|value| url::Url::parse(&value).ok())
+        .is_some_and(|url| url.scheme() == "https")
     {
         return true;
     }
@@ -52,9 +55,8 @@ pub(crate) fn build_session_cookie(session_id: &str, max_age_days: i64) -> Strin
 
 /// A session cookie that lasts `max_age_seconds`, for reissuing an existing session.
 pub(crate) fn build_session_cookie_for(session_id: &str, max_age_seconds: i64) -> String {
-    let name = session_cookie_name();
     let mut cookie = format!(
-        "{name}={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
+        "session_id={}; Path=/; HttpOnly; SameSite=Lax; Max-Age={}",
         session_id,
         max_age_seconds.max(0)
     );
@@ -71,7 +73,7 @@ pub(crate) fn build_session_cookie_for(session_id: &str, max_age_seconds: i64) -
 }
 
 pub(crate) fn build_logout_cookie() -> String {
-    let mut cookie = format!("{}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0", session_cookie_name());
+    let mut cookie = "session_id=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0".to_string();
 
     if let Some(domain) = cookie_domain() {
         cookie.push_str(&format!("; Domain={}", domain));
@@ -103,12 +105,8 @@ pub(crate) fn random_cookie(headers: &HeaderMap, name: &str) -> Option<String> {
     found
 }
 
-pub(crate) fn session_cookie_name() -> &'static str {
-    if secure_cookie() && cookie_domain().is_none() { "__Host-session_id" } else { "session_id" }
-}
-
 pub(crate) fn extract_session_id(headers: &HeaderMap) -> Option<String> {
-    random_cookie(headers, session_cookie_name())
+    random_cookie(headers, "session_id")
 }
 
 pub(crate) fn has_session_cookie(headers: &HeaderMap) -> bool {
@@ -116,13 +114,16 @@ pub(crate) fn has_session_cookie(headers: &HeaderMap) -> bool {
         header.to_str().map_or(true, |cookies| {
             cookies
                 .split(';')
-                .any(|cookie| cookie.trim().split_once('=').is_some_and(|(name, _)| name == session_cookie_name()))
+                .any(|cookie| cookie.trim().starts_with("session_id="))
         })
     })
 }
 
 pub(crate) fn oauth_browser_cookie_name() -> &'static str {
-    if super::config::public_url().ok().flatten().is_some_and(|url| url.scheme() == "http")
+    if std::env::var("PUBLIC_URL")
+        .ok()
+        .and_then(|value| url::Url::parse(&value).ok())
+        .is_some_and(|url| url.scheme() == "http")
     {
         "oauth_browser"
     } else {
@@ -162,7 +163,15 @@ pub(crate) async fn get_current_user(
     pool: &db::DbPool,
     headers: &HeaderMap,
 ) -> Result<db::models::User, (StatusCode, Json<ApiError>)> {
-    get_optional_user(pool, headers).await?.ok_or_else(|| crate::backend::api::auth::errors::admin_authority_failure(crate::backend::identity::sessions::AccountAuthorityError::NotAuthenticated))
+    get_optional_user(pool, headers).await?.ok_or_else(|| {
+        (
+            StatusCode::UNAUTHORIZED,
+            Json(ApiError::new(
+                "unauthorized",
+                "Session expired or not authenticated",
+            )),
+        )
+    })
 }
 
 pub(crate) async fn get_optional_user(
@@ -174,11 +183,25 @@ pub(crate) async fn get_optional_user(
     };
     let user = db::users::sessions::get_session_account(pool, &session_id)
         .await
-        .map_err(|_| crate::backend::api::auth::errors::session_failure())?;
+        .map_err(|_| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ApiError::new(
+                    "session_unavailable",
+                    "Session storage is temporarily unavailable",
+                )),
+            )
+        })?;
     // Absent/expired/revoked is anonymous; a storage outage is NOT anonymous.
     let user = user.filter(optional_user_allowed);
     if user.as_ref().is_some_and(|user| user.must_change_password) {
-        return Err(crate::backend::api::auth::errors::admin_authority_failure(crate::backend::identity::sessions::AccountAuthorityError::PasswordChangeRequired));
+        return Err((
+            StatusCode::PRECONDITION_REQUIRED,
+            Json(ApiError::new(
+                "password_change_required",
+                "Change your temporary password before accessing account resources",
+            )),
+        ));
     }
     Ok(user)
 }

@@ -56,8 +56,8 @@ fn apply_update(model: &mut ActionsPage, update: RunLogUpdate) {
         selected.logs_truncated = true;
     }
     selected.deployment = update.deployment;
-    // Metadata is current even while historical log pages are still draining.
-    {
+    // Drain outstanding history before terminal status unmounts the poller.
+    if !update.has_more {
         selected.run.status = update.progress.status;
         selected.run.started_at = update.progress.started_at;
         selected.run.completed_at = update.progress.completed_at;
@@ -85,17 +85,8 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
             let run_id = run_id.clone();
             let controller = controller.clone();
             async move {
-                let initially_active = {
-                    let page = current.peek();
-                    match &page.page {
-                        crate::webui::app::Page::Actions(crate::webui::pages::ci::Page::Actions(model)) => model.selected.as_ref().is_some_and(|selected| matches!(super::logs::normalize_status(&selected.run.status), "queued" | "running")),
-                        _ => false,
-                    }
-                };
-                if !initially_active { return; }
-                let mut backlog = false;
                 loop {
-                    if !backlog { gloo_timers::future::TimeoutFuture::new(2000).await; }
+                    gloo_timers::future::TimeoutFuture::new(2000).await;
                     let (location, url) = {
                         let page = current.peek();
                         let crate::webui::app::Page::Actions(
@@ -131,9 +122,12 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                         }
                         response.json::<RunLogUpdate>().await.map_err(|_| ())
                     };
-                    let result = match crate::webui::navigation::load::with_abort_timeout(request, &controller, 10_000).await {
-                        Ok(result) => result,
-                        Err(()) => {
+                    let timeout = gloo_timers::future::TimeoutFuture::new(10_000);
+                    futures_util::pin_mut!(request, timeout);
+                    let result = match futures_util::future::select(request, timeout).await {
+                        futures_util::future::Either::Left((result, _)) => result,
+                        futures_util::future::Either::Right(_) => {
+                            controller.abort();
                             failure.set(true);
                             break;
                         }
@@ -143,8 +137,6 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                     }
                     match result {
                         Ok(update) => {
-                            backlog = update.has_more;
-                            let terminal = !backlog && !matches!(super::logs::normalize_status(&update.progress.status), "queued" | "running");
                             let mut page = current.write();
                             if let crate::webui::app::Page::Actions(
                                 crate::webui::pages::ci::Page::Actions(model),
@@ -152,12 +144,7 @@ pub(super) fn ActiveRunPoll(run_id: String) -> Element {
                             {
                                 apply_update(model, update);
                             }
-                            drop(page);
                             failure.set(false);
-                            if terminal {
-                                crate::webui::navigation::refresh_page();
-                                break;
-                            }
                         }
                         Err(()) => failure.set(true),
                     }
@@ -177,11 +164,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cursor_updates_bound_logs_without_delaying_terminal_metadata() {
+    fn cursor_updates_deduplicate_bound_logs_and_drain_before_terminal_status() {
         let mut model = super::super::tests::model();
         let run = model.runs[0].clone();
         model.selected = Some(super::super::SelectedRun {
-            summaries: Vec::new(),
             run,
             logs: vec![],
             deployment: None,
@@ -214,7 +200,7 @@ mod tests {
             deployment: None,
         };
         apply_update(&mut model, update(&[1, 2], true));
-        assert_eq!(model.selected.as_ref().unwrap().run.status, "success");
+        assert_eq!(model.selected.as_ref().unwrap().run.status, "running");
         apply_update(&mut model, update(&[2, 3], false));
         let selected = model.selected.as_ref().unwrap();
         assert_eq!(

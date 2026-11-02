@@ -1,8 +1,8 @@
 //! CI/Actions: workflow triggers queue runs; worker nodes run them with `act`.
 pub mod admission;
-pub(crate) mod concurrency;
+mod concurrency;
 mod config;
-pub use codeyard_actions::workflow::dispatch_inputs;
+pub mod dispatch_inputs;
 pub mod environment_values;
 pub(crate) mod events;
 pub mod logs;
@@ -43,8 +43,6 @@ const VISIBLE_RUN_ERRORS: &[&str] = &[
     ACCESS_LOST_MESSAGE,
     "A workflow job failed",
     "CI container recovery is unavailable",
-    "The CI worker lost contact with the server",
-    "CI container cleanup failed; the worker slot is waiting for recovery",
     "CI could not load the repository or secrets",
     "CI could not run",
     "Cancelled",
@@ -68,12 +66,12 @@ pub fn visible_run_error(error: Option<&str>) -> Option<String> {
 
 /// The title and body of the notification a run's starter gets when the run fails.
 pub fn failure_notification(run: &CiRun, message: Option<&str>) -> (String, Option<String>) {
-    let branch = if matches!(run.event.as_str(), "pull_request" | "pull_request_target") {
+    let branch = if run.event == "pull_request" {
         run.branch.as_str()
     } else {
         branch_name(&run.branch)
     };
-    let title = match run.head_sha.as_deref().map(crate::webui::components::short_sha) {
+    let title = match run.head_sha.as_deref().and_then(|sha| sha.get(..7)) {
         Some(short) => format!("CI run failed: {} on {branch} ({short})", run.workflow_path),
         None => format!("CI run failed: {} on {branch}", run.workflow_path),
     };

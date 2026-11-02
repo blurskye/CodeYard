@@ -138,9 +138,6 @@ pub(super) async fn send(
             "Sign in to send a repository event.",
         );
     };
-    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
-        return ctx.error(StatusCode::UNAUTHORIZED, "A live session is required.");
-    };
     let result = ctx
         .state
         .ci_runs
@@ -150,7 +147,6 @@ pub(super) async fn send(
             actor,
             event_type.clone(),
             payload,
-            crate::backend::db::ci::CiCredential::Session(session),
         )
         .await;
     match result {

@@ -79,7 +79,7 @@ async fn product(
         Value::Null
     } else {
         serde_json::from_slice(&body)
-            .map_err(super::super::json_parse_error)?
+            .map_err(|_| Error::invalid("Invalid security product request"))?
     };
     if !input.is_null() {
         let fields = input
@@ -155,7 +155,7 @@ async fn change(
     outcome(
         roles::change(
             &state.pool,
-            actor.database_actor(),
+            actor.user.id,
             org.id,
             &RoleTarget::Team(team),
             Some(SECURITY_MANAGER_ROLE_ID),

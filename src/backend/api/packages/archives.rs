@@ -37,8 +37,7 @@ impl Xml {
 }
 
 pub(super) fn xml(bytes: &[u8]) -> Result<Xml> {
-    // XML forbids NUL, and PostgreSQL cannot keep it in the JSON metadata built from this.
-    if bytes.len() > METADATA_LIMIT || bytes.contains(&0) {
+    if bytes.len() > METADATA_LIMIT {
         return Err(Error::invalid());
     }
     let mut reader = Reader::from_reader(bytes);
@@ -128,8 +127,10 @@ pub(super) fn xml(bytes: &[u8]) -> Result<Xml> {
 }
 
 pub(super) fn nuspec(bytes: &[u8]) -> Result<Vec<u8>> {
-    let mut archive =
-        crate::backend::zip_archives::open(bytes, 20_000).map_err(|_| Error::invalid())?;
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes)).map_err(|_| Error::invalid())?;
+    if archive.len() > 20000 {
+        return Err(Error::invalid());
+    }
     let mut result = None;
     for index in 0..archive.len() {
         let entry = archive.by_index(index).map_err(|_| Error::invalid())?;

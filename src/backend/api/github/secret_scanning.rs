@@ -98,8 +98,6 @@ struct Filters {
     state: Option<String>,
     secret_type: Option<String>,
     exclude_secret_types: Option<String>,
-    providers: Option<String>,
-    exclude_providers: Option<String>,
     resolution: Option<String>,
     validity: Option<String>,
     assignee: Option<String>,
@@ -108,8 +106,8 @@ struct Filters {
     sort: Option<String>,
     #[serde(default)]
     hide_secret: bool,
-    #[serde(flatten)]
-    pagination: super::pagination::CursorPagination,
+    page: Option<usize>,
+    per_page: Option<usize>,
 }
 impl Filters {
     fn validate(&self) -> Result<()> {
@@ -134,13 +132,11 @@ impl Filters {
                 values.split(',').any(|value| {
                     !matches!(
                         value,
-                        "false_positive" | "wont_fix" | "revoked" | "used_in_tests" | "pattern_deleted" | "pattern_edited"
+                        "false_positive" | "wont_fix" | "revoked" | "used_in_tests"
                     )
                 })
             })
             || self.secret_type.is_some() && self.exclude_secret_types.is_some()
-            || self.providers.is_some() && self.exclude_providers.is_some()
-            || [&self.providers, &self.exclude_providers].iter().any(|value| value.as_deref().is_some_and(|values| values.split(',').any(|provider| provider.is_empty() || !provider.bytes().all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_'))))
         {
             return Err(Error::validation(
                 "SecretScanningAlert",
@@ -155,8 +151,6 @@ impl Filters {
             state: self.state.clone(),
             secret_type: self.secret_type.clone(),
             exclude_secret_types: self.exclude_secret_types.clone(),
-            providers: self.providers.clone(),
-            exclude_providers: self.exclude_providers.clone(),
             resolution: self.resolution.clone(),
             validity: self.validity.clone(),
             assignee: self.assignee.clone(),
@@ -182,7 +176,10 @@ async fn list_org(
         .ok_or_else(auth::required)?;
     let org = super::orgs::target(&state, &org).await?;
     query.validate()?;
-    let pagination = &query.pagination;
+    let pagination = Pagination {
+        page: query.page,
+        per_page: query.per_page,
+    };
     let (offset, limit) = pagination.window()?;
     let alerts = records::org_alerts(
         &state.pool,
@@ -193,18 +190,17 @@ async fn list_org(
     .await
     .map_err(error)?;
     let has_next = alerts.len() > limit;
-    let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
-    let ids = alerts.iter().map(|alert| alert.repo_id).collect::<Vec<_>>();
-    let repositories = db::repositories::records::get_repositories_by_ids(&state.pool, &ids).await.map_err(Error::unavailable)?
-        .into_iter().map(|repo| (repo.id, repo)).collect::<HashMap<_, _>>();
-    let documents = jobs::Documents::load(&state, &alerts).await.map_err(Error::unavailable)?;
     let mut items = Vec::new();
-    for alert in &alerts {
-        let repo = repositories.get(&alert.repo_id).ok_or_else(Error::missing)?;
+    for alert in alerts.into_iter().take(limit) {
+        let repo = db::repositories::records::get_repository_by_id(&state.pool, alert.repo_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
         if repo.owner_org_id != Some(org.id) {
             continue;
         }
-        let mut document = documents.document(&state, alert, &org.name, &repo.name, query.hide_secret)
+        let mut document = jobs::document(&state, &alert, &org.name, &repo.name, query.hide_secret)
+            .await
             .map_err(Error::unavailable)?;
         document["repository"] = payloads::repository(&repo, &org.name);
         items.push(document);
@@ -230,7 +226,10 @@ async fn list(
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(auth::required)?;
     query.validate()?;
-    let pagination = &query.pagination;
+    let pagination = Pagination {
+        page: query.page,
+        per_page: query.per_page,
+    };
     let (offset, limit) = pagination.window()?;
     let alerts = records::alerts(
         &state.pool,
@@ -241,9 +240,14 @@ async fn list(
     .await
     .map_err(error)?;
     let has_next = alerts.len() > limit;
-    let alerts = alerts.into_iter().take(limit).collect::<Vec<_>>();
-    let documents = jobs::Documents::load(&state, &alerts).await.map_err(Error::unavailable)?;
-    let items = alerts.iter().map(|alert| documents.document(&state, alert, &owner, &name, query.hide_secret).map_err(Error::unavailable)).collect::<Result<Vec<_>>>()?;
+    let mut items = Vec::new();
+    for alert in alerts.into_iter().take(limit) {
+        items.push(
+            jobs::document(&state, &alert, &owner, &name, query.hide_secret)
+                .await
+                .map_err(Error::unavailable)?,
+        );
+    }
     pagination.response(&uri, items, has_next)
 }
 
@@ -393,7 +397,7 @@ async fn history(
         .map_err(error)?;
     let scans = |kind| {
         history.iter().filter(|job| job.scan_type == kind).map(|job| {
-            let mut scan=serde_json::json!({"type": "git","status":match job.status.as_str() {"queued"=>"pending","running"=>"active","completed"=>"completed",_=>"failed"},"started_at":job.started_at,"completed_at":job.completed_at});
+            let mut scan=serde_json::json!({"type": job.scan_type,"status":if job.status=="queued" {"pending"} else {&job.status},"started_at":job.started_at,"completed_at":job.completed_at});
             if let Some(name)=&job.pattern_name {scan["pattern_name"]=serde_json::json!(name);scan["pattern_scope"]=serde_json::json!(job.pattern_scope);}
             scan
         }).collect::<Vec<_>>()

@@ -54,7 +54,6 @@ const RESERVED_NAMES: &[&str] = &[
     "stars",
     "twirp",
     "users",
-    "v2",
     "verify-email",
     "wasm",
 ];

@@ -163,8 +163,7 @@ fn insert_markup(id: &str, markup: Markup) {
             ))
         } else {
             let fence = "`".repeat(longest_run + 1);
-            let pad = if selected_text.starts_with('`') || selected_text.ends_with('`')
-                || (selected_text.starts_with(' ') && selected_text.ends_with(' ') && selected_text.chars().any(|c| c != ' ')) {
+            let pad = if selected_text.starts_with('`') || selected_text.ends_with('`') {
                 " "
             } else {
                 ""
@@ -197,21 +196,10 @@ fn insert_markup(id: &str, markup: Markup) {
                 selected.len() - selected.trim_start().len()
             };
             let (head, tail) = (&selected[..lead], &selected[lead + core.len()..]);
-            let marked = if matches!(markup, Markup::Bold | Markup::Italic) {
-                core.split('\n').map(|line| {
-                    let content = line.trim();
-                    if content.is_empty() { return line.to_owned(); }
-                    let lead = line.len() - line.trim_start().len();
-                    format!("{}{before}{content}{after}{}", &line[..lead], &line[lead + content.len()..])
-                }).collect::<Vec<_>>().join("\n")
-            } else {
-                format!("{before}{core}{after}")
-            };
-            let inserted = format!("{head}{marked}{tail}");
+            let inserted = format!("{head}{before}{core}{after}{tail}");
             let edited = format!("{}{inserted}{}", &text[..start], &text[end..]);
             let from = start + head.len() + before.len();
-            let to = start + head.len() + marked.len() - after.len();
-            (edited, from, to, (start, end), inserted)
+            (edited, from, from + core.len(), (start, end), inserted)
         }
         None => {
             let prefix = markup.line_prefix();
@@ -229,13 +217,7 @@ fn insert_markup(id: &str, markup: Markup) {
                 .collect::<Vec<_>>()
                 .join("\n");
             let edited = format!("{}{lines}{}", &text[..first], &text[last..]);
-            let (from, to) = if start == end {
-                let caret = start + prefix.len();
-                (caret, caret)
-            } else {
-                (first, first + lines.len())
-            };
-            (edited, from, to, (first, last), lines)
+            (edited, first, first + lines.len(), (first, last), lines)
         }
     };
     // Selections are counted in UTF-16 units, as the browser counts text.

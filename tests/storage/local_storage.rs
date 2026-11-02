@@ -1562,7 +1562,6 @@ async fn object_names_cannot_leave_the_object_directory() {
     let local = LocalStore::open(&fixture.state_path().join("objects"))
         .await
         .unwrap();
-    let objects = ObjectStore::open(&fixture.state_path(), None).await.unwrap();
     for key in [
         "../outside",
         "uploads/../../outside",
@@ -1581,8 +1580,8 @@ async fn object_names_cannot_leave_the_object_directory() {
         assert!(local.delete(key).await.is_err(), "delete {key:?}");
         assert!(local.verify(&upload).await.is_err(), "verify {key:?}");
         assert!(
-            objects
-                .put_bytes(&upload, b"do not change".to_vec())
+            local
+                .put(&upload, Cursor::new(b"do not change"))
                 .await
                 .is_err(),
             "put {key:?}"
@@ -2520,9 +2519,9 @@ async fn storage_overview_is_for_admins_and_shows_no_paths_or_secrets() {
         }
         builder.body(Body::empty()).unwrap()
     };
-    // A signed-out visitor is sent to sign in, like every other administrator page.
-    assert_eq!(status_of(&router, get(None)).await, StatusCode::SEE_OTHER);
-    assert_eq!(status_of(&router, get(Some(&fixture.login))).await, StatusCode::FORBIDDEN);
+    for denied in [None, Some(&fixture.login)] {
+        assert_eq!(status_of(&router, get(denied)).await, StatusCode::FORBIDDEN);
+    }
     let response = call(&router, get(Some(&admin_login))).await;
     assert_eq!(response.status(), StatusCode::OK);
     let text = String::from_utf8(body_of(response).await).unwrap();
@@ -2941,7 +2940,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
         .await;
     assert_eq!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, fixture.owner).await), Some(old))
+        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, Some(old))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(None)
@@ -2953,7 +2952,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .await
         .unwrap();
     assert!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, fixture.owner).await), Some(new))
+        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, Some(new))
             .await
             .is_err()
     );
@@ -2971,7 +2970,7 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 
     // Otherwise the old row goes with the change, and its bytes are queued.
     assert_eq!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, fixture.owner).await), Some(new))
+        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, Some(new))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(Some(old))
@@ -3000,7 +2999,7 @@ async fn a_banned_account_keeps_its_picture() {
         .await
         .unwrap()
         .unwrap();
-    avatars::set_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, user.id).await), old)
+    avatars::set_user_avatar(&fixture.pool, &user, old)
         .await
         .unwrap();
     sqlx::query("UPDATE users SET is_banned=TRUE WHERE id=?1")
@@ -3009,9 +3008,9 @@ async fn a_banned_account_keeps_its_picture() {
         .await
         .unwrap();
 
-    let changed = avatars::set_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, user.id).await), new).await;
+    let changed = avatars::set_user_avatar(&fixture.pool, &user, new).await;
     assert_eq!(changed, Err(AvatarError::Denied));
-    let cleared = avatars::remove_user_avatar(&fixture.pool, &user, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, user.id).await)).await;
+    let cleared = avatars::remove_user_avatar(&fixture.pool, &user).await;
     assert_eq!(cleared, Err(AvatarError::Denied));
     let pointer: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=?1")

@@ -37,35 +37,6 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::list_fo
     crate::backend::db::sqlite::repositories::discovery::list_forks,
     fn list_forks(pool: &DbPool, repo_id: i64, limit: i64, offset: i64) -> Result<Vec<Repository>>);
 
-native_operation!(crate::backend::db::postgres::repositories::discovery::comparison_forks,
-    crate::backend::db::sqlite::repositories::discovery::comparison_forks,
-    fn comparison_forks(pool: &DbPool, repo: i64, owner: &str) -> Result<Vec<Repository>>);
-
-native_operation!(crate::backend::db::postgres::repositories::discovery::visible_fork_counts,
-    crate::backend::db::sqlite::repositories::discovery::visible_fork_counts,
-    /// Displayed fork counts and pages share the repository-read predicate. Browser callers
-    /// retain their session; a missing viewer always gets the anonymous/public projection.
-    fn visible_fork_counts(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, ids: &[i64]) -> Result<std::collections::HashMap<i64, i32>>);
-
-native_operation!(crate::backend::db::postgres::repositories::discovery::list_visible_forks,
-    crate::backend::db::sqlite::repositories::discovery::list_visible_forks,
-    fn list_visible_forks(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, repo: i64, limit: i64, offset: i64) -> Result<Vec<Repository>>);
-
-/// Audience-independent repository projections never include private children.
-pub async fn public_fork_counts(pool: &DbPool, ids: &[i64]) -> Result<std::collections::HashMap<i64, i32>> {
-    let mut counts = std::collections::HashMap::new();
-    for ids in ids.chunks(100) {
-        counts.extend(visible_fork_counts(pool, None, None, ids).await?);
-    }
-    Ok(counts)
-}
-
-/// SQL compiler fragment for a trusted repository alias; public search predicates and ranks
-/// must not turn the internal private-inclusive cache into a counting oracle.
-pub(crate) fn public_fork_count_sql(alias: &str) -> String {
-    format!("(SELECT COUNT(*) FROM repositories public_forks WHERE public_forks.forked_from_id={alias}.id AND NOT public_forks.is_private AND NOT public_forks.is_gist)")
-}
-
 /// What a repository search matches. `org:alice`, `user:alice` and `alice/proj` name an
 /// owner; any other text matches the name, the description or the owner's name.
 #[derive(Debug, PartialEq, Eq)]
@@ -101,12 +72,12 @@ impl<'a> RepositorySearch<'a> {
 
 /// The `ORDER BY` terms of a repository search. Each list ends with the id, so a page never
 /// repeats or skips a repository.
-pub fn repository_order_by(sort: RepositorySort) -> String {
+pub fn repository_order_by(sort: RepositorySort) -> &'static str {
     match sort {
-        RepositorySort::Stars => "r.stars_count DESC, r.updated_at DESC, r.id DESC".into(),
-        RepositorySort::Forks => format!("{} DESC, r.updated_at DESC, r.id DESC", public_fork_count_sql("r")),
-        RepositorySort::Updated => "r.updated_at DESC, r.id DESC".into(),
-        RepositorySort::Recent => "r.created_at DESC, r.id DESC".into(),
+        RepositorySort::Stars => "r.stars_count DESC, r.updated_at DESC, r.id DESC",
+        RepositorySort::Forks => "r.forks_count DESC, r.updated_at DESC, r.id DESC",
+        RepositorySort::Updated => "r.updated_at DESC, r.id DESC",
+        RepositorySort::Recent => "r.created_at DESC, r.id DESC",
     }
 }
 
@@ -144,12 +115,6 @@ native_operation!(crate::backend::db::postgres::repositories::discovery::search_
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Repository>>);
-
-// The ids of the repositories `search_repositories` finds, most recently updated first, read in
-// one statement. A walk over them cannot skip or repeat a repository that changes while it runs.
-native_operation!(crate::backend::db::postgres::repositories::discovery::search_repository_ids,
-    crate::backend::db::sqlite::repositories::discovery::search_repository_ids,
-    fn search_repository_ids(pool: &DbPool, viewer: Option<i64>, query: &str, limit: i64) -> Result<Vec<i64>>);
 
 native_operation!(crate::backend::db::postgres::repositories::discovery::count_repositories,
     crate::backend::db::sqlite::repositories::discovery::count_repositories,

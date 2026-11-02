@@ -262,7 +262,8 @@ pub(super) async fn resolve(
                         pool,
                         broadcaster,
                         actor,
-                        repo.id,
+                        repository::owner(&repo, request).await?,
+                        repo.name.clone(),
                         current.number,
                         issues::mutations::UpdateIssueRequest {
                             expected_state: current.state,
@@ -317,7 +318,7 @@ pub(super) async fn resolve(
                     request.authorize(id, "metadata", false).await?;
                     Some(id)
                 } else if let Some(owner) = head_owner {
-                    let head = pull_requests::branches::owner_head_repository(pool, &repo, owner)
+                    let head = db::repositories::records::get_repository(pool, owner, &repo.name)
                         .await
                         .map_err(unavailable)?
                         .ok_or_else(missing)?;
@@ -336,16 +337,14 @@ pub(super) async fn resolve(
                     None
                 };
                 let head = repository::by_id(head_repo_id.unwrap_or(repo.id), request).await?;
-                request.authorize(head.id, "contents", false).await?;
                 let saved = pull_requests::mutations::create_pull_request(
                     pool,
                     &request.state.ci_runs,
                     broadcaster,
-                    crate::backend::repositories::store::PullHeadActor { user: actor, token: Some(request.auth.token.id) },
+                    actor,
                     repository::owner(&repo, request).await?,
                     repo.name,
                     pull_requests::mutations::CreatePullRequestRequest {
-                        suppress_ci: false,
                         head_repo_id,
                         source: pull_requests::mutations::PullRequestSource::New {
                             title: text(&input, "title")?.into(),
@@ -424,6 +423,9 @@ pub(super) async fn resolve(
                 .ok_or_else(missing)?;
                 let repo = repository::by_id(current.repo_id, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
+                if matches!(field, "mergePullRequest" | "updatePullRequestBranch") {
+                    request.require_oauth_scope("workflow")?;
+                }
                 let owner = repository::owner(&repo, request).await?;
                 let metadata = super::metadata_mutations::prepare(&input, &repo, request).await?;
                 // Metadata has its own live native authority; do not run a structural PR edit
@@ -467,7 +469,6 @@ pub(super) async fn resolve(
                         actor,
                         (&owner, &repo.name, current.number),
                         expected,
-                        Some(request.auth.token.id),
                     )
                     .await
                     .map_err(pull_error)?;
@@ -493,8 +494,10 @@ pub(super) async fn resolve(
                     request.authorize(repo.id, "contents", true).await?;
                     let method = merge_method(&input, &current)?;
                     pull_requests::merge::merge_pull_request(
-                        &request.state,
-                        request.auth.database_actor(),
+                        pool,
+                        &request.state.ci_runs,
+                        broadcaster,
+                        actor,
                         (owner, repo.name, current.number),
                         pull_requests::merge::MergeRequest {
                             expected_head: current.head_sha,
@@ -524,7 +527,7 @@ pub(super) async fn resolve(
                         &request.state.ci_runs,
                         broadcaster,
                         actor,
-                        (repo.id, current.number),
+                        (owner, repo.name, current.number),
                         pull_requests::mutations::UpdatePullRequestRequest {
                             expected_state: current.state,
                             expected_updated: current.updated_at.to_rfc3339(),
@@ -569,10 +572,9 @@ pub(super) async fn resolve(
                 let repo = repository::by_id(current.repo_id, request).await?;
                 request.authorize(repo.id, "pull-requests", true).await?;
                 if field == "enablePullRequestAutoMerge" {
+                    request.require_oauth_scope("workflow")?;
                     request.authorize(repo.id, "contents", true).await?;
                     let options = pull_requests::auto_merge::EnableRequest {
-                        expected_head: optional_text(&input, "expectedHeadOid"),
-                        token: Some(request.auth.token.id),
                         merge_method: merge_method(&input, &current)?,
                         commit_title: optional_text(&input, "commitHeadline"),
                         commit_message: optional_text(&input, "commitBody"),
@@ -652,7 +654,6 @@ pub(super) async fn resolve(
                     pool,
                     broadcaster,
                     actor,
-                    &request.auth.credential(),
                     &current.username,
                     field == "followUser",
                 )

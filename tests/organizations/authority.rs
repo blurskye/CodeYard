@@ -357,7 +357,7 @@ async fn atomic_creation_safe_metadata_namespace_and_validation(database: &Datab
     database.org(owner, "Creation_owner").await;
     database.execute("UPDATE organizations SET billing_email='private@example.test',is_verified=TRUE WHERE id=$1", &[organization.id]).await;
     let safe = applied(
-        update_organization_profile(&database.pool, owner, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, owner).await), organization.id, &profile())
+        update_organization_profile(&database.pool, owner, organization.id, &profile())
             .await
             .unwrap(),
     );
@@ -412,19 +412,19 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             .unwrap(),
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, outsider, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, outsider).await), org.id, &profile())
+        update_organization_profile(&database.pool, outsider, org.id, &profile())
             .await
             .unwrap(),
         Denied
     ));
     assert!(matches!(
-        update_organization_profile(&database.pool, member, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, member).await), org.id, &profile())
+        update_organization_profile(&database.pool, member, org.id, &profile())
             .await
             .unwrap(),
         Denied
     ));
     applied(
-        update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, admin).await), org.id, &profile())
+        update_organization_profile(&database.pool, admin, org.id, &profile())
             .await
             .unwrap(),
     );
@@ -476,7 +476,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             )
             .await;
         assert!(matches!(
-            update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, admin).await), org.id, &profile())
+            update_organization_profile(&database.pool, admin, org.id, &profile())
                 .await
                 .unwrap(),
             Denied
@@ -502,7 +502,7 @@ async fn owner_admin_member_rules_and_inactive_actors(database: &Database) {
             .await;
     }
     assert!(matches!(
-        update_organization_profile(&database.pool, 900_000, &db::users::accounts::AccountCredential::Session("missing"), org.id, &profile())
+        update_organization_profile(&database.pool, 900_000, org.id, &profile())
             .await
             .unwrap(),
         Denied
@@ -1046,7 +1046,7 @@ async fn invalid_persisted_roles_levels_and_joins_fail_closed(database: &Databas
             Denied
         ));
         assert!(matches!(
-            update_organization_profile(&database.pool, member, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, member).await), org.id, &profile())
+            update_organization_profile(&database.pool, member, org.id, &profile())
                 .await
                 .unwrap(),
             Denied
@@ -1657,7 +1657,7 @@ async fn numeric_user_org_collision_and_personal_owner_unchanged(database: &Data
         db::models::AccessLevel::None
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, 700000, &db::users::accounts::AccountCredential::Session("missing"), 700000, &profile())
+        update_organization_profile(&database.pool, 700000, 700000, &profile())
             .await
             .unwrap(),
         Denied
@@ -2642,7 +2642,7 @@ async fn suspended_governance_and_explicit_audited_recovery(database: &Database)
         "suspension retains reads, not tenant write authority"
     );
     assert!(matches!(
-        update_organization_profile(&database.pool, replacement, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, replacement).await), org.id, &profile())
+        update_organization_profile(&database.pool, replacement, org.id, &profile())
             .await
             .unwrap(),
         OrganizationOutcome::Suspended
@@ -2879,7 +2879,7 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
                 }
                 "profile" => {
                     let metadata = applied(
-                        update_organization_profile(&pool, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&pool, admin).await), org, &profile())
+                        update_organization_profile(&pool, admin, org, &profile())
                             .await
                             .unwrap(),
                     );
@@ -2920,7 +2920,7 @@ async fn postgres_organization_writes_finish_before_banning_non_owner_admin() {
             db::users::transitions::BanChange::Updated(user) if user.is_banned
         ));
         assert!(matches!(
-            update_organization_profile(&database.pool, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, admin).await), org, &profile())
+            update_organization_profile(&database.pool, admin, org, &profile())
                 .await
                 .unwrap(),
             Denied
@@ -3025,53 +3025,7 @@ async fn postgres_account_transition_includes_a_concurrent_owner_promotion() {
     database.close().await;
 }
 
-// REST removal of a pending invitee and the invitee's acceptance race; whichever commits
-// first, the acknowledged removal must leave no membership behind.
-async fn removal_and_acceptance_race_leaves_no_member(database: &Database) {
-    let owner = database.actor("race_owner").await;
-    let org = database.org(owner, "race_org").await;
-    for round in 0..8 {
-        let invitee = database.actor(&format!("race_invitee_{round}")).await;
-        applied(
-            invite_organization_member(&database.pool, owner, org.id, invitee, OrgRole::Member)
-                .await
-                .unwrap(),
-        );
-        let (pool, accepting_pool) = (database.pool.clone(), database.pool.clone());
-        let removing = tokio::spawn(async move {
-            remove_member_or_invitation_by_owner(&pool, owner, org.id, invitee).await
-        });
-        let accepting = tokio::spawn(async move {
-            accept_organization_invitation(&accepting_pool, invitee, org.id, None).await
-        });
-        let removed = removing.await.unwrap().unwrap();
-        let _ = accepting.await.unwrap().unwrap();
-        assert!(matches!(removed, Applied(())), "round {round}");
-        assert_eq!(
-            database
-                .count(
-                    "SELECT COUNT(*) FROM org_memberships WHERE org_id=$1 AND user_id=$2",
-                    &[org.id, invitee],
-                )
-                .await,
-            0,
-            "round {round}"
-        );
-        assert_eq!(
-            database
-                .count(
-                    "SELECT COUNT(*) FROM organization_invitations WHERE org_id=$1 AND user_id=$2",
-                    &[org.id, invitee],
-                )
-                .await,
-            0,
-            "round {round}"
-        );
-    }
-}
-
 async fn native_suite(database: &Database) {
-    removal_and_acceptance_race_leaves_no_member(database).await;
     atomic_creation_safe_metadata_namespace_and_validation(database).await;
     owner_admin_member_rules_and_inactive_actors(database).await;
     concurrent_last_owner_mutations(database).await;

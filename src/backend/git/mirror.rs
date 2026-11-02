@@ -3,6 +3,8 @@
 use super::repository::process;
 use anyhow::{ensure, Context, Result};
 use std::{
+    collections::BTreeSet,
+    ffi::OsString,
     path::{Path, PathBuf},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -60,34 +62,25 @@ fn deleted_entries(root: &Path) -> Result<Vec<(u64, String, PathBuf)>> {
     Ok(kept)
 }
 
-/// Index the newest retained copy of each repository in one root-directory scan.
-pub(crate) fn deleted_copies(root: &Path) -> Result<std::collections::HashMap<String, PathBuf>> {
-    let mut copies = std::collections::HashMap::<String, (u64, PathBuf)>::new();
-    for (seconds, name, path) in deleted_entries(root)? {
-        if copies.get(&name).is_none_or(|(previous, _)| seconds >= *previous) {
-            copies.insert(name, (seconds, path));
-        }
-    }
-    Ok(copies.into_iter().map(|(name, (_, path))| (name, path)).collect())
+/// The newest kept copy of the repository whose directory was named `name`.
+pub(crate) fn deleted_copy(root: &Path, name: &str) -> Result<Option<PathBuf>> {
+    Ok(deleted_entries(root)?
+        .into_iter()
+        .filter(|(_, kept, _)| kept == name)
+        .max_by_key(|(seconds, _, _)| *seconds)
+        .map(|(_, _, path)| path))
 }
 
 /// Removes the kept deleted repositories under `root` older than `window`.
 pub(crate) fn remove_expired_deleted(root: &Path, window: Duration) -> Result<usize> {
     let now = unix_seconds()?;
     let mut removed = 0;
-    let mut failed = 0;
     for (seconds, _, path) in deleted_entries(root)? {
         if now.saturating_sub(seconds) > window.as_secs() {
-            match std::fs::remove_dir_all(&path) {
-                Ok(()) => removed += 1,
-                Err(error) => {
-                    failed += 1;
-                    tracing::warn!(%error, "Could not expire retained repository");
-                }
-            }
+            std::fs::remove_dir_all(path)?;
+            removed += 1;
         }
     }
-    ensure!(failed == 0, "Could not expire {failed} retained repositories; removed {removed}");
     Ok(removed)
 }
 
@@ -140,12 +133,7 @@ pub(crate) async fn mirror(source: &Path, copy: &Path) -> Result<()> {
             .arg(&source)
             .arg("+refs/*:refs/*");
         run(fetch, b"").await?;
-        let mut head = tempfile::NamedTempFile::new_in(copy)?;
-        let mut source_head = std::fs::File::open(source.join("HEAD"))?;
-        std::io::copy(&mut source_head, &mut head)?;
-        head.as_file().sync_all()?;
-        head.persist(copy.join("HEAD"))?;
-        std::fs::File::open(copy)?.sync_all()?;
+        std::fs::copy(source.join("HEAD"), copy.join("HEAD"))?;
         // HEAD may name a branch that was created after the refs were fetched.
         if head_resolves(copy).await? || !head_resolves(&source).await? {
             break;
@@ -155,9 +143,6 @@ pub(crate) async fn mirror(source: &Path, copy: &Path) -> Result<()> {
             "the default branch moved while the repository was copied"
         );
     }
-    let mut prune = git(copy)?;
-    prune.arg("prune-packed");
-    run(prune, b"").await?;
     std::fs::File::open(copy.join("HEAD"))?.sync_all()?;
     std::fs::File::open(copy)?.sync_all()?;
     Ok(())
@@ -168,17 +153,7 @@ async fn head_resolves(path: &Path) -> Result<bool> {
     let mut command = git(path)?;
     command.args(["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
     let output = process::run(command, b"", OUTPUT_LIMIT, TIMEOUT).await?;
-    if output.status.success() { return Ok(true); }
-    ensure!(output.status.code() == Some(1), "Git could not resolve backup HEAD");
-    let mut symbolic = git(path)?;
-    symbolic.args(["symbolic-ref", "-q", "HEAD"]);
-    let reference = run(symbolic, b"").await?;
-    let reference = std::str::from_utf8(&reference)?.strip_suffix('\n').context("Invalid symbolic HEAD")?;
-    let mut exists = git(path)?;
-    exists.args(["show-ref", "--verify", "--quiet", reference]);
-    let output = process::run(exists, b"", OUTPUT_LIMIT, TIMEOUT).await?;
-    ensure!(output.status.code() == Some(1), "Backup HEAD is not a verified unborn branch");
-    Ok(false)
+    Ok(output.status.success())
 }
 
 /// How many times the pack directory is copied again because repacking added a pack.
@@ -191,7 +166,6 @@ const PACK_ATTEMPTS: usize = 4;
 /// that replaced one being copied is not missed.
 fn copy_missing_objects(objects: &Path, copy: &Path) -> Result<()> {
     std::fs::create_dir_all(copy)?;
-    if let Some(parent) = copy.parent() { std::fs::File::open(parent)?.sync_all()?; }
     for entry in std::fs::read_dir(objects)? {
         let entry = entry?;
         let name = entry.file_name();
@@ -203,12 +177,38 @@ fn copy_missing_objects(objects: &Path, copy: &Path) -> Result<()> {
     }
     for _ in 0..PACK_ATTEMPTS {
         if !copy_new_files(&objects.join("pack"), &copy.join("pack"))? {
-            // Incremental backups retain old packs until rotation: the previous database
-            // remains authoritative if a later step of this backup fails.
-            return Ok(());
+            return remove_replaced_packs(&objects.join("pack"), &copy.join("pack"));
         }
     }
     anyhow::bail!("the packs kept changing while the repository was copied")
+}
+
+/// Removes the copy's pack files that the source no longer has, so a copy made into the same
+/// place again does not keep every pack the source ever replaced. Repacking writes its new pack
+/// before it deletes the ones it replaced, so once the copy holds every pack the source has, a
+/// pack the source dropped has nothing the copy still needs. Until then nothing is removed.
+fn remove_replaced_packs(source: &Path, copy: &Path) -> Result<()> {
+    let packs = |dir: &Path| -> Result<BTreeSet<OsString>> {
+        let mut names = BTreeSet::new();
+        for entry in std::fs::read_dir(dir)? {
+            let name = entry?.file_name();
+            if name.to_string_lossy().starts_with("pack-") {
+                names.insert(name);
+            }
+        }
+        Ok(names)
+    };
+    if !source.is_dir() {
+        return Ok(());
+    }
+    let (kept, held) = (packs(source)?, packs(copy)?);
+    if !kept.is_subset(&held) {
+        return Ok(());
+    }
+    for name in held.difference(&kept) {
+        std::fs::remove_file(copy.join(name))?;
+    }
+    Ok(())
 }
 
 /// Copies the files of `from` that `to` lacks, and says whether it copied any or saw one vanish,
@@ -221,7 +221,6 @@ fn copy_new_files(from: &Path, to: &Path) -> Result<bool> {
         Err(error) => return Err(error.into()),
     };
     std::fs::create_dir_all(to)?;
-    if let Some(parent) = to.parent() { std::fs::File::open(parent)?.sync_all()?; }
     let mut changed = false;
     for entry in entries {
         let entry = entry?;
@@ -229,7 +228,6 @@ fn copy_new_files(from: &Path, to: &Path) -> Result<bool> {
         let text = name.to_string_lossy().into_owned();
         let target = to.join(&name);
         if text.starts_with("tmp_")
-            || text.starts_with(".tmp-")
             || text.starts_with("multi-pack-index")
             || text.ends_with(".partial")
             || !entry.file_type()?.is_file()
@@ -251,7 +249,6 @@ fn copy_new_files(from: &Path, to: &Path) -> Result<bool> {
         std::fs::rename(&partial, &target)?;
         changed = true;
     }
-    std::fs::File::open(to)?.sync_all()?;
     Ok(changed)
 }
 
@@ -274,27 +271,6 @@ pub(crate) async fn check(path: &Path) -> Result<Option<String>> {
     Ok(Some(report))
 }
 
-/// Resolve commit IDs in bounded batches, retaining the supplied identity for annotated tags.
-pub(crate) async fn existing_commits(path: &Path, ids: &[String]) -> Result<std::collections::HashSet<String>> {
-    let mut found = std::collections::HashSet::new();
-    for batch in ids.chunks(1024) {
-        anyhow::ensure!(batch.iter().all(|id| crate::backend::git::is_full_commit_id(id)), "invalid commit ID");
-        let input = batch.iter().map(|id| format!("{id}^{{commit}}\n")).collect::<String>();
-        let mut command = git(path)?;
-        command.args(["cat-file", "--batch-check"]);
-        let output = run(command, input.as_bytes()).await?;
-        let output = String::from_utf8(output)?;
-        let lines = output.lines().collect::<Vec<_>>();
-        anyhow::ensure!(lines.len() == batch.len(), "incomplete commit existence response");
-        for (id, line) in batch.iter().zip(lines) {
-            if line.split_whitespace().nth(1) == Some("commit") {
-                found.insert(id.clone());
-            }
-        }
-    }
-    Ok(found)
-}
-
 /// Whether the repository holds the commit `sha`.
 pub(crate) async fn has_commit(path: &Path, sha: &str) -> Result<bool> {
     let mut command = git(path)?;
@@ -308,7 +284,7 @@ pub(crate) async fn head_branch(path: &Path) -> Result<Option<String>> {
     let mut command = git(path)?;
     command.args(["symbolic-ref", "-q", "HEAD"]);
     let output = process::run(command, b"", OUTPUT_LIMIT, TIMEOUT).await?;
-    let target = String::from_utf8_lossy(&output.stdout).strip_suffix('\n').unwrap_or_default().to_owned();
+    let target = String::from_utf8_lossy(&output.stdout).trim().to_owned();
     let Some(branch) = target.strip_prefix("refs/heads/") else {
         return Ok(None);
     };
@@ -365,7 +341,6 @@ pub(crate) async fn rebuild(path: &Path) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{collections::BTreeSet, ffi::OsString};
 
     #[tokio::test]
     async fn mirror_copies_commits_that_no_ref_reaches() {
@@ -398,7 +373,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn copying_again_retains_previously_published_packs() {
+    async fn copying_again_keeps_only_the_packs_the_source_has() {
         let root = tempfile::tempdir().unwrap();
         let (source, copy) = (root.path().join("source.git"), root.path().join("copy.git"));
         let repo = git2::Repository::init_bare(&source).unwrap();
@@ -429,7 +404,6 @@ mod tests {
         // The fetch found every object already copied, so the copy has no pack of its own.
         assert_eq!(packs(&copy), packs(&source));
 
-        let first_packs = packs(&copy);
         let parent = repo.find_commit(first).unwrap();
         repo.commit(
             Some("refs/heads/main"),
@@ -444,7 +418,7 @@ mod tests {
         repack.args(["repack", "-a", "-d", "-q"]);
         run(repack, b"").await.unwrap();
         mirror(&source, &copy).await.unwrap();
-        assert_eq!(packs(&copy), packs(&source).union(&first_packs).cloned().collect());
+        assert_eq!(packs(&copy), packs(&source));
         assert!(git2::Repository::open_bare(&copy)
             .unwrap()
             .find_commit(first)
@@ -460,9 +434,9 @@ mod tests {
 
         retire(&repository).unwrap();
         assert!(!repository.exists());
-        let kept = deleted_copies(root.path()).unwrap().remove("one.git").unwrap();
+        let kept = deleted_copy(root.path(), "one.git").unwrap().unwrap();
         assert!(kept.join("HEAD").is_file());
-        assert_eq!(deleted_copies(root.path()).unwrap().remove("two.git"), None);
+        assert_eq!(deleted_copy(root.path(), "two.git").unwrap(), None);
         // Retiring a repository that is already gone is not an error.
         retire(&repository).unwrap();
 

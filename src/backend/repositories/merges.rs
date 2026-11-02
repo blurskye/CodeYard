@@ -35,13 +35,11 @@ pub async fn merge_branch(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     ci: &CiRuns,
-    actor: impl Into<db::credentials::Actor>,
+    actor: i64,
     repo_id: i64,
     owner: &str,
     input: BranchMerge<'_>,
 ) -> Result<Option<CommitInfo>, RefError> {
-    let authority = actor.into();
-    let actor = authority.user_id;
     let (repository, user) = access::check_write(pool, repo_id, actor)
         .await
         .map_err(RefError::Access)?;
@@ -50,10 +48,10 @@ pub async fn merge_branch(
         return Err(RefError::Invalid("A branch name or commit SHA is required"));
     }
     if input.message.is_some_and(|message| {
-        message.is_empty() || message.len() > crate::git_limits::MAX_MERGE_MESSAGE_BYTES || message.contains('\0')
+        message.is_empty() || message.len() > 65_536 || message.contains('\0')
     }) {
         return Err(RefError::Invalid(
-            "Merge message must be nonempty, at most 8192 bytes and without NUL",
+            "Merge message must be nonempty, at most 65536 bytes and without NUL",
         ));
     }
     let store = repo_store(&repository, cluster);
@@ -126,59 +124,52 @@ pub async fn merge_branch(
         .commit_from_primary(&result)
         .await
         .map_err(RefError::Git)?;
-    // Publication and its follow-ups run in an owned task, so a cancelled request cannot move
-    // the ref and then skip the pull-request refresh and push workflows; a retry would find the
-    // branches already merged and do nothing.
-    let (pool, cluster, ci) = (pool.clone(), cluster.cloned(), ci.clone());
-    let (owner, base_name) = (owner.to_owned(), input.base.to_owned());
-    let publication = BranchMergePublication {
-        base_branch: base_name.clone(),
-        base: base.clone(),
-        head_branch,
-        head,
-        result: result.clone(),
-        authority,
-    };
-    let base = base.clone();
-    tokio::spawn(async move {
-        // A failure after the ref moved still refreshes pull requests and queues workflows,
-        // since a retry finds the branches already merged.
-        let followup_failed = match repo_store(&repository, cluster.as_ref())
-            .publish_branch_merge_as(&pool, repo_id, actor, &publication)
-            .await
-            .map_err(publication_error)
-        {
-            Ok(_) => false,
-            Err(RefError::AppliedFollowupFailed) => true,
-            Err(error) => return Err(error),
-        };
-        let refreshed = pull_requests::refresh_open_pull_requests(
-            &pool,
-            &repository,
-            Some(&[base_name.as_str()]),
-            &ci,
+    // A failure after the ref moved still refreshes pull requests and queues workflows, since a
+    // retry finds the branches already merged.
+    let followup_failed = match store
+        .publish_branch_merge_as(
+            pool,
+            repo_id,
             actor,
-            db::models::AccessLevel::Owner,
-        )
-        .await
-        .is_ok();
-        ci.queue_push_runs(
-            &repository,
-            &owner,
-            actor,
-            RefUpdate {
-                reference: base_ref,
-                old: Some(base),
-                new: result,
-                changed_paths: None,
+            &BranchMergePublication {
+                base_branch: input.base.into(),
+                base: base.clone(),
+                head_branch,
+                head,
+                result: result.clone(),
             },
         )
-        .await;
-        if !refreshed || followup_failed {
-            return Err(RefError::AppliedFollowupFailed);
-        }
-        Ok(Some(commit))
-    })
+        .await
+        .map_err(publication_error)
+    {
+        Ok(_) => false,
+        Err(RefError::AppliedFollowupFailed) => true,
+        Err(error) => return Err(error),
+    };
+    let refreshed = pull_requests::refresh_open_pull_requests(
+        pool,
+        &repository,
+        Some(&[input.base]),
+        ci,
+        actor,
+        db::models::AccessLevel::Owner,
+    )
     .await
-    .map_err(|_| RefError::Unavailable)?
+    .is_ok();
+    ci.queue_push_runs(
+        &repository,
+        owner,
+        actor,
+        RefUpdate {
+            reference: base_ref,
+            old: Some(base.clone()),
+            new: result,
+            changed_paths: None,
+        },
+    )
+    .await;
+    if !refreshed || followup_failed {
+        return Err(RefError::AppliedFollowupFailed);
+    }
+    Ok(Some(commit))
 }

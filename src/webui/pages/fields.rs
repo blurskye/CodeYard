@@ -35,6 +35,7 @@ pub struct FormValues {
 /// Only explicitly non-secret values may survive a failed submission.
 pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
     let get = |name: &str| form.get(name).cloned().unwrap_or_default();
+    let public_key = get("public_key");
     FormValues {
         username: get("username"),
         email: get("email"),
@@ -51,8 +52,11 @@ pub fn preserved_values(form: &HashMap<String, String>) -> FormValues {
         scope: get("scope"),
         expiry: get("expiry"),
         expires_at: get("expires_at"),
-        // The enrollment adapter may restore only a successfully parsed public key.
-        public_key: String::new(),
+        public_key: if public_key.contains("PRIVATE KEY") {
+            String::new()
+        } else {
+            public_key
+        },
         redirect: get("redirect"),
         mode: get("mode"),
     }

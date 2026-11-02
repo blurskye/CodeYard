@@ -11,8 +11,6 @@ pub enum LabelWriteRefusal {
     InvalidLabels,
     #[error("A label with this name already exists")]
     DuplicateName,
-    #[error("Label changed since the form was loaded")]
-    Conflict,
 }
 
 pub(crate) fn label_database_error(error: sqlx::Error) -> anyhow::Error {
@@ -71,10 +69,6 @@ native_operation!(crate::backend::db::postgres::labels::list_repo_labels,
     crate::backend::db::sqlite::labels::list_repo_labels,
     fn list_repo_labels(pool: &DbPool, repo_id: i64) -> Result<Vec<Label>>);
 
-native_operation!(crate::backend::db::postgres::labels::get_repo_label_by_name,
-    crate::backend::db::sqlite::labels::get_repo_label_by_name,
-    fn get_repo_label_by_name(pool: &DbPool, repo_id: i64, name: &str) -> Result<Option<Label>>);
-
 native_operation!(crate::backend::db::postgres::labels::get_label_by_id,
     crate::backend::db::sqlite::labels::get_label_by_id,
     fn get_label_by_id(pool: &DbPool, id: i64) -> Result<Option<Label>>);
@@ -89,11 +83,11 @@ native_operation!(crate::backend::db::postgres::labels::list_repo_labels_page,
 
 native_operation!(crate::backend::db::postgres::labels::list_milestone_labels,
     crate::backend::db::sqlite::labels::list_milestone_labels,
-    fn list_milestone_labels(pool: &DbPool, viewer: Option<i64>, repo_id: i64, milestone_id: i64, limit: i64, offset: i64) -> Result<Vec<Label>>);
+    fn list_milestone_labels(pool: &DbPool, repo_id: i64, milestone_id: i64, limit: i64, offset: i64) -> Result<Vec<Label>>);
 
 native_operation!(crate::backend::db::postgres::labels::list_label_usage,
     crate::backend::db::sqlite::labels::list_label_usage,
-    fn list_label_usage(pool: &DbPool, repo_id: i64, label_ids: &[i64]) -> Result<Vec<(i64, i64)>>);
+    fn list_label_usage(pool: &DbPool, repo_id: i64) -> Result<Vec<(i64, i64)>>);
 
 native_operation!(crate::backend::db::postgres::labels::update_label,
     crate::backend::db::sqlite::labels::update_label,
@@ -106,10 +100,6 @@ native_operation!(crate::backend::db::postgres::labels::update_label,
     color: Option<&str>,
     description: Option<&str>,
 ) -> Result<Label>);
-
-native_operation!(crate::backend::db::postgres::labels::update_label_checked,
-    crate::backend::db::sqlite::labels::update_label_checked,
-    fn update_label_checked(pool: &DbPool, actor_id: i64, repo_id: i64, label_id: i64, fields: (Option<&str>, Option<&str>, Option<&str>), expected: Option<&str>) -> Result<Label>);
 
 native_operation!(crate::backend::db::postgres::labels::delete_label,
     crate::backend::db::sqlite::labels::delete_label,
@@ -171,20 +161,10 @@ async fn labels_of_items(
     for chunk in ids.chunks(500) {
         let rows = match pool {
             DbPool::Postgres(pool) => {
-                crate::backend::db::postgres::labels::get_items_labels(
-                    &mut *pool.acquire().await?,
-                    target,
-                    chunk,
-                )
-                .await?
+                crate::backend::db::postgres::labels::get_items_labels(pool, target, chunk).await?
             }
             DbPool::Sqlite(pool) => {
-                crate::backend::db::sqlite::labels::get_items_labels(
-                    &mut *pool.acquire().await?,
-                    target,
-                    chunk,
-                )
-                .await?
+                crate::backend::db::sqlite::labels::get_items_labels(pool, target, chunk).await?
             }
         };
         for row in rows {

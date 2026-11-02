@@ -23,18 +23,6 @@ pub enum AttestationError {
     InvalidPage,
 }
 
-pub(crate) fn page_ids(rows: &[(i64, i64)], limit: usize) -> Result<Vec<i64>, AttestationError> {
-    let mut bytes = 0usize;
-    let mut ids = Vec::new();
-    for &(id, size) in rows.iter().take(limit) {
-        bytes = bytes.saturating_add(usize::try_from(size).map_err(|_| AttestationError::Size)?);
-        if bytes > 8 * 1024 * 1024 { break; }
-        ids.push(id);
-    }
-    if !rows.is_empty() && ids.is_empty() { return Err(AttestationError::Size); }
-    Ok(ids)
-}
-
 pub fn subject_digest(value: &str) -> Result<String, AttestationError> {
     let Some(hex) = value.strip_prefix("sha256:") else {
         return Err(AttestationError::InvalidDigest);
@@ -86,7 +74,7 @@ impl PreparedBundle {
 
     pub fn new(bundle: &Value) -> Result<Self, AttestationError> {
         let text = bundle.to_string();
-        if text.len() > super::attestations::MAX_BUNDLE_BYTES {
+        if text.len() > 1024 * 1024 {
             return Err(AttestationError::Size);
         }
         let invalid = || AttestationError::InvalidBundle;
@@ -167,16 +155,12 @@ impl PreparedBundle {
             .ok_or_else(invalid)?;
         let mut digests = std::collections::BTreeSet::new();
         for subject in subjects {
-            let digest = subject.get("digest").and_then(Value::as_object).ok_or_else(invalid)?;
-            let mut recognized = false;
-            for algorithm in ["sha256", "sha512"] {
-                if let Some(hex) = digest.get(algorithm) {
-                    let hex = hex.as_str().ok_or_else(invalid)?;
-                    digests.insert(subject_digest(&format!("{algorithm}:{hex}")).map_err(|_| invalid())?);
-                    recognized = true;
-                }
-            }
-            if !recognized { return Err(invalid()); }
+            let hex = subject
+                .get("digest")
+                .and_then(|value| value.get("sha256"))
+                .and_then(Value::as_str)
+                .ok_or_else(invalid)?;
+            digests.insert(subject_digest(&format!("sha256:{hex}")).map_err(|_| invalid())?);
         }
         Ok(Self {
             bundle: text,
@@ -217,19 +201,18 @@ pub struct Attestation {
 
 pub async fn create(
     pool: &DbPool,
-    actor: impl Into<super::credentials::Actor>,
+    actor: i64,
     repo: i64,
     bundle: &PreparedBundle,
 ) -> Result<i64, AttestationError> {
     use sha2::{Digest, Sha256};
-    let actor = actor.into();
     let bundle = super::attestations::Bundle {
         hash: format!("{:x}", Sha256::digest(bundle.bundle.as_bytes())),
         json: bundle.bundle.clone(),
         predicate: bundle.predicate_type.clone(),
         subjects: bundle.subjects.iter().cloned().collect(),
     };
-    let user = super::users::accounts::get_user_by_id(pool, actor.user_id)
+    let user = super::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(AttestationError::Authority)?
         .ok_or(AttestationError::Denied)?;

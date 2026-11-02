@@ -69,17 +69,6 @@ pub fn signup_decision(origin: &str, username: &str, approved: bool) -> Mail {
     }
 }
 
-pub fn organization_invitation(origin: &str, name: &str) -> Mail {
-    let accept = match site_link(origin, "/settings/organizations") {
-        Some(link) => format!(" at {link}"),
-        None => " under Settings, Organizations".to_owned(),
-    };
-    Mail {
-        subject: one_line(&format!("Invitation to join {name}")),
-        body: format!("You have been invited to join {name}. Sign in, or create an account and verify this email address, to accept the invitation{accept}.\n\nThis invitation expires after seven days.\n"),
-    }
-}
-
 /// The link line of a code mail, when there is an origin.
 fn link_line(origin: &str, text: &str, path: &str) -> String {
     site_link(origin, path)

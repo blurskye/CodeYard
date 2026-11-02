@@ -216,11 +216,11 @@ def submit_target(form, action, submit, wanted=None):
     `wanted` is the one clicked.
     """
     name, _, value = (submit or "").partition("=")
-    targets = [t for n, v, t in form.buttons if not submit or (n == name and v == value)] if form else []
+    targets = [t for n, v, t in form.buttons if n == name and v == value] if form and submit else []
     for target in targets:
         if wanted is not None and (target == wanted or urllib.parse.urlsplit(target).path == wanted):
             return target
-    return targets[0] if targets and submit else action
+    return targets[0] if targets else action
 
 
 def apply_overrides(fields, sets, unsets, submit):
@@ -380,8 +380,8 @@ class Client:
     def request(self, method, path, headers=None, body=None, timeout=60):
         send = {"Accept": ACCEPT["html"], "User-Agent": "codeyard-e2e/1"}
         send.update(headers or {})
-        cookie = "; ".join(f"{k}={v}" for k, v in self.cookies.items())
-        if cookie and not any(name.lower() == "cookie" for name in send):
+        cookie = "; ".join(f"{k}={v}" for k, v in self.cookies.items() if not k.startswith("_"))
+        if cookie:
             send["Cookie"] = cookie
         started = time.time()
         connection = self.connection(self.host, self.port, timeout=timeout)
@@ -732,7 +732,7 @@ def cmd_form_get(client, a):
     page, form = get_form(client, a, a.status)
     if a.save:
         Path(a.save).write_text(
-            json.dumps({"page": a.path, "action": submit_target(form, form.action, None, a.action), "fields": form.fields, "buttons": form.buttons}, ensure_ascii=False)
+            json.dumps({"page": a.path, "action": form.action, "fields": form.fields}, ensure_ascii=False)
         )
     emit(client, page, a, form)
 
@@ -740,10 +740,7 @@ def cmd_form_get(client, a):
 def cmd_form_post(client, a):
     saved = json.loads(Path(a.from_file).read_text())
     fields = apply_overrides([tuple(f) for f in saved["fields"]], a.set, a.unset, a.submit)
-    form = Form({"action": saved["action"], "method": "post"})
-    form.buttons = [tuple(button) for button in saved.get("buttons", [])]
-    action = submit_target(form, saved["action"], a.submit, saved["action"])
-    post_form(client, a, saved["page"], action, fields, form)
+    post_form(client, a, saved["page"], saved["action"], fields, None)
 
 
 def check(condition, message):

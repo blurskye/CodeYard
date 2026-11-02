@@ -27,29 +27,8 @@ pub fn install() {
         true,
     );
     let _ = document.add_event_listener_with_callback("keydown", on_key.as_ref().unchecked_ref());
-    let on_dialog = Closure::<dyn FnMut(web_sys::Event)>::new(|_| sync_dialogs());
-    let on_cancel = Closure::<dyn FnMut(web_sys::Event)>::new(|event: web_sys::Event| {
-        let Some(dialog) = event.target().and_then(|target| target.dyn_into::<web_sys::HtmlDialogElement>().ok()) else { return; };
-        if !dialog.matches(".repo-confirm-modal").unwrap_or(false) { return; }
-        dialog.close();
-        if let Ok(Some(details)) = dialog.closest("details[open]") {
-            let _ = details.remove_attribute("open");
-        } else if let Ok(Some(cancel)) = dialog.query_selector(".repo-confirm-backdrop") {
-            if let (Some(window), Some(href)) = (web_sys::window(), cancel.get_attribute("href")) {
-                let _ = window.location().assign(&href);
-            }
-        }
-    });
-    let _ = document.add_event_listener_with_callback_and_bool("toggle", on_dialog.as_ref().unchecked_ref(), true);
-    let _ = document.add_event_listener_with_callback_and_bool("cancel", on_cancel.as_ref().unchecked_ref(), true);
-    if let Some(window) = web_sys::window() {
-        let _ = window.add_event_listener_with_callback("hashchange", on_dialog.as_ref().unchecked_ref());
-    }
-    sync_dialogs();
     on_click.forget();
     on_key.forget();
-    on_dialog.forget();
-    on_cancel.forget();
 }
 
 /// A click closes every open menu it is not inside. A link inside a menu also closes that
@@ -78,7 +57,7 @@ fn close_for_key(event: &web_sys::Event) {
         return;
     };
     // A control inside the menu, such as an open select, has already used this key.
-    if key.key() != "Escape" || key.is_composing() || event.default_prevented() {
+    if key.key() != "Escape" || event.default_prevented() {
         return;
     }
     let menus = open_menus();
@@ -106,23 +85,6 @@ fn close_for_key(event: &web_sys::Event) {
         summary.and_then(|summary| summary.dyn_into::<web_sys::HtmlElement>().ok())
     {
         let _ = button.focus();
-    }
-}
-
-pub(super) fn sync_dialogs() {
-    let Some(window) = web_sys::window() else { return; };
-    let Some(document) = window.document() else { return; };
-    let Ok(dialogs) = document.query_selector_all("dialog.repo-confirm-modal") else { return; };
-    let hash = window.location().hash().unwrap_or_default();
-    for index in 0..dialogs.length() {
-        let Some(dialog) = dialogs.item(index).and_then(|node| node.dyn_into::<web_sys::HtmlDialogElement>().ok()) else { continue; };
-        let visible = dialog.closest("details[open]").ok().flatten().is_some()
-            || (!dialog.id().is_empty() && hash == format!("#{}", dialog.id()));
-        if visible && !dialog.open() {
-            let _ = dialog.show_modal();
-        } else if !visible && dialog.open() {
-            dialog.close();
-        }
     }
 }
 

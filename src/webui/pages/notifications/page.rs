@@ -1,7 +1,7 @@
 //! Recipient-scoped notification presentation and polling.
 use crate::webui::components::{Avatar, DraftInput};
 use crate::webui::encode_component;
-use crate::webui::navigation::{safe_page_target as safe_notification_link, NavLink, RefreshLink};
+use crate::webui::navigation::{NavLink, RefreshLink};
 use dioxus::prelude::*;
 use serde::{Deserialize, Serialize};
 
@@ -11,9 +11,7 @@ pub(crate) fn NotificationsView(model: NotificationsPage) -> Element {
         #[cfg(target_arch = "wasm32")]
         loop {
             gloo_timers::future::TimeoutFuture::new(15000).await;
-            if web_sys::window().and_then(|window| window.document()).is_some_and(|document| !document.hidden()) {
-                crate::webui::navigation::refresh_page();
-            }
+            crate::webui::navigation::refresh_page();
         }
     });
     notifications_page(model)
@@ -89,6 +87,18 @@ pub struct NotificationsPage {
     pub before: Option<String>,
     #[serde(default)]
     pub older: Option<String>,
+}
+
+/// Stored notification URLs are not trusted navigation instructions.
+fn safe_notification_link(link: &str) -> bool {
+    let lower = link.to_ascii_lowercase();
+    link.starts_with('/')
+        && !link.starts_with("//")
+        && !link.contains(['\\', '\r', '\n'])
+        && !lower.contains("%5c")
+        && !lower.contains("%0d")
+        && !lower.contains("%0a")
+        && !lower.starts_with("/%2f")
 }
 
 fn notification_date(value: &str) -> String {
@@ -221,16 +231,16 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                             {filter_option(notifications_href(&model.view, model.repository, Some(reason.slug.as_str()), model.query.as_deref(), model.unread_only, None), &reason.label, model.reason.as_deref() == Some(reason.slug.as_str()))}
                         }
                     })}
-                    if model.view != "done" { NavLink { href: unread_toggle, class: if model.unread_only { "btn btn-sm is-current" } else { "btn btn-sm" }, aria_current: if model.unread_only { Some("true".to_owned()) } else { None }, mark_current: false,
+                    NavLink { href: unread_toggle, class: if model.unread_only { "btn btn-sm is-current" } else { "btn btn-sm" }, aria_current: if model.unread_only { Some("true".to_owned()) } else { None }, mark_current: false,
                         "Unread"
                         if model.unread_count > 0 { span { class: "notification-count", "{model.unread_count}" } }
-                    } }
+                    }
                     if filtered {
                         NavLink { href: clear, class: "notification-clear", mark_current: false, "Clear filters" }
                     }
                     if model.view != "done" && !model.notifications.is_empty() {
                         form { method: "post", action: "/notifications/done-all", class: "notification-bulk-form",
-                            {crate::webui::pages::fields::csrf(&model.csrf_token)}
+                            input { r#type: "hidden", name: "csrf_token", value: model.csrf_token.clone() }
                             {list_fields(&model, false)}
                             button { r#type: "submit", class: "btn btn-sm", "Mark all as done" }
                         }
@@ -261,16 +271,8 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                         div { class: "notification-main",
                             h2 { class: "notification-title",
                                 if let Some(link) = notification.link.as_ref().filter(|link| safe_notification_link(link)) {
-                                    if is_unread(notification) {
-                                        form { method: "post", action: format!("/notifications/{}/read", notification.id),
-                                            {crate::webui::pages::fields::csrf(&model.csrf_token)}
-                                            input { r#type: "hidden", name: "open", value: "yes" }
-                                            {list_fields(&model, true)}
-                                            button { r#type: "submit", class: "notification-link", "{headline(notification)}" }
-                                        }
-                                    } else {
-                                        NavLink { href: link.clone(), class: "notification-link", "{headline(notification)}" }
-                                    }
+                                    // The link covers the whole row (see .notification-link::after).
+                                    NavLink { href: link.clone(), class: "notification-link", "{headline(notification)}" }
                                 } else { "{headline(notification)}" }
                             }
                             if let Some(preview) = notification.body.as_deref().filter(|preview| !preview.is_empty()) {
@@ -295,13 +297,13 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                         div { class: "notification-actions",
                             if is_unread(notification) {
                                 form { method: "post", action: format!("/notifications/{}/read", notification.id), class: "notification-read-form",
-                                    {crate::webui::pages::fields::csrf(&model.csrf_token)}
+                                    input { r#type: "hidden", name: "csrf_token", value: model.csrf_token.clone() }
                                     {list_fields(&model, true)}
                                     button { r#type: "submit", class: "btn btn-sm", "Mark read" }
                                 }
                             }
                             form { method: "post", action: format!("/notifications/{}/save", notification.id), class: "notification-action-form",
-                                {crate::webui::pages::fields::csrf(&model.csrf_token)}
+                                input { r#type: "hidden", name: "csrf_token", value: model.csrf_token.clone() }
                                 input { r#type: "hidden", name: "saved", value: if notification.saved { "0" } else { "1" } }
                                 {list_fields(&model, true)}
                                 button { r#type: "submit", class: "notification-action icon-tooltip", "aria-label": if notification.saved { "Unsave" } else { "Save" }, "aria-pressed": if notification.saved { "true" } else { "false" },
@@ -309,7 +311,7 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                                 }
                             }
                             form { method: "post", action: format!("/notifications/{}/done", notification.id), class: "notification-action-form",
-                                {crate::webui::pages::fields::csrf(&model.csrf_token)}
+                                input { r#type: "hidden", name: "csrf_token", value: model.csrf_token.clone() }
                                 input { r#type: "hidden", name: "done", value: if notification.done { "0" } else { "1" } }
                                 {list_fields(&model, true)}
                                 button { r#type: "submit", class: "notification-action icon-tooltip", "aria-label": if notification.done { "Undo" } else { "Done" },
@@ -337,7 +339,7 @@ fn view_tab(model: &NotificationsPage, name: &str, label: &str, count: i64) -> E
         model.repository,
         model.reason.as_deref(),
         model.query.as_deref(),
-        model.unread_only && name != "done",
+        model.unread_only,
         None,
     );
     rsx! {

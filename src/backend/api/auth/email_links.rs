@@ -104,7 +104,6 @@ pub(crate) async fn forgot_post(
         Ok(()) => code_page(
             &ctx,
             address,
-            &redirect,
             StatusCode::OK,
             Some("If a verified address matches, an email with a code is on its way. The code works for one hour."),
         ),
@@ -118,7 +117,6 @@ pub(crate) async fn forgot_post(
 fn code_page(
     ctx: &PageContext,
     email: &str,
-    redirect: &str,
     status: StatusCode,
     message: Option<&str>,
 ) -> Response {
@@ -128,7 +126,6 @@ fn code_page(
         crate::webui::app::Page::Identity(account::Page::ResetCode {
             csrf_token: ctx.csrf_token.clone(),
             email: email.to_owned(),
-            redirect: redirect.to_owned(),
             message: message.map(str::to_owned),
             is_error: !status.is_success(),
         }),
@@ -146,8 +143,7 @@ pub(crate) async fn reset_code_get(
         Err(response) => return response,
     };
     let email = ctx.query.get("email").cloned().unwrap_or_default();
-    let redirect = safe_redirect(ctx.query.get("redirect").map(String::as_str));
-    code_page(&ctx, email.trim(), &redirect, StatusCode::OK, None)
+    code_page(&ctx, email.trim(), StatusCode::OK, None)
 }
 
 pub(crate) async fn reset_code_post(
@@ -164,13 +160,11 @@ pub(crate) async fn reset_code_post(
         return response;
     }
     let email = field(&form, "email").trim();
-    let redirect = safe_redirect(form.get("redirect").map(String::as_str));
     let password = field(&form, "new_password");
     if !within_bounds(&form) || password != field(&form, "confirm_password") {
         return code_page(
             &ctx,
             email,
-            &redirect,
             StatusCode::BAD_REQUEST,
             Some("Passwords must match and stay within the supported length."),
         );
@@ -178,28 +172,19 @@ pub(crate) async fn reset_code_post(
     // The code is the token from the link, so a pasted code works the same way.
     let code = field(&form, "code").trim();
     match identity::accounts::reset_password(&ctx.state.pool, code, password).await {
-        Ok(()) => {
-            let target = if redirect == "/" { "/login?reset=done".to_owned() }
-                else { format!("/login?reset=done&redirect={}", crate::webui::encode_component(&redirect)) };
-            ctx.redirect(&target)
-        }
+        Ok(()) => ctx.redirect("/login?reset=done"),
         Err(PasswordResetError::Input(_)) => code_page(
             &ctx,
             email,
-            &redirect,
             StatusCode::BAD_REQUEST,
             Some("Password must be between 8 and 1024 bytes."),
         ),
-        Err(PasswordResetError::UnchangedPassword) => code_page(
-            &ctx, email, &redirect, StatusCode::BAD_REQUEST, Some("Choose a password different from your temporary password."),
-        ),
         Err(PasswordResetError::InvalidLink) => {
-            code_page(&ctx, email, &redirect, StatusCode::BAD_REQUEST, Some(INVALID_CODE))
+            code_page(&ctx, email, StatusCode::BAD_REQUEST, Some(INVALID_CODE))
         }
         Err(PasswordResetError::Password(_) | PasswordResetError::AccountUnavailable) => code_page(
             &ctx,
             email,
-            &redirect,
             StatusCode::SERVICE_UNAVAILABLE,
             Some("Unable to change the password right now. Try again."),
         ),
@@ -299,9 +284,6 @@ pub(crate) async fn reset_post(
             )
             .await
         }
-        Err(PasswordResetError::UnchangedPassword) => reset_page(
-            &ctx, token, StatusCode::BAD_REQUEST, Some("Choose a password different from your temporary password."),
-        ).await,
         Err(PasswordResetError::InvalidLink) => {
             reset_page(&ctx, token, StatusCode::BAD_REQUEST, Some(INVALID_LINK)).await
         }

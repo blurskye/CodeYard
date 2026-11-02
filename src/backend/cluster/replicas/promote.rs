@@ -102,13 +102,8 @@ pub async fn promote(
     if let Some(problem) = blocking_member(pool, &members, to, force).await? {
         bail!("{problem}; nothing changed");
     }
-    if !force {
-        return match db::cluster::promote_manual_family(pool, repository, from, to).await? {
-            FamilyOutcome::Promoted(members) => Ok(members.into_iter().map(|repository| Promotion { repository, from, to, lost_writes: 0 }).collect()),
-            FamilyOutcome::Refused => bail!("the fork family changed during promotion; nothing changed"),
-        };
-    }
-    // Forced promotion explicitly accepts a split family and reports partial progress.
+    // The members move one by one, so a race can stop the sequence. The error then says
+    // which repositories had already moved.
     let mut promoted = Vec::new();
     for (member, _) in members {
         let outcome = db::cluster::promote_repository(pool, member, from, to, !force).await?;
@@ -138,6 +133,14 @@ pub async fn promote(
             "{name} {problem}; {} repositories of its fork family had already moved to the new primary. Run promote for {name} again to move the rest",
             promoted.len()
         );
+    }
+    if !force
+        && db::cluster::list_fork_family(pool, repository)
+            .await?
+            .iter()
+            .any(|(_, primary, _)| *primary == Some(from))
+    {
+        bail!("the fork family changed during promotion; {} repositories had already moved. Run promote again to move the rest", promoted.len());
     }
     Ok(promoted)
 }
@@ -178,9 +181,7 @@ pub async fn take_over(
     let mut taken = Vec::new();
     // The families already decided in this pass, so each one is tried once, from its first row.
     let mut decided = HashSet::new();
-    let held = db::cluster::list_held_replicas(pool, node).await?;
-    let versions: HashMap<_, _> = held.iter().map(|row| (row.repository_id, row.applied_version)).collect();
-    for row in held {
+    for row in db::cluster::list_held_replicas(pool, node).await? {
         let Some(from) = row.primary_node_id.filter(|from| *from != node) else {
             continue;
         };
@@ -201,11 +202,7 @@ pub async fn take_over(
         let problem = if members.len() < family.len() {
             Some("not every member of it is on the offline primary".to_owned())
         } else {
-            let blocked = members.iter().find_map(|(member, version)| copy_problem(versions.get(member).copied(), *version, false).map(|problem| (*member, problem)));
-            match blocked {
-                Some((member, problem)) => Some(format!("{} {problem}", repository_name(pool, member).await?)),
-                None => None,
-            }
+            blocking_member(pool, &members, node, false).await?
         };
         if let Some(problem) = problem {
             // A skipped family is checked again on every pass. `skipped` only keeps the warning
@@ -332,5 +329,5 @@ fn is_storage(nodes: &[ClusterNode], id: i64) -> bool {
 /// Whether a promotion may move a repository to `id`: a storage node that is reporting in, by
 /// the database clock. The promotion transaction checks the same thing again.
 fn is_reporting_storage(nodes: &[ClusterNode], id: i64) -> bool {
-    nodes.iter().any(|node| node.id == id && node.is_serving_storage())
+    is_storage(nodes, id) && nodes.iter().any(|node| node.id == id && node.is_online())
 }

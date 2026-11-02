@@ -72,7 +72,7 @@ async fn list(
     );
     let store = repo_store(&repo, state.cluster.as_ref());
     let mut refs: Vec<_> = store
-        .matching_refs(&prefix)
+        .refs()
         .await
         .map_err(store_error)?
         .into_iter()
@@ -125,8 +125,7 @@ async fn create(
     Json(input): Json<Create>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = auth.database_actor();
+    let actor = auth.ok_or_else(super::auth::required)?.user.id;
     if !crate::backend::git::is_full_commit_id(&input.sha) {
         return Err(Error::invalid("sha must be a full object ID"));
     }
@@ -187,8 +186,7 @@ async fn remove(
     Path((owner, name, reference)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = auth.database_actor();
+    let actor = auth.ok_or_else(super::auth::required)?.user.id;
     let store = repo_store(&repo, state.cluster.as_ref());
     if !store
         .refs_from_primary()
@@ -233,8 +231,7 @@ async fn update(
     Json(input): Json<Update>,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = auth.database_actor();
+    let actor = auth.ok_or_else(super::auth::required)?.user.id;
     let full = format!("refs/{reference}");
     let sha = refs::update_reference(
         &state.pool,

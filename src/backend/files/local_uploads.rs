@@ -28,13 +28,11 @@ pub enum LocalUploadError {
 pub async fn put_local_upload(
     pool: &DbPool,
     store: &ObjectStore,
-    actor: impl Into<files_db::FileAuthority>,
+    actor_id: i64,
     file_id: Uuid,
     content_type: &str,
     reader: impl AsyncRead + Unpin,
 ) -> Result<(), LocalUploadError> {
-    let actor = actor.into();
-    let actor_id = actor.user_id.ok_or(LocalUploadError::NotFound)?;
     let first = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| LocalUploadError::MetadataUnavailable)?
@@ -63,14 +61,15 @@ pub async fn put_local_upload(
         if file.content_type != content_type {
             return Err(LocalUploadError::Invalid);
         }
-        let staged = store.stage_local(&upload(&file), reader).await.map_err(|error| match error {
-            StorageError::Unavailable => LocalUploadError::StorageUnavailable,
-            _ => LocalUploadError::Rejected,
-        })?;
-        if !files_db::can_publish_upload(pool, file_id, actor).await.map_err(|_| LocalUploadError::MetadataUnavailable)? {
-            return Err(LocalUploadError::Rejected);
-        }
-        staged.publish().await.map_err(|_| LocalUploadError::StorageUnavailable)
+        store
+            .put_local(&upload(&file), reader)
+            .await
+            .map_err(|error| match error {
+                StorageError::Unavailable => LocalUploadError::StorageUnavailable,
+                StorageError::Invalid | StorageError::NotFound | StorageError::Rejected => {
+                    LocalUploadError::Rejected
+                }
+            })
     })
     .await
     .unwrap_or(Err(LocalUploadError::Rejected))

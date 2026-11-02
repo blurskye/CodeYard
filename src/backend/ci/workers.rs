@@ -26,6 +26,7 @@ pub struct CiWorkers {
     pub(super) queued: Arc<Notify>,
     pub(super) cleanups: Arc<Mutex<JoinSet<()>>>,
     pub(super) cleanup_dir: PathBuf,
+    pub(super) names: Arc<worker::WorkflowNames>,
     run_workers: bool,
     configuration_error: Option<String>,
     workers: Arc<Workers>,
@@ -72,6 +73,7 @@ impl CiWorkers {
             cleanups: Arc::new(Mutex::new(JoinSet::new())),
             cleanup_dir: work_root.join("ci-containers"),
             configuration_error,
+            names: Arc::new(worker::WorkflowNames::default()),
             workers: Arc::new(Workers {
                 stop: watch::channel(false).0,
                 tasks: Mutex::new(JoinSet::new()),
@@ -91,7 +93,11 @@ impl CiWorkers {
         // finish, each worker recovers again before its first claim.
         let mut recovered = true;
         if recover {
-            crate::backend::fs::private_dir(&self.cleanup_dir)?;
+            use std::os::unix::fs::DirBuilderExt;
+            std::fs::DirBuilder::new()
+                .recursive(true)
+                .mode(0o700)
+                .create(&self.cleanup_dir)?;
             // A Podman socket that accepts connections but never answers must not hold up the
             // listeners. Records the pass does not reach stay on disk for the background pass.
             match tokio::time::timeout(
@@ -113,11 +119,17 @@ impl CiWorkers {
         }
         // The node name, as the rest of the node setup reads it. An empty value counts
         // as unset, because compose passes an unset variable on as an empty one.
-        let node = match std::env::var("NODE_NAME").ok().filter(|name| !name.trim().is_empty()) {
-            Some(name) => name,
-            None => crate::backend::cluster::hostname()?,
-        };
-        let node = crate::backend::cluster::normalize_name(&node)?;
+        let node = std::env::var("NODE_NAME")
+            .ok()
+            .map(|name| name.trim().to_owned())
+            .filter(|name| !name.is_empty())
+            .or_else(|| {
+                std::fs::read_to_string("/etc/hostname")
+                    .ok()
+                    .map(|name| name.trim().to_owned())
+                    .filter(|name| !name.is_empty())
+            })
+            .unwrap_or_else(|| "node".into());
         let mut tasks = workers.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let RunQueue::Database { .. } = &self.queue {
             tasks.spawn(worker::fail_stale_runs(
@@ -163,12 +175,6 @@ impl CiWorkers {
     /// Stops new claims and signals running jobs without waiting for them.
     pub fn request_stop(&self) {
         self.workers.stop.send_replace(true);
-    }
-
-    /// Completes when membership refusal or shutdown retires this worker process.
-    pub async fn stopped(&self) {
-        let mut stop = self.workers.stop.subscribe();
-        let _ = stop.wait_for(|stopped| *stopped).await;
     }
 
     /// Cancels running jobs and waits briefly for results and workspace cleanup.

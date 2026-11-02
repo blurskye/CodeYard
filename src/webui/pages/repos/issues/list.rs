@@ -346,7 +346,6 @@ pub fn list(
                     NavLink { class: "btn btn-secondary", href: format!("{}/milestones", repo.url()), "Milestones" }
                     {contribute(repo, kind)}
                 }
-                if filters.labels.len() >= 100 { p { class: "collaboration-muted", "The label menu shows 100 labels plus your selections. Find other names on the Labels page, then use label:\"name\" in search." } }
                 if !filters.pinned_issues.is_empty() {
                     section { class: "collaboration-panel", aria_label: "Pinned issues",
                         h2 { "Pinned issues" }

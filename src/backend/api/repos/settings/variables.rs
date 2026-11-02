@@ -18,14 +18,11 @@ pub(crate) async fn form(
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to manage variables.");
     };
     let name = field(form, "name").to_ascii_uppercase();
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let credential = db::users::accounts::AccountCredential::Session(&session);
     let result = if action == "variable-save" {
         let previous = field(form, "previous").to_ascii_uppercase();
         db::variables::save(
             &ctx.state.pool,
             actor.id,
-            &credential,
             loaded.repository.id,
             (!previous.is_empty()).then_some(previous.as_str()),
             &name,
@@ -33,7 +30,7 @@ pub(crate) async fn form(
         )
         .await
     } else {
-        db::variables::delete(&ctx.state.pool, actor.id, &credential, loaded.repository.id, &name).await
+        db::variables::delete(&ctx.state.pool, actor.id, loaded.repository.id, &name).await
     };
     match result {
         Ok(()) => ctx.redirect(&format!("{}/settings?tab=secrets", loaded.chrome.base())),
@@ -42,7 +39,7 @@ pub(crate) async fn form(
             let (status, message) = match error {
                 VariableError::Denied => (
                     StatusCode::FORBIDDEN,
-                    "Repository write access is required.".into(),
+                    "Repository administration is required.".into(),
                 ),
                 VariableError::NotFound => (StatusCode::NOT_FOUND, "Variable not found.".into()),
                 VariableError::Database(_) | VariableError::Authority(_) => (

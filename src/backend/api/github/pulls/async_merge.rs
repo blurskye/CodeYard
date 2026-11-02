@@ -44,11 +44,6 @@ async fn start(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(super::super::auth::required)?;
-    // The merge moves the base branch, so the credential needs contents write as well as the
-    // pull request grant the route asked for.
-    auth.repository_scope(&state.pool, repo.id, "contents", true)
-        .await
-        .map_err(super::super::auth::scope_error)?;
     if !access::can_write(&state.pool, &auth.user, &repo)
         .await
         .map_err(Error::unavailable)?
@@ -66,7 +61,7 @@ async fn start(
     } else {
         match serde_json::from_slice(&body) {
             Ok(input) => input,
-            Err(error) => { let error = super::super::json_parse_error(error); return Ok(failed(error.0, error.1)); },
+            Err(_) => return Ok(failed(StatusCode::BAD_REQUEST, "Invalid merge request")),
         }
     };
     let input = input.unwrap_or_default();
@@ -141,7 +136,7 @@ async fn start(
         native::Job {
             repo_id: repo.id,
             pull_request_id: pull.id,
-            authority: auth.database_actor(),
+            token_id: auth.token.id,
             owner,
             name,
             number,

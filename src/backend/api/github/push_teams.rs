@@ -23,17 +23,13 @@ use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;
 
-pub(super) async fn documents(state: &AppState, rule: &BranchProtectionRule, actor: i64) -> Result<Vec<Value>> {
+pub(super) async fn documents(state: &AppState, rule: &BranchProtectionRule) -> Result<Vec<Value>> {
     let rows =
         db::repositories::push_teams::by_ids(&state.pool, rule.repo_id, &rule.push_team_allowances)
             .await
             .map_err(Error::unavailable)?;
     let mut values = Vec::new();
     for row in rows {
-        if db::organizations::teams::get_team_by_id(&state.pool, actor, row.team.id)
-            .await.map_err(Error::unavailable)?.is_none() {
-            continue;
-        }
         values.push(super::teams::summary(state, &row.team, &row.org_slug, row.permission).await?);
     }
     Ok(values)
@@ -68,7 +64,7 @@ async fn teams(
     if !read_method(&method) {
         let Json(input) = Json::<Input>::from_request(request, &state)
             .await
-            .map_err(super::json_error)?;
+            .map_err(|_| Error::invalid("Expected an array of team slugs"))?;
         let (Input::Array(names) | Input::Object { teams: names }) = input;
         let ids = db::repositories::push_teams::resolve_names(&state.pool, rule.repo_id, &names)
             .await
@@ -81,7 +77,7 @@ async fn teams(
         };
         rule = db::repositories::protection::update_branch_protection_rule(
             &state.pool,
-            actor.clone(),
+            actor,
             rule.repo_id,
             &rule.pattern,
             ProtectionUpdate::PushTeams(update),
@@ -89,7 +85,7 @@ async fn teams(
         .await
         .map_err(write_error)?;
     }
-    Ok(Json(documents(&state, &rule, actor.user_id).await?).into_response())
+    Ok(Json(documents(&state, &rule).await?).into_response())
 }
 
 pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {

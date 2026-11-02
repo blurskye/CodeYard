@@ -1,6 +1,5 @@
 use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};
 use anyhow::Result;
-use crate::backend::db::models::User;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 // Public visibility alone does not make a user an assignment candidate.
@@ -40,24 +39,16 @@ fn item_id(item: AssignedItem) -> i64 {
     }
 }
 
-async fn begin_write<'a>(
-    pool: &'a SqlitePool,
-    authority: &crate::backend::db::credentials::Actor,
+async fn begin_write(
+    pool: &SqlitePool,
+    actor_id: i64,
     repo_id: i64,
-) -> Result<Transaction<'a, Sqlite>> {
+) -> Result<Transaction<'_, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
-        super::discussions::lock_triage_authority(&mut tx, authority.user_id, repo_id).await?,
+        super::discussions::lock_triage_authority(&mut tx, actor_id, repo_id).await?,
         AssignmentRefusal::Denied
     );
-    if let Some(credential) = authority.credential() {
-        super::users::transitions::require_account(&mut tx, authority.user_id, &credential)
-            .await.map_err(|error| {
-                if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
-                    AssignmentRefusal::Denied.into()
-                } else { error }
-            })?;
-    }
     Ok(tx)
 }
 
@@ -79,22 +70,16 @@ async fn locate_item(
     Ok((link, column))
 }
 
-/// Assigns each of `user_ids` in one transaction. Returns the ones that were not assigned before.
-pub async fn assign_users(
+/// Assigns `user_id`. Returns whether that was a new assignment: an existing assignee returns false.
+pub async fn assign_user(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     item: AssignedItem,
-    user_ids: &[i64],
-) -> Result<Vec<i64>> {
-    let authority = actor_id.into();
-    let mut tx = begin_write(pool, &authority, repo_id).await?;
-    let mut added = Vec::new();
-    for &user_id in user_ids {
-        if assign_in_transaction(&mut tx, authority.user_id, repo_id, item, user_id).await? {
-            added.push(user_id);
-        }
-    }
+    user_id: i64,
+) -> Result<bool> {
+    let mut tx = begin_write(pool, actor_id, repo_id).await?;
+    let added = assign_in_transaction(&mut tx, repo_id, item, user_id).await?;
     tx.commit().await?;
     Ok(added)
 }
@@ -119,14 +104,12 @@ pub(crate) async fn candidate(
 }
 pub(crate) async fn assign_in_transaction(
     tx: &mut Transaction<'_, Sqlite>,
-    actor_id: i64,
     repo_id: i64,
     item: AssignedItem,
     user_id: i64,
 ) -> Result<bool> {
     let (link, column) = locate_item(tx, repo_id, item).await?;
-    // A user who is already assigned stays assigned, even after losing access, so only a new
-    // assignee must be a candidate.
+    candidate(tx, repo_id, user_id).await?;
     let assigned: bool = sqlx::query_scalar(&format!(
         "SELECT EXISTS (SELECT 1 FROM {link} WHERE {column} = ?1 AND user_id = ?2)"
     ))
@@ -136,7 +119,6 @@ pub(crate) async fn assign_in_transaction(
     .await?;
     let mut added = false;
     if !assigned {
-        candidate(tx, repo_id, user_id).await?;
         let count: i64 =
             sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {link} WHERE {column} = ?1"))
                 .bind(item_id(item))
@@ -156,46 +138,32 @@ pub(crate) async fn assign_in_transaction(
     }
     if added {
         super::labels::touch_subject(tx, tables(item).0, item_id(item)).await?;
-        let name: String = sqlx::query_scalar("SELECT username FROM users WHERE id=?1").bind(user_id).fetch_one(&mut **tx).await?;
-        let (subject, id) = crate::backend::db::timeline::item_subject(item);
-        super::timeline::append(tx, repo_id, subject, id, actor_id, "assigned", &name, "").await?;
     }
     Ok(added)
 }
 
-/// Removes each user named in `usernames` in one transaction. Returns the names that were
-/// assigned. A name that is no user, or is not assigned, removes nothing.
-pub async fn unassign_users(
+pub async fn unassign_user(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     item: AssignedItem,
-    usernames: &[String],
-) -> Result<Vec<String>> {
-    let authority = actor_id.into();
-    let mut tx = begin_write(pool, &authority, repo_id).await?;
+    username: &str,
+) -> Result<bool> {
+    let mut tx = begin_write(pool, actor_id, repo_id).await?;
     let (link, column) = locate_item(&mut tx, repo_id, item).await?;
-    let mut removed = Vec::new();
-    for username in usernames {
-        let deleted = sqlx::query(&format!(
-            "DELETE FROM {link} WHERE {column} = ?1 AND user_id = (SELECT id FROM users WHERE username = ?2)"
-        ))
-        .bind(item_id(item))
-        .bind(username)
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-        if deleted > 0 {
-            let (subject, id) = crate::backend::db::timeline::item_subject(item);
-            super::timeline::append(&mut tx, repo_id, subject, id, authority.user_id, "unassigned", username, "").await?;
-            removed.push(username.clone());
-        }
-    }
-    if !removed.is_empty() {
+    // A name that is no user matches no row, so nothing is removed.
+    let result = sqlx::query(&format!(
+        "DELETE FROM {link} WHERE {column} = ?1 AND user_id = (SELECT id FROM users WHERE username = ?2)"
+    ))
+    .bind(item_id(item))
+    .bind(username)
+    .execute(&mut *tx)
+    .await?;
+    if result.rows_affected() > 0 {
         super::labels::touch_subject(&mut tx, tables(item).0, item_id(item)).await?;
     }
     tx.commit().await?;
-    Ok(removed)
+    Ok(result.rows_affected() > 0)
 }
 
 pub async fn list_assignees(pool: &SqlitePool, item: AssignedItem) -> Result<Vec<String>> {
@@ -242,40 +210,6 @@ pub async fn list_assignable_usernames(pool: &SqlitePool, repo_id: i64) -> Resul
         super::repositories::access::USER_REPO_ACCESS_SQL
     ))
     .bind(repo_id)
-    .fetch_all(pool)
-    .await?)
-}
-
-fn matching_candidates() -> String {
-    format!("FROM repositories r JOIN users u ON {CANDIDATES} WHERE r.id=?1 AND ({})>=1 AND (instr(lower(u.username),lower(?2))>0 OR instr(lower(COALESCE(u.display_name,'')),lower(?2))>0)", super::repositories::access::USER_REPO_ACCESS_SQL)
-}
-
-pub async fn count_assignable_users(pool: &SqlitePool, repo_id: i64, query: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar(&format!("SELECT COUNT(*) {}", matching_candidates()))
-        .bind(repo_id).bind(query).fetch_one(pool).await?)
-}
-
-pub async fn list_assignable_users(pool: &SqlitePool, repo_id: i64, query: &str, offset: i64, limit: i64) -> Result<Vec<User>> {
-    Ok(sqlx::query_as(&format!("SELECT u.* {} ORDER BY u.username,u.id LIMIT ?3 OFFSET ?4", matching_candidates()))
-        .bind(repo_id).bind(query).bind(limit).bind(offset).fetch_all(pool).await?)
-}
-
-/// The users among `user_ids` who may be assigned in the repository.
-pub async fn assignable_user_ids(
-    pool: &SqlitePool,
-    repo_id: i64,
-    user_ids: &[i64],
-) -> Result<Vec<i64>> {
-    if user_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    Ok(sqlx::query_scalar(&format!(
-        "SELECT u.id FROM repositories r JOIN users u ON {CANDIDATES}
-         WHERE r.id=?1 AND u.id IN (SELECT value FROM json_each(?2)) AND ({})>=1",
-        super::repositories::access::USER_REPO_ACCESS_SQL
-    ))
-    .bind(repo_id)
-    .bind(serde_json::to_string(user_ids)?)
     .fetch_all(pool)
     .await?)
 }

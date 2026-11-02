@@ -5,8 +5,6 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use sqlx::types::Json;
 
-pub(crate) const RETENTION_BATCH: i64 = 8;
-
 #[derive(Clone, Copy)]
 pub struct Target {
     pub run: i64,
@@ -55,24 +53,7 @@ pub struct Snapshot {
     pub lines: Vec<Line>,
 }
 
-#[derive(sqlx::FromRow)]
-pub(crate) struct ObservedStep {
-    pub job_id: i64,
-    #[sqlx(flatten)]
-    pub step: Step,
-}
-impl Manifest {
-    pub(crate) fn capture(mut jobs: Vec<Job>, steps: Vec<ObservedStep>, number: Option<i32>) -> Option<Self> {
-        let indices: std::collections::HashMap<_, _> = jobs.iter().enumerate().map(|(index, job)| (job.id, index)).collect();
-        for observed in steps {
-            if let Some(index) = indices.get(&observed.job_id) { jobs[*index].steps.push(observed.step); }
-        }
-        if number.is_some_and(|number| jobs.iter().any(|job| !job.steps.iter().any(|step| step.number == number))) { return None; }
-        Some(Self { jobs })
-    }
-}
-
 native_operation!(crate::backend::db::postgres::action_logs::issue,crate::backend::db::sqlite::action_logs::issue,
-    fn issue(pool:&DbPool,actor:impl Into<super::credentials::Actor>,repo:i64,resource:&str,target:Target,hash:&str)->Result<bool>);
+    fn issue(pool:&DbPool,actor:i64,repo:i64,resource:&str,target:Target,hash:&str)->Result<bool>);
 native_operation!(crate::backend::db::postgres::action_logs::read,crate::backend::db::sqlite::action_logs::read,
     fn read(pool:&DbPool,hash:&str,resource:&str)->Result<Option<Snapshot>>);

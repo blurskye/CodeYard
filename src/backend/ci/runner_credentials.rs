@@ -55,32 +55,30 @@ pub(crate) fn valid_work_folder(folder: &str) -> bool {
 }
 pub fn save_work_folder(state: &std::path::Path, folder: &str) -> Result<()> {
     use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
     anyhow::ensure!(valid_work_folder(folder), "invalid runner work folder");
-    let _state = crate::backend::fs::lock_state_dir(state)?;
-    let previous = work_root(state)?;
-    if previous != state.join("runner-workspaces").join(folder) {
-        match std::fs::read_dir(previous.join("ci-containers")) {
-            Ok(mut records) => anyhow::ensure!(records.next().transpose()?.is_none(), "recover previous CI workspaces and containers before changing the work folder"),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
     // A new file renamed over the old one, so a crash leaves the old settings or the new ones.
-    let mut file = tempfile::NamedTempFile::new_in(state)?;
+    let temporary = state.join("runner-settings.json.tmp");
+    match std::fs::remove_file(&temporary) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(&temporary)?;
     file.write_all(&serde_json::to_vec(&SavedRunner {
         work_folder: folder.to_owned(),
     })?)?;
-    file.as_file().sync_all()?;
-    file.persist(state.join("runner-settings.json")).map_err(|error| error.error)?;
+    file.sync_all()?;
+    std::fs::rename(&temporary, state.join("runner-settings.json"))?;
     std::fs::File::open(state)?.sync_all()?;
     Ok(())
 }
 pub fn work_root(state: &std::path::Path) -> Result<std::path::PathBuf> {
-    if let Some(root) = std::env::var_os("CI_WORK_ROOT") {
-        let root = std::path::PathBuf::from(root);
-        anyhow::ensure!(root.is_absolute(), "CI_WORK_ROOT must be absolute");
-        return Ok(root);
-    }
     let bytes = match std::fs::read(state.join("runner-settings.json")) {
         Ok(bytes) => bytes,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(state.to_owned()),
@@ -115,7 +113,7 @@ pub async fn ticket(pool: &db::DbPool, context: Option<&NodeContext>) -> Result<
             .as_deref()
             .context("runner core address is unavailable")?,
     )?;
-    JoinTicket::new(core.key.public_key(), address)
+    Ok(JoinTicket::new(core.key.public_key(), address))
 }
 
 #[cfg(test)]
@@ -131,7 +129,7 @@ mod tests {
                 tcp: vec!["127.0.0.1:1".parse().unwrap()],
                 ..Default::default()
             },
-        ).unwrap();
+        );
         let config = JitConfig {
             ticket: ticket.encode(),
             node_name: "runner-42".into(),
@@ -179,11 +177,11 @@ mod tests {
     fn runner_settings_never_follow_a_symlink() {
         let state = tempfile::tempdir().unwrap();
         let target = state.path().join("unrelated");
-        std::fs::write(&target, r#"{"work_folder":"old"}"#).unwrap();
+        std::fs::write(&target, "keep").unwrap();
         std::os::unix::fs::symlink(&target, state.path().join("runner-settings.json")).unwrap();
         // The new settings are renamed over the link, so its target is never written.
         save_work_folder(state.path(), "_work").unwrap();
-        assert_eq!(std::fs::read_to_string(target).unwrap(), r#"{"work_folder":"old"}"#);
+        assert_eq!(std::fs::read_to_string(target).unwrap(), "keep");
         let saved = state.path().join("runner-settings.json");
         assert!(std::fs::symlink_metadata(&saved).unwrap().is_file());
         assert_eq!(

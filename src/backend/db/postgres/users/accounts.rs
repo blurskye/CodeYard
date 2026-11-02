@@ -1,5 +1,4 @@
 use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminUser, User};
-use crate::backend::db::users::accounts::CommitAuthor;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -151,27 +150,32 @@ pub async fn get_user_by_email(pool: &PgPool, email: &str) -> Result<Option<User
     Ok(user)
 }
 
-/// Git attribution prefers the account's noreply identity, then verified addresses, with
-/// the lowest account ID resolving legacy duplicate claims. Banned accounts never attribute.
-pub async fn commit_authors(pool: &PgPool, emails: &[String]) -> Result<Vec<CommitAuthor>> {
-    if emails.is_empty() { return Ok(Vec::new()); }
+pub async fn get_users_by_emails(pool: &PgPool, emails: &[String]) -> Result<Vec<User>> {
+    if emails.is_empty() {
+        return Ok(vec![]);
+    }
+
+    let users = sqlx::query_as::<_, User>("SELECT * FROM users WHERE email = ANY($1)")
+        .bind(emails)
+        .fetch_all(pool)
+        .await?;
+
+    Ok(users)
+}
+
+/// The verified owner of each address, as `(address, user id)`. Primary and secondary addresses
+/// both count, and the address is returned as it was requested.
+pub async fn get_verified_email_owners(
+    pool: &PgPool,
+    emails: &[String],
+) -> Result<Vec<(String, i64)>> {
+    if emails.is_empty() {
+        return Ok(vec![]);
+    }
     Ok(sqlx::query_as(
-        "WITH requested AS (
-            SELECT DISTINCT address, LOWER(address) AS normalized FROM unnest($1::text[]) AS input(address)
-         ), candidates AS (
-            SELECT a.address, u.id, 0 AS priority FROM requested a
-                JOIN users u ON LOWER(u.username || '@users.noreply')=a.normalized
-            UNION ALL
-            SELECT a.address, u.id, 1 AS priority FROM requested a
-                JOIN users u ON u.email_verified AND LOWER(u.email)=a.normalized
-            UNION ALL
-            SELECT a.address, e.user_id AS id, 1 AS priority FROM requested a
-                JOIN user_emails e ON e.verified AND LOWER(e.email)=a.normalized
-         ), ranked AS (
-            SELECT c.address, c.id, ROW_NUMBER() OVER (PARTITION BY c.address ORDER BY c.priority,c.id) AS ordinal
-            FROM candidates c JOIN users u ON u.id=c.id WHERE NOT u.is_banned
-         )
-         SELECT ranked.address, u.* FROM ranked JOIN users u ON u.id=ranked.id WHERE ranked.ordinal=1",
+        "SELECT a.address, u.id FROM unnest($1::text[]) AS a(address) JOIN users u ON u.email_verified AND lower(u.email)=lower(a.address)
+         UNION
+         SELECT a.address, e.user_id FROM unnest($1::text[]) AS a(address) JOIN user_emails e ON e.verified AND lower(e.email)=lower(a.address)",
     )
     .bind(emails)
     .fetch_all(pool)
@@ -250,26 +254,28 @@ pub async fn create_user_from_oauth(
 pub async fn set_user_avatar(
     pool: &PgPool,
     user_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     avatar_file_id: Option<uuid::Uuid>,
 ) -> Result<crate::backend::db::users::accounts::UserAvatarOutcome> {
     use crate::backend::db::users::accounts::UserAvatarOutcome;
 
     let mut tx = pool.begin().await?;
-    // The account and the requesting session must still be live when the picture changes,
-    // which happens after the upload's storage work.
-    super::transitions::require_account(&mut tx, user_id, credential).await?;
-    let previous: Option<uuid::Uuid> = sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=$1")
-        .bind(user_id)
-        .fetch_one(&mut *tx)
-        .await?;
+    let account: Option<(Option<uuid::Uuid>, bool)> =
+        sqlx::query_as("SELECT avatar_file_id,is_banned FROM users WHERE id=$1 FOR UPDATE")
+            .bind(user_id)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((previous, banned)) = account else {
+        return Ok(UserAvatarOutcome::NotUsable);
+    };
+    if banned {
+        return Ok(UserAvatarOutcome::Banned);
+    }
     if let Some(file) = avatar_file_id {
         let usable: Option<uuid::Uuid> = sqlx::query_scalar(
-            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>NOW())) AND reason='avatar' AND content_type IN (SELECT jsonb_array_elements_text($3::jsonb)) RETURNING id",
+            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>NOW())) AND reason='avatar' AND content_type IN ('image/png','image/jpeg','image/gif','image/webp') RETURNING id",
         )
         .bind(file)
         .bind(user_id)
-        .bind(serde_json::to_string(&crate::media::AVATAR_CONTENT_TYPES)?)
         .fetch_optional(&mut *tx)
         .await?;
         if usable.is_none() {
@@ -323,13 +329,13 @@ pub async fn update_user_profile(
 }
 
 /// Accounts that match the search: all of them, the administrators and the banned ones.
-pub async fn count_matching_users<'a>(pool: impl sqlx::Executor<'a, Database=sqlx::Postgres>, text: &str) -> Result<(i64, i64, i64)> {
+pub async fn count_matching_users(pool: &PgPool, text: &str) -> Result<(i64, i64, i64)> {
     Ok(sqlx::query_as("SELECT COUNT(*), COUNT(*) FILTER (WHERE is_admin), COUNT(*) FILTER (WHERE is_banned) FROM users WHERE strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0")
         .bind(text.trim().to_lowercase()).fetch_one(pool).await?)
 }
 
-pub async fn list_admin_users<'a>(
-    pool: impl sqlx::Executor<'a, Database=sqlx::Postgres>,
+pub async fn list_admin_users(
+    pool: &PgPool,
     text: &str,
     role: &str,
     limit: i64,
@@ -337,19 +343,6 @@ pub async fn list_admin_users<'a>(
 ) -> Result<Vec<AdminUser>> {
     Ok(sqlx::query_as("SELECT id,username,email,is_admin,is_banned,must_change_password,two_factor_enabled,created_at FROM users WHERE (strpos(lower(username),$1)>0 OR strpos(lower(COALESCE(email,'')),$1)>0) AND CASE $4 WHEN 'admins' THEN is_admin WHEN 'banned' THEN is_banned ELSE TRUE END ORDER BY username,id LIMIT $2 OFFSET $3")
         .bind(text.trim().to_lowercase()).bind(limit.clamp(1,100)).bind(offset.max(0)).bind(role).fetch_all(pool).await?)
-}
-
-pub async fn admin_users_page(pool: &PgPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, text: &str, role: &str, limit: i64, requested: usize) -> Result<crate::backend::db::users::accounts::AdminUserPage> {
-    let mut tx = pool.begin().await?;
-    super::transitions::lock_membership_shared(&mut tx).await?;
-    anyhow::ensure!(super::transitions::active_admin_session(&mut tx, administrator).await?, crate::backend::db::users::accounts::AccountRestricted);
-    let counts = count_matching_users(&mut *tx, text).await?;
-    let total = match role { "admins" => counts.1, "banned" => counts.2, _ => counts.0 } as usize;
-    let limit = limit.clamp(1,100);
-    let page = requested.clamp(1, total.div_ceil(limit as usize).max(1));
-    let users = list_admin_users(&mut *tx, text, role, limit, ((page-1) * limit as usize) as i64).await?;
-    tx.commit().await?;
-    Ok(crate::backend::db::users::accounts::AdminUserPage { counts, page, users })
 }
 
 pub async fn list_admin_account_summaries(
@@ -541,11 +534,11 @@ pub async fn list_admin_activity_points(
         ),
         file_storage_daily AS (
             SELECT
-                DATE(ul.confirmed_at) AS day,
+                DATE(ul.uploaded_at) AS day,
                 COALESCE(SUM(ul.file_size), 0)::BIGINT AS daily_file_storage_bytes
             FROM upload_rate_limit ul
-            WHERE ul.confirmed_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
-            GROUP BY DATE(ul.confirmed_at)
+            WHERE ul.uploaded_at >= CURRENT_DATE - ($1::INT - 1) * INTERVAL '1 day'
+            GROUP BY DATE(ul.uploaded_at)
         ),
         storage_daily AS (
             SELECT

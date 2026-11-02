@@ -9,7 +9,6 @@ use sqlx::{PgPool, Postgres, Transaction};
 pub async fn toggle_reaction(
     pool: &PgPool,
     actor_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo_id: i64,
     item_id: i64,
     subject: Subject,
@@ -23,7 +22,6 @@ pub async fn toggle_reaction(
     let mut tx = begin_write(
         pool,
         actor_id,
-        credential,
         Target {
             repo_id,
             item_id,
@@ -58,12 +56,11 @@ pub async fn toggle_reaction(
     Ok(set)
 }
 
-async fn begin_write<'a>(
-    pool: &'a PgPool,
+async fn begin_write(
+    pool: &PgPool,
     actor_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     target: Target,
-) -> Result<Transaction<'a, Postgres>> {
+) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
     super::discussions::require_contribution_authority(&mut tx, actor_id, target.repo_id).await?;
     let table = match target.subject {
@@ -96,17 +93,12 @@ async fn begin_write<'a>(
             ReactionRefusal::NotFound
         );
     }
-    anyhow::ensure!(
-        super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
-        super::discussions::AUTHORITY_DENIED
-    );
     Ok(tx)
 }
 
 pub async fn create_reaction(
     pool: &PgPool,
     actor_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     target: Target,
     content: &str,
 ) -> Result<(Reaction, bool)> {
@@ -114,7 +106,7 @@ pub async fn create_reaction(
         crate::backend::db::reactions::valid_content(target.subject, content),
         "Unknown reaction"
     );
-    let mut tx = begin_write(pool, actor_id, credential, target).await?;
+    let mut tx = begin_write(pool, actor_id, target).await?;
     let existing: Option<Reaction> = sqlx::query_as("SELECT * FROM reactions WHERE user_id=$1 AND subject_kind=$2 AND subject_id=$3 AND content=$4")
         .bind(actor_id).bind(target.subject.name()).bind(target.subject_id).bind(content).fetch_optional(&mut *tx).await?;
     let result = match existing {
@@ -129,11 +121,10 @@ pub async fn create_reaction(
 pub async fn delete_reaction(
     pool: &PgPool,
     actor_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     target: Target,
     reaction_id: i64,
 ) -> Result<bool> {
-    let mut tx = begin_write(pool, actor_id, credential, target).await?;
+    let mut tx = begin_write(pool, actor_id, target).await?;
     let result = sqlx::query("DELETE FROM reactions WHERE id=$1 AND repo_id=$2 AND user_id=$3 AND subject_kind=$4 AND subject_id=$5")
         .bind(reaction_id).bind(target.repo_id).bind(actor_id).bind(target.subject.name()).bind(target.subject_id).execute(&mut *tx).await?;
     tx.commit().await?;

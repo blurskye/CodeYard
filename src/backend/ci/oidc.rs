@@ -19,46 +19,29 @@ pub fn issuer() -> String {
         .to_owned()
 }
 
-pub struct SigningKeys {
-    pool: DbPool,
-    key: tokio::sync::OnceCell<std::sync::Arc<SigningKey>>,
-}
-
-struct SigningKey {
-    signer: rsa::pkcs1v15::SigningKey<sha2::Sha256>,
-    kid: String,
-    jwks: Value,
-}
-
-impl SigningKeys {
-    pub fn new(pool: DbPool) -> Self { Self { pool, key: tokio::sync::OnceCell::new() } }
-
-    async fn key(&self) -> Result<std::sync::Arc<SigningKey>> {
-        self.key.get_or_try_init(|| async {
-            let pem = match db::oidc::key(&self.pool).await? {
-                Some(pem) => pem,
-                None => {
-                    let (pem, _) = github_apps::generate_key().await?;
-                    db::oidc::store_key(&self.pool, &pem).await?
-                }
-            };
-            tokio::task::spawn_blocking(move || -> Result<_> {
-                let key = RsaPrivateKey::from_pkcs8_pem(&pem)?;
-                let kid = kid(&key);
-                let jwks = json!({"keys":[{"kty":"RSA","use":"sig","alg":"RS256","kid":kid,
-                    "n":URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(key.e().to_bytes_be())}]});
-                Ok(std::sync::Arc::new(SigningKey { signer: rsa::pkcs1v15::SigningKey::new(key), kid, jwks }))
-            }).await?
-        }).await.cloned()
-    }
+async fn key(pool: &DbPool) -> Result<RsaPrivateKey> {
+    static LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+    let _lock = LOCK.lock().await;
+    let pem = match db::oidc::key(pool).await? {
+        Some(pem) => pem,
+        None => {
+            let (pem, _) = github_apps::generate_key().await?;
+            db::oidc::store_key(pool, &pem).await?
+        }
+    };
+    Ok(RsaPrivateKey::from_pkcs8_pem(&pem)?)
 }
 
 fn kid(key: &RsaPrivateKey) -> String {
     super::runtime::token_hash(&URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()))
 }
 
-pub async fn jwks(keys: &SigningKeys) -> Result<Value> {
-    Ok(keys.key().await?.jwks.clone())
+pub async fn jwks(pool: &DbPool) -> Result<Value> {
+    let key = key(pool).await?;
+    Ok(
+        json!({"keys":[{"kty":"RSA","use":"sig","alg":"RS256","kid":kid(&key),
+        "n":URL_SAFE_NO_PAD.encode(key.n().to_bytes_be()),"e":URL_SAFE_NO_PAD.encode(key.e().to_bytes_be())}]}),
+    )
 }
 
 pub fn escape(value: &str) -> String {
@@ -71,11 +54,10 @@ fn owner_identifier(owner_kind: &str, owner_id: i64) -> String {
 }
 
 pub async fn issue(
-    keys: &SigningKeys,
+    pool: &DbPool,
     credential: &str,
     audience: Option<&str>,
 ) -> Result<Option<String>> {
-    let pool = &keys.pool;
     let hash = super::runtime::token_hash(credential);
     let Some(job) = db::oidc::job(pool, &hash).await? else {
         return Ok(None);
@@ -139,11 +121,11 @@ pub async fn issue(
     let workflow_ref = format!("{repository}/{root_path}@{reference}");
     let workflow_sha = run.workflow_sha.as_ref().or(run.head_sha.as_ref());
     // A called job names the workflow it calls. Its repository, path, ref and commit come from the
-    // snapshot admission stored for that file. Any other job names its own root file, as on GitHub.
+    // snapshot admission stored for that file.
     let (job_workflow_ref, job_workflow_sha) = match run
         .workflow_blobs
         .get(job.workflow.as_str())
-        .filter(|snapshot| snapshot.is_object() && job.workflow != root_path)
+        .filter(|snapshot| snapshot.is_object())
     {
         Some(snapshot) => {
             let source_id = snapshot["repository_id"]
@@ -167,7 +149,11 @@ pub async fn issue(
                 snapshot["sha"].as_str().map(str::to_owned),
             )
         }
-        None => (workflow_ref.clone(), workflow_sha.cloned()),
+        // The job's own file, in the caller's repository at the run's ref.
+        None => (
+            format!("{repository}/{}@{reference}", job.workflow),
+            workflow_sha.cloned(),
+        ),
     };
     let mut claims = json!({
         "iss":issuer,"sub":format!("repo:{}:{context}",escape(&repository)),
@@ -207,18 +193,17 @@ pub async fn issue(
         }
         claims["sub"] = json!(parts.join(":"));
     }
-    let key = keys.key().await?;
+    let key = key(pool).await?;
     // Key generation can take time. Recheck without the REST credential's completion grace period.
     if db::oidc::job(pool, &hash).await?.is_none() {
         return Ok(None);
     }
     let header = URL_SAFE_NO_PAD.encode(serde_json::to_vec(
-        &json!({"alg":"RS256","typ":"JWT","kid":key.kid}),
+        &json!({"alg":"RS256","typ":"JWT","kid":kid(&key)}),
     )?);
     let payload = URL_SAFE_NO_PAD.encode(serde_json::to_vec(&claims)?);
     let message = format!("{header}.{payload}");
-    let signing_message = message.clone();
-    let signature = tokio::task::spawn_blocking(move || key.signer.sign(signing_message.as_bytes())).await?;
+    let signature = rsa::pkcs1v15::SigningKey::<sha2::Sha256>::new(key).sign(message.as_bytes());
     Ok(Some(format!(
         "{message}.{}",
         URL_SAFE_NO_PAD.encode(signature.to_bytes())

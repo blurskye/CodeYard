@@ -20,16 +20,6 @@ pub struct Check {
     pub page: usize,
     pub has_more: bool,
     pub can_rerequest: bool,
-    #[serde(default)]
-    pub images: Vec<(String, String, Option<String>)>,
-    #[serde(default)]
-    pub actions: Vec<Action>,
-}
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-pub struct Action {
-    pub label: String,
-    pub description: String,
-    pub identifier: String,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Annotation {
@@ -58,27 +48,12 @@ pub fn render(repo: &RepoChrome, check: &Check) -> Element {
                             button { r#type:"submit", class:"btn btn-secondary", "Re-run suite" }
                         }
                     }
-                    if check.can_rerequest {
-                        for action in &check.actions {
-                            form { method:"post", action:format!("{base}/action"),
-                                {csrf(&repo.csrf_token)}
-                                input { r#type:"hidden", name:"repository_id", value:repo.id.to_string() }
-                                input { r#type:"hidden", name:"identifier", value:action.identifier.clone() }
-                                button { r#type:"submit", class:"btn btn-secondary", title:action.description.clone(), "{action.label}" }
-                            }
-                        }
-                    }
                     if let Some(url) = &check.details_url { if !url.is_empty() { a { href:url.clone(),rel:"noopener noreferrer", "View details" } } }
                 }
                 article { class:"collaboration-panel collaboration-markdown",
                     if let Some(title) = &check.title { h3 { "{title}" } }
                     if let Some(summary) = &check.summary { Markdown { content:summary.clone() } }
                     if let Some(text) = &check.text { Markdown { content:text.clone() } }
-                    for (alt, url, caption) in &check.images {
-                        figure { img { src: url.clone(), alt: alt.clone(), loading: "lazy", style: "max-width:100%" }
-                            if let Some(caption) = caption { figcaption { "{caption}" } }
-                        }
-                    }
                 }
                 h3 { "Annotations ({check.total})" }
                 for (index,annotation) in check.annotations.iter().enumerate() {

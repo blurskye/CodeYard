@@ -16,7 +16,6 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from playwright.sync_api import expect, sync_playwright
-from actions_smoke import private_output_directory
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--base-url", default="http://localhost:8080")
@@ -24,11 +23,11 @@ parser.add_argument("--owner", required=True)
 parser.add_argument("--repo", required=True)
 parser.add_argument("--username")
 parser.add_argument("--password-file", type=Path)
-parser.add_argument("--output-dir", type=Path)
+parser.add_argument("--output-dir", type=Path, default=Path("/tmp/codeyard-actions"))
 args = parser.parse_args()
 if bool(args.username) != bool(args.password_file):
     parser.error("--username and --password-file must be supplied together")
-args.output_dir = private_output_directory(args.output_dir, "codeyard-actions-ui-")
+args.output_dir.mkdir(parents=True, exist_ok=True)
 base = args.base_url.rstrip("/")
 path = f"/{args.owner}/{args.repo}/actions"
 url = base + path
@@ -68,7 +67,7 @@ def status_from_label(label):
 with sync_playwright() as playwright:
     browser = playwright.chromium.launch(**launch_options())
     try:
-        context = browser.new_context(viewport={"width": 1440, "height": 1000}, color_scheme="dark")
+        context = browser.new_context(viewport={"width": 1440, "height": 1000})
         login(context)
         page = context.new_page()
         browser_errors = []
@@ -158,7 +157,6 @@ with sync_playwright() as playwright:
         assert page.evaluate("document.documentElement.scrollWidth <= innerWidth"), "Runs overflow on mobile"
 
         page.set_viewport_size({"width": 1440, "height": 1000})
-        page.emulate_media(color_scheme="light")
         page.evaluate(
             "document.documentElement.classList.remove('dark', 'system');"
             "document.documentElement.classList.add('light')"

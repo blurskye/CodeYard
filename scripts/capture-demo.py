@@ -16,7 +16,6 @@ import re
 import os
 import secrets
 import shutil
-import signal
 import socket
 import subprocess
 import sys
@@ -41,6 +40,8 @@ jobs:
     name: Build and test
     runs-on: ubuntu-latest
     steps:
+      - name: Check out
+        uses: actions/checkout@v4
       - name: Build
         run: |
           for part in parser server web; do echo "Compiling $part"; sleep 1; done
@@ -85,11 +86,10 @@ SMOOTH_SCROLL = """
 """
 
 
-def ports():
-    with socket.socket() as http, socket.socket() as ssh:
-        http.bind(("127.0.0.1", 0))
-        ssh.bind(("127.0.0.1", 0))
-        return http.getsockname()[1], ssh.getsockname()[1]
+def port():
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
 
 
 class Forge:
@@ -222,14 +222,11 @@ class Recorder:
         self.page.wait_for_timeout(pause)
 
     def finish(self, output, hold=2500):
-        try:
-            self.page.wait_for_timeout(hold)
-            video = Path(self.page.video.path())
-            self.context.close()
-            to_gif(video, output, self.trim, self.viewport["width"])
-        finally:
-            self.context.close()
-            shutil.rmtree(self.video_dir, ignore_errors=True)
+        self.page.wait_for_timeout(hold)
+        video = Path(self.page.video.path())
+        self.context.close()
+        to_gif(video, output, self.trim, self.viewport["width"])
+        shutil.rmtree(self.video_dir, ignore_errors=True)
         return self.problems
 
 
@@ -394,9 +391,6 @@ def main():
     binary, bundle = args.binary.resolve(), args.bundle.resolve()
     if not binary.is_file() or not (bundle / "index.html").is_file():
         parser.error("pass a VPS-built server binary and browser bundle")
-    if not shutil.which("ffmpeg"):
-        parser.error("ffmpeg is required before recording")
-    args.socket = str(Path(args.socket).resolve())
     if not Path(args.socket).exists():
         parser.error(f"no runner socket at {args.socket}; start scripts/start-ci-runner.sh")
     # New repositories run their jobs on the in-house runner, which must sit beside the server.
@@ -409,14 +403,14 @@ def main():
         (fixture / "home").mkdir()
         (fixture / "repos").mkdir()
         (fixture / ".env").touch()
-        http_port, ssh_port = ports()
+        http_port = port()
         base = f"http://127.0.0.1:{http_port}"
         env = {
             "PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8", "HOME": str(fixture / "home"),
             "DATABASE_URL": f"sqlite://{fixture / 'state' / 'gitserv.db'}?mode=rwc",
             "GITSERV_STATE_DIR": str(fixture / "state"), "REPOS_PATH": str(fixture / "repos"),
             "HOST_KEY_PATH": str(fixture / "host_key"), "HTTP_ADDR": f"127.0.0.1:{http_port}",
-            "SSH_ADDR": f"127.0.0.1:{ssh_port}", "SSH_MODE": "builtin", "PUBLIC_URL": base,
+            "SSH_ADDR": f"127.0.0.1:{port()}", "PUBLIC_URL": base,
             "PUBLIC_HTTP_CLONE_BASE": base, "COOKIE_SECURE": "false", "WEBUI_DIST": str(bundle),
             "RUST_LOG": "warn", "CI_EXECUTION_MODE": "podman", "CI_PODMAN_SOCKET": args.socket,
             "CI_ACTIONS_BINARY": str(actions),
@@ -429,7 +423,7 @@ def main():
                     if proc.poll() is not None:
                         sys.exit(f"server exited: {(fixture / 'server.log').read_text()[-3000:]}")
                     try:
-                        with urllib.request.build_opener(urllib.request.ProxyHandler({})).open(base + "/health", timeout=1) as response:
+                        with urllib.request.urlopen(base + "/health", timeout=1) as response:
                             if response.status == 200:
                                 break
                     except OSError:
@@ -466,5 +460,4 @@ def main():
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
     main()

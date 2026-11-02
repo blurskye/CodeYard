@@ -562,7 +562,7 @@ async fn contract(pg: bool) {
     let error = db::interactions::set_restriction(
         f.pool(),
         alice,
-        &AccountCredential::Token(i64::MAX, ""),
+        &AccountCredential::Token(i64::MAX),
         InteractionScope::User(alice),
         Some(NewRestriction {
             limit: InteractionGroup::CollaboratorsOnly,

@@ -2,15 +2,16 @@
 //! trees, create the commit, then move the branch only if it still points where the
 //! editor started.
 use super::{ErrorKind, RepoError};
-use crate::backend::git::{objects::Signature, repository::{process, CommitInfo}};
+use crate::backend::git::repository::{
+    process, CommitInfo, MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES,
+};
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
     future::Future,
-    path::{Path, PathBuf},
+    path::Path,
     pin::Pin,
     process::ExitStatus,
-    sync::{Arc, LazyLock, Mutex},
     time::Duration,
 };
 
@@ -23,33 +24,6 @@ pub const MAX_UPLOAD_TOTAL_BYTES: usize = 100 * 1024 * 1024;
 const MAX_OUTPUT: usize = 8 * 1024 * 1024;
 const TIMEOUT: Duration = Duration::from_secs(60);
 pub(super) const ZERO: &str = "0000000000000000000000000000000000000000";
-
-/// Optional API attribution. Each omitted identity defaults independently to the actor.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct CommitIdentities {
-    pub author: Option<Signature>,
-    pub committer: Option<Signature>,
-}
-impl CommitIdentities {
-    pub(crate) fn validate(&self) -> Result<(), RepoError> {
-        for identity in self.author.iter().chain(self.committer.iter()) { identity.validate()?; }
-        Ok(())
-    }
-
-    fn resolved(&self, name: &str, email: &str) -> (Signature, Signature) {
-        let fallback = || Signature { name: name.into(), email: email.into(), date: None };
-        (self.author.clone().unwrap_or_else(fallback), self.committer.clone().unwrap_or_else(fallback))
-    }
-
-    pub(super) fn check_prepared(&self, commit: &CommitInfo) -> Result<(), RepoError> {
-        for (identity, name, email, timestamp) in [(&self.author, &commit.author_name, &commit.author_email, commit.timestamp), (&self.committer, &commit.committer_name, &commit.committer_email, commit.committer_timestamp)] {
-            if identity.as_ref().is_some_and(|identity| identity.name.trim() != name.as_str() || identity.email.trim() != email.as_str() || identity.date.is_some_and(|date| date.timestamp() != timestamp)) {
-                return Err(RepoError::new(ErrorKind::Unavailable, "Storage did not preserve the requested commit identities."));
-            }
-        }
-        Ok(())
-    }
-}
 
 /// One file change to commit. The file's bytes are passed separately.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -166,7 +140,7 @@ fn validate_path(path: &str) -> Result<(), RepoError> {
 
 /// `.git` in any case, with the trailing spaces and dots and the short name `git~1` that
 /// Windows file systems treat as the same directory.
-pub(super) fn is_git_dir_name(part: &str) -> bool {
+fn is_git_dir_name(part: &str) -> bool {
     let name = part.trim_end_matches([' ', '.']);
     name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1")
 }
@@ -176,7 +150,7 @@ fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoErro
         return Err(invalid("Invalid branch name."));
     }
     if expected_revision != "unborn"
-        && !crate::git_ids::is_full_commit_id(expected_revision)
+        && (expected_revision.len() != 40 || git2::Oid::from_str(expected_revision).is_err())
     {
         return Err(invalid("A complete expected branch revision is required."));
     }
@@ -196,29 +170,6 @@ fn unavailable() -> RepoError {
     RepoError::new(ErrorKind::Unavailable, "Repository storage is unavailable.")
 }
 
-// Preparation crosses RPC requests. Keep isolated objects under a bounded, expiring server
-// lease rather than publishing them in the real object database or accepting a client path.
-pub(super) struct StagedFile {
-    temporary: tempfile::TempDir,
-    destination: PathBuf,
-    _permit: tokio::sync::OwnedSemaphorePermit,
-}
-impl StagedFile {
-    pub(super) fn path(&self) -> &Path { self.temporary.path() }
-}
-static STAGED: LazyLock<Mutex<std::collections::HashMap<String, Arc<StagedFile>>>> =
-    LazyLock::new(|| Mutex::new(std::collections::HashMap::new()));
-static STAGING_SLOTS: LazyLock<Arc<tokio::sync::Semaphore>> =
-    LazyLock::new(|| Arc::new(tokio::sync::Semaphore::new(64)));
-
-pub(super) fn claim_staged(path: &Path, prepared: &PreparedFile) -> Result<Option<Arc<StagedFile>>, RepoError> {
-    let Some(key) = &prepared.staging else { return Ok(None); };
-    let mut staged = STAGED.lock().map_err(|_| unavailable())?;
-    let entry = staged.get(key).ok_or_else(|| invalid("The prepared file expired; reopen the editor."))?;
-    if entry.destination != path { return Err(invalid("Invalid prepared file publication.")); }
-    Ok(staged.remove(key))
-}
-
 /// A bare repository on disk that editor commands run against.
 struct Repo<'a>(&'a Path);
 impl Repo<'_> {
@@ -226,16 +177,16 @@ impl Repo<'_> {
         &self,
         args: &[&str],
         input: &[u8],
-        identity: Option<(&Signature, &Signature)>,
+        identity: Option<(&str, &str)>,
     ) -> Result<(ExitStatus, Vec<u8>), RepoError> {
         let mut command = process::git_command().map_err(|_| unavailable())?;
-        process::limit_memory(&mut command);
         command.arg("--git-dir").arg(self.0).args(args);
-        if let Some((author, committer)) = identity {
-            for (role, identity) in [("AUTHOR", author), ("COMMITTER", committer)] {
-                command.env(format!("GIT_{role}_NAME"), &identity.name).env(format!("GIT_{role}_EMAIL"), &identity.email).env_remove(format!("GIT_{role}_DATE"));
-                if let Some(date) = identity.date { command.env(format!("GIT_{role}_DATE"), date.format("@%s %z").to_string()); }
-            }
+        if let Some((name, email)) = identity {
+            command
+                .env("GIT_AUTHOR_NAME", name)
+                .env("GIT_COMMITTER_NAME", name)
+                .env("GIT_AUTHOR_EMAIL", email)
+                .env("GIT_COMMITTER_EMAIL", email);
         }
         process::buffered(command, input, MAX_OUTPUT, TIMEOUT)
             .await
@@ -245,7 +196,7 @@ impl Repo<'_> {
         &self,
         args: &[&str],
         input: &[u8],
-        identity: Option<(&Signature, &Signature)>,
+        identity: Option<(&str, &str)>,
     ) -> Result<Vec<u8>, RepoError> {
         let (status, bytes) = self.command(args, input, identity).await?;
         if !status.success() {
@@ -385,11 +336,6 @@ impl Repo<'_> {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PreparedFile {
-    /// Opaque owning-store lease; never a filesystem path.
-    #[serde(default)]
-    pub staging: Option<String>,
-    #[serde(default)]
-    pub authority: Option<crate::backend::db::credentials::Actor>,
     pub branch: String,
     pub reference: String,
     pub expected: Option<String>,
@@ -426,16 +372,25 @@ async fn prepare_commit(
     message: &str,
     expected_revision: &str,
     changes: &[Change<'_>],
-    identity: (&Signature, &Signature),
+    author: &str,
+    email: &str,
 ) -> Result<PreparedFile, RepoError> {
+    let storage = Repo(path);
     if changes.is_empty() {
         return Err(invalid("A commit needs at least one file."));
     }
-    identity.0.validate()?;
-    identity.1.validate()?;
+    if author.is_empty()
+        || author.len() > MAX_COMMIT_NAME_BYTES
+        || email.is_empty()
+        || email.len() > MAX_COMMIT_EMAIL_BYTES
+        || author.contains(['\0', '\r', '\n', '<', '>'])
+        || email.contains(['\0', '\r', '\n', '<', '>'])
+    {
+        return Err(invalid("Invalid commit identity."));
+    }
     let reference =
         crate::backend::git::branch_ref(branch).ok_or_else(|| invalid("Invalid branch name."))?;
-    let current = Repo(path).direct_ref(&reference).await?;
+    let current = storage.direct_ref(&reference).await?;
     let expected = if expected_revision == "unborn" {
         None
     } else {
@@ -448,17 +403,6 @@ async fn prepare_commit(
         }
         return Err(conflict());
     }
-    let permit = STAGING_SLOTS.clone().try_acquire_owned().map_err(|_| unavailable())?;
-    let temporary = tempfile::tempdir().map_err(|_| unavailable())?;
-    crate::backend::git::repository::initialize_repository(temporary.path(), None, branch)
-        .await.map_err(RepoError::from)?;
-    let objects = std::fs::canonicalize(path.join("objects")).map_err(|_| unavailable())?;
-    let objects = objects.to_str().filter(|path| !path.contains(['\r', '\n']))
-        .ok_or_else(unavailable)?;
-    tokio::fs::write(temporary.path().join("objects/info/alternates"), format!("{objects}\n"))
-        .await.map_err(|_| unavailable())?;
-    let staged = Arc::new(StagedFile { temporary, destination: path.to_owned(), _permit: permit });
-    let storage = Repo(staged.path());
     let tree = match &current {
         Some(parent) => Some(oid(&storage
             .checked(
@@ -481,7 +425,7 @@ async fn prepare_commit(
         args.extend(["-p", parent.as_str()]);
     }
     let sha = oid(&storage
-        .checked(&args, message.as_bytes(), Some(identity))
+        .checked(&args, message.as_bytes(), Some((author, email)))
         .await?)?;
     let bytes = storage
         .checked(&["cat-file", "commit", &sha], b"", None)
@@ -490,16 +434,7 @@ async fn prepare_commit(
     if metadata.parents != current.iter().cloned().collect::<Vec<_>>() {
         return Err(unavailable());
     }
-    let key = uuid::Uuid::new_v4().to_string();
-    STAGED.lock().map_err(|_| unavailable())?.insert(key.clone(), staged);
-    let expires = key.clone();
-    tokio::spawn(async move {
-        tokio::time::sleep(Duration::from_secs(15 * 60)).await;
-        if let Ok(mut staged) = STAGED.lock() { staged.remove(&expires); }
-    });
     Ok(PreparedFile {
-        staging: Some(key),
-        authority: None,
         branch: branch.to_owned(),
         reference,
         expected,
@@ -517,13 +452,7 @@ pub(super) async fn prepare(
     author: &str,
     email: &str,
 ) -> Result<PreparedFile, RepoError> {
-    prepare_with_identities(path, input, content, author, email, &CommitIdentities::default()).await
-}
-
-pub(super) async fn prepare_with_identities(path: &Path, input: &FileWrite, content: &[u8], author: &str, email: &str, identities: &CommitIdentities) -> Result<PreparedFile, RepoError> {
     input.validate()?;
-    identities.validate()?;
-    let (author, committer) = identities.resolved(author, email);
     if content.len() > MAX_EDITOR_BYTES {
         return Err(invalid("File content exceeds 1 MiB."));
     }
@@ -542,7 +471,8 @@ pub(super) async fn prepare_with_identities(path: &Path, input: &FileWrite, cont
         &input.message,
         &input.expected_revision,
         std::slice::from_ref(&change),
-        (&author, &committer),
+        author,
+        email,
     )
     .await
 }
@@ -572,21 +502,21 @@ pub(super) async fn prepare_upload(
         });
         offset = end;
     }
-    let identity = Signature { name: author.into(), email: email.into(), date: None };
     prepare_commit(
         path,
         &write.branch,
         &write.message,
         &write.expected_revision,
         &changes,
-        (&identity, &identity),
+        author,
+        email,
     )
     .await
 }
 
-pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged: Option<&StagedFile>) -> Result<CommitInfo, RepoError> {
+/// Moves the branch to the prepared commit; `Conflict` if it moved meanwhile.
+pub(super) async fn publish(path: &Path, prepared: &PreparedFile) -> Result<CommitInfo, RepoError> {
     let repo = Repo(path);
-    let objects = Repo(staged.map_or(path, StagedFile::path));
     if crate::backend::git::branch_ref(&prepared.branch).as_deref()
         != Some(prepared.reference.as_str())
         || !crate::backend::git::is_full_commit_id(&prepared.commit.sha)
@@ -597,17 +527,7 @@ pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged:
     {
         return Err(invalid("Invalid prepared file publication."));
     }
-    if prepared.expected.is_none() {
-        let references = repo.checked(&["for-each-ref", "--format=%(refname)", "refs/heads"], b"", None).await?;
-        let references = std::str::from_utf8(&references).map_err(|_| unavailable())?;
-        if references.lines().any(|reference| {
-            reference.strip_prefix(&prepared.reference).is_some_and(|tail| tail.starts_with('/'))
-                || prepared.reference.strip_prefix(reference).is_some_and(|tail| tail.starts_with('/'))
-        }) {
-            return Err(invalid("The branch name conflicts with an existing branch namespace."));
-        }
-    }
-    let bytes = objects
+    let bytes = repo
         .checked(&["cat-file", "commit", &prepared.commit.sha], b"", None)
         .await?;
     let commit = decode_commit(&bytes, &prepared.commit.sha)?;
@@ -625,26 +545,16 @@ pub(super) async fn publish_staged(path: &Path, prepared: &PreparedFile, staged:
         prepared.commit.sha,
         prepared.expected.as_deref().unwrap_or(ZERO)
     );
-    let result = if staged.is_some() {
-        let destination = std::path::absolute(path).map_err(|_| unavailable())?;
-        let destination = destination.to_str().ok_or_else(unavailable)?;
-        let lease = format!("--force-with-lease={}:{}", prepared.reference, prepared.expected.as_deref().unwrap_or_default());
-        let refspec = format!("{}:{}", prepared.commit.sha, prepared.reference);
-        // receive-pack quarantines incoming objects until the destination CAS accepts them.
-        objects.command(&["push", "--porcelain", "--no-verify", &lease, "--", destination, &refspec], b"", None).await
-    } else {
-        repo.command(&["update-ref", "--stdin"], transaction.as_bytes(), None).await
-    };
-    if result.as_ref().is_ok_and(|(status, _)| status.success()) {
-        return Ok(prepared.commit.clone());
+    let (status, _) = repo
+        .command(&["update-ref", "--stdin"], transaction.as_bytes(), None)
+        .await?;
+    if !status.success() {
+        if repo.direct_ref(&prepared.reference).await? != prepared.expected {
+            return Err(conflict());
+        }
+        return Err(unavailable());
     }
-    // A killed or timed-out Git command may already have committed its transaction.
-    let current = repo.direct_ref(&prepared.reference).await?;
-    if current.as_deref() == Some(prepared.commit.sha.as_str()) {
-        return Ok(prepared.commit.clone());
-    }
-    if current != prepared.expected { return Err(conflict()); }
-    Err(unavailable())
+    Ok(prepared.commit.clone())
 }
 
 fn oid(bytes: &[u8]) -> Result<String, RepoError> {
@@ -710,8 +620,8 @@ fn decode_commit(bytes: &[u8], sha: &str) -> Result<CommitInfo, RepoError> {
             parents.push(oid(value.as_bytes())?);
         }
     }
-    let (author_name, author_email, timestamp, author_offset_minutes) = author.ok_or_else(unavailable)?;
-    let (committer_name, committer_email, committer_timestamp, committer_offset_minutes) =
+    let (author_name, author_email, timestamp) = author.ok_or_else(unavailable)?;
+    let (committer_name, committer_email, committer_timestamp) =
         committer.ok_or_else(unavailable)?;
     Ok(CommitInfo {
         sha: sha.into(),
@@ -723,14 +633,12 @@ fn decode_commit(bytes: &[u8], sha: &str) -> Result<CommitInfo, RepoError> {
         committer_email,
         timestamp,
         committer_timestamp,
-        author_offset_minutes,
-        committer_offset_minutes,
         parents,
         signature: None,
         signature_payload: None,
     })
 }
-fn signature(value: &str) -> Result<(String, String, i64, i32), RepoError> {
+fn signature(value: &str) -> Result<(String, String, i64), RepoError> {
     let (identity, time) = value.rsplit_once("> ").ok_or_else(unavailable)?;
     let (name, email) = identity.rsplit_once(" <").ok_or_else(unavailable)?;
     let (seconds, zone) = time.split_once(' ').ok_or_else(unavailable)?;
@@ -740,27 +648,16 @@ fn signature(value: &str) -> Result<(String, String, i64, i32), RepoError> {
     {
         return Err(unavailable());
     }
-    let hours: i32 = zone[1..3].parse().map_err(|_| unavailable())?;
-    let minutes: i32 = zone[3..5].parse().map_err(|_| unavailable())?;
-    if hours > 23 || minutes > 59 { return Err(unavailable()); }
-    let offset = (hours * 60 + minutes) * if zone.starts_with('-') { -1 } else { 1 };
     Ok((
         name.into(),
         email.into(),
         seconds.parse().map_err(|_| unavailable())?,
-        offset,
     ))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// Moves the branch to the prepared commit; `Conflict` if it moved meanwhile.
-    async fn publish(path: &Path, prepared: &PreparedFile) -> Result<CommitInfo, RepoError> {
-        let staged = claim_staged(path, prepared)?;
-        publish_staged(path, prepared, staged.as_deref()).await
-    }
 
     fn input(path: &str) -> FileWrite {
         FileWrite {
@@ -854,7 +751,6 @@ mod tests {
         .await
         .expect("shared directories should not be rebuilt for every file")
         .unwrap();
-        publish(root.path(), &prepared).await.unwrap();
         let tree = repo
             .find_commit(git2::Oid::from_str(&prepared.commit.sha).unwrap())
             .unwrap()
@@ -1039,7 +935,6 @@ mod tests {
         .await
         .unwrap()
         .unwrap();
-        publish(root.path(), &prepared).await.unwrap();
         let tree = repo
             .find_commit(git2::Oid::from_str(&prepared.commit.sha).unwrap())
             .unwrap()

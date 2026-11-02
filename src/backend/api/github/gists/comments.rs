@@ -27,11 +27,11 @@ async fn list(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
-    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
+    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
     let (offset, limit) = page.window()?;
     let mut comments = db::gists::comments(
         &state.pool,
-        gist.repo_id,
+        loaded.repository.id,
         (limit + 1) as i64,
         offset as i64,
     )
@@ -41,7 +41,7 @@ async fn list(
     comments.truncate(limit);
     let mut values = Vec::new();
     for comment in comments {
-        values.push(documents::comment(&state, &gist, &comment).await?);
+        values.push(documents::comment(&state, &loaded.gist, &comment).await?);
     }
     let etag = documents::validator(&values)?;
     documents::conditional(&headers, etag, page.response(&uri, values, more)?)
@@ -52,14 +52,14 @@ async fn read(
     Path((id, comment)): Path<(String, String)>,
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
-    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
-    let comment = db::gists::comment(&state.pool, gist.repo_id, comment_id(&comment)?)
+    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
+    let comment = db::gists::comment(&state.pool, loaded.repository.id, comment_id(&comment)?)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     documents::response(
         &headers,
-        documents::comment(&state, &gist, &comment).await?,
+        documents::comment(&state, &loaded.gist, &comment).await?,
     )
 }
 async fn create(
@@ -70,17 +70,17 @@ async fn create(
 ) -> Result<Response> {
     let actor = writer(&state, &headers).await?;
     let Json(input) = input.map_err(|_| Error::validation("GistComment", "body", "invalid"))?;
-    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
+    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
     let comment = db::gists::create_comment(
         &state.pool,
         actor.user.id,
-        &actor.credential(),
-        gist.repo_id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id),
+        loaded.repository.id,
         &input.body,
     )
     .await
     .map_err(failure)?;
-    let value = documents::comment(&state, &gist, &comment).await?;
+    let value = documents::comment(&state, &loaded.gist, &comment).await?;
     let location = value["url"]
         .as_str()
         .ok_or_else(|| Error::unavailable(()))?
@@ -98,19 +98,19 @@ async fn update(
 ) -> Result<Json<Value>> {
     let actor = writer(&state, &headers).await?;
     let Json(input) = input.map_err(|_| Error::validation("GistComment", "body", "invalid"))?;
-    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
+    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
     let comment = db::gists::change_comment(
         &state.pool,
         actor.user.id,
-        &actor.credential(),
-        gist.repo_id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id),
+        loaded.repository.id,
         comment_id(&comment)?,
         Some(&input.body),
     )
     .await
     .map_err(hidden_failure)?;
     Ok(Json(
-        documents::comment(&state, &gist, &comment).await?,
+        documents::comment(&state, &loaded.gist, &comment).await?,
     ))
 }
 async fn remove(
@@ -119,12 +119,12 @@ async fn remove(
     Path((id, comment)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let actor = writer(&state, &headers).await?;
-    let gist = domain::metadata(&state.pool, &id).await.map_err(failure)?;
+    let loaded = domain::load(&state, &id, None).await.map_err(failure)?;
     db::gists::change_comment(
         &state.pool,
         actor.user.id,
-        &actor.credential(),
-        gist.repo_id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id),
+        loaded.repository.id,
         comment_id(&comment)?,
         None,
     )

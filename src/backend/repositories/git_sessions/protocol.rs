@@ -156,6 +156,6 @@ mod tests {
         assert!(validate_frame(EXIT, 0).is_err());
         assert!(validate_frame(255, 1).is_err());
         assert!(validate_frame(EOF, 1).is_err());
-        assert!(serde_json::from_str::<Request>(r#"{"operation":"serve","credential":{"SshKey":1},"command":"x","git_protocol":null,"hooksPath":"evil"}"#).is_err());
+        assert!(serde_json::from_str::<Request>(r#"{"operation":"serve","key_id":1,"command":"x","git_protocol":null,"hooksPath":"evil"}"#).is_err());
     }
 }

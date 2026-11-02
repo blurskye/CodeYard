@@ -39,7 +39,6 @@ async fn run(state: &AppState, owner: &str, path: &str, request: Request) -> Res
         )
         .await,
         anonymous,
-        super::RegistryFormat::Standard,
     )
 }
 
@@ -185,7 +184,14 @@ fn md5(bytes: &[u8]) -> String {
 fn compact(body: String, method: &Method, headers: &HeaderMap) -> Result<Response> {
     let bytes = body.into_bytes();
     let etag = format!("\"{}\"", md5(&bytes));
-    if crate::backend::api::http::static_files::not_modified(headers, &etag) {
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|h| h.to_str().ok())
+        .is_some_and(|h| {
+            h.split(',')
+                .any(|v| v.trim().trim_start_matches("W/") == etag || v.trim() == "*")
+        })
+    {
         return Ok((StatusCode::NOT_MODIFIED, [(header::ETAG, etag)]).into_response());
     }
     let mut start = 0;
@@ -193,10 +199,15 @@ fn compact(body: String, method: &Method, headers: &HeaderMap) -> Result<Respons
     let mut status = StatusCode::OK;
     // Indexes are rebuilt, not append-only: a changed ETag must replace Bundler's cache,
     // including after deletion or insertion in the middle of a version list.
-    if !headers.contains_key(header::IF_NONE_MATCH) {
+    if !headers.contains_key(header::IF_NONE_MATCH)
+        && headers
+            .get(header::IF_RANGE)
+            .and_then(|h| h.to_str().ok())
+            .is_none_or(|h| h == etag)
+    {
         // Ignoring an unsatisfiable range sends a complete new index instead of stranding
         // a client whose old cached index was longer than the current one.
-        if let Ok(Some((first, last))) = super::oci::byte_range(headers, bytes.len() as u64, Some(&etag)) {
+        if let Ok(Some((first, last))) = super::oci::byte_range(headers, bytes.len() as u64) {
             start = first as usize;
             end = last as usize + 1;
             status = StatusCode::PARTIAL_CONTENT;
@@ -281,7 +292,6 @@ async fn dispatch(
             package.id,
             auth.token.id,
             bytes.to_vec(),
-            db::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;
@@ -346,8 +356,27 @@ async fn dispatch(
         .strip_prefix("gems/")
         .and_then(|s| s.strip_suffix(".gem"))
     {
-        let blob = db::packages::rubygems_file(&state.pool, &owner, token, filename).await.map_err(Error::db)?;
-        return super::oci::download(state, &blob, request.method(), request.headers()).await;
+        // The compact index supplies the unambiguous name/version/platform identity.
+        for package in super::owner_packages(state, &owner, "rubygems", auth.as_ref()).await? {
+            let Some(key) = filename.strip_prefix(&format!("{}-", package.name)) else {
+                continue;
+            };
+            match db::packages::version(&state.pool, package.id, token, key).await {
+                Ok(version) => {
+                    let blob = db::packages::blob(&state.pool, package.id, token, &version.digest)
+                        .await
+                        .map_err(Error::db)?;
+                    return super::oci::download(state, &blob, request.method(), request.headers())
+                        .await;
+                }
+                Err(error)
+                    if matches!(
+                        error.downcast_ref::<db::packages::Refusal>(),
+                        Some(db::packages::Refusal::Missing)
+                    ) => {}
+                Err(error) => return Err(Error::db(error)),
+            }
+        }
     }
     Err(Error::missing())
 }

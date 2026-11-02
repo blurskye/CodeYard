@@ -58,13 +58,12 @@ async fn archive(
         .ok_or_else(|| Error::unavailable(()))?;
     let prefix = crate::backend::api::repos::code::archive::archive_prefix(
         &format!("{owner}-{name}"),
-        crate::webui::components::short_sha(&commit.sha),
+        &commit.sha[..7],
     );
     let bytes = store
         .archive(&commit.sha, &prefix, format)
         .await
         .map_err(store_error)?;
-    super::auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
     Ok(archive_response(
         bytes,
         &format!("{prefix}.{extension}"),

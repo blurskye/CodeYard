@@ -191,9 +191,10 @@ pub(crate) async fn render_page(
     let head = request.method() == Method::HEAD;
     let mut response = next.run(request).await;
     if let Some(render) = response.extensions_mut().remove::<ModelRender>() {
-        let Ok(permit) = MODEL_RENDERS.try_acquire() else {
-            return public_error(StatusCode::SERVICE_UNAVAILABLE, "Page rendering busy. Please try again.");
-        };
+        let permit = MODEL_RENDERS
+            .acquire()
+            .await
+            .expect("render semaphore remains open");
         let html = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             document::render_model(render.envelope, render.runtime_module)
@@ -336,7 +337,8 @@ pub(crate) async fn not_found(
             Some(query) => format!("{trimmed}?{query}"),
             None => trimmed.to_owned(),
         };
-        if crate::webui::navigation::safe_page_target(&target) {
+        // Doubled slashes would make a protocol-relative address.
+        if !trimmed.is_empty() && !target.starts_with("//") {
             return Redirect::permanent(&target).into_response();
         }
     }

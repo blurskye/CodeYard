@@ -13,26 +13,11 @@ use std::{
 pub struct CorePeer {
     pub public_key: String,
     pub address: NodeAddress,
-    /// Configured hostname retained even when startup DNS is unavailable.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub target: Option<String>,
 }
 
 impl CorePeer {
     pub fn node(&self) -> Result<iroh::PublicKey> {
         parse_public_key(&self.public_key)
-    }
-
-    pub async fn resolved_address(&self) -> Result<NodeAddress> {
-        let Some(host) = &self.target else { return Ok(self.address.clone()); };
-        let target = host.strip_prefix("tcp://").unwrap_or(host);
-        let addresses = tokio::time::timeout(std::time::Duration::from_secs(5), resolve(target)).await??;
-        ensure!(!addresses.is_empty(), "core hostname has no addresses");
-        Ok(if host.starts_with("tcp://") {
-            NodeAddress { tcp: addresses, ..Default::default() }
-        } else {
-            NodeAddress { addrs: addresses, ..Default::default() }
-        })
     }
 
     pub fn endpoint_addr(&self) -> Result<iroh::EndpointAddr> {
@@ -49,11 +34,15 @@ async fn resolve(host: &str) -> Result<Vec<SocketAddr>> {
 }
 
 pub fn save_core(state_dir: &Path, ticket: &super::JoinTicket) -> Result<()> {
-    crate::backend::fs::private_dir(state_dir)?;
+    std::fs::create_dir_all(state_dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(state_dir, std::fs::Permissions::from_mode(0o700))?;
+    }
     let peer = CorePeer {
         public_key: ticket.node.to_string(),
         address: ticket.address.clone(),
-        target: None,
     };
     use std::io::Write;
     let mut file = tempfile::NamedTempFile::new_in(state_dir)?;
@@ -79,15 +68,11 @@ pub async fn worker_context(
     for (public_key, host) in &settings.peers {
         // `tcp://host:port` selects TCP for this core node; any other entry uses iroh.
         let target = host.strip_prefix("tcp://").unwrap_or(host);
-        if !target.rsplit_once(':').is_some_and(|(host, port)| !host.is_empty() && port.parse::<u16>().is_ok_and(|port| port > 0)) {
-            tracing::warn!(host, "invalid configured core address; expected host:port");
-            continue;
-        }
-        let addresses = match tokio::time::timeout(std::time::Duration::from_secs(5), resolve(target)).await {
-            Ok(Ok(addresses)) if !addresses.is_empty() => addresses,
+        let addresses = match resolve(target).await {
+            Ok(addresses) if !addresses.is_empty() => addresses,
             result => {
                 tracing::warn!(host, error = ?result.err(), "core address unavailable; trying other peers");
-                Vec::new()
+                continue;
             }
         };
         let address = if host.starts_with("tcp://") {
@@ -104,7 +89,6 @@ pub async fn worker_context(
         peers.push(CorePeer {
             public_key: public_key.clone(),
             address,
-            target: Some(host.clone()),
         });
     }
     let saved_peer = (|| -> Result<CorePeer> {
@@ -131,15 +115,11 @@ pub async fn worker_context(
                 peers.push(CorePeer {
                     public_key: ticket.node.to_string(),
                     address: ticket.address.clone(),
-                    target: None,
                 });
             }
             (Err(error), Ok(peer)) => {
                 tracing::warn!(%error, "cluster join failed; using the saved core address");
                 peers.push(peer);
-            }
-            (Err(error), Err(_)) if !peers.is_empty() => {
-                tracing::warn!(%error, "cluster join failed; trying configured cores");
             }
             (Err(error), Err(_)) => return Err(error),
         }
@@ -183,7 +163,7 @@ mod tests {
         let (_, peers) = worker_context(root.path(), settings).await.unwrap();
         assert_eq!(peers.len(), 1);
         let ticket =
-            super::super::JoinTicket::new(peers[0].node().unwrap(), peers[0].address.clone()).unwrap();
+            super::super::JoinTicket::new(peers[0].node().unwrap(), peers[0].address.clone());
         save_core(root.path(), &ticket).unwrap();
         let peer: CorePeer =
             serde_json::from_slice(&std::fs::read(root.path().join("cluster-peer.json")).unwrap())
@@ -194,7 +174,7 @@ mod tests {
         let replacement = super::super::JoinTicket::new(
             super::super::NodeKey::generate().public_key(),
             ticket.address.clone(),
-        ).unwrap();
+        );
         save_core(root.path(), &replacement).unwrap();
         use std::io::Read;
         let mut previous = Vec::new();
@@ -218,7 +198,6 @@ mod tests {
         .unwrap()
         .unwrap();
         let saved = CorePeer {
-            target: None,
             public_key: key.clone(),
             address: NodeAddress {
                 tcp: vec!["127.0.0.1:7445".parse().unwrap()],

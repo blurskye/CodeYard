@@ -23,8 +23,7 @@ native_operation!(crate::backend::db::postgres::users::signing_keys::find_signin
 
 native_operation!(crate::backend::db::postgres::users::signing_keys::list_signing_key_summaries,
     crate::backend::db::sqlite::users::signing_keys::list_signing_key_summaries,
-    /// The account's own settings listing, read while `credential` is still live.
-    fn list_signing_key_summaries(pool: &DbPool, user: i64, credential: &AccountCredential<'_>, after: i64) -> Result<Vec<super::ssh_keys::SshKeySummary>>);
+    fn list_signing_key_summaries(pool: &DbPool, user: i64, after: i64) -> Result<Vec<super::ssh_keys::SshKeySummary>>);
 
 native_operation!(crate::backend::db::postgres::users::signing_keys::list_signing_keys,
     crate::backend::db::sqlite::users::signing_keys::list_signing_keys,

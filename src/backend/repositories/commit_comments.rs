@@ -104,14 +104,11 @@ async fn authors(
             .map(|contributor| contributor.email.to_ascii_lowercase())
             .collect();
         for author in &mut authors {
-            // Commits made for the account carry its no-reply address or its own email.
-            let noreply = format!("{}@users.noreply", author.username).to_ascii_lowercase();
-            let committed = emails.contains(&noreply)
-                || author
-                    .email
-                    .as_ref()
-                    .is_some_and(|email| emails.contains(&email.to_ascii_lowercase()));
-            if author.association == "NONE" && committed {
+            let email = author
+                .email
+                .clone()
+                .unwrap_or_else(|| format!("{}@users.noreply", author.username));
+            if author.association == "NONE" && emails.contains(&email.to_ascii_lowercase()) {
                 author.association = "CONTRIBUTOR".into();
             }
         }
@@ -288,28 +285,20 @@ async fn notify(
             Some(author.id)
         }
         .await;
-        let title = format!(
-            "{} commented on commit {}",
-            user.username,
-            crate::webui::components::short_sha(&comment.sha)
-        );
-        let notice = NotificationRequest {
-            user_id: user.id, actor_id: Some(user.id), repo_id: Some(repo.id), kind: "commit_comment", title: &title, body: Some(&comment.body), link: Some(&link),
-            metadata: json!({"repo_owner":owner,"repo_name":repo.name,"commit_sha":comment.sha,"commit_comment_id":comment.id,"subject":comment.sha}),
-        };
         if let Some(recipient) = recipient {
+            let title = format!(
+                "{} commented on commit {}",
+                user.username,
+                &comment.sha[..7]
+            );
             let sent = create_and_broadcast_notification(pool, broadcaster, NotificationRequest {
-                user_id: recipient, ..notice.clone()
+                user_id: recipient, actor_id: Some(user.id), repo_id: Some(repo.id), kind: "commit_comment", title: &title, body: Some(&comment.body), link: Some(&link),
+                metadata: json!({"repo_owner":owner,"repo_name":repo.name,"commit_sha":comment.sha,"commit_comment_id":comment.id,"subject":comment.sha}),
             }).await;
             if sent.is_ok() {
                 notified.push(recipient);
             }
         }
-        // Explicit thread subscribers hear about every new comment on the commit.
-        let subscribers = crate::backend::notifications::create::notify_subscribers(
-            pool, broadcaster, notice, &notified,
-        ).await;
-        notified.extend(subscribers);
     }
     notify_mentions(
         pool,
@@ -335,13 +324,11 @@ pub async fn create(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
-    actor: impl Into<db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     reference: &str,
     mut input: CreateComment,
 ) -> Result<CommentDetails> {
-    let credential = actor.into();
-    let actor = credential.user_id;
     let (user, repository, owner) = writable(pool, actor, repo).await?;
     if input.repository_id.is_some_and(|id| id != repo) {
         return Err(CommentError::Conflict);
@@ -416,7 +403,6 @@ pub async fn create(
         pool,
         CommentCreate {
             actor_id: actor,
-            token_id: credential.token_id(),
             repo_id: repo,
             sha: &commit.sha,
             body: &input.body,
@@ -482,13 +468,12 @@ pub async fn edit(
 
 pub async fn delete(
     pool: &db::DbPool,
-    actor: impl Into<db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     id: i64,
     revision: Option<&str>,
 ) -> Result<CommitComment> {
-    let actor = actor.into();
-    writable(pool, actor.user_id, repo).await?;
+    writable(pool, actor, repo).await?;
     // GitHub sends commit_comment only for creation. Deletion needs no Git metadata lookup.
     records::delete_comment(pool, actor, repo, id, revision)
         .await

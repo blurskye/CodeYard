@@ -30,12 +30,12 @@ pub async fn update_issue(
     Json(req): Json<UpdateIssueRequest>,
 ) -> Result<Json<IssueResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
-    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let issue = crate::backend::issues::mutations::update_issue(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
-        repository.id,
+        owner,
+        repo,
         number,
         req,
     )
@@ -177,26 +177,9 @@ pub(crate) async fn native_detail(
                         .await
                         .map_err(|_| unavailable(&ctx))?
                         .ok_or_else(|| unavailable(&ctx))?;
-                // The comment and the page the old link asked for still apply at the new home.
-                let comment = ctx
-                    .query
-                    .get("comment")
-                    .and_then(|id| id.parse::<i64>().ok())
-                    .filter(|id| *id > 0);
-                let page = ctx
-                    .query
-                    .get("page")
-                    .and_then(|page| page.parse::<usize>().ok())
-                    .filter(|page| (2..=crate::backend::issues::MAX_COMMENT_PAGE).contains(page));
-                let suffix = match (comment, page) {
-                    (Some(id), _) => format!("?comment={id}#comment-{id}"),
-                    (None, Some(page)) => format!("?page={page}"),
-                    (None, None) => String::new(),
-                };
-                return Ok(ctx.redirect(&format!(
-                    "/{owner}/{}/issues/{}{suffix}",
-                    target.name, moved.number
-                )));
+                return Ok(
+                    ctx.redirect(&format!("/{owner}/{}/issues/{}", target.name, moved.number))
+                );
             }
             let pull_request = db::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
@@ -362,10 +345,10 @@ pub(crate) async fn native_edit(
     let draft = submitted_detail(&form, "edit");
     let title = field(&form, "title");
     let body = field(&form, "body");
-    if !value.can_edit {
+    if !repo.view.can_write {
         return Err(ctx.error(
             StatusCode::FORBIDDEN,
-            "Only the author or a repository writer may edit this entry.",
+            "Write access is required to edit this entry.",
         ));
     }
     if let Err(message) = expected(&form, &value) {
@@ -401,7 +384,7 @@ pub(crate) async fn native_edit(
         &ctx,
         kind,
         ctx.require_user()?.id,
-        (repo.record.id, number),
+        (owner, name, number),
         EntryChange {
             title: Some(title),
             body: Some(body),
@@ -435,7 +418,7 @@ pub(crate) async fn save_entry_change(
     ctx: &PageContext,
     kind: Kind,
     actor_id: i64,
-    (repository_id, number): (i64, i32),
+    (owner, name, number): (String, String, i32),
     text: EntryChange,
 ) -> Result<(), ApiFailure> {
     match kind {
@@ -443,7 +426,8 @@ pub(crate) async fn save_entry_change(
             &ctx.state.pool,
             &ctx.state.notification_broadcaster,
             actor_id,
-            repository_id,
+            owner,
+            name,
             number,
             crate::backend::issues::mutations::UpdateIssueRequest {
                 expected_state: text.expected_state,
@@ -462,7 +446,7 @@ pub(crate) async fn save_entry_change(
             &ctx.state.ci_runs,
             &ctx.state.notification_broadcaster,
             actor_id,
-            (repository_id, number),
+            (owner, name, number),
             crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
                 expected_state: text.expected_state,
                 expected_updated: text.expected_updated,
@@ -524,7 +508,7 @@ pub(crate) async fn native_change_state(
         &ctx,
         kind,
         ctx.require_user()?.id,
-        (repo.record.id, number),
+        (owner, name, number),
         EntryChange {
             title: None,
             body: None,
@@ -565,7 +549,6 @@ mod tests {
             labels: vec![],
             comparison: None,
             comment_count: 0,
-            can_edit: false,
             can_tick: false,
             tasks: Default::default(),
             commit_count: None,

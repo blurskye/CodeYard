@@ -37,7 +37,6 @@ pub(crate) async fn native_pin(
     db::pins::set_pin(
         &ctx.state.pool,
         ctx.require_user()?.id,
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
         repo.record.id,
         item,
         comment,
@@ -77,20 +76,17 @@ pub(crate) async fn pinned_comment(
     let base = format!("{}/{number}", repo.view.family_url(kind));
     let (body, author, href) = match item {
         db::assignees::AssignedItem::Issue(id) => {
-            // A comment deleted after the pin was read takes its pin with it.
-            let Some(comment) = db::issues::get_issue_comment(&ctx.state.pool, pin.comment_id)
+            let comment = db::issues::get_issue_comment(&ctx.state.pool, pin.comment_id)
                 .await
                 .map_err(|_| unavailable(ctx))?
                 .filter(|comment| comment.issue_id == id)
-            else {
-                return Ok(None);
-            };
+                .ok_or_else(|| unavailable(ctx))?;
             let position = db::issues::issue_comment_position(&ctx.state.pool, comment.id).await;
             let href = crate::backend::issues::comment_link(&base, comment.id, position);
             (comment.body, comment.author_id, href)
         }
         db::assignees::AssignedItem::PullRequest(id) => {
-            let Some(comment) = db::pull_requests::reviews::get_pull_request_comment_by_id(
+            let comment = db::pull_requests::reviews::get_pull_request_comment_by_id(
                 &ctx.state.pool,
                 pin.comment_id,
             )
@@ -101,9 +97,7 @@ pub(crate) async fn pinned_comment(
                     && comment.path.is_none()
                     && comment.review_id.is_none()
             })
-            else {
-                return Ok(None);
-            };
+            .ok_or_else(|| unavailable(ctx))?;
             let href = crate::backend::repositories::pull_requests::comments::saved_comment_link(
                 &ctx.state.pool,
                 &base,

@@ -1,7 +1,6 @@
 //! Outgoing email over SMTP. The server settings live in `config`, the texts in `messages`,
 //! `links` mails the address confirmation and password reset codes, and `outbox` sends the
-//! queued mail. The entry points below queue what the site mails, or write the mail that a
-//! database transaction queues with the change it reports.
+//! queued mail. The entry points below queue what the site mails.
 pub mod config;
 pub mod links;
 mod messages;
@@ -44,42 +43,59 @@ pub async fn notify_user(pool: &DbPool, notification: &db::models::Notification)
     }
 }
 
-/// The offer of a seat in organization `name`. The database queues it in the transaction that
-/// saves the invitation, linked to it so exhausted SMTP retries can be reported.
-pub fn organization_invitation(name: &str) -> messages::Mail {
-    messages::organization_invitation(&public_origin(), name)
+/// Invitation messages are linked to their offer so exhausted SMTP retries can be reported.
+pub async fn organization_invitation(
+    pool: &DbPool,
+    invitation: &db::models::OrgInvitation,
+    name: &str,
+) {
+    if !config::is_configured(pool).await {
+        return;
+    }
+    let to = match &invitation.email {
+        Some(email) => Some(email.clone()),
+        None => match invitation.user_id {
+            Some(user) => db::email::notification_email_address(pool, user)
+                .await
+                .ok()
+                .flatten(),
+            None => None,
+        },
+    };
+    let Some(to) = to else {
+        return;
+    };
+    let title = format!("Invitation to join {name}");
+    let body = format!("You have been invited to join {name}. Sign in, or create an account and verify this email address, to accept the invitation at {}/settings/organizations.\n\nThis invitation expires after seven days.", public_origin());
+    if let Err(error) =
+        db::email::enqueue_invitation_email(pool, invitation.id, &to, &title, &body).await
+    {
+        warn!(%error, "could not queue an organization invitation email");
+    }
 }
 
-/// Tells the person who asked for an account that an administrator decided on the request. The
-/// database queues it in the transaction that records the decision.
-pub fn signup_decision(username: &str, approved: bool) -> messages::Mail {
-    messages::signup_decision(&public_origin(), username, approved)
+/// Tells the person who asked for an account that an administrator decided on the request.
+pub async fn signup_decision(pool: &DbPool, email: Option<&str>, username: &str, approved: bool) {
+    let Some(to) = email.map(str::trim).filter(|email| !email.is_empty()) else {
+        return;
+    };
+    if config::is_configured(pool).await {
+        let mail = messages::signup_decision(&public_origin(), username, approved);
+        outbox::enqueue(pool, to, mail).await;
+    }
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum TestMailError {
-    #[error("A live unrestricted administrator session is required")]
-    Authority(crate::backend::identity::sessions::AccountAuthorityError),
-    #[error("Your account has no email address. Add one in Settings under Email address.")]
-    NoAddress,
-    #[error("{0}")]
-    Delivery(String),
-}
-
-/// Rechecks the initiating administrator after configuration loading, at send admission.
+/// Sends a test message now, not through the outbox, so the answer is the server's.
 pub async fn send_test(
     pool: &DbPool,
     secrets: Option<&SecretEncryptor>,
-    session: &str,
-) -> Result<String, TestMailError> {
-    let (config, _) = config::load(pool, secrets).await.map_err(TestMailError::Delivery)?
-        .ok_or_else(|| TestMailError::Delivery("Email is not set up. Save the settings first.".into()))?;
-    let admin = crate::backend::identity::sessions::administrator(pool, Some(session)).await
-        .map_err(TestMailError::Authority)?;
-    let to = admin.email.as_deref().map(str::trim).filter(|email| !email.is_empty()).ok_or(TestMailError::NoAddress)?;
+    to: &str,
+) -> Result<(), String> {
+    let (config, _) = config::load(pool, secrets)
+        .await?
+        .ok_or("Email is not set up. Save the settings first.")?;
     let mail = messages::test_message();
-    send::send(&config, to, &mail.subject, &mail.body).await.map_err(TestMailError::Delivery)?;
-    Ok(to.to_owned())
+    send::send(&config, to, &mail.subject, &mail.body).await
 }
 
 #[cfg(test)]
@@ -229,13 +245,13 @@ mod tests {
             None
         );
 
-        assert!(db::email::get_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"))
+        assert!(db::email::get_email_notifications(&f.pool, f.admin)
             .await
             .unwrap());
-        db::email::set_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"), false)
+        db::email::set_email_notifications(&f.pool, f.admin, false)
             .await
             .unwrap();
-        assert!(!db::email::get_email_notifications(&f.pool, f.admin, &db::users::accounts::AccountCredential::Session("live"))
+        assert!(!db::email::get_email_notifications(&f.pool, f.admin)
             .await
             .unwrap());
         assert_eq!(
@@ -266,6 +282,7 @@ mod tests {
             )
         };
         notify_user(&f.pool, &notification(None, None).await.unwrap()).await;
+        signup_decision(&f.pool, Some("carol@example.com"), "carol", true).await;
         assert!(db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
@@ -277,7 +294,12 @@ mod tests {
             .unwrap();
         let mail = notification(Some("Body"), Some("/x")).await.unwrap();
         notify_user(&f.pool, &mail).await;
+        signup_decision(&f.pool, Some("carol@example.com"), "carol", false).await;
         let first = db::email::claim_due_email(&f.pool, 5, 600)
+            .await
+            .unwrap()
+            .unwrap();
+        let second = db::email::claim_due_email(&f.pool, 5, 600)
             .await
             .unwrap()
             .unwrap();
@@ -291,6 +313,7 @@ mod tests {
                 .await
                 .unwrap()
         );
+        assert_eq!(second.to_address, "carol@example.com");
     }
 
     #[tokio::test]
@@ -325,7 +348,7 @@ mod tests {
         // Each failure sets the next attempt; with no wait it is due again at once.
         let id = claimed[0].id;
         for attempts in 1..=outbox::MAX_ATTEMPTS {
-            db::email::mark_email_failed(&f.pool, id, attempts, "refused", 0, outbox::MAX_ATTEMPTS)
+            db::email::mark_email_failed(&f.pool, id, "refused", 0, outbox::MAX_ATTEMPTS)
                 .await
                 .unwrap();
             let next = db::email::claim_due_email(&f.pool, outbox::MAX_ATTEMPTS, 600)
@@ -358,7 +381,7 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        db::email::mark_email_failed(&f.pool, two.id, two.attempts, "later", 3600, outbox::MAX_ATTEMPTS)
+        db::email::mark_email_failed(&f.pool, two.id, "later", 3600, outbox::MAX_ATTEMPTS)
             .await
             .unwrap();
         assert!(

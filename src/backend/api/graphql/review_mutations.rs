@@ -149,7 +149,8 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         "addPullRequestReview" | "submitPullRequestReview" => {
             let body = input["body"]
                 .as_str()
-                .map(str::to_owned);
+                .map(str::to_owned)
+                .or_else(|| existing.as_ref().and_then(|r| r.body.clone()));
             crate::backend::issues::validate_body(body.as_deref().unwrap_or(""), false)
                 .map_err(async_graphql::Error::new)?;
             let commit = input
@@ -161,7 +162,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     })
                 })
                 .transpose()?
-                // Identified drafts keep the commit that was actually reviewed.
+                // A pending review is submitted on the commit it was drafted on, so a stale draft is refused below.
                 .or_else(|| {
                     (field == "submitPullRequestReview")
                         .then(|| existing.as_ref().and_then(|r| r.commit_sha.as_deref()))
@@ -169,7 +170,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 })
                 .unwrap_or(&pull.head_sha);
             if !crate::backend::git::is_full_commit_id(commit)
-                || (field != "submitPullRequestReview" && !commit.eq_ignore_ascii_case(&pull.head_sha))
+                || !commit.eq_ignore_ascii_case(&pull.head_sha)
             {
                 return Err(async_graphql::Error::new(
                     "Review the current pull request head",
@@ -184,32 +185,30 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                     request.state.cluster.as_ref(),
                     &request.state.notification_broadcaster,
                     actor,
-                    &request.auth.credential(),
                     (owner, repo.name.clone(), pull.number),
                     reviews::CreatePullRequestReviewRequest {
                         state: Some(state),
                         body,
                         commit_sha: Some(commit.to_owned()),
                         review_id: existing.as_ref().map(|r| r.id),
-                        token: Some(request.auth.token.id),
                     },
                 )
                 .await
                 .map_err(pull_error)?
             } else {
-                db::pull_requests::reviews::save_review_batch(pool, db::pull_requests::reviews::ReviewBatch {
-                    pr_id: pull.id, author_id: actor, state: None, body: body.as_deref(), commit_sha: Some(commit),
-                    expected_pending: None, create_pending: true, comments: &[], token: Some(request.auth.token.id),
-                    credential: &request.auth.credential(),
-                })
+                db::pull_requests::reviews::create_pending_review(
+                    pool,
+                    pull.id,
+                    actor,
+                    body.as_deref(),
+                    commit,
+                )
                 .await
-                .map(|(review, _)| review)
                 .map_err(|e| pull_error(pull_requests::write_error(e)))?
             }
         }
         "updatePullRequestReview" => reviews::edit_review(
             pool,
-            &request.state.notification_broadcaster,
             actor,
             &repo,
             &pull,

@@ -31,7 +31,7 @@ pub(super) fn panel(page: &Page, org: &Organization) -> Element {
                     form { id: "organization-picture-upload", method: "post", action: base.clone(), enctype: "multipart/form-data", class: "org-form",
                         {csrf(&page.csrf_token)}
                         label { span { "Upload a new picture" }
-                            input { r#type: "file", name: "picture", accept: crate::media::AVATAR_CONTENT_TYPES.join(","), required: true }
+                            input { r#type: "file", name: "picture", accept: "image/png,image/jpeg,image/gif,image/webp", required: true }
                         }
                         p { "PNG, JPEG, GIF, or WebP. Maximum 2 MB." }
                     }

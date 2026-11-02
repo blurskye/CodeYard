@@ -84,7 +84,6 @@ async fn contract(pg: bool) {
         "BASE_SECRET",
         "must-not-be-delivered",
         Some(alice_id),
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice_id).await),
     )
     .await
     .unwrap();
@@ -230,7 +229,7 @@ async fn contract(pg: bool) {
     assert_eq!(pending.len(), 1);
     assert!(pending[0].approval_required && pending[0].is_fork);
     assert!(
-        db::ci::claim_ci_run(f.pool(), "not-approved", "local", &[alice_id, bob_id], &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(f.pool(), "not-approved", "local", &[alice_id, bob_id])
             .await
             .unwrap()
             .is_none()

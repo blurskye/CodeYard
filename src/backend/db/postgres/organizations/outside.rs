@@ -29,18 +29,15 @@ pub async fn list(
 }
 pub async fn remove(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
-    let grant = actor.into();
-    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if !credential(&mut tx, &grant, org, "members").await? { return Ok(Denied); }
     active(&mut tx, target).await?;
     if membership_role(&mut tx, org, target).await?.is_some() {
         return Ok(Conflict);

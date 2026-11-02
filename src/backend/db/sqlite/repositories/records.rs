@@ -1,15 +1,9 @@
 use crate::backend::db::models::{Repository, SharedRepository};
-use crate::backend::db::repositories::discovery::public_fork_count_sql;
 use crate::backend::db::repositories::records::{
     MergeMethodUpdate, RepositoryFilter, RepositorySort,
 };
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
-
-pub async fn network_fork_count(pool: &SqlitePool, repo: i64) -> Result<i64> {
-    Ok(sqlx::query_scalar(crate::backend::db::repositories::records::NETWORK_FORK_COUNT)
-        .bind(repo).fetch_one(pool).await?)
-}
 
 pub async fn create_repository(
     pool: &SqlitePool,
@@ -47,7 +41,7 @@ pub async fn get_repository(
         SELECT r.* FROM repositories r
         LEFT JOIN users u ON r.owner_user_id = u.id AND r.owner_kind = 'user'
         LEFT JOIN organizations o ON r.owner_org_id = o.id AND r.owner_kind = 'org'
-        WHERE (lower(u.username) = lower(?1) OR lower(o.name) = lower(?1)) AND lower(r.name) = lower(?2) AND NOT r.is_gist
+        WHERE (u.username = ?1 OR o.name = ?1) AND r.name = ?2 AND NOT r.is_gist
         "#,
     )
     .bind(owner_name)
@@ -125,23 +119,18 @@ pub async fn list_user_repositories(pool: &SqlitePool, user_id: i64) -> Result<V
     Ok(repos)
 }
 
-fn personal_repository_condition() -> &'static str {
-    "NOT is_gist AND owner_kind='user' AND owner_user_id=?1 AND (NOT is_private OR EXISTS(
-        SELECT 1 FROM sessions s JOIN users u ON u.id=s.user_id WHERE u.id=?1 AND s.id=?2
-        AND julianday(s.expires_at)>julianday('now') AND NOT u.is_banned AND NOT u.must_change_password))"
-}
-
-/// Private personal repositories require their owner's original live session.
+/// How many repositories `user_id` owns that a profile lists. Private ones are counted only when
+/// `include_private` is set, which is the owner's own view.
 pub async fn count_user_repositories(
     pool: &SqlitePool,
     user_id: i64,
-    owner_session: Option<&str>,
+    include_private: bool,
 ) -> Result<i64> {
     Ok(sqlx::query_scalar::<_, i64>(
-        &format!("SELECT COUNT(*) FROM repositories WHERE {}", personal_repository_condition()),
+        "SELECT COUNT(*) FROM repositories WHERE owner_kind = 'user' AND owner_user_id = ?1 AND NOT is_gist AND (?2 OR is_private = false)",
     )
     .bind(user_id)
-    .bind(owner_session)
+    .bind(include_private)
     .fetch_one(pool)
     .await?)
 }
@@ -154,46 +143,26 @@ pub async fn list_public_repositories(
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     // The order is part of the query, so the limit keeps the top rows of that order.
     // The stars index lets SQLite find that top row without sorting every public repository.
-    let sql: std::borrow::Cow<'_, str> = match sort {
+    let sql = match sort {
         RepositorySort::Recent => {
-            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY created_at DESC, id DESC LIMIT ?1".into()
+            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY created_at DESC, id DESC LIMIT ?1"
         }
         RepositorySort::Stars => {
-            "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false AND NOT is_gist ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?1".into()
+            "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars WHERE is_private = false AND NOT is_gist ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?1"
         }
         RepositorySort::Forks => {
-            format!("SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY {} DESC, created_at DESC, id DESC LIMIT ?1", public_fork_count_sql("repositories")).into()
+            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY forks_count DESC, created_at DESC, id DESC LIMIT ?1"
         }
         RepositorySort::Updated => {
-            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY updated_at DESC, id DESC LIMIT ?1".into()
+            "SELECT * FROM repositories WHERE is_private = false AND NOT is_gist ORDER BY updated_at DESC, id DESC LIMIT ?1"
         }
     };
-    let repos = sqlx::query_as::<_, Repository>(&sql)
+    let repos = sqlx::query_as::<_, Repository>(sql)
         .bind(limit)
         .fetch_all(pool)
         .await?;
 
     Ok(repos)
-}
-
-pub async fn list_trending_repositories(
-    pool: &SqlitePool,
-    viewer: i64,
-    text: &str,
-    limit: i64,
-) -> Result<Vec<Repository>> {
-    anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
-    Ok(sqlx::query_as::<_, Repository>(
-        "SELECT * FROM repositories INDEXED BY idx_repositories_public_stars \
-         WHERE is_private = false AND NOT is_gist AND NOT (owner_kind='user' AND owner_user_id=?1) \
-         AND (name REGEXP ?2 OR COALESCE(description,'') REGEXP ?2) \
-         ORDER BY stars_count DESC, created_at DESC, id DESC LIMIT ?3",
-    )
-    .bind(viewer)
-    .bind(super::super::search::contains(text.trim()))
-    .bind(limit.min(100))
-    .fetch_all(pool)
-    .await?)
 }
 
 fn shared_repository_condition() -> String {
@@ -216,19 +185,18 @@ pub async fn list_shared_repositories(
 pub async fn list_user_repository_page(
     pool: &SqlitePool,
     user: i64,
-    owner_session: Option<&str>,
+    include_private: bool,
     text: &str,
-    include_archived: bool,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<Repository>, i64)> {
-    let condition = format!("{} AND (name REGEXP ?3 OR COALESCE(description,'') REGEXP ?3){}", personal_repository_condition(), if include_archived { "" } else { " AND NOT is_archived" });
+    let condition = "NOT is_gist AND owner_kind='user' AND owner_user_id=?1 AND (?2 OR NOT is_private) AND (name REGEXP ?3 OR COALESCE(description,'') REGEXP ?3)";
     let needle = super::super::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
         "SELECT COUNT(*) FROM repositories WHERE {condition}"
     ))
     .bind(user)
-    .bind(owner_session)
+    .bind(include_private)
     .bind(&needle)
     .fetch_one(pool)
     .await?;
@@ -236,7 +204,7 @@ pub async fn list_user_repository_page(
         "SELECT * FROM repositories WHERE {condition} ORDER BY name,id LIMIT ?4 OFFSET ?5"
     ))
     .bind(user)
-    .bind(owner_session)
+    .bind(include_private)
     .bind(&needle)
     .bind(limit.clamp(1, 100))
     .bind(offset.max(0))
@@ -249,14 +217,12 @@ pub async fn list_shared_repository_page(
     pool: &SqlitePool,
     user: i64,
     text: &str,
-    include_archived: bool,
     limit: i64,
     offset: i64,
 ) -> Result<(Vec<SharedRepository>, i64)> {
     let condition = format!(
-        "{} AND (r.name REGEXP ?2 OR COALESCE(r.description,'') REGEXP ?2){}",
-        shared_repository_condition(),
-        if include_archived { "" } else { " AND NOT r.is_archived" }
+        "{} AND (r.name REGEXP ?2 OR COALESCE(r.description,'') REGEXP ?2)",
+        shared_repository_condition()
     );
     let needle = super::super::search::contains(text.trim());
     let count = sqlx::query_scalar(&format!(
@@ -285,14 +251,14 @@ pub async fn search_public_repositories(
     anyhow::ensure!(limit >= 0, "Result limit must be nonnegative");
     anyhow::ensure!(offset >= 0, "Result offset must be nonnegative");
     let pattern = super::super::search::contains(text);
-    let (index, order): (&str, std::borrow::Cow<'_, str>) = match sort {
-        RepositorySort::Recent => ("", "created_at DESC, id DESC".into()),
+    let (index, order) = match sort {
+        RepositorySort::Recent => ("", "created_at DESC, id DESC"),
         RepositorySort::Stars => (
             "INDEXED BY idx_repositories_public_stars",
-            "stars_count DESC, created_at DESC, id DESC".into(),
+            "stars_count DESC, created_at DESC, id DESC",
         ),
-        RepositorySort::Forks => ("", format!("{} DESC, created_at DESC, id DESC", public_fork_count_sql("repositories")).into()),
-        RepositorySort::Updated => ("", "updated_at DESC, id DESC".into()),
+        RepositorySort::Forks => ("", "forks_count DESC, created_at DESC, id DESC"),
+        RepositorySort::Updated => ("", "updated_at DESC, id DESC"),
     };
     let sql = format!(
         r#"SELECT * FROM repositories {index} WHERE is_private = false AND NOT is_gist
@@ -325,19 +291,9 @@ pub async fn public_languages(pool: &SqlitePool, limit: i64) -> Result<Vec<Strin
     .await?)
 }
 
-async fn require_settings_actor(
-    tx: &mut Transaction<'_, Sqlite>,
-    actor: &crate::backend::db::credentials::Actor,
-) -> Result<()> {
-    if let Some(credential) = actor.credential() {
-        super::super::users::transitions::require_account(tx, actor.user_id, &credential).await?;
-    }
-    Ok(())
-}
-
 pub async fn update_repository(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     description: Option<&str>,
     is_private: impl Into<crate::backend::db::repositories::records::VisibilityUpdate>,
@@ -362,25 +318,25 @@ pub async fn update_repository(
 
 pub async fn patch_repository(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
 ) -> Result<Repository> {
-    patch_core(pool, actor.into(), repo_id, changes, None, None).await
+    patch_core(pool, actor, repo_id, changes, None, None).await
 }
 pub async fn patch_repository_and_default(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
     name: &str,
     expected_owner: Option<&str>,
 ) -> Result<Repository> {
-    patch_core(pool, actor.into(), repo_id, changes, Some(name), expected_owner).await
+    patch_core(pool, actor, repo_id, changes, Some(name), expected_owner).await
 }
 async fn patch_core(
     pool: &SqlitePool,
-    authority: crate::backend::db::credentials::Actor,
+    actor: i64,
     repo_id: i64,
     changes: &crate::backend::db::repositories::records::RepositoryChanges<&str>,
     default_branch: Option<&str>,
@@ -389,17 +345,12 @@ async fn patch_core(
     use crate::backend::db::repositories::records::{
         validate_repository_alias, RepositorySettingsRefusal as Refusal,
     };
-    let actor = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor, repo_id)
             .await?,
         Refusal::Denied
     );
-    if let Some(token) = changes.token {
-        anyhow::ensure!(super::super::users::tokens::repository_write_on(&mut tx, token, actor, repo_id, "administration").await?, Refusal::Denied);
-    }
     let previous = sqlx::query_as::<_, Repository>("SELECT * FROM repositories WHERE id=?1")
         .bind(repo_id)
         .fetch_one(&mut *tx)
@@ -457,27 +408,20 @@ async fn patch_core(
             .await?;
     }
     apply_merge_methods(&mut tx, repo_id, changes.merge_methods).await?;
-    features_on(&mut tx, repo_id, changes.wiki, changes.discussions).await?;
     let updated=sqlx::query_as::<_,Repository>("UPDATE repositories SET name=COALESCE(?2,name),description=CASE WHEN ?3 THEN ?4 ELSE description END,website=CASE WHEN ?5 THEN ?6 ELSE website END,is_private=?7,is_archived=?8,is_template=COALESCE(?9,is_template),default_branch=COALESCE(?10,default_branch),updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND NOT is_archived RETURNING *")
         .bind(repo_id).bind(changes.name).bind(changes.description.is_some()).bind(changes.description.flatten()).bind(website.is_some()).bind(website.as_ref().and_then(|value|value.as_deref())).bind(private).bind(changes.archived.unwrap_or(previous.is_archived)).bind(changes.is_template).bind(default_branch).fetch_one(&mut *tx).await.map_err(name_conflict_error)?;
-    if private != previous.is_private {
-        super::super::secrets::delivery_budget(&mut tx, repo_id).await?;
-    }
     tx.commit().await?;
     Ok(updated)
 }
 
 pub async fn set_merge_methods(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     update: MergeMethodUpdate,
 ) -> Result<()> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
-    let authority = actor_id.into();
-    let actor_id = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,
@@ -502,7 +446,10 @@ async fn apply_merge_methods(
     .bind(repo_id)
     .fetch_one(&mut **tx)
     .await?;
-    let (merge, squash, rebase) = update.resolve((merge, squash, rebase))?;
+    let merge = update.merge.unwrap_or(merge);
+    let squash = update.squash.unwrap_or(squash);
+    let rebase = update.rebase.unwrap_or(rebase);
+    anyhow::ensure!(merge || squash || rebase, Refusal::NoMergeMethod);
     // The guard keeps the invariant on the write itself, so no later change to the read above
     // can leave every method off.
     let result = sqlx::query(
@@ -537,19 +484,11 @@ pub async fn advance_contribution_version(pool: &SqlitePool, repo_id: i64) -> Re
 }
 
 pub async fn update_repo_size(pool: &SqlitePool, repo_id: i64, size: i64) -> Result<()> {
-    update_repo_size_checked(pool, repo_id, size, None).await
-}
-pub async fn update_repo_size_at(pool: &SqlitePool, repo_id: i64, size: i64, node: Option<i64>) -> Result<()> {
-    update_repo_size_checked(pool, repo_id, size, Some(node)).await
-}
-async fn update_repo_size_checked(pool: &SqlitePool, repo_id: i64, size: i64, node: Option<Option<i64>>) -> Result<()> {
     let mut tx = pool.begin().await?;
     let changed =
-        sqlx::query("UPDATE repositories SET size_bytes=?1 WHERE id=?2 AND size_bytes<>?1 AND (NOT ?3 OR storage_node_id IS ?4)")
+        sqlx::query("UPDATE repositories SET size_bytes=?1 WHERE id=?2 AND size_bytes<>?1")
             .bind(size)
             .bind(repo_id)
-            .bind(node.is_some())
-            .bind(node.flatten())
             .execute(&mut *tx)
             .await?
             .rows_affected();
@@ -566,18 +505,12 @@ async fn update_repo_size_checked(pool: &SqlitePool, repo_id: i64, size: i64, no
 
 /// Deletes a repository only while it has accepted no writes. A failed creation uses this, so
 /// a push that landed while creation was failing keeps its repository.
-pub async fn delete_unattached_advisory_fork(pool: &SqlitePool, repo_id: i64) -> Result<Option<Repository>> {
-    Ok(sqlx::query_as::<_, Repository>(
-        "DELETE FROM repositories WHERE id=?1 AND is_private AND contribution_version=1 AND NOT EXISTS(SELECT 1 FROM repository_advisories WHERE private_fork_id=?1) RETURNING *",
-    ).bind(repo_id).fetch_optional(pool).await?)
-}
-
 pub async fn delete_unwritten_repository(
     pool: &SqlitePool,
     repo_id: i64,
 ) -> Result<Option<Repository>> {
     Ok(sqlx::query_as::<_, Repository>(
-        "DELETE FROM repositories WHERE id=?1 AND contribution_version=0 AND NOT EXISTS(SELECT 1 FROM repository_discussion_counters WHERE repo_id=?1) AND NOT EXISTS(SELECT 1 FROM discussions WHERE repo_id=?1) AND NOT EXISTS(SELECT 1 FROM repository_security_reports WHERE repo_id=?1) RETURNING *",
+        "DELETE FROM repositories WHERE id=?1 AND contribution_version=0 RETURNING *",
     )
     .bind(repo_id)
     .fetch_optional(pool)
@@ -588,23 +521,16 @@ pub async fn delete_unwritten_repository(
 /// deleted, so the caller removes the files where that row says they are.
 pub async fn delete_repository(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
 ) -> Result<Repository> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
-    let actor = actor.into();
-    let actor_id = actor.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor_id, repo_id)
             .await?,
         Refusal::Denied
     );
-    if let Some(credential) = actor.credential() {
-        crate::backend::db::sqlite::users::transitions::require_account(&mut tx, actor_id, &credential).await?;
-    }
-    sqlx::query("UPDATE repositories SET forked_from_id=(SELECT forked_from_id FROM repositories WHERE id=?1) WHERE forked_from_id=?1")
-        .bind(repo_id).execute(&mut *tx).await?;
     let files: Vec<uuid::Uuid> = sqlx::query_scalar("SELECT DISTINCT a.file_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=?1 ORDER BY a.file_id")
         .bind(repo_id).fetch_all(&mut *tx).await?;
     // Deletion detaches the repository's packages. Those that its privacy hid stay private.
@@ -612,7 +538,6 @@ pub async fn delete_repository(
         .bind(repo_id)
         .execute(&mut *tx)
         .await?;
-    super::super::runners::remove_repository_runners(&mut tx, repo_id).await?;
     let deleted =
         sqlx::query_as::<_, Repository>("DELETE FROM repositories WHERE id=?1 RETURNING *")
             .bind(repo_id)
@@ -629,17 +554,14 @@ pub async fn delete_repository(
 
 pub async fn rename_repository(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     new_name: &str,
 ) -> Result<Repository> {
     use crate::backend::db::repositories::records::{
         validate_repository_alias, RepositorySettingsRefusal as Refusal,
     };
-    let authority = actor_id.into();
-    let actor_id = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,
@@ -695,34 +617,31 @@ async fn check_namespace(
 }
 pub async fn transfer_repository(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
 ) -> Result<Repository> {
-    transfer_repository_inner(pool, actor_id.into(), repo_id, target, None).await
+    transfer_repository_inner(pool, actor_id, repo_id, target, None).await
 }
 pub async fn transfer_repository_checked(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
     expected_owner: &str,
-    expected_name: &str,
 ) -> Result<Repository> {
-    transfer_repository_inner(pool, actor_id.into(), repo_id, target, Some((expected_owner, expected_name))).await
+    transfer_repository_inner(pool, actor_id, repo_id, target, Some(expected_owner)).await
 }
 async fn transfer_repository_inner(
     pool: &SqlitePool,
-    authority: crate::backend::db::credentials::Actor,
+    actor_id: i64,
     repo_id: i64,
     target: crate::backend::db::repositories::creation::RepositoryTarget,
-    expected: Option<(&str, &str)>,
+    expected_owner: Option<&str>,
 ) -> Result<Repository> {
     use crate::backend::db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
-    let actor_id = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
             .await?,
@@ -753,12 +672,7 @@ async fn transfer_repository_inner(
         RepositoryTarget::Personal(id) => ("user", Some(id), None),
         RepositoryTarget::Organization(id) => ("org", None, Some(id)),
     };
-    if let Some((_, name)) = expected {
-        let current: String = sqlx::query_scalar("SELECT name FROM repositories WHERE id=?1")
-            .bind(repo_id).fetch_one(&mut *tx).await?;
-        anyhow::ensure!(current == name, Refusal::NameConflict);
-    }
-    check_namespace(&mut tx, repo_id, user, org, None, expected.map(|(owner, _)| owner)).await?;
+    check_namespace(&mut tx, repo_id, user, org, None, expected_owner).await?;
     let changed = previous != (kind.to_owned(), user, org);
     if changed {
         if let Some(org) = org {
@@ -776,12 +690,10 @@ async fn transfer_repository_inner(
             .execute(&mut *tx)
             .await?;
     }
-    if changed {
-        // The write transaction serializes destination fork admission.
-        let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories AS other JOIN repositories AS moved ON moved.id=?1 WHERE other.owner_kind=?2 AND (other.owner_user_id=?3 OR other.owner_org_id=?4) AND other.forked_from_id=moved.forked_from_id AND other.id<>moved.id)")
+    if let (true, Some(org)) = (changed, org) {
+        // One fork of a source per organization. The write transaction keeps this check exact.
+        let duplicate: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories AS other JOIN repositories AS moved ON moved.id=?1 WHERE other.owner_kind='org' AND other.owner_org_id=?2 AND other.forked_from_id=moved.forked_from_id AND other.id<>moved.id)")
             .bind(repo_id)
-            .bind(kind)
-            .bind(user)
             .bind(org)
             .fetch_one(&mut *tx)
             .await?;
@@ -815,14 +727,6 @@ async fn transfer_repository_inner(
             .await?;
     }
     if changed {
-        if let Some(owner) = user {
-            sqlx::query("DELETE FROM repo_access WHERE repo_id=?1 AND EXISTS(SELECT 1 FROM user_blocks b WHERE (b.user_id=?2 AND b.blocked_id=repo_access.user_id) OR (b.blocked_id=?2 AND b.user_id=repo_access.user_id))")
-                .bind(repo_id).bind(owner).execute(&mut *tx).await?;
-        }
-        sqlx::query("DELETE FROM action_runner_group_repositories WHERE repo_id=?1")
-            .bind(repo_id).execute(&mut *tx).await?;
-        sqlx::query("UPDATE issue_suggestions SET state='invalidated',updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE state='pending' AND action='add_field' AND issue_id IN (SELECT id FROM issues WHERE repo_id=?1)")
-            .bind(repo_id).execute(&mut *tx).await?;
         super::creation::grant_creator(
             &mut tx,
             RepositoryCreationOwner { actor_id, target },
@@ -849,9 +753,6 @@ async fn transfer_repository_inner(
         .execute(&mut *tx)
         .await?;
         super::super::code_security::apply_default(&mut tx, &result).await?;
-        sqlx::query("DELETE FROM secret_scanning_commits WHERE repo_id=?1").bind(repo_id).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO secret_scanning_jobs(repo_id,scan_type,actor_id) SELECT ?1,'backfill',?2 WHERE EXISTS(SELECT 1 FROM secret_scanning_settings WHERE repo_id=?1 AND enabled)")
-            .bind(repo_id).bind(actor_id).execute(&mut *tx).await?;
         // Packages stay in their publishing namespace; the new owner must not inherit access.
         // A package that the private repository hid stays private once it is detached.
         sqlx::query("UPDATE packages SET repo_id=NULL,visibility=CASE WHEN (SELECT is_private FROM repositories WHERE id=$2) THEN 'private' ELSE visibility END,updated_at=$1 WHERE repo_id=$2")
@@ -874,7 +775,6 @@ async fn transfer_repository_inner(
         super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
         super::super::runners::remove_repository_runners(&mut tx, repo_id).await?;
     }
-    super::super::secrets::delivery_budget(&mut tx, repo_id).await?;
     tx.commit().await?;
     Ok(result)
 }
@@ -934,14 +834,11 @@ pub async fn restore_repository_default_branch(
 /// Archives or unarchives under current administrator authority, including archived rows.
 pub async fn set_repository_archived(
     pool: &SqlitePool,
-    actor_id: impl Into<crate::backend::db::credentials::Actor>,
+    actor_id: i64,
     repo_id: i64,
     archived: bool,
 ) -> Result<bool> {
-    let authority = actor_id.into();
-    let actor_id = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor_id, repo_id)
             .await?,
@@ -956,18 +853,6 @@ pub async fn set_repository_archived(
     .await?;
     tx.commit().await?;
     Ok(result.rows_affected() == 1)
-}
-
-pub(crate) async fn features_on(tx: &mut Transaction<'_, Sqlite>, repo: i64, wiki: Option<bool>, discussions: Option<bool>) -> Result<()> {
-    if let Some(enabled) = wiki {
-        sqlx::query("INSERT INTO repository_features(repo_id,wiki_enabled) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET wiki_enabled=excluded.wiki_enabled")
-            .bind(repo).bind(enabled).execute(&mut **tx).await?;
-    }
-    if let Some(enabled) = discussions {
-        sqlx::query("INSERT INTO repository_discussion_settings(repo_id,enabled) VALUES($1,$2) ON CONFLICT(repo_id) DO UPDATE SET enabled=excluded.enabled")
-            .bind(repo).bind(enabled).execute(&mut **tx).await?;
-    }
-    Ok(())
 }
 
 pub async fn repository_wiki(pool: &SqlitePool, repo_id: i64) -> Result<bool> {
@@ -991,7 +876,11 @@ pub async fn set_repository_wiki(
         super::super::discussions::lock_admin_authority(&mut tx, actor, repo_id).await?,
         crate::backend::db::repositories::records::RepositorySettingsRefusal::Denied
     );
-    features_on(&mut tx, repo_id, Some(enabled), None).await?;
+    sqlx::query("INSERT INTO repository_features (repo_id,wiki_enabled) VALUES (?1,?2) ON CONFLICT(repo_id) DO UPDATE SET wiki_enabled=?2")
+        .bind(repo_id)
+        .bind(enabled)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok(())
 }

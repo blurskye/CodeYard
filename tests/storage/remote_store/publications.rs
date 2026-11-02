@@ -259,7 +259,6 @@ async fn branch_provenance_tracks_publishers_not_authors_and_survives_remote_noo
         base: changed.sha.clone(),
         name: "Branch updater".into(),
         email: "updater@example.invalid".into(),
-        token: None,
     };
     let updated = remote
         .update_pull_branch_as(

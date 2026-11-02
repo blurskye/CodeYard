@@ -1,53 +1,27 @@
 //! Repository serialization. Ordinary operations use the process mutex and Git CAS;
 //! branch provenance additionally uses an interprocess lease. Publication subprocesses
 //! inherit that lease, so cancellation or a backend crash cannot release it before Git exits.
-//! Readers of a directory share a reader guard, which replacing, moving or retiring the
-//! directory takes exclusively.
+use std::collections::HashMap;
 use std::fs::File;
 use std::future::Future;
 use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock};
-use tokio::sync::{OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard};
+use std::sync::{Arc, LazyLock, Mutex};
+use tokio::sync::OwnedMutexGuard;
 
-static LOCKS: LazyLock<crate::backend::locks::KeyedMutex<PathBuf>> =
+static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
     LazyLock::new(Default::default);
-static READERS: LazyLock<crate::backend::locks::KeyedRwLock<PathBuf>> =
-    LazyLock::new(Default::default);
-
-/// Receive sessions use canonical paths; API writes may retain a symlink alias. Resolve the
-/// nearest existing ancestor, including before a destination directory exists, so creating
-/// that directory does not change the lock selected through a symlinked parent.
-async fn canonical(path: &Path) -> PathBuf {
-    let absolute = if path.is_absolute() { path.to_owned() } else { std::env::current_dir().unwrap_or_default().join(path) };
-    let mut ancestor = absolute.as_path();
-    let mut tail = Vec::new();
-    loop {
-        if let Ok(mut canonical) = tokio::fs::canonicalize(ancestor).await {
-            for component in tail.iter().rev() { canonical.push(component); }
-            break canonical;
-        }
-        let Some(name) = ancestor.file_name() else { break absolute.clone(); };
-        tail.push(name.to_owned());
-        let Some(parent) = ancestor.parent() else { break absolute.clone(); };
-        ancestor = parent;
-    }
-}
 
 pub async fn lock(path: &Path) -> OwnedMutexGuard<()> {
-    LOCKS.lock(canonical(path).await).await
-}
-
-/// Held for the whole of a read, alongside other readers and writers of the directory.
-pub async fn read(path: &Path) -> OwnedRwLockReadGuard<()> {
-    READERS.read(canonical(path).await).await
-}
-
-/// Waits for the directory's readers to finish and keeps new ones out, before it is replaced,
-/// moved or retired. Take it after `lock`.
-pub async fn exclusive(path: &Path) -> OwnedRwLockWriteGuard<()> {
-    READERS.write(canonical(path).await).await
+    // Receive sessions use canonical paths; API writes may retain a symlink alias.
+    let path = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let mutex = {
+        let mut locks = LOCKS.lock().unwrap_or_else(|poison| poison.into_inner());
+        locks.retain(|_, mutex| Arc::strong_count(mutex) > 1);
+        locks.entry(path).or_default().clone()
+    };
+    mutex.lock_owned().await
 }
 
 #[derive(Debug)]

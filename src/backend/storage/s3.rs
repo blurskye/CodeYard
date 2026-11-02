@@ -5,7 +5,6 @@ use anyhow::{anyhow, ensure, Context, Result};
 use aws_credential_types::Credentials;
 use aws_sdk_s3::{
     config::{BehaviorVersion, Builder as S3ConfigBuilder, Region},
-    error::ProvideErrorMetadata,
     presigning::PresigningConfig,
     primitives::ByteStream,
     types::{BucketLocationConstraint, CorsConfiguration, CorsRule, CreateBucketConfiguration},
@@ -83,21 +82,21 @@ fn optional_env(name: &str) -> Result<Option<String>> {
 }
 
 fn public_url_host(value: &str) -> Result<ConfiguredHost> {
-    let url = crate::backend::api::http::config::parse_public_url(value)?;
+    let url = url::Url::parse(value).map_err(|_| anyhow!("Invalid PUBLIC_URL"))?;
+    ensure!(
+        matches!(url.scheme(), "http" | "https")
+            && url.host().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "Invalid PUBLIC_URL"
+    );
     ConfiguredHost::from_url(&url).ok_or_else(|| anyhow!("Invalid PUBLIC_URL"))
 }
 
 impl S3Config {
-    pub fn optional_from_env() -> Result<Option<Self>> {
-        if ["S3_ENDPOINT", "S3_PUBLIC_ENDPOINT", "S3_ACCESS_KEY", "S3_SECRET_KEY", "S3_BUCKET", "S3_REGION"]
-            .iter().any(|name| std::env::var_os(name).is_some())
-        {
-            Self::from_env().map(Some)
-        } else {
-            Ok(None)
-        }
-    }
-
     pub fn from_env() -> Result<Self> {
         let required = |name| {
             std::env::var(name)
@@ -222,48 +221,29 @@ impl S3Store {
         })
     }
 
-    pub async fn open_range(&self, key: &str, offset: u64, length: u64) -> Result<Box<dyn tokio::io::AsyncRead + Unpin + Send>> {
-        use tokio::io::AsyncReadExt;
-        ensure!(valid_key(key) && length > 0 && offset.checked_add(length).is_some(), "invalid range");
-        let result = tokio::time::timeout(Duration::from_secs(60), self.client.get_object()
-            .bucket(self.bucket()).key(key)
-            .range(format!("bytes={offset}-{}", offset + length - 1)).send()).await??;
-        Ok(Box::new(result.body.into_async_read().take(length)))
-    }
-
     pub async fn read_range(&self, key: &str, offset: u64, length: usize) -> Result<Vec<u8>> {
         ensure!(
             valid_key(key) && length > 0 && length <= 1024 * 1024,
             "invalid range"
         );
-        self.object_bytes(key, length, Some(offset)).await
-    }
-
-    pub async fn read_object(&self, key: &str, length: usize) -> Result<Vec<u8>> {
-        ensure!(valid_key(key) && length <= MAX_OBJECT_BYTES as usize, "invalid object read");
-        self.object_bytes(key, length, None).await
-    }
-
-    async fn object_bytes(&self, key: &str, length: usize, offset: Option<u64>) -> Result<Vec<u8>> {
+        // The operation timeout ends when the response starts, so one deadline also covers the
+        // body.
         let read = async {
-            let mut request = self.client.get_object().bucket(self.bucket()).key(key);
-            if let Some(offset) = offset {
-                let end = offset.checked_add(length as u64).and_then(|end| end.checked_sub(1)).context("invalid object range")?;
-                request = request.range(format!("bytes={offset}-{end}"));
-            }
-            let result = request.send().await?;
-            ensure!(result.content_length() == Some(length as i64), "object length differs from requested length");
-            if let Some(offset) = offset {
-                let prefix = format!("bytes {offset}-{}", offset + length as u64 - 1);
-                ensure!(result.content_range().is_some_and(|range| range.strip_prefix(&format!("{prefix}/"))
-                    .and_then(|total| total.parse::<u64>().ok()).is_some_and(|total| total >= offset + length as u64)), "S3 did not honor the requested range");
-            }
-            let mut bytes = Vec::with_capacity(length.min(64 * 1024));
-            result.body.into_async_read().take(length as u64 + 1).read_to_end(&mut bytes).await?;
-            ensure!(bytes.len() == length, "object response length differs from requested length");
-            anyhow::Ok(bytes)
+            let result = self
+                .client
+                .get_object()
+                .bucket(self.bucket())
+                .key(key)
+                .range(format!("bytes={offset}-{}", offset + length as u64 - 1))
+                .send()
+                .await?;
+            anyhow::Ok(result.body.collect().await?.into_bytes().to_vec())
         };
-        tokio::time::timeout(Duration::from_secs(60), read).await.context("object read timed out")?
+        let bytes = tokio::time::timeout(Duration::from_secs(60), read)
+            .await
+            .map_err(|_| anyhow::anyhow!("object range read timed out"))??;
+        ensure!(bytes.len() == length, "short object range");
+        Ok(bytes)
     }
 
     pub fn bucket(&self) -> &str {
@@ -273,7 +253,7 @@ impl S3Store {
     /// Creates the bucket when it does not exist: a new RustFS or MinIO starts without one.
     pub async fn ensure_bucket(&self) -> Result<()> {
         match self.client.head_bucket().bucket(self.bucket()).send().await {
-            Ok(_) => return self.reconcile_cors().await,
+            Ok(_) => return Ok(()),
             Err(error) if error.as_service_error().is_some_and(|e| e.is_not_found()) => {}
             Err(error) => return Err(anyhow::Error::new(error).context("check the S3 bucket")),
         }
@@ -288,38 +268,31 @@ impl S3Store {
             );
         }
         match create.send().await {
-            Ok(_) => self.reconcile_cors().await,
+            Ok(_) => {
+                // Browsers upload straight to the bucket from PUBLIC_URL's origin. Some
+                // S3-compatible stores do not implement bucket CORS, so a refusal is logged.
+                if let Err(error) = self.allow_browser_uploads().await {
+                    tracing::warn!(%error, "S3 bucket CORS rule not set; browser uploads need one for PUBLIC_URL");
+                }
+                Ok(())
+            }
             // Another node created it first.
             Err(error)
                 if error
                     .as_service_error()
                     .is_some_and(|e| e.is_bucket_already_owned_by_you()) =>
             {
-                self.reconcile_cors().await
+                Ok(())
             }
             Err(error) => Err(anyhow::Error::new(error).context("create the S3 bucket")),
         }
-    }
-
-    async fn reconcile_cors(&self) -> Result<()> {
-        match self.client.get_bucket_cors().bucket(self.bucket()).send().await {
-            Ok(config) if !config.cors_rules().is_empty() => return Ok(()),
-            Ok(_) => {},
-            Err(error) if error.as_service_error().is_some_and(|error| matches!(error.code(), Some("NoSuchCORSConfiguration" | "NotFound"))) => {},
-            Err(error) if error.as_service_error().is_some_and(|error| matches!(error.code(), Some("NotImplemented" | "MethodNotAllowed"))) => {
-                tracing::warn!(%error, "S3 CORS API unsupported; configure browser access on the object endpoint");
-                return Ok(());
-            }
-            Err(error) => return Err(error.into()),
-        }
-        self.allow_browser_uploads().await
     }
 
     async fn allow_browser_uploads(&self) -> Result<()> {
         let Some(public_url) = optional_env("PUBLIC_URL")? else {
             return Ok(());
         };
-        let origin = crate::backend::api::http::config::parse_public_url(&public_url)?.origin().ascii_serialization();
+        let origin = url::Url::parse(&public_url)?.origin().ascii_serialization();
         let rule = CorsRule::builder()
             .allowed_origins(origin)
             .allowed_methods("PUT")
@@ -328,16 +301,13 @@ impl S3Store {
             .expose_headers("ETag")
             .max_age_seconds(3600)
             .build()?;
-        match self.client.put_bucket_cors().bucket(self.bucket())
-            .cors_configuration(CorsConfiguration::builder().cors_rules(rule).build()?).send().await
-        {
-            Ok(_) => Ok(()),
-            Err(error) if error.as_service_error().is_some_and(|error| matches!(error.code(), Some("NotImplemented" | "MethodNotAllowed"))) => {
-                tracing::warn!(%error, "S3 CORS API unsupported; configure browser access on the object endpoint");
-                Ok(())
-            }
-            Err(error) => Err(error.into()),
-        }
+        self.client
+            .put_bucket_cors()
+            .bucket(self.bucket())
+            .cors_configuration(CorsConfiguration::builder().cors_rules(rule).build()?)
+            .send()
+            .await?;
+        Ok(())
     }
 
     /// Size, type and SHA-256 are signed into the URL, so S3 rejects any other
@@ -400,7 +370,7 @@ impl S3Store {
 
     /// Uploads bytes this server holds itself, with the same constraints a presigned
     /// upload carries: size, type and SHA-256, and no replacing an existing object.
-    pub(super) async fn put_object(&self, upload: &Upload<'_>, bytes: Vec<u8>, guard: std::sync::Arc<tokio::sync::OwnedSemaphorePermit>) -> Result<()> {
+    pub async fn put_object(&self, upload: &Upload<'_>, bytes: Vec<u8>) -> Result<()> {
         ensure!(valid_key(upload.key), "invalid object key");
         ensure!(
             (0..=MAX_OBJECT_BYTES).contains(&upload.bytes),
@@ -410,8 +380,10 @@ impl S3Store {
             bytes.len() as i64 == upload.bytes,
             "upload is not the declared size"
         );
-        let (checksum, bytes, _guard) = tokio::task::spawn_blocking(move || (hex::encode(Sha256::digest(&bytes)), bytes, guard)).await?;
-        ensure!(checksum == upload.sha256_hex, "upload checksum does not match");
+        ensure!(
+            hex::encode(Sha256::digest(&bytes)) == upload.sha256_hex,
+            "upload checksum does not match"
+        );
         ensure!(
             media_signature_matches(upload.content_type, &bytes),
             "upload content does not match its type"
@@ -441,7 +413,10 @@ impl S3Store {
         ensure!(valid_key(key), "invalid object key");
         if let Some(kind) = inline_image {
             ensure!(
-                crate::media::AVATAR_CONTENT_TYPES.contains(&kind),
+                matches!(
+                    kind,
+                    "image/png" | "image/jpeg" | "image/gif" | "image/webp"
+                ),
                 "unsafe inline object type"
             );
         }
@@ -451,8 +426,6 @@ impl S3Store {
             .bucket(self.bucket())
             .key(key)
             .response_content_type(inline_image.unwrap_or("application/octet-stream"))
-            .response_content_encoding("identity")
-            .response_cache_control("private, no-store")
             .response_content_disposition(if inline_image.is_some() {
                 "inline".to_owned()
             } else {
@@ -516,11 +489,6 @@ impl S3Store {
 
     pub async fn delete(&self, key: &str) -> Result<()> {
         ensure!(valid_key(key), "invalid object key");
-        match self.client.head_object().bucket(self.bucket()).key(key).send().await {
-            Ok(_) => {},
-            Err(error) if error.as_service_error().is_some_and(|error| error.is_not_found()) => return Ok(()),
-            Err(error) => return Err(error.into()),
-        }
         self.client
             .delete_object()
             .bucket(self.bucket())

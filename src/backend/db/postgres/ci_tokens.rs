@@ -10,11 +10,7 @@ pub async fn issue(
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
     super::users::transitions::lock_membership_shared(&mut tx).await?;
-    let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM ci_runs WHERE id=$1")
-        .bind(run_id).fetch_one(&mut *tx).await?;
-    sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR SHARE")
-        .bind(repo).fetch_one(&mut *tx).await?;
-    let (repo, fork): (i64, bool) = sqlx::query_as("SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested FOR UPDATE")
+    let (repo, fork): (i64, bool) = sqlx::query_as("SELECT repo_id,is_fork FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' FOR UPDATE")
         .bind(run_id).bind(worker).fetch_one(&mut *tx).await?;
     ensure!(
         !fork || tokens.iter().all(|token| !token.write),
@@ -43,16 +39,34 @@ pub async fn get(pool: &PgPool, token_id: i64) -> Result<Option<JobToken>> {
     get_in_connection(&mut connection, token_id).await
 }
 
-pub(crate) async fn get_in_connection(
+async fn get_in_connection(
     connection: &mut sqlx::PgConnection,
     token_id: i64,
 ) -> Result<Option<JobToken>> {
-    Ok(sqlx::query_as("SELECT r.id AS run_id,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND NOT r.cancel_requested AND (t.revoked_at IS NULL OR t.revoked_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint-60) AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '1 minute')")
+    Ok(sqlx::query_as("SELECT r.id AS run_id,r.repo_id,t.permissions FROM actions_github_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.token_id=$1 AND (t.revoked_at IS NULL OR t.revoked_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint-60) AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '1 minute')")
         .bind(token_id).fetch_optional(connection).await?)
 }
 
+pub(crate) async fn may_cancel(
+    connection: &mut sqlx::PgConnection,
+    actor: i64,
+    repo: i64,
+    token_id: i64,
+) -> Result<bool> {
+    let Some(token) = get_in_connection(connection, token_id).await? else {
+        return Ok(false);
+    };
+    if token.repo_id != repo {
+        return Ok(false);
+    }
+    let owns:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=$1 AND user_id=$2 AND scope='write' AND (expires_at IS NULL OR expires_at>clock_timestamp()))").bind(token_id).bind(actor).fetch_one(connection).await?;
+    let permissions: crate::backend::ci::tokens::Permissions =
+        serde_json::from_str(&token.permissions)?;
+    Ok(owns && permissions.allows("actions", true))
+}
+
 pub async fn finish_job(pool: &PgPool, run_id: i64, worker: &str, job: &str) -> Result<()> {
-    sqlx::query("UPDATE actions_github_tokens SET revoked_at=COALESCE(revoked_at,FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) WHERE run_id=$1 AND (job=$3 OR left(job,length($3)+1)=$3 || '/') AND EXISTS(SELECT 1 FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running')")
+    sqlx::query("UPDATE actions_github_tokens SET revoked_at=COALESCE(revoked_at,FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) WHERE run_id=$1 AND job=$3 AND EXISTS(SELECT 1 FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running')")
         .bind(run_id).bind(worker).bind(job).execute(pool).await?;
     Ok(())
 }

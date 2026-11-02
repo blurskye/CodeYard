@@ -9,7 +9,11 @@ use syntect::{
     util::LinesWithEndings,
 };
 
-pub use super::escape_html as escape_code;
+pub fn escape_code(text: &str) -> String {
+    text.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
 
 /// The language a file is highlighted as, from the extension of its name. A name without an
 /// extension gives "text", which is shown plain.
@@ -99,10 +103,9 @@ pub fn highlight_lines(code: &str, language: &str) -> Vec<String> {
 fn highlight_each_line(code: &str, language: &str) -> Vec<String> {
     const MAX_BYTES: usize = 64 * 1024;
     const MAX_TOKENS: usize = 4096;
-    const MAX_LINE_BYTES: usize = 4096;
     const MAX_HTML_BYTES: usize = 256 * 1024;
     let plain = || LinesWithEndings::from(code).map(escape_code).collect();
-    if code.len() > MAX_BYTES || code.lines().any(|line| line.len() > MAX_LINE_BYTES) {
+    if code.len() > MAX_BYTES {
         return plain();
     }
     static SYNTAX: OnceLock<SyntaxSet> = OnceLock::new();

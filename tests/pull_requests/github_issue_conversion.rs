@@ -145,7 +145,6 @@ async fn contract(pg: bool) {
     let (reaction, _) = db::reactions::create_reaction(
         f.pool(),
         alice_id,
-        &db::users::accounts::AccountCredential::Session(&alice.session),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: source.id,
@@ -159,7 +158,6 @@ async fn contract(pg: bool) {
     let (description_reaction, _) = db::reactions::create_reaction(
         f.pool(),
         alice_id,
-        &db::users::accounts::AccountCredential::Session(&alice.session),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: source.id,
@@ -208,7 +206,6 @@ async fn contract(pg: bool) {
         alice_id,
         &db::issue_attributes::Definition {
             id: None,
-            expected_updated: None,
             kind: "type".into(),
             name: "Retained type".into(),
             description: None,
@@ -294,14 +291,13 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::suggestions::set_enabled(f.pool(), repo.id, alice_id, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice_id).await), true)
+    db::suggestions::set_enabled(f.pool(), repo.id, alice_id, true)
         .await
         .unwrap();
     let suggestion = db::suggestions::propose(
         f.pool(),
         repo.id,
         alice_id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), alice_id).await),
         filler.id,
         &db::suggestions::Proposal {
             action: db::suggestions::Action::CloseIssue,
@@ -310,7 +306,6 @@ async fn contract(pg: bool) {
             rationale: None,
             confidence: None,
         },
-        None,
     )
     .await
     .unwrap();
@@ -339,7 +334,6 @@ async fn contract(pg: bool) {
     db::pins::set_pin(
         f.pool(),
         alice_id,
-        &db::users::accounts::AccountCredential::Session(&alice.session),
         repo.id,
         db::assignees::AssignedItem::Issue(source.id),
         old_id,

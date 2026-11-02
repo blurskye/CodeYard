@@ -3,7 +3,7 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::access::access_error;
 use crate::backend::api::repos::paging::{json_page, PageQuery};
-use crate::backend::api::repos::responses::{repository_fork_counts, repository_owners, repository_topics, RepoResponse};
+use crate::backend::api::repos::responses::{repository_owners, repository_topics, RepoResponse};
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::organizations::{self as orgs, OrganizationOutcome, OrganizationPage};
@@ -44,15 +44,11 @@ pub async fn list_repos(
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let mut owners = repository_owners(&state.pool, &ids).await?;
     let mut topics = repository_topics(&state.pool, &ids).await?;
-    let mut fork_counts = repository_fork_counts(&state.pool, None, &ids).await?;
-    let readable = db::repositories::access::readable_repository_ids(&state.pool, None, &ids)
-        .await.map_err(|_| access_error(AccessError::Unavailable))?;
     let mut responses = Vec::with_capacity(repos.len());
     for repository in repos {
-        if !readable.contains(&repository.id) { continue; }
         let owner = owners.remove(&repository.id).expect("validated owner");
         let topics = topics.remove(&repository.id).unwrap_or_default();
-        responses.push(RepoResponse::new(&repository, &owner, topics, None, fork_counts.remove(&repository.id).unwrap_or_default()));
+        responses.push(RepoResponse::new(&repository, &owner, topics, None));
     }
 
     Ok(Json(responses))
@@ -77,7 +73,6 @@ pub async fn create_repo(
 ) -> Result<(StatusCode, Json<RepoResponse>), (StatusCode, Json<ApiError>)> {
     let pool = state.pool.clone();
     let user = get_current_user(&pool, &headers).await?;
-    let authority = crate::backend::db::credentials::Actor::from((user.id, crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default()));
 
     let creation_owner = db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
@@ -114,7 +109,6 @@ pub async fn create_repo(
         lifecycle::CreationInput {
             owner: creation_owner,
             properties: &properties,
-            admission: db::repositories::creation::CreationAdmission { authority: Some(&authority), advisory: None },
         },
         &req.name,
         req.description.as_deref(),
@@ -144,11 +138,9 @@ pub async fn create_repo(
                 )),
             )
         })?;
-    let forks = repository_fork_counts(&pool, Some(&headers), &[repo.id]).await?
-        .remove(&repo.id).unwrap_or_default();
     Ok((
         StatusCode::CREATED,
-        Json(RepoResponse::new(&repo, &owner, Vec::new(), None, forks)),
+        Json(RepoResponse::new(&repo, &owner, Vec::new(), None)),
     ))
 }
 
@@ -391,7 +383,7 @@ pub(crate) async fn new_repository(
         }
     }
     if let Err(status) = properties::populate(&ctx, &choices, &mut form).await {
-        return ctx.error(status, properties::failure_message(status));
+        return ctx.error(status, "Repository properties are temporarily unavailable.");
     }
     ctx.page_model(
         "Create a new repository",
@@ -428,7 +420,7 @@ async fn creation_error(
             RepositoryCreationChoices::default()),
     };
     if let Err(status) = properties::populate(ctx, &choices, &mut form).await {
-        return ctx.error(status, properties::failure_message(status));
+        return ctx.error(status, "Repository properties are temporarily unavailable.");
     }
     ctx.page_model_status(
         status,
@@ -511,7 +503,7 @@ pub(crate) async fn create_repository(
             .await;
         }
         if let Err(status) = properties::populate(&ctx, &choices, &mut values).await {
-            return ctx.error(status, properties::failure_message(status));
+            return ctx.error(status, "Repository properties are temporarily unavailable.");
         }
         return ctx.page_model(
             "Create a new repository",
@@ -531,13 +523,23 @@ pub(crate) async fn create_repository(
                 .await
         }
     };
+    if target.is_none() && lifecycle::validate_name(&user.username).is_err() {
+        return creation_error(
+            &ctx,
+            values,
+            page,
+            StatusCode::BAD_REQUEST,
+            None,
+            "This account's repository path is invalid. Contact an administrator.",
+        )
+        .await;
+    }
     let property_values = match properties::values(&ctx, user.id, target, &values).await {
         Ok(values) => values,
         Err((status, message)) => {
             return creation_error(&ctx, values, page, status, None, message).await
         }
     };
-    let authority = ctx.database_actor(user.id);
     let creation_owner = db::repositories::creation::RepositoryCreationOwner {
         actor_id: user.id,
         target: match target {
@@ -546,7 +548,7 @@ pub(crate) async fn create_repository(
         },
     };
     let result = if !values.source.is_empty() {
-        create_selection(&ctx, creation_owner, &values, files, &property_values, &authority).await
+        create_selection(&ctx, creation_owner, &values, files, &property_values).await
     } else {
         lifecycle::provision_with_initial_properties(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
@@ -554,7 +556,6 @@ pub(crate) async fn create_repository(
             lifecycle::CreationInput {
                 owner: creation_owner,
                 properties: &property_values,
-                admission: db::repositories::creation::CreationAdmission { authority: Some(&authority), advisory: None },
             },
             &values.name,
             Some(&values.description)
@@ -599,7 +600,6 @@ async fn create_selection(
     values: &NewRepositoryForm,
     files: InitialFiles,
     properties: &[db::organizations::properties::ValueInput],
-    authority: &db::credentials::Actor,
 ) -> Result<db::models::Repository, lifecycle::StorageError> {
     let description = Some(values.description.as_str()).filter(|value| !value.is_empty());
     let source = source_name(&values.source).map_err(|(_, message)| lifecycle::StorageError {
@@ -629,7 +629,6 @@ async fn create_selection(
                     name: Some(&values.name),
                     default_branch_only: !values.all_branches,
                     properties,
-                    authority: Some(authority),
                 },
                 source.id,
                 source_owner,
@@ -647,19 +646,15 @@ async fn create_selection(
                     private: values.is_private,
                     all_branches: values.all_branches,
                     properties,
-                    authority: Some(authority),
                 },
             )
             .await
         }
     } else {
-        lifecycle::provision_with_initial_properties(
+        lifecycle::provision_with_initial_files(
             (&ctx.state.pool, ctx.state.cluster.as_ref()),
             &ctx.state.repos_path,
-            lifecycle::CreationInput {
-                owner, properties,
-                admission: db::repositories::creation::CreationAdmission { authority: Some(authority), advisory: None },
-            },
+            owner,
             &values.name,
             description,
             values.is_private,

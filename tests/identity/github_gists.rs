@@ -107,7 +107,7 @@ async fn contract(pg: bool) {
             .is_none()
     );
     assert_eq!(
-        db::repositories::records::count_user_repositories(f.pool(), alice, Some(&a.session))
+        db::repositories::records::count_user_repositories(f.pool(), alice, true)
             .await
             .unwrap(),
         0

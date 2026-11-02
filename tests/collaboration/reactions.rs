@@ -724,7 +724,6 @@ async fn proj_id(pool: &db::DbPool) -> i64 {
 async fn unassigned_lines(pool: &db::DbPool, issue: i64) -> usize {
     db::timeline::list_events(
         pool,
-        proj_id(pool).await,
         "issue",
         issue,
         None,
@@ -782,13 +781,10 @@ async fn toggles_check_access_in_their_transaction(pg: bool) {
         .await
         .unwrap()
         .id;
-    let owner_credential = db::users::accounts::AccountCredential::Session(&_alice.session);
-    let bob_credential = db::users::accounts::AccountCredential::Session(&_bob.session);
     let toggle = |actor: i64| {
         db::reactions::toggle_reaction(
             pool,
             actor,
-            if actor == owner { &owner_credential } else { &bob_credential },
             repo,
             issue,
             db::reactions::Subject::Issue,
@@ -848,13 +844,11 @@ async fn concurrent_toggles_do_not_lose_updates(pg: bool) {
         .await
         .unwrap()
         .id;
-    let credential = db::users::accounts::AccountCredential::Session(&_alice.session);
     for _ in 0..10 {
         let (first, second) = tokio::join!(
             db::reactions::toggle_reaction(
                 pool,
                 owner,
-                &credential,
                 repo,
                 issue,
                 db::reactions::Subject::Issue,
@@ -864,7 +858,6 @@ async fn concurrent_toggles_do_not_lose_updates(pg: bool) {
             db::reactions::toggle_reaction(
                 pool,
                 owner,
-                &credential,
                 repo,
                 issue,
                 db::reactions::Subject::Issue,

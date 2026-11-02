@@ -85,7 +85,7 @@ pub fn render(repo: &RepoChrome, page: Page) -> Element {
                             p { "Revoke exposed credentials with their provider before closing this alert." }
                             for location in locations {
                                 div { class: "panel", style: "padding: 12px; overflow-wrap: anywhere;",
-                                    NavLink { href: format!("{}?view=code&line={}#L{}",crate::webui::pages::repos::ref_path::file_url(&repo.base(),"blob",&location.commit,&location.path),location.line,location.line), "{location.path}:{location.line}" }
+                                    NavLink { href: format!("{}/blob/{}/{}?view=code&line={}#L{}",repo.base(),location.commit,location.path.split('/').map(crate::webui::encode_component).collect::<Vec<_>>().join("/"),location.line,location.line), "{location.path}:{location.line}" }
                                     p { code { "{location.commit}" } }
                                 }
                             }

@@ -19,8 +19,62 @@ use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 use tracing::warn;
 
+/// act names a job's container after the workflow's name and the job alone, so two runs of one
+/// workflow on one engine, from two pushes or from two repositories, would fight over the name.
+/// Every run gets its full UUID added, including across worker processes sharing an engine.
+/// The local set also distinguishes workflows with the same name within one run.
+#[derive(Default)]
+pub struct WorkflowNames {
+    active: Arc<Mutex<std::collections::HashSet<String>>>,
+}
+
+pub struct WorkflowName {
+    active: Arc<Mutex<std::collections::HashSet<String>>>,
+    name: String,
+}
+
+impl Drop for WorkflowName {
+    fn drop(&mut self) {
+        self.active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(&self.name);
+    }
+}
+
+impl WorkflowNames {
+    fn take(&self, name: &str, run_id: uuid::Uuid) -> WorkflowName {
+        let id = run_id.simple();
+        let mut active = self
+            .active
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut candidate = format!("{name} ({id})");
+        let mut attempt = 2;
+        while !active.insert(candidate.clone()) {
+            candidate = format!("{name} ({id}-{attempt})");
+            attempt += 1;
+        }
+        WorkflowName {
+            active: self.active.clone(),
+            name: candidate,
+        }
+    }
+}
+
+/// The name act gives a workflow: its `name:`, or the file name without one.
+fn act_workflow_name(definition: &Value, workflow: &str) -> String {
+    definition
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+        .filter(|name| !name.is_empty())
+        .unwrap_or_else(|| file_name(workflow).to_owned())
+}
+
 const IDLE_POLL: Duration = Duration::from_secs(3);
 const HEARTBEAT: Duration = Duration::from_secs(10);
+const HEARTBEAT_TIMEOUT: Duration = Duration::from_secs(15);
 /// Without an acknowledged heartbeat for this long, a run is cancelled before the core's stale
 /// cutoff. The margin covers claim preparation before the first heartbeat, and cleanup.
 const LOST_HEARTBEAT_CANCEL: Duration = Duration::from_secs(45);
@@ -108,7 +162,7 @@ pub(super) async fn run(
             }
             service
                 .queue
-                .claim_with_stop(&worker, service.config.mode, &service.config.platform_labels(), Some(&mut claim_stop))
+                .claim_with_stop(&worker, service.config.mode, Some(&mut claim_stop))
                 .await
         };
         tokio::pin!(claim);
@@ -146,10 +200,6 @@ pub(super) async fn run(
             Err(error) => {
                 // A claim that ended because the worker is stopping is not a failure.
                 if *stop.borrow() {
-                    break;
-                }
-                if error.to_string() == "not an active runner" {
-                    service.request_stop();
                     break;
                 }
                 warn!(%error, "CI worker could not claim a run");
@@ -190,25 +240,16 @@ async fn execute(
         } else {
             ""
         };
-        let prepared = (|| -> Result<_> {
-            let root = match &service.config.process_cgroup_root {
-                Some(root) => Some(std::fs::canonicalize(root)?),
-                None if service.config.mode == CiExecutionMode::Local => Some(codeyard_actions::process::Cgroup::current_root()?),
-                None => None,
-            };
-            ContainerOwnership::create(&service.cleanup_dir, socket, run.run_id, root.as_deref())
-                .context("Unable to contain CI processes; configure a writable delegated CI_PROCESS_CGROUP_ROOT")
-        })();
-        match prepared {
+        match ContainerOwnership::create(&service.cleanup_dir, socket, run.run_id) {
             Ok(ownership) => ownership,
             Err(error) => {
-                warn!(%error, "could not persist CI execution ownership");
+                warn!(%error, "could not persist CI container ownership");
                 record_result(
                     &service.queue,
                     worker,
                     run,
                     "failed",
-                    Some("CI execution recovery is unavailable"),
+                    Some("CI container recovery is unavailable"),
                     &mut stop,
                 )
                 .await;
@@ -218,9 +259,6 @@ async fn execute(
     };
     // A run handed back by a retried claim may have been cancelled since the first claim.
     let (cancel_tx, cancel) = watch::channel(run.cancel_requested || *stop.borrow());
-    let (force_tx, force) = watch::channel(false);
-    let (ready_tx, mut ready) = watch::channel(false);
-    let mut fencing_signal = force.clone();
     let mut heartbeat_stop = stop.clone();
     // Set when the core stopped acknowledging heartbeats, so the run ends as failed, not cancelled.
     let lost = AtomicBool::new(false);
@@ -243,17 +281,17 @@ async fn execute(
                 }
                 _ = lease, if !lost.load(Ordering::Relaxed) => {
                     lost.store(true, Ordering::Relaxed);
-                    warn!("CI heartbeat unacknowledged; fencing the run");
-                    let _ = force_tx.send(true);
+                    warn!("CI heartbeat unacknowledged; cancelling the run");
                     let _ = cancel_tx.send(true);
                     continue;
                 }
             }
             wait = HEARTBEAT;
             let lease = tokio::time::sleep_until((last_ack + LOST_HEARTBEAT_CANCEL).into());
-            let request_started = Instant::now();
             let reply = tokio::select! {
-                reply = service.queue.heartbeat(worker, run.id) => reply,
+                reply = tokio::time::timeout(HEARTBEAT_TIMEOUT, service.queue.heartbeat(worker, run.id)) => {
+                    reply.unwrap_or_else(|_| Err(anyhow::anyhow!("heartbeat timed out")))
+                }
                 _ = heartbeat_stop.changed(), if !shutdown => {
                     shutdown = true;
                     let _ = cancel_tx.send(true);
@@ -261,57 +299,26 @@ async fn execute(
                 }
                 _ = lease, if !lost.load(Ordering::Relaxed) => {
                     lost.store(true, Ordering::Relaxed);
-                    warn!("CI heartbeat unacknowledged; fencing the run");
-                    let _ = force_tx.send(true);
+                    warn!("CI heartbeat unacknowledged; cancelling the run");
                     let _ = cancel_tx.send(true);
                     continue;
                 }
             };
             match reply {
-                Ok(Some(false)) => {
-                    last_ack = request_started;
-                    let _ = ready_tx.send(true);
-                }
-                Ok(Some(true)) => {
-                    last_ack = request_started;
+                Ok(Some(false)) => last_ack = Instant::now(),
+                Ok(Some(true)) | Ok(None) => {
                     let _ = cancel_tx.send(true);
                 }
-                Ok(None) => { let _ = force_tx.send(true); let _ = cancel_tx.send(true); }
-                Err(error) => {
-                    if error.to_string().contains("not an active runner") {
-                        let _ = force_tx.send(true);
-                        let _ = cancel_tx.send(true);
-                        service.request_stop();
-                    }
-                    warn!(%error, "CI heartbeat failed");
-                }
+                Err(error) => warn!(%error, "CI heartbeat failed"),
             }
-        }
-    };
-    let fencing = async {
-        let _ = fencing_signal.wait_for(|fenced| *fenced).await;
-        loop {
-            match tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, ownership.fence()).await {
-                Ok(Ok(())) => {}
-                _ => warn!(run = %run.run_id, "CI execution fencing will retry"),
-            }
-            tokio::time::sleep(Duration::from_secs(1)).await;
         }
     };
     let work = async {
         let (cleaned, cleanup) = oneshot::channel();
-        let mut workspace = None;
-        let result = async {
-            // A delayed claim must renew its live authority before any workflow process starts.
-            tokio::select! {
-                biased;
-                _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
-                _ = ready.wait_for(|ready| *ready) => {}
-            }
-            run_workflows(service, worker, &claim, cancel, force, cleaned, &mut workspace, ownership.group.as_ref()).await
-        }.await;
+        let mut names = Vec::new();
+        let result = run_workflows(service, worker, &claim, cancel, cleaned, &mut names).await;
         let shutting_down = *stop.borrow();
-        let (status, message) = match &result {
+        let (mut status, mut message) = match &result {
             Ok(true) => ("success", None),
             Ok(false) => ("failed", Some("A workflow job failed".to_owned())),
             Err(error) => match error.downcast_ref::<Stopped>() {
@@ -347,23 +354,29 @@ async fn execute(
                 }
             },
         };
-        // A live container is still executing this run. Retain its workflow concurrency
-        // lease and heartbeat until recovery confirms removal, not merely for this slot.
-        let mut delay = Duration::from_secs(1);
-        loop {
-            match tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, ownership.remove_containers()).await {
-                Ok(Ok(())) => break,
-                _ => warn!(run = %run.run_id, "CI container removal pending; retaining the run lease"),
+        // Finish even if the engine never recovers. The durable record keeps the slot
+        // from accepting more work until recovery has removed its containers.
+        // The first removal always runs, even when the worker is stopping; only the retries wait on stop.
+        let reuse_slot = tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, async {
+            let mut delay = Duration::from_secs(1);
+            while let Err(error) = ownership.remove_containers().await {
+                warn!(%error, run = %run.run_id, "could not remove CI containers");
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    _ = stop.wait_for(|stopped| *stopped) => return false,
+                }
+                delay = (delay * 2).min(FINISH_RETRY_MAX);
             }
-            tokio::select! {
-                _ = tokio::time::sleep(delay) => {}
-                _ = stop.wait_for(|stopped| *stopped) => return false,
-            }
-            delay = (delay * 2).min(FINISH_RETRY_MAX);
+            true
+        })
+        .await
+        .unwrap_or(false);
+        if !reuse_slot && !*stop.borrow() {
+            status = "failed";
+            message =
+                Some("CI container cleanup failed; the worker slot is waiting for recovery".into());
         }
-        // No process or container can still access this checkout when removal starts.
-        if let Some(workspace) = &mut workspace { workspace.removable = true; }
-        drop(workspace);
+        drop(names);
         record_result(
             &service.queue,
             worker,
@@ -376,9 +389,26 @@ async fn execute(
         // Recording the result must not wait for the blocking directory cleanup. Shutdown
         // retains that cleanup even when the blocking pool is busy.
         let _ = cleanup.await;
+        if !reuse_slot {
+            let mut delay = IDLE_POLL;
+            loop {
+                tokio::select! {
+                    result = tokio::time::timeout(CLEANUP_RETRY_TIMEOUT, ownership.remove_containers()) => {
+                        if matches!(result, Ok(Ok(()))) {
+                            break;
+                        }
+                    }
+                    _ = stop.wait_for(|stopped| *stopped) => return false,
+                }
+                tokio::select! {
+                    _ = tokio::time::sleep(delay) => {}
+                    _ = stop.wait_for(|stopped| *stopped) => return false,
+                }
+                delay = (delay * 2).min(FINISH_RETRY_MAX);
+            }
+        }
         if let Err(error) = ownership.remove_workspace().await {
             warn!(%error, run = %run.run_id, "could not remove CI workspace; recovery will retry");
-            return false;
         }
         true
     };
@@ -386,7 +416,6 @@ async fn execute(
     tokio::select! {
         reuse_slot = work => reuse_slot,
         _ = heartbeat => unreachable!("heartbeat loop never ends"),
-        _ = fencing => unreachable!("fencing loop never ends"),
     }
 }
 
@@ -448,10 +477,8 @@ async fn run_workflows(
     worker: &str,
     claim: &ClaimedRun,
     cancel: watch::Receiver<bool>,
-    force: watch::Receiver<bool>,
     cleaned: oneshot::Sender<()>,
-    workspace_owner: &mut Option<Workspace>,
-    scope: Option<&codeyard_actions::process::Cgroup>,
+    names: &mut Vec<WorkflowName>,
 ) -> Result<bool> {
     let timeout = claim
         .limits
@@ -459,7 +486,6 @@ async fn run_workflows(
         .unwrap_or(service.config.run_timeout_seconds);
     let deadline = Instant::now() + Duration::from_secs(timeout.into());
     let run = &claim.run;
-    let masker = credential_masker(claim);
     // A run still preparing when shutdown starts stops here, not after the checkout, and
     // the checkout counts against the run's time limit.
     let workspace_directory = service
@@ -472,8 +498,6 @@ async fn run_workflows(
             return Err(Stopped::TimedOut.into());
         }
     };
-    *workspace_owner = Some(workspace);
-    let workspace = workspace_owner.as_ref().unwrap();
     let native = run.engine.as_deref() == Some("codeyard-actions");
     ensure!(
         claim.replay.is_none() || native,
@@ -504,53 +528,46 @@ async fn run_workflows(
         let preparing = async {
             let permit = super::workflows::PARSING_SLOTS.acquire().await?;
             let path = definition.clone();
+            let workflow = workflow.to_owned();
             let config = service.config.clone();
+            let names = service.names.clone();
             let run_id = run.run_id;
-            let limits = claim.limits.container_options();
             tokio::task::spawn_blocking(move || {
                 let _permit = permit;
-                prepare_workflow_for_engine(&path, &config, run_id, native, &limits)
+                prepare_workflow_for_engine(&path, &workflow, &config, &names, run_id, native)
             })
             .await?
         };
-        let labels = tokio::select! {
+        let (labels, name) = tokio::select! {
             prepared = preparing => prepared?,
             _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
             _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => return Err(Stopped::TimedOut.into()),
         };
+        names.extend(name);
         all_labels.extend(labels);
+        if super::reusable::content(&run.workflow_blobs[workflow]).is_some() {
+            let target = workspace.checkout().join(workflow);
+            // Replace a tracked file rather than following a repository-controlled symlink.
+            match tokio::fs::remove_file(&target).await {
+                Ok(()) => {}
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error.into()),
+            }
+            tokio::fs::create_dir_all(target.parent().context("invalid workflow path")?).await?;
+            tokio::fs::copy(&definition, target).await?;
+        }
     }
-    let mut runtime_env = Vec::new();
-    if !native && claim.github_tokens.oidc_jobs.contains("act") {
-        runtime_env.extend([
-            ("ACTIONS_ID_TOKEN_REQUEST_URL".to_owned(), claim.github_tokens.oidc_url.clone()),
-            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN".to_owned(), claim.github_tokens.act.clone()),
-        ]);
-    }
-    if !claim.runtime.token.is_empty() {
-        runtime_env.extend([
-            ("ACTIONS_RUNTIME_TOKEN".to_owned(), claim.runtime.token.clone()),
-            ("ACTIONS_RESULTS_URL".to_owned(), claim.runtime.results_url.clone()),
-            ("ACTIONS_CACHE_URL".to_owned(), claim.runtime.results_url.clone()),
-            ("ACTIONS_CACHE_SERVICE_V2".to_owned(), "True".to_owned()),
-        ]);
-    }
-    let runtime_file = workspace.write_values("runtime.env", &runtime_env, !native)?;
     for workflow in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
-        workspace.restore_called_workflows(run)?;
         let definition = workspace.definition(workflow);
         let mut command = act_command(
             service,
             claim,
-            workspace,
+            &workspace,
             &definition,
             &all_labels,
             secret_file.as_deref(),
             podman_label.as_deref(),
         );
-        if let Some(file) = &runtime_file {
-            command.arg("--env-file").arg(file);
-        }
         if let Some(file) = &variable_file {
             command.arg("--var-file").arg(file);
         }
@@ -582,10 +599,6 @@ async fn run_workflows(
                 concurrency_dir = Some(directory);
             }
         }
-        if let Some(scope) = scope {
-            scope.attach(&mut command)?;
-            if native { command.arg("--process-root").arg(scope.path()); }
-        }
         let completion_prefix = format!(
             "::codeyard-job-completed::{}:",
             claim.github_tokens.completion_secret
@@ -603,6 +616,7 @@ async fn run_workflows(
         let (lines_tx, lines_rx) = mpsc::channel(LOG_QUEUE_LINES);
         let stalled = Arc::new(AtomicBool::new(false));
         let remote = matches!(&service.queue, RunQueue::Remote { .. });
+        let (output_done, output_ended) = oneshot::channel();
         let running = async {
             let admitting = async {
                 match &concurrency_dir {
@@ -621,8 +635,7 @@ async fn run_workflows(
                     None => std::future::pending().await,
                 }
             };
-            let grace = if native { codeyard_actions::runner::SHUTDOWN_GRACE } else { Duration::from_secs(3) };
-            let output = process::run_with_grace(command, remaining, grace, scope, force.clone(), cancel.clone(), |line, stderr| {
+            let output = process::run(command, remaining, cancel.clone(), |line, stderr| {
                 let completed = if native && !claim.github_tokens.completion_secret.is_empty() {
                     line.strip_prefix(&completion_prefix)
                         .map(|job| format!("{workflow}:{job}"))
@@ -638,7 +651,7 @@ async fn run_workflows(
                 let level = if stderr { log_level(&line) } else { "info" };
                 let mut line = LogLine {
                     stage: stage.clone(),
-                    line: if progress.is_none() && completed.is_none() { masker.mask(&line) } else { String::new() },
+                    line: mask_credentials(line, claim),
                     level: level.to_owned(),
                     ..Default::default()
                 };
@@ -648,9 +661,19 @@ async fn run_workflows(
                 let admissions = admissions.clone();
                 let generation = generation.clone();
                 let stage = stage.clone();
-                let masker = masker.clone();
                 async move {
                     if let Some(job) = completed {
+                        let prefix = format!("{job}/");
+                        if let Some(tokens) = claim.github_tokens.workflows.get(workflow) {
+                            for child in tokens
+                                .keys()
+                                .map(|id| format!("{workflow}:{id}"))
+                                .filter(|id| id.starts_with(&prefix))
+                            {
+                                deliver(|| service.queue.finish_job(worker, run.id, &child))
+                                    .await?;
+                            }
+                        }
                         return deliver(|| service.queue.finish_job(worker, run.id, &job)).await;
                     }
                     if let Some(event) = progress {
@@ -665,7 +688,7 @@ async fn run_workflows(
                                 .get(&key)
                                 .copied()
                                 .context("output precedes its job observation")?;
-                            line.line = masker.mask(text);
+                            line.line = mask_credentials(text.clone(), claim);
                             line.job_id = Some(id);
                             line.step_number = step.map(i32::try_from).transpose()?;
                         } else {
@@ -683,9 +706,6 @@ async fn run_workflows(
                                     .lock()
                                     .unwrap_or_else(|error| error.into_inner())
                                     .insert(key.clone(), id);
-                            }
-                            if matches!(event.update, codeyard_actions::progress::Update::Finished { .. }) {
-                                admissions.lock().unwrap_or_else(|error| error.into_inner()).remove(&key);
                             }
                             records
                                 .lock()
@@ -711,17 +731,17 @@ async fn run_workflows(
                     ) {
                         result
                             .outputs
-                            .retain(|_, value| !masker.contains(value));
+                            .retain(|_, value| mask_credentials(value.clone(), claim) == *value);
                     }
-                    tokio::select! {
-                        result = deliver(|| service.queue.job_state(worker, run.id, &generation, workflow, &state)) => result?,
-                        _ = process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
-                        _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => return Err(Stopped::TimedOut.into()),
-                    }
+                    service
+                        .queue
+                        .job_state(worker, run.id, &generation, workflow, &state)
+                        .await?;
                 }
             }
             // The batches end once the last sender is gone, which is when the output ends.
             drop(lines_tx);
+            let _ = output_done.send(());
             status
         };
         let sending = async {
@@ -729,15 +749,15 @@ async fn run_workflows(
                 sent = send_log_batches(service, worker, run, lines_rx, &mut log_open) => sent,
                 _ = process::cancelled(cancel.clone()) => Ok(()),
                 _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => Ok(()),
+                _ = async {
+                    let _ = output_ended.await;
+                    tokio::time::sleep(LOG_FLUSH_GRACE).await;
+                }, if remote => Ok(()),
             }
         };
         let (status, sent) = tokio::join!(running, sending);
         sent?;
-        let status = status?;
-        if native && status.code() == Some(codeyard_actions::runner::CANCELLED_EXIT_CODE) {
-            return Err(Stopped::Cancelled.into());
-        }
-        if !status.success() {
+        if !status?.success() {
             return Ok(false);
         }
     }
@@ -871,8 +891,6 @@ fn act_command(
         // act reads `.actrc` from its working directory; keep the repository's out of it.
         .current_dir(workspace.root())
         .env("HOME", &home)
-        // The runner's temporary bind sources must share the host-visible workspace root.
-        .env("TMPDIR", workspace.root().join("tmp"))
         .env("XDG_CONFIG_HOME", home.join(".config"))
         .env("XDG_CACHE_HOME", home.join(".cache"))
         .env("DOCKER_CONFIG", home.join(".docker"))
@@ -882,17 +900,30 @@ fn act_command(
         .env("GITSERV_REPO_NAME", &claim.repository_name)
         .env("GITSERV_BRANCH", &run.branch)
         .env("GITSERV_HEAD_SHA", run.head_sha.as_deref().unwrap_or(""));
-    if !native {
-        // act names a job's container, network and volumes after the workflow and job alone, so
-        // two runs of one workflow would fight over them. The patched act adds this value to those
-        // names and leaves the workflow's own name, which `github.workflow` shows, unchanged.
-        command.env("CODEYARD_ACT_INSTANCE", run.run_id.simple().to_string());
+    if !native && claim.github_tokens.oidc_jobs.contains("act") {
+        for (name, value) in [
+            (
+                "ACTIONS_ID_TOKEN_REQUEST_URL",
+                &claim.github_tokens.oidc_url,
+            ),
+            ("ACTIONS_ID_TOKEN_REQUEST_TOKEN", &claim.github_tokens.act),
+        ] {
+            command.arg("--env").arg(format!("{name}={value}"));
+        }
     }
     if !claim.runtime.token.is_empty() {
         // act derives RESULTS_URL from its parent's RUNTIME_URL after loading --env.
         command
             .env("ACTIONS_RUNTIME_URL", &claim.runtime.results_url)
             .env("ACTIONS_RUNTIME_TOKEN", &claim.runtime.token);
+        for (name, value) in [
+            ("ACTIONS_RUNTIME_TOKEN", claim.runtime.token.as_str()),
+            ("ACTIONS_RESULTS_URL", claim.runtime.results_url.as_str()),
+            ("ACTIONS_CACHE_URL", claim.runtime.results_url.as_str()),
+            ("ACTIONS_CACHE_SERVICE_V2", "True"),
+        ] {
+            command.arg("--env").arg(format!("{name}={value}"));
+        }
     }
     // Workflow URLs come from the core, so a runner without PUBLIC_URL still names the forge.
     let origin = if claim.forge_origin.is_empty() {
@@ -906,11 +937,6 @@ fn act_command(
         ("GITHUB_GRAPHQL_URL", format!("{origin}/api/graphql")),
         ("GITHUB_SHA", run.head_sha.clone().unwrap_or_default()),
         ("SHA_REF", run.head_sha.clone().unwrap_or_default()),
-        ("GITHUB_WORKFLOW_SHA", run.workflow_sha.as_ref().or(run.head_sha.as_ref()).cloned().unwrap_or_default()),
-        ("GITHUB_WORKFLOW_REF", {
-            let workflow = run.workflow_path.split(',').find(|path| workspace.definition(path) == definition).unwrap_or(&run.workflow_path);
-            format!("{}/{}/{workflow}@{}", claim.owner, claim.repository_name, github_ref(claim).unwrap_or_default())
-        }),
         (
             "GITHUB_RUN_ID",
             run.workflow_run_id.unwrap_or(run.id).to_string(),
@@ -934,10 +960,6 @@ fn act_command(
         "GITHUB_REPOSITORY={}/{}",
         claim.owner, claim.repository_name
     ));
-    command.arg("--env").arg(format!("GITHUB_REPOSITORY_ID={}", run.repo_id));
-    if claim.owner_id > 0 {
-        command.arg("--env").arg(format!("GITHUB_REPOSITORY_OWNER_ID={}", claim.owner_id));
-    }
     let actor = claim
         .original_actor
         .as_ref()
@@ -975,11 +997,8 @@ fn act_command(
     if let Some(reference) = github_ref(claim) {
         command.arg("--env").arg(format!("GITHUB_REF={reference}"));
     }
-    if native && config.github_action_fallback { command.arg("--github-action-fallback"); }
     match config.mode {
         CiExecutionMode::Local => {
-            command.env("CODEYARD_DENY_DOCKER", "1");
-            if native { command.arg("--deny-docker"); }
             for label in labels {
                 command.arg("-P").arg(format!("{label}=-self-hosted"));
             }
@@ -1002,7 +1021,8 @@ fn act_command(
             // One job at a time, so the limits below bound the whole run.
             command.arg("--concurrent-jobs").arg("1");
             if let Some(label) = podman_label {
-                // Explicit job/service containers also receive these caps during rewriting.
+                // act applies these only to a job without its own `container.options`, so a
+                // workflow can replace the limits. They stop a runaway job, not a hostile one.
                 let limits = claim.limits.container_options();
                 let options = run_container_options(label);
                 command
@@ -1041,61 +1061,61 @@ fn container_filters(label: &str) -> String {
 #[cfg(test)]
 fn prepare_workflow(
     path: &Path,
+    workflow: &str,
     config: &super::config::CiConfig,
+    names: &WorkflowNames,
     run_id: uuid::Uuid,
-) -> Result<BTreeSet<String>> {
-    prepare_workflow_for_engine(path, config, run_id, false, "")
+) -> Result<(BTreeSet<String>, Option<WorkflowName>)> {
+    prepare_workflow_for_engine(path, workflow, config, names, run_id, false)
 }
 
 fn prepare_workflow_for_engine(
     path: &Path,
+    workflow: &str,
     config: &super::config::CiConfig,
+    names: &WorkflowNames,
     run_id: uuid::Uuid,
     native: bool,
-    limits: &str,
-) -> Result<BTreeSet<String>> {
+) -> Result<(BTreeSet<String>, Option<WorkflowName>)> {
     let mut value = super::workflows::parse_yaml(&std::fs::read(path)?)?;
-    ensure!(native || !codeyard_actions::workflow::has_job_concurrency(&value), "Job concurrency requires the codeyard-actions engine");
-    if config.mode != CiExecutionMode::Local {
-        for job in value.get_mut("jobs").and_then(Value::as_mapping_mut).into_iter().flat_map(|jobs| jobs.values_mut()) {
-            if let Some(selector) = job.get_mut("runs-on").and_then(Value::as_mapping_mut) {
-                if selector.contains_key("group") && selector.get("labels").is_none_or(|labels| labels.as_sequence().is_some_and(Vec::is_empty)) {
-                    let label = config.act_platform_map.keys().find(|label| label.as_str() == "ubuntu-latest").or_else(|| config.act_platform_map.keys().next()).context("Group-only jobs need a configured default platform")?;
-                    selector.insert("labels".into(), label.clone().into());
-                }
-            }
-        }
-    }
     let labels = labels_from_value(&value, config.mode == CiExecutionMode::Local)?;
     if config.mode == CiExecutionMode::Local {
-        return Ok(labels);
+        return Ok((labels, None));
     }
-    for job in value.get("jobs").and_then(Value::as_mapping).into_iter().flat_map(|jobs| jobs.values()) {
-        if job.get("uses").is_some() { continue; }
-        let selector = job.get("runs-on").context("Job needs runs-on")?;
-        let selector = selector.get("labels").unwrap_or(selector);
-        let selected: Vec<_> = match selector {
-            Value::String(label) => vec![label.as_str()],
-            Value::Sequence(labels) => labels.iter().filter_map(Value::as_str).collect(),
-            _ => Vec::new(),
-        };
-        ensure!(selected.iter().any(|label| config.act_platform_map.keys().any(|key| key.eq_ignore_ascii_case(label))), "no runner image matches this job's runs-on selectors; add one to CI_ACT_PLATFORM_MAP");
+    if let Some(label) = labels
+        .iter()
+        .find(|label| !config.act_platform_map.contains_key(*label))
+    {
+        bail!("no runner image for `runs-on: {label}`; add it to CI_ACT_PLATFORM_MAP");
     }
-    add_container_options(&mut value, &format!("{} {limits}", run_container_options(&run_container_label(run_id))))?;
+    // Native containers already have per-job random names. Only act needs its workflow
+    // title rewritten to isolate container names; that private suffix is not native metadata.
+    let unique = (!native).then(|| names.take(&act_workflow_name(&value, workflow), run_id));
+    if let Some(unique) = &unique {
+        value
+            .as_mapping_mut()
+            .context("workflow must be a mapping")?
+            .insert(
+                Value::String("name".into()),
+                Value::String(unique.name.clone()),
+            );
+    }
+    add_container_label(&mut value, &run_container_label(run_id))?;
     std::fs::write(path, serde_yaml::to_string(&value)?)?;
-    Ok(labels)
+    Ok((labels, unique))
 }
 
-fn add_container_options(workflow: &mut Value, option: &str) -> Result<()> {
+fn add_container_label(workflow: &mut Value, label: &str) -> Result<()> {
     let Some(jobs) = workflow.get_mut("jobs").and_then(Value::as_mapping_mut) else {
         bail!("workflow jobs must be a mapping");
     };
+    let option = run_container_options(label);
     for job in jobs.values_mut() {
         let Some(job) = job.as_mapping_mut() else {
             continue;
         };
         if let Some(container) = job.get_mut(Value::String("container".into())) {
-            append_container_option(container, option)?;
+            append_container_option(container, &option)?;
         }
         if let Some(services) = job
             .get_mut(Value::String("services".into()))
@@ -1104,7 +1124,7 @@ fn add_container_options(workflow: &mut Value, option: &str) -> Result<()> {
             // The parser accepts the image shorthand for services too; an empty image there
             // disables the service, and the runner leaves it out.
             for service in services.values_mut() {
-                append_container_option(service, option)?;
+                append_container_option(service, &option)?;
             }
         }
     }
@@ -1127,7 +1147,7 @@ fn append_container_option(spec: &mut Value, option: &str) -> Result<()> {
     };
     let key = Value::String("options".into());
     match mapping.get_mut(&key) {
-        None | Some(Value::Null) => {
+        None => {
             mapping.insert(key, Value::String(option.to_owned()));
         }
         Some(Value::String(options)) => {
@@ -1145,8 +1165,6 @@ fn append_container_option(spec: &mut Value, option: &str) -> Result<()> {
 struct ContainerRecord {
     socket: String,
     run_id: uuid::Uuid,
-    #[serde(default)]
-    cgroup: Option<PathBuf>,
 }
 
 struct ContainerOwnership {
@@ -1154,7 +1172,6 @@ struct ContainerOwnership {
     _lock: std::fs::File,
     path: PathBuf,
     record: ContainerRecord,
-    group: Option<codeyard_actions::process::Cgroup>,
 }
 
 impl Drop for ContainerOwnership {
@@ -1169,11 +1186,10 @@ impl Drop for ContainerOwnership {
 }
 
 impl ContainerOwnership {
-    fn create(directory: &Path, socket: &str, run_id: uuid::Uuid, cgroup_root: Option<&Path>) -> Result<Self> {
+    fn create(directory: &Path, socket: &str, run_id: uuid::Uuid) -> Result<Self> {
         let record = ContainerRecord {
             socket: socket.to_owned(),
             run_id,
-            cgroup: cgroup_root.map(|root| root.join(format!("codeyard-{run_id}"))),
         };
         let mut pending = tempfile::NamedTempFile::new_in(directory)?;
         ensure!(
@@ -1185,13 +1201,10 @@ impl ContainerOwnership {
         let path = directory.join(format!("{run_id}.json"));
         let file = pending.persist_noclobber(&path)?;
         std::fs::File::open(directory)?.sync_all()?;
-        // Persist recovery identity before creating anything in the delegated hierarchy.
-        let group = cgroup_root.map(|root| codeyard_actions::process::Cgroup::create(root, &format!("codeyard-{run_id}"))).transpose()?;
         Ok(Self {
             _lock: file,
             path,
             record,
-            group,
         })
     }
 
@@ -1201,13 +1214,6 @@ impl ContainerOwnership {
     }
 
     async fn remove_containers(&self) -> Result<()> {
-        self.fence().await?;
-        if let Some(group) = &self.group { group.cleanup(Duration::from_secs(30)).await?; }
-        Ok(())
-    }
-
-    async fn fence(&self) -> Result<()> {
-        if let Some(group) = &self.group { group.kill()?; }
         if !self.record.socket.is_empty() {
             remove_run_containers(
                 &self.record.socket,
@@ -1219,18 +1225,7 @@ impl ContainerOwnership {
     }
 
     async fn remove_workspace(&self) -> Result<()> {
-        let directory = self.path.with_extension("workspace");
-        let mut locks = Vec::new();
-        match tokio::fs::read_dir(&directory).await {
-            Ok(mut entries) => while let Some(entry) = entries.next_entry().await? {
-                if entry.file_type().await?.is_dir() {
-                    locks.push(crate::backend::git::locks::lock(&entry.path().join("repo")).await);
-                }
-            },
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(error.into()),
-        }
-        match tokio::fs::remove_dir_all(&directory).await {
+        match tokio::fs::remove_dir_all(self.path.with_extension("workspace")).await {
             Ok(()) => {}
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
             Err(error) => return Err(error.into()),
@@ -1285,19 +1280,10 @@ pub(super) async fn reconcile_containers(directory: &Path) -> Result<()> {
                 return Ok(());
             }
             let record: ContainerRecord = serde_json::from_reader(&file)?;
-            let group = match record.cgroup.as_deref() {
-                Some(path) => match std::fs::symlink_metadata(path) {
-                    Ok(_) => Some(codeyard_actions::process::Cgroup::open(path)?),
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(error) => return Err(error.into()),
-                },
-                None => None,
-            };
             ContainerOwnership {
                 _lock: file,
                 path,
                 record,
-                group,
             }
             .remove()
             .await
@@ -1329,58 +1315,7 @@ struct ResourceId {
     id: String,
 }
 
-#[derive(Deserialize)]
-struct NamedResource {
-    #[serde(rename = "Id")]
-    id: String,
-    #[serde(rename = "Name", default)]
-    name: String,
-}
-
-#[derive(Deserialize)]
-struct ContainerDetail {
-    #[serde(rename = "Name", default)]
-    name: Option<String>,
-    #[serde(rename = "Mounts", default)]
-    mounts: Option<Vec<ContainerMount>>,
-}
-
-#[derive(Deserialize)]
-struct ContainerMount {
-    #[serde(rename = "Type", default)]
-    kind: Option<String>,
-    #[serde(rename = "Name", default)]
-    name: Option<String>,
-}
-
-/// act names a job container's workspace and environment volumes after the container, and its
-/// service network after the container and job, but gives none of them the run label. They are
-/// found through the labeled job container, so no other volume or network is touched.
-fn act_owned_names(detail: &ContainerDetail) -> Option<(String, Vec<String>)> {
-    let container = detail.name.as_deref()?.trim_start_matches('/');
-    let valid = |name: &str| {
-        !name.is_empty()
-            && name.len() <= 255
-            && name.bytes().all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
-    };
-    if !container.starts_with("act-") || !valid(container) {
-        return None;
-    }
-    let environment = format!("{container}-env");
-    let volumes = detail
-        .mounts
-        .iter()
-        .flatten()
-        .filter(|mount| mount.kind.as_deref() == Some("volume"))
-        .filter_map(|mount| mount.name.as_deref())
-        .filter(|name| *name == container || *name == environment)
-        .map(str::to_owned)
-        .collect();
-    Some((container.to_owned(), volumes))
-}
-
-/// Force-removes every container carrying the run's label through the Podman socket, then the
-/// act volumes and networks those containers owned.
+/// Force-removes every container carrying the run's label through the Podman socket.
 async fn remove_run_containers(socket: &str, label: &str) -> Result<()> {
     let client = reqwest::Client::builder()
         .unix_socket(podman_socket_path(socket)?)
@@ -1395,19 +1330,7 @@ async fn remove_run_containers(socket: &str, label: &str) -> Result<()> {
         .error_for_status()?
         .json()
         .await?;
-    let mut job_containers = Vec::new();
     for container in containers {
-        // Read the names first: they are gone with the container.
-        let response = client
-            .get(format!("http://localhost/v1.40/containers/{}/json", container.id))
-            .send()
-            .await?;
-        let owned = if response.status() == reqwest::StatusCode::NOT_FOUND {
-            None
-        } else {
-            let detail: ContainerDetail = response.error_for_status()?.json().await?;
-            act_owned_names(&detail)
-        };
         // Anonymous volumes, which images such as postgres declare, go with the container.
         remove_resource(
             &client,
@@ -1415,29 +1338,6 @@ async fn remove_run_containers(socket: &str, label: &str) -> Result<()> {
             &[("force", "true"), ("v", "true")],
         )
         .await?;
-        if let Some((name, volumes)) = owned {
-            for volume in volumes {
-                remove_unlabeled_resource(&client, &format!("volumes/{volume}")).await;
-            }
-            job_containers.push(name);
-        }
-    }
-    if !job_containers.is_empty() {
-        let networks: Vec<NamedResource> = client
-            .get("http://localhost/v1.40/networks")
-            .send()
-            .await?
-            .error_for_status()?
-            .json()
-            .await?;
-        for network in networks.into_iter().filter(|network| {
-            network.name.ends_with("-network")
-                && job_containers
-                    .iter()
-                    .any(|container| network.name.starts_with(&format!("{container}-")))
-        }) {
-            remove_unlabeled_resource(&client, &format!("networks/{}", network.id)).await;
-        }
     }
     // Networks and built images carry the run's label as well, so a crash leaves none behind.
     let networks: Vec<ResourceId> = client
@@ -1468,14 +1368,6 @@ async fn remove_run_containers(socket: &str, label: &str) -> Result<()> {
         .await?;
     }
     Ok(())
-}
-
-/// Deletes an act volume or network that has no run label. Another unlabeled container may still
-/// use it, so a refusal is logged and does not keep the run's cleanup record.
-async fn remove_unlabeled_resource(client: &reqwest::Client, path: &str) {
-    if let Err(error) = remove_resource(client, path, &[]).await {
-        warn!(%error, resource = path, "could not remove an act resource of a CI run");
-    }
 }
 
 /// Deletes one Podman resource. A resource that is already gone is not an error.
@@ -1527,9 +1419,9 @@ async fn send_log_lines(
     lines: &[LogLine],
 ) -> Result<bool> {
     let result = service.queue.logs(worker, run.id, lines).await;
-    // Log ingestion is best effort on both database and remote workers.
+    // A disconnected core must not stop a job; its normal deadline still applies.
     match result {
-        Err(error) => {
+        Err(error) if matches!(&service.queue, RunQueue::Remote { .. }) => {
             warn!(%error, "could not send CI log lines");
             Ok(true)
         }
@@ -1578,9 +1470,8 @@ async fn send_log_batches(
     Ok(())
 }
 
-fn credential_masker(claim: &ClaimedRun) -> codeyard_actions::runner::Masker {
-    let masker = codeyard_actions::runner::Masker::default();
-    let values = std::iter::once(&claim.runtime.token)
+fn mask_credentials(mut line: String, claim: &ClaimedRun) -> String {
+    let mut values: Vec<_> = std::iter::once(&claim.runtime.token)
         .chain(std::iter::once(&claim.github_tokens.act))
         .chain(std::iter::once(&claim.github_tokens.completion_secret))
         .chain(
@@ -1598,11 +1489,15 @@ fn credential_masker(claim: &ClaimedRun) -> codeyard_actions::runner::Masker {
                 .values()
                 .flat_map(|scope| scope.secrets.values()),
         )
-        .filter(|value| !value.is_empty());
+        .filter(|value| !value.is_empty())
+        .collect();
+    values.sort_unstable_by_key(|value| std::cmp::Reverse(value.len()));
     for value in values {
-        masker.add(value);
+        if line.contains(value.as_str()) {
+            line = line.replace(value.as_str(), "***");
+        }
     }
-    masker
+    line
 }
 
 fn log_level(line: &str) -> &'static str {
@@ -1622,15 +1517,10 @@ struct Workspace {
     temp: Option<tempfile::TempDir>,
     cleanups: Arc<Mutex<JoinSet<()>>>,
     cleaned: Option<oneshot::Sender<()>>,
-    removable: bool,
 }
 
 impl Drop for Workspace {
     fn drop(&mut self) {
-        if !self.removable {
-            if let Some(temp) = self.temp.take() { let _ = temp.keep(); }
-            return;
-        }
         let checkout = self.checkout();
         let temp = self.temp.take().unwrap();
         let cleaned = self.cleaned.take();
@@ -1653,41 +1543,6 @@ impl Drop for Workspace {
 }
 
 impl Workspace {
-    fn restore_called_workflows(&self, run: &CiRun) -> Result<()> {
-        use std::io::Write;
-        use std::os::unix::fs::OpenOptionsExt;
-        let blobs = run.workflow_blobs.as_object().context("run has no workflow files")?;
-        let called: Vec<_> = blobs.keys().filter(|path| !run.workflow_path.split(',').any(|root| root == path.as_str())).collect();
-        if called.is_empty() { return Ok(()); }
-        let checkout = self.checkout();
-        for path in [".github", ".github/workflows", ".git", ".git/info"] {
-            let directory = checkout.join(path);
-            match std::fs::create_dir(&directory) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    ensure!(std::fs::symlink_metadata(&directory)?.is_dir(), "Unsafe workflow directory");
-                }
-                Err(error) => return Err(error.into()),
-            }
-        }
-        let mut exclude = std::fs::OpenOptions::new().append(true).create(true)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK).open(checkout.join(".git/info/exclude"))?;
-        ensure!(exclude.metadata()?.is_file(), "Unsafe Git exclude file");
-        for workflow in called {
-            ensure!(workflow.starts_with(".github/workflows/codeyard-call-") && super::admission::is_safe_workflow_path(workflow), "Invalid called workflow path");
-            let target = checkout.join(workflow);
-            match std::fs::remove_file(&target) {
-                Ok(()) => {}
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error.into()),
-            }
-            let mut file = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o600).open(target)?;
-            file.write_all(&std::fs::read(self.definition(workflow))?)?;
-            writeln!(exclude, "\n/{workflow}")?;
-        }
-        Ok(())
-    }
-
     async fn prepare(
         queue: &RunQueue,
         claim: &ClaimedRun,
@@ -1697,12 +1552,18 @@ impl Workspace {
     ) -> Result<Self> {
         tokio::fs::create_dir_all(directory).await?;
         let workspace = Self {
-            temp: Some(codeyard_actions::fs::private_tempdir("workspace-", Some(directory)).context("could not create a CI workspace")?),
+            temp: Some(tempfile::tempdir_in(directory).context("could not create a CI workspace")?),
             cleanups,
             cleaned: Some(cleaned),
-            removable: false,
         };
-        for dir in ["home/.docker", "definitions", "tmp"] {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            tokio::fs::set_permissions(workspace.root(), std::fs::Permissions::from_mode(0o700))
+                .await
+                .context("could not secure the CI workspace")?;
+        }
+        for dir in ["home/.docker", "definitions"] {
             tokio::fs::create_dir_all(workspace.root().join(dir)).await?;
         }
         let store = queue.checkout(claim, &workspace.checkout()).await?;
@@ -1726,6 +1587,29 @@ impl Workspace {
                     .await?
             };
             definitions.insert(path.clone(), content);
+        }
+        if run.engine.as_deref() == Some("act")
+            && blobs
+                .values()
+                .any(|value| super::reusable::content(value).is_some())
+        {
+            let roots = run
+                .workflow_path
+                .split(',')
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            let secrets = claim
+                .secrets
+                .iter()
+                .map(|(name, _)| name.clone())
+                .chain(std::iter::once("GITHUB_TOKEN".into()))
+                .collect();
+            let permit = super::workflows::PARSING_SLOTS.acquire().await?;
+            definitions = tokio::task::spawn_blocking(move || {
+                let _permit = permit;
+                super::reusable::act_secrets(definitions, &roots, secrets)
+            })
+            .await??;
         }
         for (path, content) in definitions {
             tokio::fs::write(workspace.definition(&path), content).await?;
@@ -1770,11 +1654,11 @@ impl Workspace {
             Err(error) => return Err(error.into()),
         };
         let mut body = Vec::new();
-        file.take((codeyard_actions::progress::MAX_STATE_BYTES + 1) as u64)
+        file.take(8 * 1024 * 1024 + 1)
             .read_to_end(&mut body)
             .await?;
         ensure!(
-            body.len() <= codeyard_actions::progress::MAX_STATE_BYTES,
+            body.len() <= 8 * 1024 * 1024,
             "job state exceeds the native limit"
         );
         Ok(Some(
@@ -1857,7 +1741,7 @@ impl Workspace {
             return Ok(None);
         };
         let mut environments = BTreeMap::new();
-        for key in jobs.values().collect::<BTreeSet<_>>() {
+        for key in jobs.values() {
             let scope = values
                 .environments
                 .get(key)
@@ -1873,7 +1757,7 @@ impl Workspace {
                 .collect();
             db::secrets::validate_repository_secrets(&secrets)?;
             ensure!(
-                scope.variables.len() <= codeyard_actions::values::MAX_SCOPE_VALUES,
+                scope.variables.len() <= 100,
                 "Too many environment variables"
             );
             let variables: Vec<_> = scope
@@ -1887,7 +1771,7 @@ impl Workspace {
         let bytes =
             serde_json::to_vec(&serde_json::json!({"jobs":jobs,"environments":environments}))?;
         ensure!(
-            bytes.len() <= codeyard_actions::values::MAX_ENVIRONMENT_FILE_BYTES,
+            bytes.len() <= 16 * 1024 * 1024,
             "Environment values file is too large"
         );
         let path = self
@@ -2002,7 +1886,7 @@ fn native_dotenv_value(value: &str) -> String {
         match character {
             '\\' => encoded.push_str("\\\\"),
             '\n' => encoded.push_str("\\n"),
-            '\r' => encoded.push('\r'),
+            '\r' => encoded.push_str("\\r"),
             '"' => encoded.push_str("\\\""),
             '$' => encoded.push_str("\\$"),
             _ => encoded.push(character),
@@ -2059,17 +1943,29 @@ mod tests {
             ..Default::default()
         };
         let run_id = uuid::Uuid::new_v4();
-        let labels = prepare_workflow(&path, &config, run_id).unwrap();
+        let (labels, name) =
+            prepare_workflow(&path, "ci.yml", &config, &WorkflowNames::default(), run_id).unwrap();
         assert!(labels.contains("ubuntu-latest"));
         let value = super::super::workflows::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
-        // The workflow keeps its public name; act's resource names carry the run instead.
-        assert_eq!(value["name"].as_str(), Some("Test"));
+        assert_eq!(
+            value["name"].as_str(),
+            Some(name.as_ref().unwrap().name.as_str())
+        );
         assert!(value["jobs"]["build"]["container"]["options"]
             .as_str()
             .unwrap()
             .contains(&run_container_label(run_id)));
         std::fs::write(&path, source).unwrap();
-        prepare_workflow_for_engine(&path, &config, run_id, true, "").unwrap();
+        let (_, name) = prepare_workflow_for_engine(
+            &path,
+            "ci.yml",
+            &config,
+            &WorkflowNames::default(),
+            run_id,
+            true,
+        )
+        .unwrap();
+        assert!(name.is_none());
         let native = super::super::workflows::parse_yaml(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(native["name"].as_str(), Some("Test"));
         assert!(native["jobs"]["build"]["container"]["options"]
@@ -2081,11 +1977,18 @@ mod tests {
             mode: CiExecutionMode::Local,
             ..Default::default()
         };
-        assert!(prepare_workflow(&path, &config, run_id).is_err());
+        assert!(
+            prepare_workflow(&path, "ci.yml", &config, &WorkflowNames::default(), run_id).is_err()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), source);
         let local = b"jobs: {build: {runs-on: linux, steps: [{run: echo ok}]}}";
         std::fs::write(&path, local).unwrap();
-        prepare_workflow(&path, &config, run_id).unwrap();
+        assert!(
+            prepare_workflow(&path, "ci.yml", &config, &WorkflowNames::default(), run_id)
+                .unwrap()
+                .1
+                .is_none()
+        );
         assert_eq!(std::fs::read(&path).unwrap(), local);
     }
 
@@ -2128,7 +2031,7 @@ mod tests {
         )
         .await
         .unwrap();
-        db::ci::claim_ci_run(&pool, "worker", "local", &[owner.id], &crate::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(&pool, "worker", "local", &[owner.id])
             .await
             .unwrap()
             .unwrap();
@@ -2237,7 +2140,6 @@ mod tests {
             storage_node_id: None,
             repository: uuid::Uuid::new_v4(),
             repository_name: "project".into(),
-            owner_id: 1,
             owner: "worker_owner".into(),
             actor: "worker_owner".into(),
             original_actor: None,
@@ -2292,12 +2194,52 @@ mod tests {
         pool.close().await;
     }
 
+    #[test]
+    fn act_names_a_workflow_by_its_name_or_its_file() {
+        assert_eq!(
+            act_workflow_name(
+                &super::super::workflows::parse_yaml(b"name: CI\non: push\njobs: {}\n").unwrap(),
+                ".github/workflows/ci.yml"
+            ),
+            "CI"
+        );
+        assert_eq!(
+            act_workflow_name(
+                &super::super::workflows::parse_yaml(b"on: push\njobs: {}\n").unwrap(),
+                ".github/workflows/ci.yml"
+            ),
+            "ci.yml"
+        );
+    }
+
+    #[test]
+    fn workflow_names_are_unique_across_runs_and_worker_processes() {
+        let names = WorkflowNames::default();
+        let first = names.take("CI", uuid::Uuid::from_u128(1));
+        assert_eq!(first.name, "CI (00000000000000000000000000000001)");
+        let second = names.take("CI", uuid::Uuid::from_u128(2));
+        assert_eq!(second.name, "CI (00000000000000000000000000000002)");
+        let another_process = WorkflowNames::default();
+        let third = another_process.take("CI", uuid::Uuid::from_u128(3));
+        assert_ne!(first.name, third.name);
+        assert_ne!(second.name, third.name);
+        assert_eq!(
+            names.take("Deploy", uuid::Uuid::from_u128(3)).name,
+            "Deploy (00000000000000000000000000000003)"
+        );
+        drop(first);
+        let fourth = names.take("CI", uuid::Uuid::from_u128(4));
+        assert_eq!(fourth.name, "CI (00000000000000000000000000000004)");
+        // Two workflows of one run with the same name still differ.
+        let other = names.take("CI", uuid::Uuid::from_u128(2));
+        assert_eq!(other.name, "CI (00000000000000000000000000000002-2)");
+    }
+
     fn secret_workspace() -> Workspace {
         Workspace {
             temp: Some(tempfile::tempdir().unwrap()),
             cleanups: Arc::new(Mutex::new(JoinSet::new())),
             cleaned: None,
-            removable: true,
         }
     }
 
@@ -2394,7 +2336,6 @@ mod tests {
             storage_node_id: None,
             repository: uuid::Uuid::new_v4(),
             repository_name: "project".into(),
-            owner_id: 1,
             owner: "worker_owner".into(),
             actor: "worker_owner".into(),
             original_actor: None,
@@ -2413,7 +2354,7 @@ mod tests {
             store: None,
         };
         assert_eq!(
-            credential_masker(&claim).mask("shared-secret shared visible-variable"),
+            mask_credentials("shared-secret shared visible-variable".into(), &claim),
             "*** *** visible-variable"
         );
     }
@@ -2556,7 +2497,7 @@ mod tests {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let captured = lines.clone();
         let (_stop_tx, stop) = watch::channel(false);
-        let status = process::tests::run(command, Duration::from_secs(30), stop, move |line, _| {
+        let status = process::run(command, Duration::from_secs(30), stop, move |line, _| {
             captured.lock().unwrap().push(line);
             async { Ok(()) }
         })
@@ -2679,7 +2620,6 @@ mod tests {
             storage_node_id: None,
             repository: uuid::Uuid::new_v4(),
             repository_name: "project".into(),
-            owner_id: 1,
             owner: "worker_owner".into(),
             actor: "worker_owner".into(),
             original_actor: None,
@@ -2725,10 +2665,6 @@ mod tests {
             "ACTIONS_CACHE_SERVICE_V2=True",
         ] {
             assert!(args.windows(2).any(|pair| pair == ["--env", value]));
-        }
-        let repository_id = format!("GITHUB_REPOSITORY_ID={}", claim.run.repo_id);
-        for value in [repository_id.as_str(), "GITHUB_REPOSITORY_OWNER_ID=1"] {
-            assert!(args.windows(2).any(|pair| pair == ["--env", value]), "{value}");
         }
         let env = command
             .as_std()
@@ -2798,7 +2734,7 @@ jobs:
         )
         .unwrap();
         let mut yaml = super::super::workflows::parse_yaml(&std::fs::read(path).unwrap()).unwrap();
-        add_container_options(&mut yaml, &run_container_options(&label)).unwrap();
+        add_container_label(&mut yaml, &label).unwrap();
         let jobs = yaml.get("jobs").unwrap();
         assert_eq!(
             jobs["image-shorthand"]["container"]["options"],
@@ -2824,7 +2760,7 @@ jobs:
         if let Ok(input) = std::env::var(CHILD) {
             let (directory, socket, run): (PathBuf, String, uuid::Uuid) =
                 serde_json::from_str(&input).unwrap();
-            let _ownership = ContainerOwnership::create(&directory, &socket, run, None).unwrap();
+            let _ownership = ContainerOwnership::create(&directory, &socket, run).unwrap();
             let workspace = directory.join(format!("{run}.workspace"));
             std::fs::create_dir(&workspace).unwrap();
             std::fs::write(workspace.join("secrets.env"), "TOKEN=private").unwrap();
@@ -2844,7 +2780,7 @@ jobs:
         ])
         .await;
         let live = uuid::Uuid::new_v4();
-        let _ownership = ContainerOwnership::create(records.path(), &socket, live, None).unwrap();
+        let _ownership = ContainerOwnership::create(records.path(), &socket, live).unwrap();
         let live_workspace = records.path().join(format!("{live}.workspace"));
         std::fs::create_dir(&live_workspace).unwrap();
         reconcile_containers(records.path()).await.unwrap();
@@ -2905,7 +2841,7 @@ jobs:
     async fn local_run_recovery_removes_abandoned_workspaces() {
         let records = tempfile::tempdir().unwrap();
         let run = uuid::Uuid::new_v4();
-        let ownership = ContainerOwnership::create(records.path(), "", run, None).unwrap();
+        let ownership = ContainerOwnership::create(records.path(), "", run).unwrap();
         let workspace = ownership.path.with_extension("workspace");
         std::fs::create_dir(&workspace).unwrap();
         std::fs::write(workspace.join("secrets.env"), "TOKEN=private").unwrap();
@@ -2954,32 +2890,10 @@ jobs:
         let second = "b".repeat(64);
         let label = "com.codeyard.ci.run=01234567-89ab-cdef-0123-456789abcdef";
         let network = "c".repeat(64);
-        let act_network = "d".repeat(64);
-        let inspected = serde_json::to_vec(&serde_json::json!({
-            "Name": "/act-job",
-            "Mounts": [
-                { "Type": "volume", "Name": "act-job" },
-                { "Type": "volume", "Name": "act-job-env" },
-                { "Type": "volume", "Name": "user-data" },
-                { "Type": "bind", "Name": "act-job" },
-            ],
-        }))
-        .unwrap();
-        let networks = serde_json::to_vec(&serde_json::json!([
-            { "Id": act_network, "Name": "act-job-build-network" },
-            { "Id": "user", "Name": "user-network" },
-        ]))
-        .unwrap();
         let (_directory, socket, mut requests, server) = fake_podman(vec![
             response(200, list_body(&[&first, &second])),
-            response(200, inspected),
-            response(204, Vec::new()),
-            response(204, Vec::new()),
             response(204, Vec::new()),
             response(404, Vec::new()),
-            response(404, Vec::new()),
-            response(200, networks),
-            response(204, Vec::new()),
             response(200, list_body(&[&network])),
             response(204, Vec::new()),
             response(200, list_body(&[])),
@@ -2997,29 +2911,14 @@ jobs:
             decoded_query(&target).get("filters").map(String::as_str),
             Some(container_filters(label).as_str())
         );
-        let (method, target) = requests.recv().await.unwrap();
-        assert_eq!((method.as_str(), target.as_str()), ("GET", format!("/v1.40/containers/{first}/json").as_str()));
-        let (method, target) = requests.recv().await.unwrap();
-        assert_eq!(method, "DELETE");
-        assert!(target.starts_with(&format!("/v1.40/containers/{first}?")));
-        let query = decoded_query(&target);
-        assert_eq!(query.get("force").map(String::as_str), Some("true"));
-        assert_eq!(query.get("v").map(String::as_str), Some("true"));
-        for volume in ["act-job", "act-job-env"] {
+        for id in [&first, &second] {
             let (method, target) = requests.recv().await.unwrap();
             assert_eq!(method, "DELETE");
-            assert!(target.starts_with(&format!("/v1.40/volumes/{volume}")));
+            assert!(target.starts_with(&format!("/v1.40/containers/{id}?")));
+            let query = decoded_query(&target);
+            assert_eq!(query.get("force").map(String::as_str), Some("true"));
+            assert_eq!(query.get("v").map(String::as_str), Some("true"));
         }
-        let (method, target) = requests.recv().await.unwrap();
-        assert_eq!((method.as_str(), target.as_str()), ("GET", format!("/v1.40/containers/{second}/json").as_str()));
-        let (method, target) = requests.recv().await.unwrap();
-        assert_eq!(method, "DELETE");
-        assert!(target.starts_with(&format!("/v1.40/containers/{second}?")));
-        let (method, target) = requests.recv().await.unwrap();
-        assert_eq!((method.as_str(), target.as_str()), ("GET", "/v1.40/networks"));
-        let (method, target) = requests.recv().await.unwrap();
-        assert_eq!(method, "DELETE");
-        assert!(target.starts_with(&format!("/v1.40/networks/{act_network}")));
         let (method, target) = requests.recv().await.unwrap();
         assert_eq!(method, "GET");
         assert!(target.starts_with("/v1.40/networks?"));
@@ -3132,7 +3031,6 @@ jobs:
             storage_node_id: None,
             repository: uuid::Uuid::new_v4(),
             repository_name: "test".into(),
-            owner_id: 1,
             owner: "test".into(),
             actor: "test".into(),
             original_actor: None,
@@ -3218,7 +3116,6 @@ jobs:
             storage_node_id: None,
             repository: uuid::Uuid::nil(),
             repository_name: "repo".to_owned(),
-            owner_id: 1,
             owner: "alice".to_owned(),
             actor: String::new(),
             original_actor: None,
@@ -3278,7 +3175,6 @@ jobs:
             storage_node_id: None,
             repository: uuid::Uuid::nil(),
             repository_name: "repo".to_owned(),
-            owner_id: 1,
             owner: "alice".to_owned(),
             actor: String::new(),
             original_actor: None,

@@ -37,11 +37,10 @@ fn refusal(ctx: &PageContext, error: Error) -> Response {
 }
 async fn load(ctx: &PageContext, actor: i64, page: usize) -> Result<view::Page, Error> {
     let limit = paging::DEFAULT_PER_PAGE;
-    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
-    let mut rows = collaborators::recipient_invitations(
+    let mut rows = collaborators::invitations(
         &ctx.state.pool,
         actor,
-        &session,
+        None,
         ((page - 1) * limit) as i64,
         (limit + 1) as i64,
     )
@@ -50,13 +49,28 @@ async fn load(ctx: &PageContext, actor: i64, page: usize) -> Result<view::Page, 
     rows.truncate(limit);
     let mut invitations = Vec::new();
     for row in rows {
+        let repository =
+            db::repositories::records::get_repository_by_id(&ctx.state.pool, row.repo_id)
+                .await
+                .map_err(|_| Error::Unavailable)?
+                .ok_or(Error::Unavailable)?;
+        let owner = db::repositories::records::repository_owner_name(&ctx.state.pool, row.repo_id)
+            .await
+            .map_err(|_| Error::Unavailable)?
+            .ok_or(Error::Unavailable)?;
+        let inviter = db::users::accounts::get_user_by_id(&ctx.state.pool, row.inviter_id)
+            .await
+            .map_err(|_| Error::Unavailable)?
+            .ok_or(Error::Unavailable)?;
         invitations.push(view::Invitation {
-            id: row.invitation.id,
-            owner: row.owner,
-            repository: row.repository,
-            inviter: row.inviter,
-            access: db::models::AccessLevel::from(row.invitation.permission).as_str().into(),
-            created: row.invitation.created_at.to_rfc3339(),
+            id: row.id,
+            owner,
+            repository: repository.name,
+            inviter: inviter.username,
+            access: db::models::AccessLevel::from(row.permission)
+                .as_str()
+                .into(),
+            created: row.created_at.to_rfc3339(),
         });
     }
     Ok(view::Page {
@@ -110,8 +124,7 @@ async fn respond(
         "decline" => false,
         _ => return ctx.error(StatusCode::NOT_FOUND, "Unknown invitation action."),
     };
-    let authority = ctx.database_actor(actor);
-    match collaborators::respond(&ctx.state.pool, authority, id, accept).await {
+    match collaborators::respond(&ctx.state.pool, actor, id, accept).await {
         Ok(()) => ctx.redirect("/settings/invitations"),
         Err(error) => refusal(&ctx, error),
     }

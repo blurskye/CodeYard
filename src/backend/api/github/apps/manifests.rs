@@ -16,7 +16,6 @@ use axum::{
 };
 use serde_json::{json, Value};
 use std::sync::Arc;
-/// GitHub documents this conversion's 422 as `validation-error-simple`.
 pub(super) async fn convert(
     State(state): State<Arc<AppState>>,
     Path(code): Path<String>,
@@ -31,7 +30,7 @@ pub(super) async fn convert(
         .ok_or_else(Error::missing)?;
     let value: Value = serde_json::from_str(&draft.manifest).map_err(Error::unavailable)?;
     let manifest = apps::manifest(&value).ok_or_else(|| {
-        Error::invalid_simple("Invalid manifest or unsupported permissions, events or setup automation")
+        Error::invalid("Invalid manifest or unsupported permissions, events or setup automation")
     })?;
     let webhook_secret = manifest.hook_url.as_ref().map(|_| oauth_apps::random());
     let fields = if let Some(url) = &manifest.hook_url {
@@ -48,7 +47,7 @@ pub(super) async fn convert(
             secret: webhook_secret.clone().unwrap_or_default(),
         };
         let mut fields = settings::validated(&form).map_err(|error| match error {
-            HookError::Invalid(message) => Error::invalid_simple(message),
+            HookError::Invalid(message) => Error::invalid(message),
             _ => Error::unavailable(()),
         })?;
         fields.events = manifest.events.clone();
@@ -108,7 +107,7 @@ pub(super) async fn convert(
             .and_then(sqlx::Error::as_database_error)
             .is_some_and(|error| error.is_unique_violation());
         if unique {
-            Error::invalid_simple("App name is already registered")
+            Error::invalid("App name is already registered")
         } else {
             tracing::warn!(%error,"App manifest conversion failed");
             Error::unavailable(error)

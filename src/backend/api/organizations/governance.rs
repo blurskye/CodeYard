@@ -126,7 +126,7 @@ pub(super) async fn recover(
     };
     // DAO atomically rechecks persisted staff/active status, membership, suspended
     // governance and mandatory audit. No ordinary tenant operation uses this gate.
-    let (status, message) = match recover_suspended_organization_owner(&ctx.state.pool, (actor, crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()), org, target).await {
+    let (status, message) = match recover_suspended_organization_owner(&ctx.state.pool, actor, org, target).await {
         Ok(OrganizationOutcome::Applied(_)) => return ctx.redirect(INDEX),
         Ok(_) => (StatusCode::CONFLICT, "Recovery was not applied. Confirm suspended governance and an eligible current member."),
         Err(_) => (StatusCode::SERVICE_UNAVAILABLE, "Organization recovery is temporarily unavailable; no success was confirmed."),

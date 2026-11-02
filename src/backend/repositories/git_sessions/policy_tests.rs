@@ -225,9 +225,7 @@ mod fixture {
                     (Some(organization.id), Some((organization.id, team.id)))
                 }
             };
-            let mut options = git2::RepositoryInitOptions::new();
-            options.bare(true).initial_head("main");
-            let bare = git2::Repository::init_opts(&path, &options).unwrap();
+            let bare = git2::Repository::init_bare(&path).unwrap();
             let path = std::fs::canonicalize(path).unwrap();
             let tree_oid = bare.treebuilder(None).unwrap().write().unwrap();
             let tree = bare.find_tree(tree_oid).unwrap();
@@ -647,7 +645,7 @@ mod fixture {
                 .unwrap();
         }
         assert_eq!(
-            crate::backend::git::published_refs_in_use(&fixture.path)
+            crate::backend::git::branches_and_tags_in_use(&fixture.path)
                 .unwrap()
                 .count,
             10_000
@@ -1969,7 +1967,7 @@ mod fixture {
             assert!(repository.size_bytes > 0);
             for _ in 0..runs.len() {
                 let run =
-                    db::ci::claim_ci_run(&fixture.pool, "worker", "local", &[fixture.actor_id], &crate::backend::ci::CiConfig::default().platform_labels())
+                    db::ci::claim_ci_run(&fixture.pool, "worker", "local", &[fixture.actor_id])
                         .await
                         .unwrap()
                         .unwrap();

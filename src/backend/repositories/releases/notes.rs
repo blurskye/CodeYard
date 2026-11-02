@@ -6,7 +6,6 @@ use serde::Deserialize;
 use std::fmt::Write;
 
 pub struct ReleaseNotes {
-    pub target: String,
     pub name: String,
     pub body: String,
 }
@@ -195,9 +194,7 @@ pub async fn generate_notes(
         .release_history(&head.sha, input.previous_tag, input.tag)
         .await
         .map_err(ReleaseError::Git)?;
-    access::check_write(pool, repository_id, actor).await?;
     let config = configuration(&store, &head.sha, input.configuration_path).await?;
-    access::check_write(pool, repository_id, actor).await?;
     let pulls = db::releases::release_note_pulls(pool, repository_id, &history.commits)
         .await
         .map_err(unavailable)?;
@@ -207,9 +204,10 @@ pub async fn generate_notes(
         .ok_or(ReleaseError::NotFound)?;
     let encode = crate::webui::encode_component;
     let base = format!(
-        "{}{}",
+        "{}/{}/{}",
         link_origin(),
-        crate::webui::repository_path(&owner, &repository.name)
+        encode(&owner),
+        encode(&repository.name)
     );
     let categories = if config.changelog.categories.is_empty() {
         vec![Category {
@@ -258,11 +256,11 @@ pub async fn generate_notes(
     let comparison = if let Some(previous) = history.previous_tag {
         format!(
             "{base}/compare/{}...{}",
-            encode(&format!("refs/tags/{previous}")),
-            encode(&format!("refs/tags/{}", input.tag))
+            encode(&previous),
+            encode(input.tag)
         )
     } else {
-        format!("{base}/commits/{}", encode(&format!("refs/tags/{}", input.tag)))
+        format!("{base}/commits/{}", encode(input.tag))
     };
     let _ = write!(body, "**Full Changelog**: {comparison}");
     validate_fields(&ReleaseFields {
@@ -270,10 +268,7 @@ pub async fn generate_notes(
         body: Some(body.clone()),
         ..Default::default()
     })?;
-    // Slow Git/history reads cannot lend a revoked writer a private response.
-    access::check_write(pool, repository_id, actor).await?;
     Ok(ReleaseNotes {
-        target: head.sha,
         name: input.tag.to_owned(),
         body,
     })

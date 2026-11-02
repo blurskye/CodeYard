@@ -71,17 +71,23 @@ pub async fn list_ci_workflows(
         .unwrap_or(&repository.default_branch);
 
     let store = repo_store(&repository, state.cluster.as_ref());
-    let workflows = match list_workflows_for_ref(&store, git_ref).await {
-        Ok(workflows) => workflows,
-        Err(error) if error.downcast_ref::<crate::backend::repositories::store::RepoError>().is_some_and(|error| error.kind == crate::backend::repositories::store::ErrorKind::NotFound) => {
-            if query.git_ref.is_none() { Vec::new() } else {
-                return Err((StatusCode::NOT_FOUND, Json(ApiError::new("not_found", "Workflow ref not found"))));
-            }
+    let workflows = async {
+        // A repository with no commits has no workflows yet.
+        if store.refs().await?.is_empty() {
+            return Ok(Vec::new());
         }
-        Err(_) => return Err((StatusCode::SERVICE_UNAVAILABLE, Json(ApiError::new("ci_error", "Workflow definitions are unavailable")))),
-    };
-    let user = get_current_user(&state.pool, &headers).await?;
-    super::jobs::ensure_repo_read_access(&state, &user, &repository).await?;
+        list_workflows_for_ref(&store, git_ref).await
+    }
+    .await
+    .map_err(|_| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiError::new(
+                "ci_error",
+                "Workflow definitions are unavailable",
+            )),
+        )
+    })?;
 
     Ok(Json(ListWorkflowsResponse {
         workflows: workflows

@@ -1,4 +1,4 @@
-use super::{invalid, Conditions, Definition, Invalid, Property, PropertySource, Target};
+use super::{invalid, Definition, Invalid, Property, PropertySource, Target};
 use crate::backend::{
     ci::workflows::WorkflowMatchBudget, db::repositories::protection::branch_pattern_matches,
 };
@@ -82,13 +82,15 @@ fn matches_property(property: &Property, repository: &RepositoryContext<'_>) -> 
         .iter()
         .any(|expected| expected == value)
 }
-impl Conditions {
+impl Definition {
     pub fn matches_repository(
         &self,
         repository: &RepositoryContext<'_>,
         budget: &mut WorkflowMatchBudget,
     ) -> Result<bool, Invalid> {
-        let conditions = self;
+        let Some(conditions) = &self.conditions else {
+            return Ok(true);
+        };
         if let Some(names) = &conditions.repository_name {
             return Ok(matches_any(&names.include, repository.name, None, budget)?
                 && !matches_any(&names.exclude, repository.name, None, budget)?);
@@ -109,12 +111,6 @@ impl Conditions {
         // A persisted unknown selector is not an absent condition.
         Err(invalid("conditions", "The repository selector is invalid"))
     }
-}
-impl Definition {
-    pub fn matches_repository(&self, repository: &RepositoryContext<'_>, budget: &mut WorkflowMatchBudget) -> Result<bool, Invalid> {
-        self.conditions.as_ref().map_or(Ok(true), |conditions| conditions.matches_repository(repository, budget))
-    }
-
     pub fn matches_reference(
         &self,
         reference: &str,

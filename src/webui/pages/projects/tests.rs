@@ -9,7 +9,6 @@ fn page() -> Page {
         values: vec![(2, "todo".into(), "Todo".into())],
     };
     Page {
-        view_state: Default::default(),
         owner: "alice".into(),
         base: "/users/alice/projects".into(),
         csrf_token: "csrf-marker".into(),

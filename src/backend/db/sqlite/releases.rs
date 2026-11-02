@@ -1,6 +1,4 @@
 mod notes;
-mod read;
-pub use read::read_release_snapshot;
 use crate::backend::db::models::{File, Release, ReleaseAsset, ReleaseRow};
 use crate::backend::db::releases::{
     NewReleaseAsset, ReleaseChanges, ReleaseFields, ReleaseRefusal,
@@ -54,17 +52,7 @@ async fn set_latest_flag(
     release_id: i64,
     fields: &ReleaseFields,
 ) -> Result<()> {
-    if matches!(fields.make_latest, crate::backend::db::releases::LatestSelection::Legacy) {
-        let rows = sqlx::query_as("SELECT id,tag_name,created_at FROM releases WHERE repo_id=?1 AND NOT is_draft AND NOT is_prerelease")
-            .bind(repo_id).fetch_all(&mut **tx).await?;
-        let candidate = crate::backend::db::releases::legacy_latest(&rows);
-        sqlx::query("UPDATE releases SET is_latest=0 WHERE repo_id=?1 AND is_latest")
-            .bind(repo_id).execute(&mut **tx).await?;
-        sqlx::query("UPDATE releases SET is_latest=1 WHERE id=?1")
-            .bind(candidate).execute(&mut **tx).await?;
-        return Ok(());
-    }
-    let wants = matches!(fields.make_latest, crate::backend::db::releases::LatestSelection::Promote) && !fields.is_draft && !fields.is_prerelease;
+    let wants = fields.make_latest && !fields.is_draft && !fields.is_prerelease;
     if wants {
         sqlx::query(
             "UPDATE releases SET is_latest = 0 WHERE repo_id = ?1 AND is_latest = 1 AND id <> ?2",
@@ -185,17 +173,6 @@ pub async fn update_release_with_publication(
         !current.is_immutable || fields.is_draft != Some(true),
         ReleaseRefusal::Immutable
     );
-    if let Some(tag) = &fields.tag {
-        anyhow::ensure!(!current.is_immutable || tag == &current.tag_name, ReleaseRefusal::Immutable);
-        let taken: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM releases WHERE repo_id=?1 AND tag_name=?2 AND id<>?3)")
-            .bind(repo_id).bind(tag).bind(release_id).fetch_one(&mut *tx).await?;
-        anyhow::ensure!(!taken, ReleaseRefusal::TagTaken);
-        if tag != &current.tag_name {
-            super::repositories::immutable_releases::assert_available(&mut tx, repo_id, tag).await?;
-        }
-    }
-    let tag = fields.tag.clone().unwrap_or_else(|| current.tag_name.clone());
-    let target = fields.target.clone().unwrap_or_else(|| current.target_commitish.clone());
     let fields = fields.apply_to(&current);
     // A release first published keeps its date. A draft gets one when it is published.
     sqlx::query(
@@ -203,15 +180,13 @@ pub async fn update_release_with_publication(
              published_at = CASE WHEN ?3 = 1 THEN NULL
                                  WHEN published_at IS NULL THEN strftime('%Y-%m-%dT%H:%M:%f000Z','now')
                                  ELSE published_at END
-         , tag_name = ?6, target_commitish = ?7 WHERE id = ?5",
+         WHERE id = ?5",
     )
     .bind(&fields.name)
     .bind(&fields.body)
     .bind(fields.is_draft)
     .bind(fields.is_prerelease)
     .bind(release_id)
-    .bind(tag)
-    .bind(target)
     .execute(&mut *tx)
     .await?;
     set_latest_flag(&mut tx, repo_id, release_id, &fields).await?;
@@ -265,17 +240,11 @@ pub async fn delete_release(
 pub async fn add_release_asset(
     pool: &SqlitePool,
     actor_id: i64,
-    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     repo_id: i64,
     release_id: i64,
     asset: &NewReleaseAsset<'_>,
-    token: Option<i64>,
 ) -> Result<ReleaseAsset> {
     let mut tx = begin_write(pool, actor_id, repo_id).await?;
-    anyhow::ensure!(super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?, ReleaseRefusal::Denied);
-    if let Some(token) = token {
-        anyhow::ensure!(super::users::tokens::repository_write_on(&mut tx, token, actor_id, repo_id, "contents").await?, ReleaseRefusal::Denied);
-    }
     let release = release_in_repo(&mut tx, repo_id, release_id).await?;
     anyhow::ensure!(!release.is_immutable, ReleaseRefusal::Immutable);
     let taken: Option<i64> =
@@ -494,11 +463,6 @@ pub async fn latest_release(pool: &SqlitePool, repo_id: i64) -> Result<Option<Re
     .await?)
 }
 
-pub async fn list_asset_files(pool: &SqlitePool, release_id: i64) -> Result<Vec<crate::backend::db::releases::ReleaseAssetFile>> {
-    Ok(sqlx::query_as("SELECT a.*,f.sha256_hex,u.id AS uploader_id,u.username AS uploader_name,u.is_admin AS uploader_is_admin FROM release_assets a JOIN files f ON f.id=a.file_id LEFT JOIN users u ON u.id=f.user_id WHERE a.release_id=?1 ORDER BY a.name,a.id")
-        .bind(release_id).fetch_all(pool).await?)
-}
-
 pub async fn list_release_assets(pool: &SqlitePool, release_id: i64) -> Result<Vec<ReleaseAsset>> {
     Ok(sqlx::query_as::<_, ReleaseAsset>(&format!(
         "SELECT {ASSET_COLUMNS} FROM release_assets WHERE release_id = ?1 ORDER BY name"
@@ -515,20 +479,6 @@ pub async fn get_repository_release_asset(
 ) -> Result<Option<ReleaseAsset>> {
     Ok(sqlx::query_as("SELECT a.* FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE r.repo_id=?1 AND a.id=?2")
         .bind(repo_id).bind(asset_id).fetch_optional(pool).await?)
-}
-
-pub async fn download_asset(
-    pool: &SqlitePool,
-    viewer: Option<i64>,
-    repo: i64,
-    tag: Option<&str>,
-    name: Option<&str>,
-    asset: Option<i64>,
-) -> Result<Option<ReleaseAsset>> {
-    let readable = super::repositories::access::readable_condition();
-    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
-    Ok(sqlx::query_as(&format!("SELECT a.* FROM release_assets a JOIN releases rel ON rel.id=a.release_id JOIN repositories r ON r.id=rel.repo_id LEFT JOIN users u ON u.id=?1 WHERE r.id=?2 AND {readable} AND (NOT rel.is_draft OR ({access})>=3 OR (r.owner_kind='user' AND u.is_admin)) AND (?3 IS NULL OR rel.tag_name=?3) AND (?4 IS NULL OR a.name=?4) AND (?5 IS NULL OR a.id=?5)"))
-        .bind(viewer).bind(repo).bind(tag).bind(name).bind(asset).fetch_optional(pool).await?)
 }
 
 pub async fn get_release_asset_by_name(

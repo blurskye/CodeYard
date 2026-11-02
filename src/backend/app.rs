@@ -21,7 +21,6 @@ pub struct AppState {
     pub storage: Arc<ObjectStore>,
     pub notification_broadcaster: Arc<NotificationBroadcaster>,
     pub ci_runs: Arc<CiRuns>,
-    pub(crate) oidc_keys: Arc<crate::backend::ci::oidc::SigningKeys>,
     pub(crate) git_tasks: Arc<crate::backend::repositories::git_sessions::GitTasks>,
     pub(crate) form_reads: Arc<tokio::sync::Semaphore>,
     pub(crate) anonymous_form_reads: Arc<tokio::sync::Semaphore>,
@@ -42,9 +41,6 @@ impl AppState {
         ci_config: CiConfig,
         cluster: Option<crate::backend::cluster::NodeContext>,
     ) -> Self {
-        if cluster.is_none() {
-            crate::backend::repositories::releases::immutable::register_local_identity(storage.state_directory(), &repos_path);
-        }
         let notification_broadcaster = Arc::new(NotificationBroadcaster::new(&pool));
         let ci_runs = Arc::new(CiRuns::new(
             pool.clone(),
@@ -53,10 +49,8 @@ impl AppState {
             cluster.clone(),
             notification_broadcaster.clone(),
         ));
-        let oidc_keys = Arc::new(crate::backend::ci::oidc::SigningKeys::new(pool.clone()));
         Self {
             pool,
-            oidc_keys,
             repos_path,
             cluster,
             secret_encryptor,

@@ -5,7 +5,24 @@ use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::collections::BTreeMap;
 
-use codeyard_actions::workflow::PERMISSION_SCOPES as SCOPES;
+const SCOPES: &[&str] = &[
+    "actions",
+    "artifact-metadata",
+    "attestations",
+    "checks",
+    "contents",
+    "deployments",
+    "discussions",
+    "id-token",
+    "issues",
+    "models",
+    "packages",
+    "pages",
+    "pull-requests",
+    "security-events",
+    "statuses",
+    "metadata",
+];
 
 #[derive(Clone, Default, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Permissions(pub BTreeMap<String, u8>);
@@ -25,7 +42,7 @@ impl Permissions {
                         (
                             (*scope).into(),
                             match (*scope, value.as_str()) {
-                                ("models" | "metadata" | "vulnerability-alerts", _) => 1,
+                                ("models" | "metadata", _) => 1,
                                 ("id-token", "read-all") => 0,
                                 (_, "write-all") => 2,
                                 _ => 1,
@@ -42,7 +59,7 @@ impl Permissions {
                     let level = match level.as_str() {
                         Some("none") => 0,
                         Some("read") if name != "id-token" => 1,
-                        Some("write") if codeyard_actions::workflow::permission_level_allowed(name, "write") => 2,
+                        Some("write") if name != "models" && name != "metadata" => 2,
                         _ => bail!("invalid workflow permission"),
                     };
                     result.insert(name.to_owned(), level);
@@ -63,10 +80,6 @@ impl Permissions {
 
     pub fn jobs(bytes: &[u8], permissive: bool, fork: bool) -> Result<BTreeMap<String, Self>> {
         let workflow = super::workflows::parse_yaml(bytes)?;
-        Self::jobs_from_yaml(&workflow, permissive, fork)
-    }
-
-    fn jobs_from_yaml(workflow: &Value, permissive: bool, fork: bool) -> Result<BTreeMap<String, Self>> {
         let default = if permissive {
             Self(
                 SCOPES
@@ -75,7 +88,7 @@ impl Permissions {
                     .map(|scope| {
                         (
                             (*scope).into(),
-                            if matches!(*scope, "models" | "metadata" | "vulnerability-alerts") {
+                            if *scope == "models" || *scope == "metadata" {
                                 1
                             } else {
                                 2
@@ -87,7 +100,6 @@ impl Permissions {
         } else {
             Self(BTreeMap::from([
                 ("contents".into(), 1),
-                ("packages".into(), 1),
                 ("metadata".into(), 1),
             ]))
         };
@@ -144,7 +156,7 @@ pub async fn issue(
 }
 
 /// Reusable calls multiply job identities, so credentials and environment bindings share one budget.
-pub(crate) const MAX_EXPANDED_JOBS: usize = 1000;
+pub(super) const MAX_EXPANDED_JOBS: usize = 1000;
 
 pub(crate) async fn issue_selected(
     pool: &DbPool,
@@ -157,9 +169,8 @@ pub(crate) async fn issue_selected(
         replay.is_none() || run.engine.as_deref() == Some("codeyard-actions"),
         "Partial re-runs require a native workflow"
     );
-    let parsed = super::workflows::parse_definitions(definitions).await?;
     fn policies_for(
-        definitions: &BTreeMap<String, Value>,
+        definitions: &BTreeMap<String, Vec<u8>>,
         path: &str,
         prefix: &str,
         ceiling: Option<&Permissions>,
@@ -168,19 +179,29 @@ pub(crate) async fn issue_selected(
         policies: &mut BTreeMap<String, Permissions>,
     ) -> Result<()> {
         ensure!(
-            prefix.split_once(':').map_or(prefix, |(_, job)| job).matches('/').count() < codeyard_actions::workflow::MAX_REUSABLE_LEVELS,
+            prefix.matches('/').count() < 8,
             "called workflow nesting exceeds limit"
         );
-        let yaml = definitions.get(path).ok_or_else(|| anyhow::anyhow!("missing called workflow"))?;
-        let mut jobs = Permissions::jobs_from_yaml(yaml, permissive, fork)?;
+        let bytes = definitions
+            .get(path)
+            .ok_or_else(|| anyhow::anyhow!("missing called workflow"))?;
+        let yaml = super::workflows::parse_yaml(bytes)?;
+        let mut jobs = Permissions::jobs(bytes, permissive, fork)?;
         if let Some(ceiling) = ceiling {
             let default = Permissions::parse(yaml.get("permissions"), ceiling, fork)?;
-            ensure!(default.0.iter().all(|(scope, level)| *level <= ceiling.0.get(scope).copied().unwrap_or(0)), "Called workflow permissions exceed caller permissions");
             for (id, permissions) in &mut jobs {
                 let job = yaml.get("jobs").and_then(|jobs| jobs.get(id));
-                let requested = Permissions::parse(job.and_then(|job| job.get("permissions")), &default, fork)?;
-                ensure!(requested.0.iter().all(|(scope, level)| *level <= ceiling.0.get(scope).copied().unwrap_or(0)), "Called job permissions exceed caller permissions");
-                *permissions = requested;
+                *permissions = Permissions::intersection(
+                    [
+                        Permissions::parse(
+                            job.and_then(|job| job.get("permissions")),
+                            &default,
+                            fork,
+                        )?,
+                        ceiling.clone(),
+                    ]
+                    .into_iter(),
+                );
             }
         }
         for (id, permissions) in jobs {
@@ -217,7 +238,7 @@ pub(crate) async fn issue_selected(
     let mut policies = BTreeMap::new();
     for path in run.workflow_path.split(',').filter(|path| !path.is_empty()) {
         policies_for(
-            &parsed,
+            definitions,
             path,
             &format!("{path}:"),
             None,
@@ -257,7 +278,7 @@ pub(crate) async fn issue_selected(
     }
     let values: BTreeMap<_, _> = policies
         .keys()
-        .map(|key| (key.clone(), format!("{}{}", crate::backend::identity::tokens::ACTIONS_PREFIX, super::runtime::secret())))
+        .map(|key| (key.clone(), format!("ghs_{}", super::runtime::secret())))
         .collect();
     let stored: Vec<_> = policies
         .iter()
@@ -304,7 +325,7 @@ pub(crate) async fn issue_selected(
             let mut path = path;
             let mut job = jobs;
             while let Some((caller, child)) = job.split_once('/') {
-                let workflow = &parsed[path];
+                let workflow = super::workflows::parse_yaml(&definitions[path])?;
                 let reference = workflow
                     .get("jobs")
                     .and_then(|jobs| jobs.get(caller))
@@ -321,9 +342,8 @@ pub(crate) async fn issue_selected(
             }
             (path, Some(job))
         };
-        let workflow = &parsed[path];
-        let root = key.split_once(':').map_or(path, |(root, _)| root);
-        let name = parsed[root].get("name").and_then(Value::as_str).unwrap_or(root);
+        let workflow = super::workflows::parse_yaml(&definitions[path])?;
+        let name = workflow.get("name").and_then(Value::as_str).unwrap_or(path);
         let environment = job
             .and_then(|job| workflow.get("jobs")?.get(job)?.get("environment"))
             .and_then(|env| {

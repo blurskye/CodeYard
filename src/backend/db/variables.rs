@@ -1,6 +1,5 @@
-//! Actions variables are plain text; repository collaborators may inspect their values.
+//! Actions variables are plain text; repository readers may inspect their values.
 use super::DbPool;
-use codeyard_actions::values::MAX_VARIABLE_BYTES;
 use chrono::{DateTime, Utc};
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize, sqlx::FromRow)]
@@ -32,11 +31,11 @@ pub enum VariableError {
 }
 
 pub fn validate(name: &str, value: &str) -> Result<(), VariableError> {
-    use codeyard_actions::values::InvalidValue;
-    codeyard_actions::values::validate(name, value).map_err(|error| match error {
-        InvalidValue::Name | InvalidValue::ReservedName => VariableError::InvalidName,
-        InvalidValue::Nul | InvalidValue::TooLarge => VariableError::InvalidValue,
-    })
+    super::secrets::validate_repository_secret(name, "").map_err(|_| VariableError::InvalidName)?;
+    if value.len() > 48 * 1024 || value.contains('\0') {
+        return Err(VariableError::InvalidValue);
+    }
+    Ok(())
 }
 
 pub fn validate_all(variables: &[(String, String)]) -> Result<(), VariableError> {
@@ -57,7 +56,7 @@ fn validate_set(variables: &[(String, String)], limit: usize) -> Result<(), Vari
         validate(name, value)?;
         bytes += name.len() + value.len();
     }
-    if bytes > MAX_VARIABLE_BYTES {
+    if bytes > 256 * 1024 {
         return Err(VariableError::Limit);
     }
     Ok(())
@@ -69,7 +68,7 @@ pub(crate) fn ensure_room(
     name: &str,
     value: &str,
 ) -> Result<(), VariableError> {
-    if count >= 500 || bytes + (name.len() + value.len()) as i64 > MAX_VARIABLE_BYTES as i64 {
+    if count >= 500 || bytes + (name.len() + value.len()) as i64 > 256 * 1024 {
         return Err(VariableError::Limit);
     }
     Ok(())
@@ -77,15 +76,15 @@ pub(crate) fn ensure_room(
 
 native_operation!(crate::backend::db::postgres::variables::list,
     crate::backend::db::sqlite::variables::list,
-    fn list(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64) -> Result<Vec<Variable>, VariableError>);
+    fn list(pool: &DbPool, actor: i64, repo: i64) -> Result<Vec<Variable>, VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::save,
     crate::backend::db::sqlite::variables::save,
-    fn save(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
+    fn save(pool: &DbPool, actor: i64, repo: i64, previous: Option<&str>, name: &str, value: Option<&str>) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::delete,
     crate::backend::db::sqlite::variables::delete,
-    fn delete(pool: &DbPool, actor: i64, credential: &super::users::accounts::AccountCredential<'_>, repo: i64, name: &str) -> Result<(), VariableError>);
+    fn delete(pool: &DbPool, actor: i64, repo: i64, name: &str) -> Result<(), VariableError>);
 
 native_operation!(crate::backend::db::postgres::variables::for_run,
     crate::backend::db::sqlite::variables::for_run,

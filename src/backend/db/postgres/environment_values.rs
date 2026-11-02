@@ -6,14 +6,16 @@ use sqlx::{PgConnection as Connection, PgPool as Pool};
 
 async fn authorize(
     connection: &mut sqlx::Transaction<'_, sqlx::Postgres>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo: i64,
-    permission: &str,
+    admin: bool,
 ) -> Result<(), ValueError> {
-    let actor = actor.into();
-    let allowed = super::discussions::lock_admin_authority(connection, actor.user_id, repo).await
-        .map_err(ValueError::Authority)?
-        && super::credentials::repository(connection, &actor, repo, permission, true).await.map_err(ValueError::Authority)?;
+    let allowed = if admin {
+        super::discussions::lock_admin_authority(connection, actor, repo).await
+    } else {
+        super::discussions::lock_contribution_authority(connection, actor, repo).await
+    }
+    .map_err(ValueError::Authority)?;
     if allowed {
         Ok(())
     } else {
@@ -74,38 +76,26 @@ async fn lock_environment(
     id.map(|_| ()).ok_or(ValueError::NotFound)
 }
 
-pub async fn create(pool: &Pool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, name: &str) -> Result<(), ValueError> {
+pub async fn create(pool: &Pool, actor: i64, repo: i64, name: &str) -> Result<(), ValueError> {
     let key = environment_values::environment_key(name)?;
     let mut tx = pool.begin().await?;
-    authorize(&mut tx, actor, repo, "administration").await?;
+    authorize(&mut tx, actor, repo, true).await?;
     sqlx::query("INSERT INTO deployment_environments(repo_id,name_key,name) VALUES($1,$2,$3) ON CONFLICT(repo_id,name_key) DO NOTHING").bind(repo).bind(key).bind(name).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
 
-pub async fn environments(pool: &Pool, actor: i64, repo: i64, offset: i64) -> Result<Vec<String>, ValueError> {
+pub async fn environments(pool: &Pool, actor: i64, repo: i64) -> Result<Vec<String>, ValueError> {
     let mut tx = pool.begin().await?;
     authorize_read(&mut tx, actor, repo, true).await?;
     let names = sqlx::query_scalar(
-        "SELECT name FROM deployment_environments WHERE repo_id=$1 ORDER BY name_key LIMIT $2 OFFSET $3",
+        "SELECT name FROM deployment_environments WHERE repo_id=$1 ORDER BY name_key",
     )
     .bind(repo)
-    .bind((environment_values::ENVIRONMENTS_PER_PAGE + 1) as i64)
-    .bind(offset.max(0))
     .fetch_all(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(names)
-}
-
-pub async fn environment(pool: &Pool, actor: i64, repo: i64, name: &str) -> Result<Option<String>, ValueError> {
-    let key = environment_values::environment_key(name)?;
-    let mut tx = pool.begin().await?;
-    authorize_read(&mut tx, actor, repo, true).await?;
-    let name = sqlx::query_scalar("SELECT name FROM deployment_environments WHERE repo_id=$1 AND name_key=$2")
-        .bind(repo).bind(key).fetch_optional(&mut *tx).await?;
-    tx.commit().await?;
-    Ok(name)
 }
 
 pub async fn list(
@@ -127,7 +117,7 @@ pub async fn list(
 pub async fn save(
     pool: &Pool,
     encryptor: Option<&SecretEncryptor>,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     environment: &str,
     input: &Save<'_>,
@@ -137,7 +127,7 @@ pub async fn save(
     let name = input.name.to_ascii_uppercase();
     let previous = input.previous.unwrap_or(input.name).to_ascii_uppercase();
     let mut tx = pool.begin().await?;
-    authorize(&mut tx, actor, repo, "environments").await?;
+    authorize(&mut tx, actor, repo, true).await?;
     lock_environment(&mut tx, repo, &key).await?;
     let old: Option<String> = sqlx::query_scalar("SELECT value FROM repo_environment_values WHERE repo_id=$1 AND environment=$2 AND kind=$3 AND name=$4").bind(repo).bind(&key).bind(input.kind.as_str()).bind(&previous).fetch_optional(&mut *tx).await?;
     if input.kind == Kind::Variable {
@@ -159,14 +149,14 @@ pub async fn save(
         .or(old.as_deref())
         .ok_or(ValueError::InvalidValue)?;
     let (count, bytes): (i64, i64) = sqlx::query_as("SELECT COUNT(*),COALESCE(SUM(length(name)+COALESCE(octet_length(encrypted_value),octet_length(value))),0) FROM repo_environment_values WHERE repo_id=$1 AND environment=$2 AND kind=$3 AND name<>$4").bind(repo).bind(&key).bind(input.kind.as_str()).bind(&previous).fetch_one(&mut *tx).await?;
-    if count >= codeyard_actions::values::MAX_SCOPE_VALUES as i64 {
+    if count >= 100 {
         return Err(ValueError::Limit);
     }
     if input.kind == Kind::Secret {
         super::super::secrets::ensure_room_for_secret(count, bytes, &name, value)
             .map_err(|_| ValueError::SecretsSize)?;
     }
-    if input.kind == Kind::Variable && bytes + (name.len() + value.len()) as i64 > codeyard_actions::values::MAX_VARIABLE_BYTES as i64 {
+    if input.kind == Kind::Variable && bytes + (name.len() + value.len()) as i64 > 256 * 1024 {
         return Err(ValueError::Size);
     }
     let (plain, encrypted, nonce) = if input.kind == Kind::Secret {
@@ -189,7 +179,7 @@ pub async fn save(
 
 pub async fn delete(
     pool: &Pool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     environment: &str,
     kind: Kind,
@@ -197,7 +187,7 @@ pub async fn delete(
 ) -> Result<(), ValueError> {
     let key = environment_values::environment_key(environment)?;
     let mut tx = pool.begin().await?;
-    authorize(&mut tx, actor, repo, "environments").await?;
+    authorize(&mut tx, actor, repo, true).await?;
     lock_environment(&mut tx, repo, &key).await?;
     let result = sqlx::query("DELETE FROM repo_environment_values WHERE repo_id=$1 AND environment=$2 AND kind=$3 AND name=$4").bind(repo).bind(key).bind(kind.as_str()).bind(name.to_ascii_uppercase()).execute(&mut *tx).await?;
     if result.rows_affected() == 0 {

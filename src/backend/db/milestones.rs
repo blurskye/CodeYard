@@ -19,16 +19,14 @@ pub enum MilestoneWriteRefusal {
     Denied,
     #[error("Milestone not found")]
     NotFound,
-    #[error("Milestone changed since the form was loaded")]
-    Conflict,
     #[error("A milestone with this title already exists")]
     DuplicateTitle,
 }
 
 pub struct MilestoneInput<'a> {
-    pub title: Option<&'a str>,
-    pub description: Option<Option<&'a str>>,
-    pub due_on: Option<Option<chrono::DateTime<chrono::Utc>>>,
+    pub title: &'a str,
+    pub description: Option<&'a str>,
+    pub due_on: Option<chrono::DateTime<chrono::Utc>>,
     pub state: Option<&'a str>,
 }
 
@@ -42,23 +40,9 @@ pub(crate) fn due_on(day: Option<&str>) -> Result<Option<chrono::DateTime<chrono
     .transpose()
 }
 
-pub(crate) fn calendar_due_on(
-    current: Option<chrono::DateTime<chrono::Utc>>,
-    submitted: Option<chrono::DateTime<chrono::Utc>>,
-) -> Option<chrono::DateTime<chrono::Utc>> {
-    match (current, submitted) {
-        (Some(current), Some(day)) if current.date_naive() == day.date_naive() => Some(current),
-        (_, changed) => changed,
-    }
-}
-
 native_operation!(crate::backend::db::postgres::milestones::save_milestone,
     crate::backend::db::sqlite::milestones::save_milestone,
-    fn save_milestone(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
-
-native_operation!(crate::backend::db::postgres::milestones::save_milestone_checked,
-    crate::backend::db::sqlite::milestones::save_milestone_checked,
-    fn save_milestone_checked(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>, expected: Option<&str>) -> Result<Milestone>);
+    fn save_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, number: Option<i32>, input: MilestoneInput<'_>) -> Result<Milestone>);
 
 native_operation!(crate::backend::db::postgres::milestones::create_milestone,
     crate::backend::db::sqlite::milestones::create_milestone,
@@ -91,12 +75,7 @@ native_operation!(crate::backend::db::postgres::milestones::set_milestone_state,
 // Deletes the milestone and clears it from every issue that named it.
 native_operation!(crate::backend::db::postgres::milestones::delete_milestone,
     crate::backend::db::sqlite::milestones::delete_milestone,
-    fn delete_milestone(pool: &DbPool, actor_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
-
-native_operation!(crate::backend::db::postgres::milestones::read_milestones,
-    crate::backend::db::sqlite::milestones::read_milestones,
-    /// Read authority and milestone payloads share a single statement snapshot.
-    fn read_milestones(pool: &DbPool, viewer: Option<i64>, repo: i64, number: Option<i32>, state: Option<&str>, sort: &str, limit: i64, offset: i64) -> Result<Vec<MilestoneSummary>>);
+    fn delete_milestone(pool: &DbPool, actor_id: i64, repo_id: i64, number: i32, expected_id: i64) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::milestones::get_milestone,
     crate::backend::db::sqlite::milestones::get_milestone,
@@ -105,11 +84,6 @@ native_operation!(crate::backend::db::postgres::milestones::get_milestone,
 native_operation!(crate::backend::db::postgres::milestones::get_milestone_by_id,
     crate::backend::db::sqlite::milestones::get_milestone_by_id,
     fn get_milestone_by_id(pool: &DbPool, repo_id: i64, id: i64) -> Result<Option<MilestoneSummary>>);
-
-native_operation!(crate::backend::db::postgres::milestones::get_milestones_by_ids,
-    crate::backend::db::sqlite::milestones::get_milestones_by_ids,
-    /// The milestones of the repository among `ids` (at most 500) with their counts, in no order.
-    fn get_milestones_by_ids(pool: &DbPool, repo_id: i64, ids: &[i64]) -> Result<Vec<MilestoneSummary>>);
 
 // Every milestone of a repository, or only those in `state`, with due dates first.
 native_operation!(crate::backend::db::postgres::milestones::list_repo_milestones,
@@ -132,10 +106,10 @@ pub(crate) fn milestone_order(sort: &str) -> &'static str {
         "due-on-desc" => "due_on IS NULL, due_on DESC, number",
         "furthest-due" => "due_date IS NULL, due_date DESC, number",
         "most-complete" => {
-            "COALESCE(100.0 * closed_items / NULLIF(open_items + closed_items, 0), 0) DESC, number"
+            "COALESCE(100 * closed_items / NULLIF(open_items + closed_items, 0), 0) DESC, number"
         }
         "least-complete" => {
-            "COALESCE(100.0 * closed_items / NULLIF(open_items + closed_items, 0), 0), number"
+            "COALESCE(100 * closed_items / NULLIF(open_items + closed_items, 0), 0), number"
         }
         "most-issues" => "open_items + closed_items DESC, number",
         "least-issues" => "open_items + closed_items, number",

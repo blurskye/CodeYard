@@ -16,8 +16,6 @@ pub struct ReleaseItem {
     pub body: String,
     pub author: String,
     pub target: String,
-    /// The revision the source archives are cut from.
-    pub archive_revision: String,
     pub created_at: String,
     pub published_at: Option<String>,
     pub draft: bool,
@@ -283,7 +281,8 @@ fn detail(
     can_write: bool,
 ) -> Element {
     let base = repo.base();
-    let archive_ref = crate::webui::encode_component(&release.archive_revision);
+    // The archive names the tag's full ref, so a branch with the same name is not downloaded.
+    let archive_ref = crate::webui::encode_component(&format!("refs/tags/{}", release.tag));
     let delete_id = format!("delete-release-{}", release.id);
     rsx! {
         section { class: "collaboration-page releases-page release-detail", aria_label: "Release {release.title}",
@@ -321,9 +320,13 @@ fn detail(
             section { class: "releases-assets", aria_label: "Downloads",
                 h3 { "Downloads" }
                 ul { class: "releases-asset-list",
-                    if !release.draft {
-                        li { class: "releases-asset", {icon("archive")} a { class: "releases-asset-name", href: format!("{base}/archive/{archive_ref}.zip"), "Source code (zip)" } }
-                        li { class: "releases-asset", {icon("archive")} a { class: "releases-asset-name", href: format!("{base}/archive/{archive_ref}.tar.gz"), "Source code (tar.gz)" } }
+                    li { class: "releases-asset",
+                        {icon("archive")}
+                        a { class: "releases-asset-name", href: format!("{base}/archive/{archive_ref}.zip"), "Source code (zip)" }
+                    }
+                    li { class: "releases-asset",
+                        {icon("archive")}
+                        a { class: "releases-asset-name", href: format!("{base}/archive/{archive_ref}.tar.gz"), "Source code (tar.gz)" }
                     }
                     for asset in assets { {asset_row(asset)} }
                 }
@@ -381,7 +384,6 @@ fn form(
             if immutable {p {class:"collaboration-muted",{icon("lock")} " The tag and assets are immutable. " NavLink {href:release_url(repo,&draft.tag),"View locked assets and attestation"}}}
             if editing.is_none(){p {class:"collaboration-muted","When immutable releases is enabled, save a draft and attach all assets before publishing. Publication permanently reserves the tag name."}}
             form { method: "post", action: action.clone(), class: "releases-form", id: "release-form",
-                button { r#type: "submit", name: "intent", value: "save", hidden: true, tabindex: "-1", aria_hidden: "true", "Save release" }
                 {csrf(&repo.csrf_token)}
                 {repository_id(repo.id)}
                 if editing.is_some() { input { r#type: "hidden", name: "revision", value: draft.revision.clone() } }

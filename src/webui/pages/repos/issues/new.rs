@@ -68,8 +68,6 @@ pub struct FormField {
     pub text: String,
     /// The labels of a choice's options.
     pub options: Vec<String>,
-    #[serde(default)]
-    pub required_options: Vec<String>,
     pub multiple: bool,
     pub required: bool,
     /// The answer: the typed text, or the labels of the chosen options.
@@ -102,9 +100,8 @@ pub struct TemplateCard {
 }
 
 /// The template chooser a new issue opens on when the repository has issue templates.
-pub fn chooser(repo: &Repository, templates: &[TemplateCard], blank_allowed: bool, draft: &NewDraft) -> Element {
+pub fn chooser(repo: &Repository, templates: &[TemplateCard], blank_allowed: bool) -> Element {
     let url = format!("{}/new", repo.family_url(Kind::Issue));
-    let prefill = format!("&title={}&body={}", encode_component(&draft.title), encode_component(&draft.body));
     repos::chrome::chrome(
         &repo.chrome,
         rsx! {
@@ -114,7 +111,7 @@ pub fn chooser(repo: &Repository, templates: &[TemplateCard], blank_allowed: boo
                 ul { class: "collaboration-template-list",
                     for template in templates {
                         li {
-                            NavLink { class: "collaboration-template-card collaboration-panel", href: format!("{url}?template={}{prefill}", encode_component(&template.path)),
+                            NavLink { class: "collaboration-template-card collaboration-panel", href: format!("{url}?template={}", encode_component(&template.path)),
                                 strong { "{template.name}" }
                                 if !template.about.is_empty() { span { class: "collaboration-muted", "{template.about}" } }
                             }
@@ -122,7 +119,7 @@ pub fn chooser(repo: &Repository, templates: &[TemplateCard], blank_allowed: boo
                     }
                 }
                 if blank_allowed {
-                    NavLink { class: "btn btn-secondary", href: format!("{url}?template={prefill}"), "Open a blank issue" }
+                    NavLink { class: "btn btn-secondary", href: format!("{url}?template="), "Open a blank issue" }
                 }
             }
         },
@@ -252,9 +249,8 @@ fn form_field(index: usize, field: &FormField) -> Element {
                 div { class: "collaboration-form-checks",
                     for option in field.options.iter() {
                         label { key: "{option}", class: "collaboration-checkbox",
-                            DraftCheckbox { name: name.clone(), initial_checked: field.values.contains(option), submission_value: option.clone(), required: field.required_options.contains(option) }
+                            DraftCheckbox { name: name.clone(), initial_checked: field.values.contains(option), submission_value: option.clone() }
                             " {option}"
-                            if field.required_options.contains(option) { span { class: "collaboration-required", " Required" } }
                         }
                     }
                 }
@@ -269,13 +265,13 @@ fn form_field(index: usize, field: &FormField) -> Element {
             if !field.description.is_empty() { p { class: "collaboration-muted collaboration-field-hint", "{field.description}" } }
             match field.kind {
                 FieldKind::Input => rsx! {
-                    DraftInput { id: id.clone(), name, required: field.required, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
+                    DraftInput { id: id.clone(), name, required: field.required, maxlength: Some(255), placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
                 },
                 FieldKind::Textarea => rsx! {
                     DraftTextarea { id: id.clone(), name, required: field.required, rows: 6, placeholder: field.placeholder.clone(), initial_value: first, class: "collaboration-input" }
                 },
                 _ => rsx! {
-                    DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: std::iter::once(SelectOption::new("", "Select an answer")).chain(field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone()))).collect::<Vec<_>>() }
+                    DraftSelect { id: id.clone(), name, required: field.required, initial_value: first, options: field.options.iter().map(|label| SelectOption::new(label.clone(), label.clone())).collect::<Vec<_>>() }
                 },
             }
         }
@@ -295,7 +291,6 @@ fn IssuePickers(
     let assignees = use_signal(|| draft.assignees.clone());
     let labels = use_signal(|| draft.labels.clone());
     let milestone = use_signal(|| draft.milestone.clone());
-    use_effect(move || adopt_native_picks(assignees, labels, milestone));
     let assignee_text = if assignees().is_empty() {
         "No one".to_owned()
     } else {
@@ -332,29 +327,6 @@ fn IssuePickers(
             p { class: "collaboration-muted", "{milestone_text}" }
         }
     }
-}
-
-fn adopt_native_picks(mut assignees: Signal<Vec<String>>, mut labels: Signal<Vec<String>>, mut milestone: Signal<String>) {
-    #[cfg(target_arch = "wasm32")]
-    {
-        use wasm_bindgen::JsCast;
-        let Some(document) = web_sys::window().and_then(|window| window.document()) else { return; };
-        let Ok(inputs) = document.query_selector_all("input[form=\"new-entry-form\"]") else { return; };
-        let (mut people, mut tags, mut selected) = (Vec::new(), Vec::new(), String::new());
-        for index in 0..inputs.length() {
-            let Some(input) = inputs.item(index).and_then(|node| node.dyn_into::<web_sys::HtmlInputElement>().ok()) else { continue; };
-            if !input.checked() { continue; }
-            match input.name().as_str() {
-                "assignees" => people.push(input.value()),
-                "labels" => tags.push(input.value()),
-                "milestone" => selected = input.value(),
-                _ => {},
-            }
-        }
-        assignees.set(people); labels.set(tags); milestone.set(selected);
-    }
-    #[cfg(not(target_arch = "wasm32"))]
-    let _ = (&mut assignees, &mut labels, &mut milestone);
 }
 
 /// Adds `value` to the picks or removes it, as its checkbox says.

@@ -47,7 +47,6 @@ pub(crate) fn profile_model(
 ) -> Profile {
     Profile {
         username: user.username.clone(),
-        repository_query: String::new(),
         social_accounts: accounts
             .into_iter()
             .map(|account| (account.provider, account.url))
@@ -55,7 +54,7 @@ pub(crate) fn profile_model(
         company: settings.company.clone().unwrap_or_default(),
         twitter_username: settings.twitter_username.clone().unwrap_or_default(),
         hireable: settings.hireable.unwrap_or(false),
-        public_email: settings.public_email().unwrap_or_default().to_owned(),
+        public_email: settings.public_email(user).unwrap_or_default().to_owned(),
         primary_email_visibility: settings.primary_visibility.clone(),
         display_name: user.display_name.clone().unwrap_or_default(),
         bio: user.bio.clone().unwrap_or_default(),
@@ -78,24 +77,6 @@ fn settings_key(key: db::users::ssh_keys::SshKeySummary) -> Key {
     }
 }
 
-/// Maps a failed private settings read: a session that ended or an account that became
-/// restricted since the page loaded is refused, anything else is unavailable.
-fn settings_read_failure<'a>(
-    ctx: &'a PageContext,
-    message: &'static str,
-) -> impl Fn(anyhow::Error) -> Response + 'a {
-    move |error| {
-        if error.is::<db::users::accounts::AccountRestricted>() {
-            ctx.error(
-                StatusCode::FORBIDDEN,
-                "A live unrestricted account session is required.",
-            )
-        } else {
-            ctx.error(StatusCode::SERVICE_UNAVAILABLE, message)
-        }
-    }
-}
-
 pub(crate) async fn load_settings(
     ctx: &PageContext,
     tab: &str,
@@ -107,22 +88,22 @@ pub(crate) async fn load_settings(
     if user.must_change_password && tab != "password" {
         return Err(ctx.redirect("/settings?tab=password"));
     }
-    // Private listings are read in the same transaction that rechecks this session.
-    let session = session::extract_session_id(&ctx.headers);
-    let credential =
-        db::users::accounts::AccountCredential::Session(session.as_deref().unwrap_or_default());
     let keys = if tab == "keys" {
         db::users::ssh_keys::list_user_key_summaries(
             &ctx.state.pool,
             user.id,
-            &credential,
             ctx.query
                 .get("keys_after")
                 .and_then(|v| v.parse().ok())
                 .unwrap_or(0),
         )
         .await
-        .map_err(settings_read_failure(ctx, "Unable to load your SSH keys."))?
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load your SSH keys.",
+            )
+        })?
         .into_iter()
         .map(settings_key)
         .collect()
@@ -130,17 +111,23 @@ pub(crate) async fn load_settings(
         Vec::new()
     };
     let gpg_keys = if tab == "keys" {
-        db::users::gpg_keys::list_gpg_key_summaries(&ctx.state.pool, user.id, &credential)
+        db::users::gpg_keys::list_gpg_keys(&ctx.state.pool, user.id, 100, 0)
             .await
-            .map_err(settings_read_failure(ctx, "Unable to load your GPG keys."))?
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load your GPG keys.",
+                )
+            })?
             .into_iter()
             .map(|key| Key {
                 id: key.id,
                 name: key.name.unwrap_or(key.key_id),
                 fingerprint: key.fingerprint,
-                kind: if key.revoked {
+                kind: if key.material.revoked {
                     "Revoked GPG key"
                 } else if key
+                    .material
                     .expires_at
                     .is_some_and(|expiry| expiry <= chrono::Utc::now())
                 {
@@ -149,7 +136,7 @@ pub(crate) async fn load_settings(
                     "GPG key"
                 }
                 .into(),
-                created: key.created_at.format("%b %e, %Y").to_string(),
+                created: key.material.created_at.format("%b %e, %Y").to_string(),
             })
             .collect()
     } else {
@@ -159,14 +146,18 @@ pub(crate) async fn load_settings(
         db::users::signing_keys::list_signing_key_summaries(
             &ctx.state.pool,
             user.id,
-            &credential,
             ctx.query
                 .get("signing_after")
                 .and_then(|value| value.parse().ok())
                 .unwrap_or(0),
         )
         .await
-        .map_err(settings_read_failure(ctx, "Unable to load your signing keys."))?
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load your signing keys.",
+            )
+        })?
         .into_iter()
         .map(settings_key)
         .collect()
@@ -179,9 +170,14 @@ pub(crate) async fn load_settings(
             .get("tokens_before")
             .and_then(|value| value.parse().ok())
             .unwrap_or(0);
-        db::users::tokens::list_tokens(&ctx.state.pool, user.id, &session::extract_session_id(&ctx.headers).unwrap_or_default(), before)
+        db::users::tokens::list_tokens(&ctx.state.pool, user.id, before)
             .await
-            .map_err(settings_read_failure(ctx, "Unable to load your tokens."))?
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load your tokens.",
+                )
+            })?
             .into_iter()
             .map(|token| Token {
                 id: token.id,
@@ -203,14 +199,17 @@ pub(crate) async fn load_settings(
         super::sessions::load_sessions(
             &ctx.state.pool,
             user.id,
-            session.as_deref(),
-            submitted.and_then(|form| form.get("sessions_before")).or_else(|| ctx.query.get("sessions_before"))
-                .and_then(|value| value.parse::<i64>().ok()).unwrap_or(0).max(0),
+            session::extract_session_id(&ctx.headers).as_deref(),
         )
         .await
-        .map_err(|error| ctx.error(error.0, public_api_message(&error.1.0)))?
+        .map_err(|_| {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load your sessions.",
+            )
+        })?
     } else {
-        super::sessions::SessionListing::default()
+        Vec::new()
     };
     let blocked = if tab == "blocked" {
         let page = ctx
@@ -259,9 +258,14 @@ pub(crate) async fn load_settings(
         Default::default()
     };
     let emails = if tab == "email" {
-        db::users::emails::list_account_emails(&ctx.state.pool, user.id, &credential)
+        db::users::emails::list_emails(&ctx.state.pool, user.id)
             .await
-            .map_err(settings_read_failure(ctx, "Unable to load your email addresses."))?
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load your email addresses.",
+                )
+            })?
             .into_iter()
             .map(|email| SecondaryEmail {
                 email: email.email,
@@ -272,9 +276,14 @@ pub(crate) async fn load_settings(
         Vec::new()
     };
     let email_notifications = if tab == "email" {
-        db::email::get_email_notifications(&ctx.state.pool, user.id, &credential)
+        db::email::get_email_notifications(&ctx.state.pool, user.id)
             .await
-            .map_err(settings_read_failure(ctx, "Unable to load your notification setting."))?
+            .map_err(|_| {
+                ctx.error(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "Unable to load your notification setting.",
+                )
+            })?
     } else {
         true
     };
@@ -294,9 +303,7 @@ pub(crate) async fn load_settings(
         )
     })?;
     let values = if let Some(form) = submitted {
-        let mut values = preserved_values(form);
-        values.public_key = form.get("public_key").filter(|key| db::users::ssh_keys::parse_public_key(key).is_ok()).cloned().unwrap_or_default();
-        values
+        preserved_values(form)
     } else {
         FormValues {
             display_name: profile.display_name.clone(),
@@ -322,8 +329,7 @@ pub(crate) async fn load_settings(
         signing_keys,
         gpg_keys,
         tokens,
-        sessions: sessions.items,
-        session_pagination: sessions.pagination,
+        sessions,
         new_token: None,
         password_supported: user.password_hash.is_some(),
         must_change_password: user.must_change_password,

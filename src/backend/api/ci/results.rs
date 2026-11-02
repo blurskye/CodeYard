@@ -112,13 +112,13 @@ fn valid_name(name: &str) -> bool {
     !name.is_empty() && name.len() <= 512 && !name.chars().any(char::is_control)
 }
 
-fn credential_hash(headers: &HeaderMap) -> Result<String, Error> {
-    let token = crate::backend::api::http::credentials::bearer(headers).ok_or_else(denied)?;
-    Ok(runtime::token_hash(token))
-}
-
 async fn authenticate(state: &AppState, headers: &HeaderMap) -> Result<RuntimeRun, Error> {
-    objects::authenticate(&state.pool, &credential_hash(headers)?)
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .ok_or_else(denied)?;
+    objects::authenticate(&state.pool, &runtime::token_hash(token))
         .await?
         .ok_or_else(denied)
 }
@@ -153,13 +153,9 @@ async fn twirp(
     State(state): State<Arc<AppState>>,
     Path((service, method)): Path<(String, String)>,
     headers: HeaderMap,
-    request: axum::extract::Request,
+    Json(request): Json<Request>,
 ) -> Result<Json<Value>, Error> {
     let run = authenticate(&state, &headers).await?;
-    let bytes = tokio::time::timeout(Duration::from_secs(30), axum::body::to_bytes(request.into_body(), 64 * 1024))
-        .await.map_err(|_| Error(StatusCode::REQUEST_TIMEOUT, "deadline_exceeded", "Results body timed out"))?
-        .map_err(|_| invalid())?;
-    let request: Request = serde_json::from_slice(&bytes).map_err(|_| invalid())?;
     let site = db::actions::get_actions_settings(&state.pool).await?;
     let repo = db::actions::get_repo_actions_settings(&state.pool, run.repo_id).await?;
     let cache_limit = site.cache_size_bytes(&repo);
@@ -254,7 +250,7 @@ async fn twirp(
             } else {
                 &request.size_bytes
             })?;
-            if !objects::finalize_object(&state.pool, run.id, &credential_hash(&headers)?, object.id, size, cache_limit).await? {
+            if !objects::finalize_object(&state.pool, run.id, object.id, size, cache_limit).await? {
                 return Err(invalid());
             }
             if artifact {
@@ -281,20 +277,18 @@ async fn twirp(
             }
         }
         (true, "ListArtifacts") => {
-            let id = request.id_filter.as_deref().map(str::parse::<i64>).transpose().map_err(|_| invalid())?;
-            let list = objects::list_artifacts(&state.pool, run.id, request.name_filter.as_deref(), id).await?;
-            let list: Vec<_> = list.into_iter()
+            let list = objects::list_artifacts(&state.pool, run.id).await?;
+            let list: Vec<_> = list.into_iter().filter(|o| request.name_filter.as_ref().is_none_or(|n| *n==o.name) && request.id_filter.as_ref().is_none_or(|id| *id==o.id.to_string()))
                 .map(|o| json!({"workflowRunBackendId":run.backend_id,"workflowJobRunBackendId":run.backend_id,"databaseId":o.id.to_string(),"name":o.name,"size":o.size.to_string(),"createdAt":chrono::DateTime::from_timestamp(o.created_at,0).map(|t| t.to_rfc3339())})).collect();
             json!({"artifacts":list})
         }
         (true, "GetSignedArtifactURL") | (true, "DeleteArtifact") => {
-            let object = if method == "DeleteArtifact" {
-                objects::own_object(&state.pool, run.id, "artifact", name, "").await?.filter(|o| o.finalized)
-            } else {
-                objects::artifact_for_run(&state.pool, run.id, name).await?
-            }.ok_or_else(missing)?;
+            let object = objects::own_object(&state.pool, run.id, "artifact", name, "")
+                .await?
+                .filter(|o| o.finalized)
+                .ok_or_else(missing)?;
             if method == "DeleteArtifact" {
-                if !objects::delete_artifact(&state.pool, object.id, run.id, None, None).await? {
+                if !objects::delete_artifact(&state.pool, object.id, run.id, None).await? {
                     return Err(missing());
                 }
                 json!({"ok":true,"artifactId":object.id.to_string()})
@@ -361,7 +355,6 @@ async fn put_blob(
     request: axum::extract::Request,
 ) -> Result<Response, Error> {
     let object = capability(&state, id, &query, true).await?;
-    let grant_hash = runtime::token_hash(query.get("sig").ok_or_else(denied)?);
     let _io = state.storage.try_acquire_io()?;
     let _memory = state
         .upload_reads
@@ -405,7 +398,7 @@ async fn put_blob(
     })?;
     if comp == "blocklist" {
         if bytes.len() > 8 * 1024 * 1024
-            || !objects::seal_blob(&state.pool, id, &grant_hash, &block_list(&bytes)?).await?
+            || !objects::seal_blob(&state.pool, id, &block_list(&bytes)?).await?
         {
             return Err(invalid());
         }
@@ -431,7 +424,7 @@ async fn put_blob(
         };
         // A single-shot PUT replaces an unfinished upload, so a retry after a lost response works.
         if comp.is_empty() {
-            objects::reopen_blob(&state.pool, id, &grant_hash).await?;
+            objects::reopen_blob(&state.pool, id).await?;
         }
         let mut blocks = Vec::new();
         let chunk_size = if comp.is_empty() {
@@ -439,10 +432,9 @@ async fn put_blob(
         } else {
             MAX_OBJECT_BYTES as usize
         };
-        let upload_id = uuid::Uuid::new_v4();
         for (index, bytes) in bytes.chunks(chunk_size).enumerate() {
             let block_id = if comp.is_empty() {
-                format!("plain-{upload_id}-{index}")
+                format!("plain-{index}")
             } else {
                 block.clone()
             };
@@ -451,7 +443,7 @@ async fn put_blob(
                 object_key: format!("actions/{}", uuid::Uuid::new_v4()),
                 size: bytes.len() as i64,
             };
-            if !objects::stage_block(&state.pool, id, &grant_hash, &part, limit).await? {
+            if !objects::stage_block(&state.pool, id, &part, limit).await? {
                 return Err(invalid());
             }
             let hash = hex::encode(Sha256::digest(bytes));
@@ -473,12 +465,12 @@ async fn put_blob(
                     "Blob upload timed out",
                 )
             })??;
-            if !objects::ready_block(&state.pool, id, &grant_hash, &part.object_key).await? {
+            if !objects::ready_block(&state.pool, id, &part.object_key).await? {
                 return Err(invalid());
             }
             blocks.push(block_id);
         }
-        if comp.is_empty() && !objects::seal_blob(&state.pool, id, &grant_hash, &blocks).await? {
+        if comp.is_empty() && !objects::seal_blob(&state.pool, id, &blocks).await? {
             return Err(invalid());
         }
     } else {
@@ -523,48 +515,83 @@ pub(super) async fn download(
     let parts: Vec<BlobPart> =
         serde_json::from_str(object.manifest.as_deref().ok_or_else(missing)?)
             .map_err(|_| invalid())?;
-    let invalid_range = || Error(StatusCode::RANGE_NOT_SATISFIABLE, "out_of_range", "Invalid byte range");
-    let name = if headers.contains_key(header::RANGE) { "range" } else { "x-ms-range" };
-    let (range, partial) = crate::backend::api::http::range::requested_header(headers, name)
-        .map_err(|_| invalid_range())?;
-    let size = u64::try_from(object.size).map_err(|_| invalid_range())?;
-    let (start, length) = range.normalize(size).map_err(|_| invalid_range())?;
-    let (start, end) = (start as i64, (start + length) as i64);
+    let range = headers
+        .get(header::RANGE)
+        .or_else(|| headers.get("x-ms-range"))
+        .map(|v| v.to_str().map_err(|_| invalid()))
+        .transpose()?;
+    let (start, end) = match range {
+        None => (0, object.size),
+        Some(value) => {
+            let (start, end) = value
+                .strip_prefix("bytes=")
+                .and_then(|v| v.split_once('-'))
+                .ok_or_else(invalid)?;
+            let (start, end) = if start.is_empty() {
+                let suffix: i64 = end.parse().map_err(|_| invalid())?;
+                if suffix <= 0 {
+                    return Err(invalid());
+                }
+                ((object.size - suffix).max(0), object.size)
+            } else {
+                let start: i64 = start.parse().map_err(|_| invalid())?;
+                let end = if end.is_empty() {
+                    object.size
+                } else {
+                    end.parse::<i64>()
+                        .map_err(|_| invalid())?
+                        .checked_add(1)
+                        .ok_or_else(invalid)?
+                        .min(object.size)
+                };
+                (start, end)
+            };
+            if start < 0 || start >= end || start >= object.size {
+                return Err(Error(
+                    StatusCode::RANGE_NOT_SATISFIABLE,
+                    "out_of_range",
+                    "Invalid byte range",
+                ));
+            }
+            (start, end)
+        }
+    };
     let store = state.storage.clone();
     let stream = futures_util::stream::try_unfold(
-        (parts, start, end, 0usize, 0i64, None::<Box<dyn tokio::io::AsyncRead + Unpin + Send>>, store, permit),
-        |(parts, offset, end, mut index, mut base, mut reader, store, permit)| async move {
+        (parts, start, end, store, permit),
+        |(parts, offset, end, store, permit)| async move {
             if offset >= end {
                 return Ok::<_, std::io::Error>(None);
             }
-            while let Some(part) = parts.get(index) {
-                if offset < base + part.size { break; }
-                base += part.size;
-                index += 1;
-                reader = None;
-            }
-            let part = parts.get(index).ok_or_else(|| std::io::Error::other("Missing blob block"))?;
-            let remaining = (end - offset).min(base + part.size - offset);
-            if reader.is_none() {
-                reader = Some(tokio::time::timeout(Duration::from_secs(60),
-                    store.open_range(&part.object_key, (offset - base) as u64, remaining as u64))
-                    .await.map_err(|_| std::io::Error::other("Blob read timeout"))?
-                    .map_err(|_| std::io::Error::other("Blob read unavailable"))?);
-            }
-            let mut bytes = vec![0; remaining.min(1024 * 1024) as usize];
-            use tokio::io::AsyncReadExt;
-            let length = tokio::time::timeout(Duration::from_secs(60), reader.as_mut().expect("range reader exists").read(&mut bytes))
-                .await.map_err(|_| std::io::Error::other("Blob read timeout"))??;
-            if length == 0 { return Err(std::io::Error::other("Short blob block")); }
-            bytes.truncate(length);
+            let mut base = 0;
+            let part = parts
+                .iter()
+                .find(|p| {
+                    let contains = offset < base + p.size;
+                    if !contains {
+                        base += p.size;
+                    }
+                    contains
+                })
+                .ok_or_else(|| std::io::Error::other("Missing blob block"))?;
+            let length = (end - offset)
+                .min(base + part.size - offset)
+                .min(1024 * 1024) as usize;
+            let bytes = tokio::time::timeout(
+                Duration::from_secs(60),
+                store.read_range(&part.object_key, (offset - base) as u64, length),
+            )
+            .await
+            .map_err(|_| std::io::Error::other("Blob read timeout"))?
+            .map_err(|_| std::io::Error::other("Blob read unavailable"))?;
             Ok(Some((
                 Bytes::from(bytes),
-                (parts, offset + length as i64, end, index, base, reader, store, permit),
+                (parts, offset + length as i64, end, store, permit),
             )))
         },
     );
     let mut response = Response::builder()
-        .status(if partial {
+        .status(if range.is_some() {
             StatusCode::PARTIAL_CONTENT
         } else {
             StatusCode::OK
@@ -586,7 +613,7 @@ pub(super) async fn download(
             header::CONTENT_DISPOSITION,
             crate::backend::storage::attachment_disposition(&format!("{}.zip", object.name)),
         );
-    if partial {
+    if range.is_some() {
         response = response.header(
             header::CONTENT_RANGE,
             format!("bytes {start}-{}/{}", end - 1, object.size),

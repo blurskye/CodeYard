@@ -1,6 +1,6 @@
 pub(crate) mod pages;
 use crate::backend::db::artifact_metadata::{
-    cacheable, Actor, Admission, Artifact, ClusterInput, Deployment, DeploymentInput, Environment, Job, JobInput,
+    Actor, Artifact, ClusterInput, Deployment, DeploymentInput, Environment, Job, JobInput,
     Mutation, Record, Refusal, StorageInput,
 };
 use anyhow::Result;
@@ -38,65 +38,63 @@ async fn credential(tx: &mut Tx<'_>, actor: Actor) -> Result<()> {
     Ok(())
 }
 
-async fn writable(tx: &mut Tx<'_>, admission: &mut Admission, org: i64, repo: i64) -> Result<()> {
-    if let Some(cached) = admission.repositories.get(&(org, repo)) {
-        return (*cached).map_err(Into::into);
-    }
-    let actor = admission.actor;
-    let result: Result<()> = async {
-        anyhow::ensure!(actor.repo.is_none_or(|scope| scope == repo), Refusal::Missing);
-        let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND r.owner_kind='org' AND r.owner_org_id=$3 AND {})",super::repositories::access::readable_condition()))
-            .bind(actor.user).bind(repo).bind(org).fetch_one(&mut **tx).await?;
-        anyhow::ensure!(readable, Refusal::Missing);
-        anyhow::ensure!(super::discussions::lock_write_authority(tx, actor.user, repo).await?, Refusal::Denied);
-        let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2)").bind(repo).bind(org).fetch_one(&mut **tx).await?;
-        anyhow::ensure!(belongs, Refusal::Missing);
-        Ok(())
-    }.await;
-    if let Some(cached) = cacheable(&result) { admission.repositories.insert((org, repo), cached); }
-    result
+async fn writable(tx: &mut Tx<'_>, actor: Actor, org: i64, repo: i64) -> Result<()> {
+    anyhow::ensure!(
+        actor.repo.is_none_or(|scope| scope == repo),
+        Refusal::Missing
+    );
+    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2 AND r.owner_kind='org' AND r.owner_org_id=$3 AND {})",super::repositories::access::readable_condition()))
+        .bind(actor.user).bind(repo).bind(org).fetch_one(&mut **tx).await?;
+    anyhow::ensure!(readable, Refusal::Missing);
+    anyhow::ensure!(
+        super::discussions::lock_write_authority(tx, actor.user, repo).await?,
+        Refusal::Denied
+    );
+    let belongs: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2)").bind(repo).bind(org).fetch_one(&mut **tx).await?;
+    anyhow::ensure!(belongs, Refusal::Missing);
+    Ok(())
 }
 
 async fn targets(
     tx: &mut Tx<'_>,
-    admission: &mut Admission,
+    actor: Actor,
     org: i64,
     artifact: &Artifact,
     maximum: usize,
 ) -> Result<Vec<(i64, Option<i64>)>> {
-    anyhow::ensure!((1..=1001).contains(&maximum), Refusal::Invalid);
-    let key = (org, artifact.digest.clone(), artifact.github_repository.clone(), maximum);
-    if let Some(cached) = admission.targets.get(&key) { return cached.clone().map_err(Into::into); }
-    let actor = admission.actor;
-    let result: Result<Vec<(i64, Option<i64>)>> = async {
-        let sql = crate::backend::db::artifact_metadata::target_candidates_sql(true, super::repositories::access::USER_REPO_ACCESS_SQL);
-        let mut rows: Vec<(i64,Option<i64>)> = sqlx::query_as(&sql)
-            .bind(org).bind(&artifact.digest).bind(actor.user).bind(actor.repo).bind(maximum as i64).fetch_all(&mut **tx).await?;
-        if rows.is_empty() {
-            // Filtering must not turn authoritative but inaccessible provenance into
-            // permission to attach this digest to an unrelated fallback repository.
-            let provenance: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artifact_attestations a JOIN attestation_subjects s ON s.attestation_id=a.id JOIN repositories r ON r.id=a.repo_id WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND s.digest=$2 AND a.predicate_type IN ('https://slsa.dev/provenance/v1','https://slsa.dev/provenance/v0.2'))")
-                .bind(org).bind(&artifact.digest).fetch_one(&mut **tx).await?;
-            anyhow::ensure!(!provenance, Refusal::Missing);
-            let name = artifact.github_repository.as_deref().ok_or(Refusal::Missing)?;
-            let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND name=$2").bind(org).bind(name).fetch_optional(&mut **tx).await?;
-            rows.push((repo.ok_or(Refusal::Missing)?, None));
+    let mut rows: Vec<(i64,Option<i64>)> = sqlx::query_as("SELECT a.repo_id,MAX(a.id) FROM artifact_attestations a JOIN attestation_subjects s ON s.attestation_id=a.id JOIN repositories r ON r.id=a.repo_id WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND s.digest=$2 AND a.predicate_type IN ('https://slsa.dev/provenance/v1','https://slsa.dev/provenance/v0.2') GROUP BY a.repo_id ORDER BY MAX(a.id) DESC")
+        .bind(org).bind(&artifact.digest).fetch_all(&mut **tx).await?;
+    if rows.is_empty() {
+        let name = artifact
+            .github_repository
+            .as_deref()
+            .ok_or(Refusal::Missing)?;
+        let repo: Option<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=$1 AND LOWER(name)=LOWER($2)").bind(org).bind(name).fetch_optional(&mut **tx).await?;
+        rows.push((repo.ok_or(Refusal::Missing)?, None));
+    }
+    let mut authorized = Vec::new();
+    let mut refusal = Refusal::Missing;
+    for (repo, attestation) in rows {
+        match writable(tx, actor, org, repo).await {
+            Ok(()) => {
+                authorized.push((repo, attestation));
+                if authorized.len() == maximum {
+                    break;
+                }
+            }
+            Err(error) if matches!(error.downcast_ref::<Refusal>(), Some(Refusal::Denied)) => {
+                refusal = Refusal::Denied
+            }
+            Err(error) if matches!(error.downcast_ref::<Refusal>(), Some(Refusal::Missing)) => {}
+            Err(error) => return Err(error),
         }
-        let mut authorized = Vec::new();
-        for (repo, attestation) in rows {
-            // A changed authority snapshot must fail, not silently truncate bounded fanout.
-            writable(tx, admission, org, repo).await?;
-            authorized.push((repo, attestation));
-        }
-        anyhow::ensure!(!authorized.is_empty(), Refusal::Missing);
-        Ok(authorized)
-    }.await;
-    if let Some(cached) = cacheable(&result) { admission.targets.insert(key, cached); }
-    result
+    }
+    anyhow::ensure!(!authorized.is_empty(), refusal);
+    Ok(authorized)
 }
 
 struct NewRecord<'a> {
-    actor: &'a mut Admission,
+    actor: Actor,
     org: i64,
     repo: i64,
     attestation: Option<i64>,
@@ -110,7 +108,7 @@ struct NewRecord<'a> {
 
 async fn previous_authority(
     tx: &mut Tx<'_>,
-    actor: &mut Admission,
+    actor: Actor,
     org: i64,
     kind: &str,
     identity: &str,
@@ -145,7 +143,7 @@ fn identity(environment: &Environment, cluster: &str, deployment: &str) -> Strin
 
 async fn put_deployment(
     tx: &mut Tx<'_>,
-    authority: (&mut Admission, i64),
+    authority: (Actor, i64),
     repo: i64,
     attestation: Option<i64>,
     environment: &Environment,
@@ -181,16 +179,15 @@ pub async fn deployment(
     input.validate()?;
     let mut tx = begin(pool).await?;
     credential(&mut tx, actor).await?;
-    let mut admission = Admission::new(actor);
-    let (repo, attestation) = targets(&mut tx, &mut admission, org, &input.deployment.artifact, 1)
+    let (repo, attestation) = targets(&mut tx, actor, org, &input.deployment.artifact, 1)
         .await?
         .into_iter()
         .next()
         .ok_or(Refusal::Missing)?;
-    writable(&mut tx, &mut admission, org, repo).await?;
+    writable(&mut tx, actor, org, repo).await?;
     let row = put_deployment(
         &mut tx,
-        (&mut admission, org),
+        (actor, org),
         repo,
         attestation,
         &input.environment,
@@ -214,11 +211,10 @@ pub async fn storage(
     input.validate()?;
     let mut tx = begin(pool).await?;
     credential(&mut tx, actor).await?;
-    let mut admission = Admission::new(actor);
-    let targets = targets(&mut tx, &mut admission, org, &input.artifact, 1001).await?;
+    let targets = targets(&mut tx, actor, org, &input.artifact, 1001).await?;
     anyhow::ensure!(targets.len() <= 1000, Refusal::TooLarge);
     for (repo, _) in &targets {
-        writable(&mut tx, &mut admission, org, *repo).await?;
+        writable(&mut tx, actor, org, *repo).await?;
     }
     let mut records = Vec::new();
     for (repo, attestation) in targets {
@@ -237,7 +233,7 @@ pub async fn storage(
             put(
                 &mut tx,
                 NewRecord {
-                    actor: &mut admission,
+                    actor,
                     org,
                     repo,
                     attestation,
@@ -265,7 +261,7 @@ fn rejected(deployment: &Deployment, error: &anyhow::Error) -> Value {
 
 async fn prepare(
     tx: &mut Tx<'_>,
-    actor: &mut Admission,
+    actor: Actor,
     org: i64,
     cluster: &str,
     input: &ClusterInput,
@@ -310,7 +306,7 @@ async fn prepare(
 
 async fn apply(
     tx: &mut Tx<'_>,
-    actor: &mut Admission,
+    actor: Actor,
     org: i64,
     cluster: &str,
     input: &ClusterInput,
@@ -321,7 +317,7 @@ async fn apply(
         records.push(
             put_deployment(
                 tx,
-                (&mut *actor, org),
+                (actor, org),
                 repo,
                 attestation,
                 &input.environment,
@@ -344,8 +340,7 @@ pub async fn cluster(
     input.validate(cluster, 1000)?;
     let mut tx = begin(pool).await?;
     credential(&mut tx, actor).await?;
-    let mut admission = Admission::new(actor);
-    let mutation = apply(&mut tx, &mut admission, org, cluster, input).await?;
+    let mutation = apply(&mut tx, actor, org, cluster, input).await?;
     tx.commit().await?;
     Ok(mutation)
 }
@@ -374,18 +369,6 @@ pub async fn list(
     Ok(rows)
 }
 
-async fn prune_jobs(tx: &mut Tx<'_>, scope: Option<(i64, i64, Option<i64>)>) -> Result<()> {
-    use crate::backend::db::artifact_metadata::{JOB_GC_BATCH, JOB_HISTORY_LIMIT, JOB_HISTORY_SECONDS};
-    let cutoff = chrono::Utc::now() - chrono::Duration::seconds(JOB_HISTORY_SECONDS);
-    sqlx::query("DELETE FROM artifact_metadata_jobs WHERE id IN (SELECT id FROM artifact_metadata_jobs WHERE status IN ('completed','failed') AND completed_at<$1 ORDER BY completed_at,id LIMIT $2)")
-        .bind(cutoff).bind(JOB_GC_BATCH).execute(&mut **tx).await?;
-    if let Some((actor, org, repo)) = scope {
-        sqlx::query("DELETE FROM artifact_metadata_jobs WHERE id IN (SELECT id FROM artifact_metadata_jobs WHERE actor_id=$1 AND org_id=$2 AND (($3::bigint IS NULL AND scoped_repo IS NULL) OR scoped_repo=$3) AND status IN ('completed','failed') ORDER BY id DESC LIMIT $4 OFFSET $5)")
-            .bind(actor).bind(org).bind(repo).bind(JOB_GC_BATCH).bind(JOB_HISTORY_LIMIT).execute(&mut **tx).await?;
-    }
-    Ok(())
-}
-
 pub async fn enqueue(
     pool: &PgPool,
     actor: Actor,
@@ -398,10 +381,8 @@ pub async fn enqueue(
     input.partial_success = true;
     let mut tx = begin(pool).await?;
     credential(&mut tx, actor).await?;
-    let mut admission = Admission::new(actor);
-    let (accepted, errors) = prepare(&mut tx, &mut admission, org, cluster, &input).await?;
+    let (accepted, errors) = prepare(&mut tx, actor, org, cluster, &input).await?;
     let noop = accepted.is_empty();
-    anyhow::ensure!(!noop || input.deployments.is_empty(), Refusal::Denied);
     if !noop {
         let busy: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM artifact_metadata_jobs WHERE org_id=$1 AND cluster=$2 AND status IN ('pending','processing'))").bind(org).bind(cluster).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!busy, Refusal::Busy);
@@ -411,8 +392,8 @@ pub async fn enqueue(
         .map(|(deployment, _, _)| deployment)
         .collect();
     let saved = JobInput { input };
-    let id = sqlx::query_scalar("INSERT INTO artifact_metadata_jobs(org_id,cluster,actor_id,token_id,scoped_repo,input,status,errors,completed_at) VALUES($1,$2,$3,$4,$5,$6,$8,$7,CASE WHEN $8='completed' THEN clock_timestamp() ELSE NULL END) RETURNING id")
-        .bind(org).bind(cluster).bind(actor.user).bind(actor.token).bind(actor.repo).bind(if noop { String::new() } else { serde_json::to_string(&saved)? }).bind(serde_json::to_string(&errors)?).bind(if noop {"completed"} else {"pending"}).fetch_one(&mut *tx).await?;
+    let id = sqlx::query_scalar("INSERT INTO artifact_metadata_jobs(org_id,cluster,actor_id,token_id,scoped_repo,input,status,errors) VALUES($1,$2,$3,$4,$5,$6,$8,$7) RETURNING id")
+        .bind(org).bind(cluster).bind(actor.user).bind(actor.token).bind(actor.repo).bind(serde_json::to_string(&saved)?).bind(serde_json::to_string(&errors)?).bind(if noop {"completed"} else {"pending"}).fetch_one(&mut *tx).await?;
     if noop {
         sqlx::query("UPDATE artifact_metadata_jobs SET started_at=$2,total_count=0 WHERE id=$1")
             .bind(id)
@@ -420,7 +401,6 @@ pub async fn enqueue(
             .execute(&mut *tx)
             .await?;
     }
-    prune_jobs(&mut tx, Some((actor.user, org, actor.repo))).await?;
     tx.commit().await?;
     Ok((id, errors))
 }
@@ -440,8 +420,6 @@ pub async fn process_job(pool: &PgPool, id: Option<i64>) -> Result<bool> {
     let mut tx = begin(pool).await?;
     let job: Option<Job> = sqlx::query_as("SELECT * FROM artifact_metadata_jobs WHERE status='pending' AND (CAST($1 AS BIGINT) IS NULL OR id=$1) ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED").bind(id).fetch_optional(&mut *tx).await?;
     let Some(job) = job else {
-        prune_jobs(&mut tx, None).await?;
-        tx.commit().await?;
         return Ok(false);
     };
     let actor = Actor {
@@ -453,17 +431,14 @@ pub async fn process_job(pool: &PgPool, id: Option<i64>) -> Result<bool> {
     let result = async {
         credential(&mut tx, actor).await?;
         let saved: JobInput = serde_json::from_str(&job.input)?;
-        let mut admission = Admission::new(actor);
-        apply(&mut tx, &mut admission, job.org_id, &job.cluster, &saved.input).await
+        apply(&mut tx, actor, job.org_id, &job.cluster, &saved.input).await
     }
     .await;
     match result {
         Ok(mutation) => {
             let mut errors: Vec<Value> = serde_json::from_str(&job.errors)?;
             errors.extend(mutation.errors);
-            let scope = Some((job.actor_id, job.org_id, job.scoped_repo));
-            sqlx::query("UPDATE artifact_metadata_jobs SET status='completed',started_at=$2,total_count=$3,errors=$4,input='',completed_at=clock_timestamp() WHERE id=$1").bind(job.id).bind(started).bind(mutation.records.len() as i64).bind(serde_json::to_string(&errors)?).execute(&mut *tx).await?;
-            prune_jobs(&mut tx, scope).await?;
+            sqlx::query("UPDATE artifact_metadata_jobs SET status='completed',started_at=$2,total_count=$3,errors=$4 WHERE id=$1").bind(job.id).bind(started).bind(mutation.records.len() as i64).bind(serde_json::to_string(&errors)?).execute(&mut *tx).await?;
             tx.commit().await?;
         }
         Err(error) => {
@@ -473,11 +448,7 @@ pub async fn process_job(pool: &PgPool, id: Option<i64>) -> Result<bool> {
             } else {
                 "Artifact metadata processing failed".to_owned()
             };
-            let mut tx = begin(pool).await?;
-            let scope = Some((job.actor_id, job.org_id, job.scoped_repo));
-            sqlx::query("UPDATE artifact_metadata_jobs SET status='failed',started_at=$2,errors=$3,input='',completed_at=clock_timestamp() WHERE id=$1 AND status='pending'").bind(job.id).bind(started).bind(json!([{"cause":message}]).to_string()).execute(&mut *tx).await?;
-            prune_jobs(&mut tx, scope).await?;
-            tx.commit().await?;
+            sqlx::query("UPDATE artifact_metadata_jobs SET status='failed',started_at=$2,errors=$3 WHERE id=$1 AND status='pending'").bind(job.id).bind(started).bind(json!([{"cause":message}]).to_string()).execute(pool).await?;
         }
     }
     Ok(true)

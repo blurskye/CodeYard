@@ -72,12 +72,6 @@ impl State {
         }
     }
 }
-pub struct PageSnapshot {
-    pub snapshot: Snapshot,
-    pub state: Option<State>,
-    pub proposals: BTreeMap<i64, (i32, String, bool)>,
-}
-
 pub struct Policy {
     pub alerts: bool,
     pub updates: bool,
@@ -184,7 +178,10 @@ fn bounded(text: &str, limit: usize) -> bool {
     text.len() <= limit && !text.contains('\0')
 }
 pub fn sha(sha: &str) -> bool {
-    crate::git_ids::is_full_commit_id(sha) && !sha.bytes().any(|byte| byte.is_ascii_uppercase())
+    sha.len() == 40
+        && sha
+            .bytes()
+            .all(|c| c.is_ascii_digit() || matches!(c, b'a'..=b'f'))
 }
 impl InstalledPackage {
     pub fn validate(&self) -> Result<()> {
@@ -407,22 +404,26 @@ pub(crate) fn receipts(snapshot: &Snapshot) -> Result<String> {
 
 pub(crate) fn project(
     rows: Vec<crate::backend::db::dependabot_alerts::Alert>,
-    inventory: Vec<crate::backend::dependency_graph::Snapshot>,
+    inventory: Option<crate::backend::dependency_graph::Snapshot>,
     raw: &str,
 ) -> Result<Snapshot> {
     use serde_json::Value;
     let receipts: BTreeMap<String, Receipt> = serde_json::from_str(raw)?;
     let mut snapshot = Snapshot::default();
-    let sha = inventory.iter().find(|snapshot| snapshot.detector.name == "Codeyard" && snapshot.job.correlator == "lockfiles")
-        .or_else(|| inventory.first()).map(|snapshot| snapshot.sha.clone()).unwrap_or_else(|| "0".repeat(40));
-    snapshot.packages = crate::backend::dependency_graph::packages(&inventory)
-        .into_iter()
-        .map(|package| InstalledPackage {
-            path: package.manifest,
-            name: package.name,
-            version: package.version,
-        })
-        .collect();
+    let sha = inventory
+        .as_ref()
+        .map(|s| s.sha.clone())
+        .unwrap_or_else(|| "0".repeat(40));
+    if let Some(inventory) = inventory {
+        snapshot.packages = crate::backend::dependency_graph::packages(&[inventory])
+            .into_iter()
+            .map(|p| InstalledPackage {
+                path: p.manifest,
+                name: p.name,
+                version: p.version,
+            })
+            .collect();
+    }
     for row in rows {
         let advisory: Value = serde_json::from_str(&row.advisory)?;
         let vulnerability: Value = serde_json::from_str(&row.vulnerability)?;
@@ -483,9 +484,8 @@ pub(crate) fn project(
     }
     Ok(snapshot)
 }
-native_operation!(crate::backend::db::postgres::repositories::dependencies::page_snapshot,crate::backend::db::sqlite::repositories::dependencies::page_snapshot,fn page_snapshot(pool:&DbPool,actor:impl Into<super::super::credentials::Actor>,repo:i64)->Result<PageSnapshot>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::state,crate::backend::db::sqlite::repositories::dependencies::state,fn state(pool:&DbPool,repo:i64)->Result<Option<State>>);
-native_operation!(crate::backend::db::postgres::repositories::dependencies::configure,crate::backend::db::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:impl Into<super::super::credentials::Actor>,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
+native_operation!(crate::backend::db::postgres::repositories::dependencies::configure,crate::backend::db::sqlite::repositories::dependencies::configure,fn configure(pool:&DbPool,actor:i64,repo:i64,feature:Feature,enabled:bool,private_consent:bool)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::enqueue,crate::backend::db::sqlite::repositories::dependencies::enqueue,fn enqueue(pool:&DbPool,repo:i64)->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::claim,crate::backend::db::sqlite::repositories::dependencies::claim,fn claim(pool:&DbPool,nonce:&str)->Result<Option<Job>>);
 native_operation!(crate::backend::db::postgres::repositories::dependencies::check_job,crate::backend::db::sqlite::repositories::dependencies::check_job,fn check_job(pool:&DbPool,job:&Job,feature:Feature)->Result<()>);

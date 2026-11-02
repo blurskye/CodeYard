@@ -17,12 +17,6 @@ struct Pattern {
     exclude: bool,
     directory_only: bool,
     root: PathBuf,
-    max_depth: Option<usize>,
-}
-
-fn path_text(path: &Path) -> String {
-    let text = path.to_string_lossy().into_owned();
-    if cfg!(windows) { text.replace('\\', "/") } else { text }
 }
 
 impl Pattern {
@@ -48,11 +42,7 @@ impl Pattern {
         }
         let mut root;
         let mut expression;
-        let parts = if cfg!(windows) && pattern.as_bytes().get(1) == Some(&b':') {
-            root = PathBuf::from(format!("{}/", parts[0]));
-            expression = regex::escape(parts[0]);
-            &parts[1..]
-        } else if pattern.starts_with('/') {
+        let parts = if pattern.starts_with('/') {
             root = PathBuf::from("/");
             expression = String::new();
             &parts[..]
@@ -60,26 +50,21 @@ impl Pattern {
             root = std::env::var_os("HOME")
                 .map(PathBuf::from)
                 .ok_or_else(|| Error::Evaluation("Unable to determine HOME directory".into()))?;
-            expression = regex::escape(path_text(&root).trim_end_matches('/'));
+            expression = regex::escape(&root.to_string_lossy());
             &parts[1..]
         } else {
             root = workspace.to_path_buf();
-            expression = regex::escape(path_text(workspace).trim_end_matches('/'));
+            expression = regex::escape(&workspace.to_string_lossy());
             if parts.first() == Some(&".") {
                 &parts[1..]
             } else {
                 &parts[..]
             }
         };
-        let base_depth = root.components().count();
-        let max_depth = (!parts.contains(&"**")).then_some(base_depth + parts.len());
         let mut found_glob = false;
         for (i, part) in parts.iter().enumerate() {
             if !found_glob {
                 if let Some(literal) = literal_segment(part) {
-                    if literal == "." || literal == ".." || literal.contains('/') || (cfg!(windows) && (literal.contains('\\') || literal.contains(':'))) {
-                        return Err(Error::Evaluation("Decoded glob segments must not change directories".into()));
-                    }
                     root.push(literal);
                 } else {
                     found_glob = true;
@@ -99,26 +84,24 @@ impl Pattern {
         if expression.is_empty() {
             expression.push('/');
         }
-        let regex = regex::RegexBuilder::new(&format!("^(?:{expression})$"))
-            .case_insensitive(cfg!(windows)).size_limit(256 * 1024).build()
+        let regex = Regex::new(&format!("^(?:{expression})$"))
             .map_err(|e| Error::Evaluation(format!("Invalid glob pattern '{pattern}': {e}")))?;
         Ok(Self {
             regex,
             exclude,
             root,
             directory_only: pattern.ends_with('/'),
-            max_depth,
         })
     }
 
     fn matches(&self, path: &Path, directory: bool) -> bool {
-        if (directory || !self.directory_only) && self.regex.is_match(&path_text(path)) {
+        if (directory || !self.directory_only) && self.regex.is_match(&path.to_string_lossy()) {
             return true;
         }
         // @actions/glob adds an implicit /** after every pattern, including exclusions.
         path.ancestors()
             .skip(1)
-            .any(|parent| self.regex.is_match(&path_text(parent)))
+            .any(|parent| self.regex.is_match(&parent.to_string_lossy()))
     }
 }
 
@@ -133,7 +116,7 @@ fn literal_segment(segment: &str) -> Option<String> {
                 let rest = chars.as_str();
                 if let Some(end) = rest.find(']') {
                     let inside = &rest[..end];
-                    if inside.chars().count() == 1 && !matches!(inside, "!" | "^") {
+                    if inside.chars().count() == 1 {
                         literal.push(inside.chars().next()?);
                         chars = rest[end + 1..].chars();
                     } else {
@@ -167,9 +150,8 @@ fn segment_regex(segment: &str) -> String {
                     let inside = &chars[i + 1..end];
                     let mut class = String::from("[");
                     for (n, c) in inside.iter().enumerate() {
-                        if n == 0 && matches!(c, '!' | '^') {
+                        if n == 0 && *c == '!' {
                             class.push('^');
-                            if inside.len() > 1 { class.push('/'); }
                         } else if matches!(c, '[' | '\\' | '&' | '~') {
                             class.push('\\');
                             class.push(*c);
@@ -218,18 +200,13 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
             )));
         }
     }
-    let deadline = Instant::now() + Duration::from_secs(120);
-    let mut patterns = Vec::new();
-    let mut pattern_bytes = 0usize;
-    for line in arguments.iter().flat_map(|argument| argument.lines()).map(str::trim)
+    let patterns = arguments
+        .iter()
+        .flat_map(|argument| argument.lines())
+        .map(str::trim)
         .filter(|line| !line.is_empty() && !line.starts_with('#'))
-    {
-        pattern_bytes = pattern_bytes.saturating_add(line.len());
-        if patterns.len() >= 256 || pattern_bytes > 1_048_576 || super::execution_expired(deadline) {
-            return Err(Error::Evaluation("hashFiles pattern budget exceeded".into()));
-        }
-        patterns.push(Pattern::parse(line, &workspace)?);
-    }
+        .map(|line| Pattern::parse(line, &workspace))
+        .collect::<Result<Vec<_>, _>>()?;
     let candidates: BTreeSet<_> = patterns
         .iter()
         .filter(|p| !p.exclude)
@@ -257,17 +234,13 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
             roots.push(root);
         }
     }
-    let mut visited = 0usize;
+    let deadline = Instant::now() + Duration::from_secs(120);
     let mut result = Sha256::new();
     let mut has_match = false;
     for root in roots {
         let mut stack = vec![(root, Vec::<PathBuf>::new())];
         while let Some((path, mut ancestors)) = stack.pop() {
-            visited += 1;
-            if visited > 100_000 || ancestors.len() > 256 {
-                return Err(Error::Evaluation("hashFiles traversal budget exceeded".into()));
-            }
-            if super::execution_expired(deadline) {
+            if Instant::now() > deadline {
                 return Err(Error::Evaluation(
                     "hashFiles couldn't finish within 120 seconds".into(),
                 ));
@@ -283,10 +256,6 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
                 Err(error) => return Err(io_error(&path, error)),
             };
             if metadata.is_dir() {
-                if !patterns.iter().filter(|pattern| !pattern.exclude).any(|pattern| {
-                    pattern.matches(&path, true) || pattern.root.starts_with(&path)
-                        || (path.starts_with(&pattern.root) && pattern.max_depth.is_none_or(|depth| path.components().count() < depth))
-                }) { continue; }
                 if follow_links {
                     let real = fs::canonicalize(&path).map_err(|e| io_error(&path, e))?;
                     if ancestors.contains(&real) {
@@ -302,13 +271,11 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
                 if excluded {
                     continue;
                 }
-                let mut children = Vec::new();
-                for entry in fs::read_dir(&path).map_err(|e| io_error(&path, e))? {
-                    if children.len() + stack.len() >= 100_000 || super::execution_expired(deadline) {
-                        return Err(Error::Evaluation("hashFiles traversal budget exceeded".into()));
-                    }
-                    children.push(entry.map_err(|e| io_error(&path, e))?.path());
-                }
+                let mut children = fs::read_dir(&path)
+                    .map_err(|e| io_error(&path, e))?
+                    .map(|entry| entry.map(|e| e.path()))
+                    .collect::<io::Result<Vec<_>>>()
+                    .map_err(|e| io_error(&path, e))?;
                 children.sort();
                 stack.extend(
                     children
@@ -337,19 +304,11 @@ pub(super) fn hash_files(workspace: &str, arguments: &[String]) -> Result<String
                 if !target.is_file() {
                     continue;
                 }
-                let mut options = File::options();
-                options.read(true);
-                #[cfg(unix)]
-                {
-                    use std::os::unix::fs::OpenOptionsExt;
-                    options.custom_flags(libc::O_NONBLOCK);
-                }
-                let mut file = options.open(&path).map_err(|e| io_error(&path, e))?;
-                if !file.metadata().map_err(|e| io_error(&path, e))?.is_file() { continue; }
+                let mut file = File::open(&path).map_err(|e| io_error(&path, e))?;
                 let mut hash = Sha256::new();
                 let mut buffer = [0; 65536];
                 loop {
-                    if super::execution_expired(deadline) {
+                    if Instant::now() > deadline {
                         return Err(Error::Evaluation(
                             "hashFiles couldn't finish within 120 seconds".into(),
                         ));

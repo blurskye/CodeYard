@@ -39,12 +39,7 @@ async fn list(
         &uri,
         teams
             .into_iter()
-            .take(limit)
-            .map(|row| {
-                let mut value = payloads::team_document(&row.team, &owner, row.permission);
-                if let Some(parent) = row.parent { value["parent"] = payloads::team_document(&parent, &owner, parent.default_permission); }
-                value
-            })
+            .map(|row| payloads::team_document(&row.team, &owner, row.permission))
             .collect(),
         next,
     )

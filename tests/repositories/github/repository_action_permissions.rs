@@ -168,7 +168,7 @@ async fn contract(pg: bool) {
         notifications: Arc::new(NotificationBroadcaster::new(f.pool())),
     };
     assert!(queue
-        .claim("slot-1", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .claim("slot-1", CiExecutionMode::Local)
         .await
         .unwrap()
         .is_none());
@@ -201,7 +201,7 @@ async fn contract(pg: bool) {
         StatusCode::SEE_OTHER
     );
     assert!(queue
-        .claim("slot-1", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        .claim("slot-1", CiExecutionMode::Local)
         .await
         .unwrap()
         .is_some());

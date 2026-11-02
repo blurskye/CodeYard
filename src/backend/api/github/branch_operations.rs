@@ -27,11 +27,9 @@ async fn rename(
     Json(input): Json<Rename>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = auth.user.id;
-    let authority = auth.database_actor();
+    let actor = auth.ok_or_else(super::auth::required)?.user.id;
     repo_store(&repo, state.cluster.as_ref())
-        .rename_branch_as(&state.pool, repo.id, authority, &branch, &input.new_name)
+        .rename_branch_as(&state.pool, repo.id, actor, &branch, &input.new_name)
         .await
         .map_err(store_error)?;
     pull_requests::refresh_open_pull_requests(
@@ -67,8 +65,7 @@ async fn upstream(
     request: Request,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = auth.ok_or_else(super::auth::required)?;
-    let actor = &auth.user;
+    let actor = auth.ok_or_else(super::auth::required)?.user;
     let Json(input) = Json::<Upstream>::from_request(request, &state)
         .await
         .map_err(|_| Error::invalid("A branch name is required"))?;
@@ -85,38 +82,11 @@ async fn upstream(
             access::AccessError::Unavailable => Error::unavailable(()),
             _ => Error::missing(),
         })?;
-    // The upstream's commits become readable through the fork, so the credential must reach
-    // the upstream too, not only the fork the request names.
-    auth.repository_scope(&state.pool, parent.id, "contents", false)
-        .await
-        .map_err(super::auth::scope_error)?;
     let parent_owner = db::repositories::records::repository_owner_name(&state.pool, parent.id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let base_branch = format!("{parent_owner}:{}", input.branch);
-    let tasks = state.git_tasks.clone();
-    let (send, receive) = tokio::sync::oneshot::channel();
-    if !tasks.spawn(async move {
-        let result = complete_upstream(state, repo, parent, input, owner, base_branch, auth).await;
-        if result.is_err() { tracing::warn!("upstream synchronization or its follow-up failed"); }
-        let _ = send.send(result);
-    }) {
-        return Err(Error::new(StatusCode::SERVICE_UNAVAILABLE, "Repository writes are busy"));
-    }
-    receive.await.map_err(Error::unavailable)?
-}
-
-async fn complete_upstream(
-    state: Arc<AppState>,
-    repo: db::models::Repository,
-    parent: db::models::Repository,
-    input: Upstream,
-    owner: String,
-    base_branch: String,
-    auth: super::auth::Authentication,
-) -> Result<Json<Value>> {
-    let actor = &auth.user;
     let source = repo_store(&parent, state.cluster.as_ref());
     let merged = repo_store(&repo, state.cluster.as_ref())
         .merge_upstream_as(
@@ -125,7 +95,6 @@ async fn complete_upstream(
             actor.id,
             (parent.id, &source),
             &input.branch,
-            Some(auth.token.id),
         )
         .await
         .map_err(store_error)?;

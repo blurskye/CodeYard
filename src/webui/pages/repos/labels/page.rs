@@ -62,7 +62,6 @@ fn edit_label(repo: &Repository, label: &Label) -> Element {
                 {csrf(&repo.csrf)}
                 {repos::chrome::repository_id(repo.chrome.id)}
                 input { r#type: "hidden", name: "label_id", value: label.id.to_string() }
-                input { r#type: "hidden", name: "original", value: serde_json::to_string(&(&label.name, &label.color, &label.description)).unwrap_or_default() }
                 input { r#type: "hidden", name: "original_description", value: serde_json::to_string(&label.description.replace(['\r', '\n'], "")).unwrap_or_default() }
                 {label_fields(label.name.clone(), label.color.clone(), label.description.clone())}
                 div { class: "collaboration-actions", button { r#type: "submit", class: "btn btn-primary", "Save label" } }

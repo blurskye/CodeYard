@@ -1,25 +1,18 @@
 use crate::backend::db::repositories::autolinks::{Autolink, NewAutolink, Refusal};
 use anyhow::Result;
 use sqlx::{Sqlite, SqlitePool, Transaction};
-async fn admin(tx: &mut Transaction<'_, Sqlite>, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, write: bool) -> Result<()> {
-    let credential = actor.into();
-    let actor = credential.user_id;
+async fn admin(tx: &mut Transaction<'_, Sqlite>, actor: i64, repo: i64, write: bool) -> Result<()> {
     let allowed = if write {
         super::super::discussions::lock_admin_authority(tx, actor, repo).await?
     } else {
         super::super::discussions::lock_archive_authority(tx, actor, repo).await?
     };
     anyhow::ensure!(allowed, Refusal::Denied);
-    if write {
-        if let Some(token) = credential.token_id() {
-            anyhow::ensure!(super::super::users::tokens::permits_write(&mut *tx, actor, token, Some(repo), None, "administration").await?, Refusal::Denied);
-        }
-    }
     Ok(())
 }
 pub async fn create(
     pool: &SqlitePool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     input: &NewAutolink,
 ) -> Result<Autolink> {
@@ -71,7 +64,7 @@ pub async fn get(pool: &SqlitePool, actor: i64, repo: i64, id: i64) -> Result<Au
     tx.commit().await?;
     Ok(row)
 }
-pub async fn remove(pool: &SqlitePool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, id: i64) -> Result<()> {
+pub async fn remove(pool: &SqlitePool, actor: i64, repo: i64, id: i64) -> Result<()> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     admin(&mut tx, actor, repo, true).await?;
     let removed = sqlx::query("DELETE FROM repository_autolinks WHERE repo_id=$1 AND id=$2")

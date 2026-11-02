@@ -110,11 +110,6 @@ fn artifact(path: &str) -> Option<Artifact> {
     let mut relative = parts[2..parts.len() - 1].join("/");
     relative.push('/');
     relative.push_str(&filename);
-    // package_files indexes the complete relative path on both database engines.
-    // Reject unsupported paths before dispatch can persist their bytes.
-    if relative.len() > 1024 {
-        return None;
-    }
     Some(Artifact {
         owner: parts[0].clone(),
         repo: parts[1].clone(),
@@ -167,7 +162,6 @@ pub(crate) fn route(
             )
             .await,
             anonymous,
-            super::RegistryFormat::Standard,
         )
     })
 }
@@ -201,11 +195,6 @@ fn dispatch(
                 .await
                 .map_err(Error::db)?;
             if let Some(algorithm) = &artifact.checksum {
-                let length = match algorithm.as_str() { "sha1" => 40, "sha256" => 64, "sha512" => 128, _ => 32 };
-                if request.method() == Method::HEAD {
-                    return Ok(([(header::CONTENT_TYPE, "text/plain"), (header::CONTENT_LENGTH, &length.to_string())], "").into_response());
-                }
-                let _slot = state.storage.try_acquire_download().ok_or_else(Error::unavailable)?;
                 let bytes = packages::read(&state.storage, &blob)
                     .await
                     .map_err(Error::db)?;
@@ -230,10 +219,6 @@ fn dispatch(
                 response
                     .headers_mut()
                     .insert(header::CONTENT_TYPE, "application/xml".parse().unwrap());
-                response.headers_mut().insert(
-                    header::CONTENT_SECURITY_POLICY,
-                    "default-src 'none'; sandbox".parse().unwrap(),
-                );
             }
             return Ok(response);
         }
@@ -381,7 +366,6 @@ fn dispatch(
             package.id,
             auth.token.id,
             bytes.to_vec(),
-            db::packages::Charge::Upload,
         )
         .await
         .map_err(Error::db)?;

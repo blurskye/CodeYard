@@ -6,6 +6,7 @@ use crate::backend::{
         self,
         attestations::{self, Filter, Owner, Refusal},
     },
+    repositories::access,
 };
 use crate::webui::{app::Page as AppPage, encode_component, pages::attestations as view};
 use axum::{
@@ -109,10 +110,8 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
         None => 0,
     };
     let digests = vec![digest.clone()];
-    let browser_session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
     let filter = Filter {
         actor: ctx.user.as_ref().map(|user| user.id),
-        session: browser_session.as_deref(),
         owner: org,
         repo,
         digests: (!digest.is_empty()).then_some(digests.as_slice()),
@@ -128,26 +127,48 @@ async fn model(ctx: &PageContext, params: &Params) -> Result<view::Page, Respons
     rows.truncate(30);
     let mut entries = Vec::new();
     for row in &rows {
-        let owner = &row.owner_name;
+        let repository =
+            db::repositories::records::get_repository_by_id(&ctx.state.pool, row.repo_id)
+                .await
+                .map_err(|error| failure(ctx, error))?
+                .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
+        let owner = if let Some(org) = repository.owner_org_id {
+            db::organizations::get_public_organization_by_id(&ctx.state.pool, org)
+                .await
+                .map_err(|error| failure(ctx, error))?
+                .map(|org| org.name)
+        } else if let Some(user) = repository.owner_user_id {
+            db::users::accounts::get_user_by_id(&ctx.state.pool, user)
+                .await
+                .map_err(|error| failure(ctx, error))?
+                .map(|user| user.username)
+        } else {
+            None
+        }
+        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository owner not found."))?;
         let repository_href = format!(
             "/{}/{}",
             encode_component(&owner),
-            encode_component(&row.repository)
+            encode_component(&repository.name)
         );
-        let mut subjects: Vec<String> =
+        let subjects: Vec<String> =
             serde_json::from_str(&row.subjects).map_err(|error| failure(ctx, error.into()))?;
-        let omitted_subjects = subjects.len().saturating_sub(5);
-        subjects.truncate(5);
+        let can_delete = if let Some(user) = &ctx.user {
+            access::can_write(&ctx.state.pool, user, &repository)
+                .await
+                .map_err(|error| failure(ctx, error))?
+        } else {
+            false
+        };
         entries.push(view::Entry {
             id: row.id,
-            repository: format!("{owner}/{}", row.repository),
+            repository: format!("{owner}/{}", repository.name),
             repository_href: repository_href.clone(),
             bundle_href: format!("{repository_href}/attestations/{}/bundle", row.id),
             predicate: row.predicate_type.clone(),
             subjects,
-            omitted_subjects,
-            delete_action: row.can_delete.then(|| ctx.location.clone()),
-            inventory_base: row
+            delete_action: can_delete.then(|| base.clone()),
+            inventory_base: repository
                 .owner_org_id
                 .map(|_| format!("/orgs/{}/artifacts", encode_component(&owner))),
         });
@@ -213,10 +234,8 @@ async fn bundle(
     else {
         return ctx.error(StatusCode::NOT_FOUND, "Attestation not found.");
     };
-    let browser_session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
     let filter = Filter {
         actor: ctx.user.as_ref().map(|user| user.id),
-        session: browser_session.as_deref(),
         owner: None,
         repo: Some(loaded.repository.id),
         digests: None,
@@ -265,6 +284,10 @@ async fn remove(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
+    let page = match model(&ctx, &params).await {
+        Ok(page) => page,
+        Err(response) => return response,
+    };
     let Some(id) = form
         .get("attestation_id")
         .and_then(|value| value.parse::<i64>().ok())
@@ -290,10 +313,8 @@ async fn remove(
             Ok(loaded) => loaded,
             Err(response) => return response,
         };
-        let browser_session = crate::backend::api::http::session::extract_session_id(&ctx.headers);
         let filter = Filter {
             actor: Some(actor),
-            session: browser_session.as_deref(),
             owner: None,
             repo: Some(loaded.repository.id),
             digests: None,
@@ -315,9 +336,9 @@ async fn remove(
             return ctx.error(StatusCode::NOT_FOUND, "Repository owner not found.");
         }
     };
-    match attestations::delete(&ctx.state.pool, ctx.database_actor(actor), org, &[id], &[]).await {
+    match attestations::delete(&ctx.state.pool, actor, org, &[id], &[]).await {
         Ok(0) => ctx.error(StatusCode::NOT_FOUND, "Attestation not found."),
-        Ok(_) => ctx.redirect(&ctx.location),
+        Ok(_) => ctx.redirect(&page.base),
         Err(error) => failure(&ctx, error),
     }
 }

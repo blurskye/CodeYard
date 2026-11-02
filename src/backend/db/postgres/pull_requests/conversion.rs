@@ -41,7 +41,7 @@ pub(super) async fn read_source(
     anyhow::ensure!(metadata, IssueConversionRefusal::Invalid);
     // The creation lock excludes new issue metadata. PRs have no equivalents for these
     // records, so conversion must not silently cascade-delete them.
-    let portable: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM issue_type_assignments WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_field_values WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_relations WHERE kind IN ('parent','blocks','related') AND source_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_relations WHERE kind IN ('parent','blocks','related') AND target_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_suggestions WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_redirects WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_duplicates WHERE issue_id=$1 OR duplicate_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_linked_branches WHERE issue_id=$1)")
+    let portable: bool = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM issue_type_assignments WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_field_values WHERE issue_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_relations WHERE kind IN ('parent','blocks','related') AND source_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_relations WHERE kind IN ('parent','blocks','related') AND target_id=$1) AND NOT EXISTS(SELECT 1 FROM issue_suggestions WHERE issue_id=$1)")
         .bind(issue.id).fetch_one(&mut **tx).await?;
     anyhow::ensure!(portable, IssueConversionRefusal::Invalid);
     Ok(issue)
@@ -70,9 +70,11 @@ pub(super) async fn move_source(
     sqlx::query("UPDATE timeline_events SET subject_kind='pull_request',subject_id=$1 WHERE subject_kind='issue' AND subject_id=$2")
         .bind(pull.id).bind(issue.id).execute(&mut **tx).await?;
     if issue.state == "closed" {
-        super::super::timeline::append(tx, pull.repo_id, "pull_request", pull.id, actor, "reopened", "", "").await?;
+        sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind) VALUES($1,'pull_request',$2,$3,'reopened')")
+            .bind(pull.repo_id).bind(pull.id).bind(actor).execute(&mut **tx).await?;
     }
-    super::super::timeline::append(tx, pull.repo_id, "pull_request", pull.id, actor, "converted", "", "").await?;
+    sqlx::query("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind) VALUES($1,'pull_request',$2,$3,'converted')")
+        .bind(pull.repo_id).bind(pull.id).bind(actor).execute(&mut **tx).await?;
     // Project entries move to the new pull request, keeping their fields, archive state and position.
     sqlx::query("UPDATE project_items SET issue_id=NULL,pull_request_id=$1 WHERE issue_id=$2")
         .bind(pull.id)

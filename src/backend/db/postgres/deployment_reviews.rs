@@ -32,10 +32,7 @@ async fn can_review(connection: &mut PgConnection, pending: &Pending, actor: i64
 }
 
 async fn pending_rows(connection: &mut PgConnection, repo: i64, run: i64) -> Result<Vec<Pending>> {
-    let environment: Option<String> = sqlx::query_scalar("SELECT environment FROM ci_deployments WHERE repo_id=$1 AND run_id=$2")
-        .bind(repo).bind(run).fetch_optional(&mut *connection).await?;
-    let Some(environment) = environment else { return Ok(Vec::new()); };
-    Ok(sqlx::query_as("SELECT e.*,d.created_at AS waiting_since,r.triggered_by_id FROM ci_deployments d JOIN ci_runs r ON r.id=d.run_id AND r.repo_id=d.repo_id JOIN deployment_environments e ON e.repo_id=d.repo_id AND e.name_key=$3 WHERE d.repo_id=$1 AND d.run_id=$2 AND d.status='pending' AND (e.wait_timer>0 OR e.reviewers<>'[]') ORDER BY e.id").bind(repo).bind(run).bind(environment.to_lowercase()).fetch_all(connection).await?)
+    Ok(sqlx::query_as("SELECT e.*,d.created_at AS waiting_since,r.triggered_by_id FROM ci_deployments d JOIN ci_runs r ON r.id=d.run_id AND r.repo_id=d.repo_id JOIN deployment_environments e ON e.repo_id=d.repo_id AND e.name_key=LOWER(d.environment) WHERE d.repo_id=$1 AND d.run_id=$2 AND d.status='pending' AND (e.wait_timer>0 OR e.reviewers<>'[]') ORDER BY e.id").bind(repo).bind(run).fetch_all(connection).await?)
 }
 
 pub async fn pending(
@@ -56,18 +53,15 @@ pub async fn pending(
 
 pub async fn review(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     run: i64,
     input: &Input,
 ) -> Result<Vec<Deployment>> {
     input.validate()?;
-    let credential = actor.into();
-    let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_read_authority(&mut tx, actor, repo).await?
-            && super::credentials::repository(&mut tx, &credential, repo, "deployments", true).await?,
+        super::discussions::lock_contribution_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     let source: CiRun =
@@ -102,22 +96,15 @@ pub async fn review(
         let changed = sqlx::query("UPDATE ci_deployments SET status=$3,approved_by_id=$4,approved_at=NOW(),updated_at=NOW() WHERE repo_id=$1 AND run_id=$2 AND status='pending'").bind(repo).bind(run).bind(&input.state).bind(actor).execute(&mut *tx).await?;
         ensure!(changed.rows_affected() == 1, Refusal::Conflict);
         let sha = source.head_sha.as_deref().ok_or(Refusal::Invalid)?;
-        let deployment: Deployment = sqlx::query_as("INSERT INTO repository_deployments(repo_id,creator_id,sha,reference,task,payload,original_environment,environment,production_environment,environment_key) VALUES($1,$2,$3,$4,'deploy',$5,$6,$6,$7,$8) RETURNING *").bind(repo).bind(source.triggered_by_id).bind(sha).bind(&source.branch).bind(serde_json::json!({"workflow_run_id":run}).to_string()).bind(&current.environment.name).bind(current.environment.name_key == "production").bind(&current.environment.name_key).fetch_one(&mut *tx).await?;
+        let deployment: Deployment = sqlx::query_as("INSERT INTO repository_deployments(repo_id,creator_id,sha,reference,task,payload,original_environment,environment,production_environment) VALUES($1,$2,$3,$4,'deploy',$5,$6,$6,$7) RETURNING *").bind(repo).bind(source.triggered_by_id).bind(sha).bind(&source.branch).bind(serde_json::json!({"workflow_run_id":run}).to_string()).bind(&current.environment.name).bind(current.environment.name == "production").fetch_one(&mut *tx).await?;
         sqlx::query("INSERT INTO deployment_statuses(deployment_id,creator_id,state,environment) VALUES($1,$2,$3,$4)").bind(deployment.id).bind(actor).bind(if input.state == "approved" { "queued" } else { "failure" }).bind(&current.environment.name).execute(&mut *tx).await?;
-        sqlx::query("INSERT INTO actions_deployment_reviews(run_id,environment_id,actor_id,state,comment,deployment_id,environment_name) VALUES($1,$2,$3,$4,$5,$6,$7)").bind(run).bind(id).bind(actor).bind(&input.state).bind(&input.comment).bind(deployment.id).bind(&current.environment.name).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO actions_deployment_reviews(run_id,environment_id,actor_id,state,comment,deployment_id) VALUES($1,$2,$3,$4,$5,$6)").bind(run).bind(id).bind(actor).bind(&input.state).bind(&input.comment).bind(deployment.id).execute(&mut *tx).await?;
         deployments.push(deployment);
     }
     tx.commit().await?;
     Ok(deployments)
 }
 
-pub(super) async fn sync_execution(connection: &mut PgConnection, run: i64, status: &str) -> Result<()> {
-    let state = crate::backend::db::deployment_reviews::execution_state(status)?;
-    sqlx::query("INSERT INTO deployment_statuses(deployment_id,creator_id,state,environment) SELECT DISTINCT d.id,d.creator_id,$2,d.environment FROM actions_deployment_reviews v JOIN repository_deployments d ON d.id=v.deployment_id WHERE v.run_id=$1 AND v.state='approved'")
-        .bind(run).bind(state).execute(connection).await?;
-    Ok(())
-}
-
 pub async fn history(pool: &PgPool, repo: i64, run: i64) -> Result<Vec<Review>> {
-    Ok(sqlx::query_as("SELECT v.environment_id,v.environment_name,v.actor_id,v.state,v.comment FROM actions_deployment_reviews v JOIN ci_runs r ON r.id=v.run_id WHERE r.repo_id=$1 AND r.id=$2 ORDER BY v.id").bind(repo).bind(run).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT e.*,v.actor_id,v.state,v.comment FROM actions_deployment_reviews v JOIN ci_runs r ON r.id=v.run_id JOIN deployment_environments e ON e.id=v.environment_id AND e.repo_id=r.repo_id WHERE r.repo_id=$1 AND r.id=$2 ORDER BY v.id").bind(repo).bind(run).fetch_all(pool).await?)
 }

@@ -33,14 +33,6 @@ pub fn router() -> Router<Arc<AppState>> {
         .merge(jobs::router())
         .route_layer(from_fn(middleware::require_node_access))
         .layer(from_fn(middleware::private_sensitive_response));
-    repository_router()
-        .merge(json)
-        .merge(runners::router())
-        .route("/ci", get(actions_page::global_actions))
-        .route("/ci/dispatch", post(trigger::global_dispatch))
-}
-
-pub(super) fn repository_router() -> Router<Arc<AppState>> {
     Router::new()
         .route(
             "/:owner/:repo/actions/runs/:run_id/artifacts/:artifact/download",
@@ -50,6 +42,10 @@ pub(super) fn repository_router() -> Router<Arc<AppState>> {
             "/:owner/:repo/actions/runs/:run_id/artifacts/:artifact/delete",
             post(run_forms::delete_artifact),
         )
+        .merge(json)
+        .merge(runners::router())
+        .route("/ci", get(actions_page::global_actions))
+        .route("/ci/dispatch", post(trigger::global_dispatch))
         .route(
             "/:owner/:repo/actions",
             get(actions_page::repository_actions),

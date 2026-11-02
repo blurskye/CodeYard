@@ -367,7 +367,7 @@ fn value_suggestions(key: &str, raw: &str, filters: &ListFilters) -> Vec<Suggest
             .collect(),
         "sort" => SORTS
             .iter()
-            .filter(|(value, title)| contains(title, &typed) || contains(value, &typed))
+            .filter(|(_, title)| contains(title, &typed))
             .map(|(value, title)| plain(key, value, title))
             .collect(),
         _ => Vec::new(),

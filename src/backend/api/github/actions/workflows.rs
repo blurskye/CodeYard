@@ -31,11 +31,25 @@ pub(super) async fn discover(
     if store.refs().await.map_err(store_error)?.is_empty() {
         return Ok(Vec::new());
     }
-    let definitions = ci::list_workflows_for_ref(&store, &format!("refs/heads/{}", repo.default_branch))
+    let definitions = ci::list_workflows_for_ref(&store, &repo.default_branch)
         .await
         .map_err(Error::unavailable)?;
-    let definitions: Vec<_> = definitions.into_iter().map(|definition| (definition.path, definition.name)).collect();
-    workflows::register_workflows(&state.pool, repo.id, &definitions, true).await.map_err(Error::unavailable)
+    let mut values = Vec::new();
+    for definition in definitions {
+        values.push(
+            workflows::register_workflow(
+                &state.pool,
+                repo.id,
+                &definition.path,
+                &definition.name,
+                true,
+            )
+            .await
+            .map_err(Error::unavailable)?,
+        );
+    }
+    values.sort_by_key(|workflow| workflow.id);
+    Ok(values)
 }
 
 pub(super) async fn lookup(
@@ -138,9 +152,9 @@ async fn enabled(
     enable: bool,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let authentication = authentication.ok_or_else(auth::required)?;
+    let actor = authentication.ok_or_else(auth::required)?.user.id;
     let workflow = lookup(state, &repo, key).await?;
-    workflows::set_workflow_enabled(&state.pool, authentication.database_actor(), repo.id, workflow.id, enable)
+    workflows::set_workflow_enabled(&state.pool, actor, repo.id, workflow.id, enable)
         .await
         .map_err(|error| {
             if error
@@ -187,9 +201,10 @@ async fn dispatch(
     input: std::result::Result<Json<Dispatch>, JsonRejection>,
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
-    let authentication = authentication.ok_or_else(auth::required)?;
-    let credential = authentication.ci_credential(&headers, "actions")?;
-    let actor = authentication.workflow_actor(&state, repo.id).await?;
+    let actor = authentication
+        .ok_or_else(auth::required)?
+        .workflow_actor(&state, repo.id)
+        .await?;
     let Json(input) = input.map_err(|_| Error::invalid("Invalid workflow dispatch"))?;
     let workflow = lookup(&state, &repo, &key).await?;
     let run = state
@@ -208,7 +223,6 @@ async fn dispatch(
                 inputs: input.inputs,
                 repo_id: Some(repo.id),
             },
-            Some(credential),
         )
         .await
         .map_err(admission_error)?;
@@ -254,7 +268,13 @@ async fn badge(
             _ => ("no status", "#9f9f9f"),
         }
     };
-    let escape = crate::webui::components::escape_html;
+    let escape = |text: &str| {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&apos;")
+    };
     let label = escape(&workflow.name.chars().take(22).collect::<String>());
     let title = escape(&workflow.name);
     let svg = format!(

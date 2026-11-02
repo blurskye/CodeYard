@@ -277,14 +277,6 @@ impl Rule {
             Self::MaxFileSize { .. } => "max_file_size",
         }
     }
-    pub(crate) fn supports_evaluation(&self) -> bool {
-        matches!(self,
-            Self::Creation | Self::Update { .. } | Self::Deletion
-                | Self::NonFastForward | Self::RequiredLinearHistory
-                | Self::BranchNamePattern { .. } | Self::TagNamePattern { .. }
-        )
-    }
-
     fn validate(&mut self, target: Target) -> Result<(), Invalid> {
         let applicable = match self {
             Self::Creation | Self::Update { .. } | Self::Deletion | Self::NonFastForward => {
@@ -406,20 +398,12 @@ impl Definition {
         validated.validate_owner(owner)?;
         // Pushes record evaluate-mode verdicts as rule suites, but ref admission does not
         // enforce these policies yet; never claim they are active.
-        if validated.enforcement == Enforcement::Active && (!validated.rules.is_empty() || validated.conditions.as_ref().and_then(|conditions| conditions.repository_name.as_ref()).is_some_and(|names| names.protected)) {
+        if validated.enforcement == Enforcement::Active && !validated.rules.is_empty() {
             return Err(invalid(
                 "enforcement",
                 "Nonempty rulesets can be disabled or evaluated until native ref admission enforces them",
             )
             .into());
-        }
-        if validated.enforcement == Enforcement::Evaluate
-            && validated.rules.iter().any(|rule| !rule.supports_evaluation())
-        {
-            return Err(invalid(
-                "rules",
-                "Evaluate mode supports only ref creation, update, deletion, history and name rules",
-            ).into());
         }
         Ok(serde_json::to_string(&validated)?)
     }

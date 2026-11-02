@@ -16,10 +16,6 @@ async fn metadata_contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("project-metadata-alice").await;
     let bob = f.actor("project-metadata-bob").await;
-    let alice_session = crate::support::live_session(f.pool(), alice).await;
-    let bob_session = crate::support::live_session(f.pool(), bob).await;
-    let alice_credential = db::users::accounts::AccountCredential::Session(&alice_session);
-    let bob_credential = db::users::accounts::AccountCredential::Session(&bob_session);
     let org = applied(
         db::organizations::profiles::create_organization(
             f.pool(),
@@ -108,14 +104,13 @@ async fn metadata_contract(pg: bool) {
             ("Closed", true, true),
             ("Private", false, false),
         ] {
-            let p = store::create(f.pool(), alice, &alice_credential, owner, title, None, public)
+            let p = store::create(f.pool(), alice, owner, title, None, public)
                 .await
                 .unwrap();
             if closed {
                 store::save(
                     f.pool(),
                     alice,
-                    &alice_credential,
                     p.id,
                     &store::Settings {
                         title: Some(title.into()),
@@ -128,7 +123,7 @@ async fn metadata_contract(pg: bool) {
                 .unwrap();
             }
             if public {
-                store::link_repository(f.pool(), alice, &alice_credential, p.id, repo.id, true)
+                store::link_repository(f.pool(), alice, p.id, repo.id, true)
                     .await
                     .unwrap();
             }
@@ -143,7 +138,6 @@ async fn metadata_contract(pg: bool) {
     let hidden = store::create(
         f.pool(),
         bob,
-        &bob_credential,
         store::Owner::User(bob),
         "Hidden",
         None,
@@ -151,16 +145,15 @@ async fn metadata_contract(pg: bool) {
     )
     .await
     .unwrap();
-    store::link_repository(f.pool(), bob, &bob_credential, hidden.id, repo.id, true)
+    store::link_repository(f.pool(), bob, hidden.id, repo.id, true)
         .await
         .unwrap();
-    store::add_item(f.pool(), bob, &bob_credential, hidden.id, &store::Content::Issue(issue.id))
+    store::add_item(f.pool(), bob, hidden.id, &store::Content::Issue(issue.id))
         .await
         .unwrap();
     store::add_item(
         f.pool(),
         bob,
-        &bob_credential,
         hidden.id,
         &store::Content::PullRequest(pull.id),
     )
@@ -169,7 +162,6 @@ async fn metadata_contract(pg: bool) {
     let unlinked = store::create(
         f.pool(),
         alice,
-        &alice_credential,
         store::Owner::User(alice),
         "Unlinked",
         None,
@@ -295,7 +287,6 @@ async fn metadata_contract(pg: bool) {
     let old_issue = store::add_item(
         f.pool(),
         alice,
-        &alice_credential,
         projects[1].id,
         &store::Content::Issue(issue.id),
     )
@@ -304,7 +295,6 @@ async fn metadata_contract(pg: bool) {
     let old_pull = store::add_item(
         f.pool(),
         alice,
-        &alice_credential,
         projects[5].id,
         &store::Content::PullRequest(pull.id),
     )
@@ -363,7 +353,6 @@ async fn metadata_contract(pg: bool) {
         store::update_item(
             f.pool(),
             alice,
-            &alice_credential,
             project.id,
             item.id,
             &[store::FieldUpdate {
@@ -373,7 +362,7 @@ async fn metadata_contract(pg: bool) {
         )
         .await
         .unwrap();
-        store::archive_item(f.pool(), alice, &alice_credential, project.id, item.id, true)
+        store::archive_item(f.pool(), alice, project.id, item.id, true)
             .await
             .unwrap();
         new_items.push((item.id, option.clone()));
@@ -409,7 +398,6 @@ async fn metadata_contract(pg: bool) {
         let unset = store::add_item(
             f.pool(),
             alice,
-            &alice_credential,
             projects[1 + index * 4].id,
             &if index == 0 {
                 store::Content::Issue(issue.id)

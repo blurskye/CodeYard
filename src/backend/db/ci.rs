@@ -46,11 +46,8 @@ pub(crate) fn may_cancel_run(
     personal_admin: bool,
     access: super::models::AccessLevel,
 ) -> bool {
-    triggered_by_id == Some(actor_id) || personal_admin || access.can_write()
+    triggered_by_id == Some(actor_id) || personal_admin || access.can_admin()
 }
-
-/// History reads deliberately omit reusable-workflow content snapshots.
-pub(crate) const RUN_METADATA_COLUMNS: &str = "c.workflow_run_number,c.workflow_run_id,c.workflow_run_attempt,c.engine,c.id,c.run_id,c.repo_id,c.triggered_by_id,c.mode,c.pipeline,c.event,c.pull_request_id,c.attempt,c.pull_request_event,c.event_payload,c.workflow_inputs,c.is_fork,c.approval_required,c.branch,c.head_sha,c.workflow_path,c.workflow_sha,c.runner_labels,c.runner_group,c.worker,c.heartbeat_at,c.cancel_requested,c.environment,c.status,c.error_message,c.started_at,c.completed_at,c.created_at,c.updated_at";
 
 pub struct NewCiRun<'a> {
     pub repo_id: i64,
@@ -82,57 +79,10 @@ pub enum CiReplaySelection {
     Job(i64),
 }
 
-/// The proof actually presented by the request, retained across Git and body awaits.
-/// Serializes selection, credential rotation and state initialization for one worker,
-/// including retries that arrive through a different core.
-pub(crate) async fn prepare_claim<T>(
-    pool: &DbPool, worker: &str, prepare: impl std::future::Future<Output = Result<T>>,
-) -> Result<T> {
-    match pool {
-        DbPool::Postgres(pool) => {
-            use sqlx::{Connection, postgres::{PgAdvisoryLock, PgConnection}};
-            // A preparation performs other pool operations. A dedicated connection avoids
-            // exhausting the pool with lock holders that then need another connection.
-            let mut connection = PgConnection::connect_with(&pool.connect_options()).await?;
-            let schema: String = sqlx::query_scalar("SELECT current_schema()")
-                .fetch_one(&mut connection).await?;
-            let lock = PgAdvisoryLock::new(format!("codeyard-ci-prepare:{schema}:{worker}"));
-            let guard = lock.acquire(connection).await?;
-            let result = prepare.await;
-            guard.release_now().await?;
-            result
-        }
-        DbPool::Sqlite(_) => {
-            use std::{collections::HashMap, sync::{Arc, Mutex, OnceLock, Weak}};
-            static LOCKS: OnceLock<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>> = OnceLock::new();
-            let lock = {
-                let mut locks = LOCKS.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
-                locks.retain(|_, lock| lock.strong_count() > 0);
-                match locks.get(worker).and_then(Weak::upgrade) {
-                    Some(lock) => lock,
-                    None => {
-                        let lock = Arc::new(tokio::sync::Mutex::new(()));
-                        locks.insert(worker.to_owned(), Arc::downgrade(&lock));
-                        lock
-                    }
-                }
-            };
-            let _guard = lock.lock().await;
-            prepare.await
-        }
-    }
-}
-
-#[derive(Clone)]
-pub enum CiCredential {
-    Session(String),
-    Token { id: i64, hash: String, permission: &'static str },
-}
-
 pub struct NewCiAttempt {
     pub source: i64,
     pub source_uuid: Uuid,
-    pub credential: Option<CiCredential>,
+    pub credential: Option<i64>,
     /// Native forms retain their explicit duplicate/reuse behavior; REST attempts require idle roots.
     pub allow_active: bool,
     pub selection: CiReplaySelection,
@@ -187,13 +137,12 @@ native_operation!(crate::backend::db::postgres::ci::ci_run_options,crate::backen
 /// lost access, and shown to the person who looks at the run.
 pub const ACCESS_LOST_MESSAGE: &str = "The person who started this run no longer has access";
 
-native_operation!(crate::backend::db::postgres::ci::accept_repository_dispatch,
-    crate::backend::db::sqlite::ci::accept_repository_dispatch,
-    fn accept_repository_dispatch(pool: &DbPool, actor: i64, repo: i64, credential: &CiCredential) -> Result<bool>);
-
 native_operation!(crate::backend::db::postgres::ci::scheduled_repositories,
     crate::backend::db::sqlite::ci::scheduled_repositories,
     fn scheduled_repositories(pool: &DbPool, after: i64) -> Result<Vec<i64>>);
+native_operation!(crate::backend::db::postgres::ci::schedule_actor,
+    crate::backend::db::sqlite::ci::schedule_actor,
+    fn schedule_actor(pool: &DbPool, repo: i64, reference: &str, sha: &str) -> Result<Option<i64>>);
 
 // Commits retained by recorded runs, including runs whose branch no longer exists.
 native_operation!(crate::backend::db::postgres::ci::retained_ci_commits,
@@ -204,15 +153,12 @@ native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run,
     crate::backend::db::sqlite::ci::enqueue_ci_run,
     fn enqueue_ci_run(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64]) -> Result<CiRun>);
 
-/// Run and whether this transaction inserted its admission (rather than reusing it).
-pub type Enqueued = (CiRun, bool);
-
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_attempt,
     crate::backend::db::sqlite::ci::enqueue_ci_run_attempt,
-    fn enqueue_ci_run_attempt(pool:&DbPool,input:NewCiRun<'_>,trusted_ids:&[i64],attempt:NewCiAttempt,scheduling:&super::runners::Scheduling,event_payload:Option<&serde_json::Value>)->Result<Enqueued>);
+    fn enqueue_ci_run_attempt(pool:&DbPool,input:NewCiRun<'_>,trusted_ids:&[i64],attempt:NewCiAttempt,scheduling:&super::runners::Scheduling,event_payload:Option<&serde_json::Value>)->Result<CiRun>);
 native_operation!(crate::backend::db::postgres::ci::enqueue_ci_run_for_runners,
     crate::backend::db::sqlite::ci::enqueue_ci_run_for_runners,
-    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &super::runners::Scheduling, event_payload: Option<&serde_json::Value>, credential: Option<&CiCredential>) -> Result<Enqueued>);
+    fn enqueue_ci_run_for_runners(pool: &DbPool, input: NewCiRun<'_>, trusted_ids: &[i64], scheduling: &super::runners::Scheduling, event_payload: Option<&serde_json::Value>) -> Result<CiRun>);
 
 native_operation!(crate::backend::db::postgres::ci::claim_ci_run,
     crate::backend::db::sqlite::ci::claim_ci_run,
@@ -221,7 +167,7 @@ native_operation!(crate::backend::db::postgres::ci::claim_ci_run,
     /// access are cancelled instead, and the claim moves on to the next one. A worker
     /// that already holds a running run gets that run back, so a claim retried after a
     /// lost reply does not leave its run stranded.
-    fn claim_ci_run(pool: &DbPool, worker: &str, mode: &str, trusted_ids: &[i64], platforms: &[String]) -> Result<Option<CiRun>>);
+    fn claim_ci_run(pool: &DbPool, worker: &str, mode: &str, trusted_ids: &[i64]) -> Result<Option<CiRun>>);
 
 native_operation!(crate::backend::db::postgres::ci::claim_ci_run_on_node,
     crate::backend::db::sqlite::ci::claim_ci_run_on_node,
@@ -237,7 +183,6 @@ native_operation!(crate::backend::db::postgres::ci::claim_ci_run_on_node,
         worker: &str,
         mode: &str,
         trusted_ids: &[i64],
-        platforms: &[String],
     ) -> Result<Option<CiRun>>);
 
 native_operation!(crate::backend::db::postgres::ci::ci_run_allows_repository_read,
@@ -252,10 +197,6 @@ native_operation!(crate::backend::db::postgres::ci::ci_run_allows_repository_rea
         public_key: &str,
     ) -> Result<bool>);
 
-native_operation!(crate::backend::db::postgres::ci::heartbeat_ci_run_on_node,
-    crate::backend::db::sqlite::ci::heartbeat_ci_run_on_node,
-    fn heartbeat_ci_run_on_node(pool: &DbPool, id: i64, worker: &str, node_key: &str) -> Result<Option<bool>>);
-
 native_operation!(crate::backend::db::postgres::ci::heartbeat_ci_run,
     crate::backend::db::sqlite::ci::heartbeat_ci_run,
     fn heartbeat_ci_run(pool: &DbPool, id: i64, worker: &str) -> Result<Option<bool>>);
@@ -268,25 +209,22 @@ native_operation!(crate::backend::db::postgres::ci::finish_ci_run,
     worker: &str,
     status: &str,
     message: Option<&str>,
-) -> Result<Option<(CiRun, Vec<(i64, i64)>, Vec<i64>)>>);
+) -> Result<Option<(CiRun, Vec<(i64, i64)>)>>);
 
 native_operation!(crate::backend::db::postgres::ci::fail_stale_ci_runs,
     crate::backend::db::sqlite::ci::fail_stale_ci_runs,
-    fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<(Vec<CiRun>, Vec<(i64, i64)>, Vec<(i64, i64)>)>);
-
-/// Changed flag, notifications, and a terminal run only when cancellation completed it.
-pub type Cancellation = (bool, Vec<(i64, i64)>, Option<CiRun>);
+    fn fail_stale_ci_runs(pool: &DbPool, stale_seconds: i64) -> Result<(Vec<CiRun>, Vec<(i64, i64)>)>);
 
 native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation,
     crate::backend::db::sqlite::ci::request_ci_cancellation,
-    fn request_ci_cancellation(pool: &DbPool, run_id: Uuid, actor_id: i64) -> Result<Cancellation>);
+    fn request_ci_cancellation(pool: &DbPool, run_id: Uuid, actor_id: i64) -> Result<(bool, Vec<(i64, i64)>)>);
 
-native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation_with_credential,
-    crate::backend::db::sqlite::ci::request_ci_cancellation_with_credential,
-    fn request_ci_cancellation_with_credential(pool: &DbPool, run_id: Uuid, actor_id: i64, credential: &CiCredential) -> Result<Cancellation>);
+native_operation!(crate::backend::db::postgres::ci::request_ci_cancellation_with_token,
+    crate::backend::db::sqlite::ci::request_ci_cancellation_with_token,
+    fn request_ci_cancellation_with_token(pool: &DbPool, run_id: Uuid, actor_id: i64, token_id: i64) -> Result<(bool, Vec<(i64,i64)>)>);
 native_operation!(crate::backend::db::postgres::ci::delete_ci_run_data,
     crate::backend::db::sqlite::ci::delete_ci_run_data,
-    fn delete_ci_run_data(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
+    fn delete_ci_run_data(pool: &DbPool, actor: i64, repo: i64, id: i64, kind: CiRunDeletion) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::ci::get_ci_run_by_id,
     crate::backend::db::sqlite::ci::get_ci_run_by_id,
     fn get_ci_run_by_id(pool: &DbPool, repo_id: i64, id: i64) -> Result<Option<CiRun>>);

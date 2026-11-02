@@ -49,16 +49,6 @@ def fits(page):
         raise AssertionError(widths)
 
 
-def visit_settings(page, path):
-    response = page.goto(base + path)
-    assert response and response.ok, f"Settings navigation failed: {path}"
-    if path == organization:
-        expect(page.locator('form:has(input[name="previous"][value="ORGANIZATION_REGION"]) textarea[name="value"]')).to_have_value("org-visible")
-        expect(page.get_by_text("ORGANIZATION_TOKEN", exact=True)).to_be_visible()
-    else:
-        expect(page.locator('form[action$="/environment-secret-save"]')).to_be_visible()
-
-
 def scope(page, value, *, hydrated=False):
     picker = page.get_by_role("combobox", name="Repository or environment", exact=True)
     if hydrated:
@@ -83,7 +73,7 @@ with sync_playwright() as pw:
     phone.add_cookies([cookie])
     native = phone.new_page()
     observe(native)
-    visit_settings(native, repository + "/settings?tab=secrets&environment=Production")
+    native.goto(base + repository + "/settings?tab=secrets&environment=Production")
     secret = native.locator('form[action$="/environment-secret-save"]')
     expect(secret).to_be_visible()
     native.screenshot(path=str(artifacts / "environment-375.png"), full_page=True)
@@ -107,10 +97,10 @@ with sync_playwright() as pw:
     fits(native)
     print("PASS native phone forms save environment values and switch scopes without JavaScript")
 
-    visit_settings(native, repository + "/settings?tab=secrets&environment=" + quote("L" * 255))
+    native.goto(base + repository + "/settings?tab=secrets&environment=" + quote("L" * 255))
     fits(native)
     private_values_absent(native)
-    visit_settings(native, organization)
+    native.goto(base + organization)
     native.screenshot(path=str(artifacts / "organization-375.png"), full_page=True)
     fits(native)
     private_values_absent(native)
@@ -120,7 +110,7 @@ with sync_playwright() as pw:
     desktop.add_cookies([cookie])
     page = desktop.new_page()
     observe(page)
-    visit_settings(page, repository + "/settings?tab=secrets&environment=Production")
+    page.goto(base + repository + "/settings?tab=secrets&environment=Production")
     page.locator('[data-hydrated="true"]').wait_for(timeout=60000)
     private_values_absent(page)
     page.screenshot(path=str(artifacts / "environment-desktop.png"), full_page=True)
@@ -137,7 +127,7 @@ with sync_playwright() as pw:
     private_values_absent(page)
     print("PASS hydration initializes values and scope changes discard secret drafts")
 
-    visit_settings(page, organization)
+    page.goto(base + organization)
     page.locator('[data-hydrated="true"]').wait_for(timeout=60000)
     private_values_absent(page)
     page.screenshot(path=str(artifacts / "organization-desktop.png"), full_page=True)
@@ -147,7 +137,7 @@ with sync_playwright() as pw:
     page.set_viewport_size({"width": 375, "height": 812})
     for path, name in ((organization, "organization"),
                        (repository + "/settings?tab=secrets&environment=" + quote("L" * 255), "environment")):
-        visit_settings(page, path)
+        page.goto(base + path)
         page.locator('[data-hydrated="true"]').wait_for(timeout=60000)
         private_values_absent(page)
         fits(page)

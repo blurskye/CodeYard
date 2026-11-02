@@ -42,10 +42,9 @@ already-authenticated ID cannot be rebound to another account. Password reset,
 password change and suspension revoke authenticated sessions; suspension preserves
 repositories and other stored data.
 
-Passwords are verified only as Argon2id PHC hashes (new passwords use 19456 KiB memory,
-2 iterations, 1 lane). Legacy SHA256 verifiers require a password reset; login does not
-accept or upgrade them. Successful Argon2id verification conditionally upgrades outdated
-cost parameters without overwriting a concurrent reset. Four native KDF permits bound in-process work. The selected database
+New passwords use Argon2id (19456 KiB memory, 2 iterations, 1 lane). Successful legacy
+SHA256 verification upgrades the stored hash conditionally, so it cannot overwrite a
+concurrent reset. Four native KDF permits bound in-process work. The selected database
 enforces shared per-account and per-client-address limits across independent handles
 and PostgreSQL nodes. Current defaults are 10 failed attempts per five minutes per
 account and 30 per five minutes per client address; a right password gives its attempt

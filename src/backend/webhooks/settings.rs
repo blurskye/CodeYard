@@ -46,8 +46,6 @@ pub struct HookPatch {
     pub payload_url: Option<String>,
     pub content_type: Option<String>,
     pub events: Option<Vec<String>>,
-    pub add_events: Vec<String>,
-    pub remove_events: Vec<String>,
     pub active: Option<bool>,
     pub ssl_verify: Option<bool>,
     pub secret: Option<String>,
@@ -55,24 +53,6 @@ pub struct HookPatch {
 
 fn unavailable<E>(_: E) -> HookError {
     HookError::Unavailable
-}
-
-/// Maps a refused hook write to what the form or API shows.
-fn write_error(owner: HookOwner, error: anyhow::Error) -> HookError {
-    if let Some(invalid) = error.downcast_ref::<hooks::InvalidEvents>() {
-        HookError::Invalid(invalid.0)
-    } else if error.is::<hooks::HookLimit>() {
-        HookError::Invalid(
-            "This owner's webhook limit has been reached. Remove an existing hook first.",
-        )
-    } else if error.is::<hooks::HookExists>() {
-        HookError::Invalid(match owner {
-            HookOwner::Repository(_) => "Hook already exists on this repository",
-            HookOwner::Organization(_) => "Hook already exists on this organization",
-        })
-    } else {
-        HookError::Unavailable
-    }
 }
 
 /// Repository admins manage a repository's hooks, and so do site administrators on user-owned
@@ -171,17 +151,8 @@ pub async fn save(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
     id: Option<i64>,
     form: &HookForm,
-) -> Result<i64, HookError> {
-    save_with_revision(pool, encryptor, owner, actor, credential, id, form, None).await
-}
-
-pub async fn save_with_revision(
-    pool: &DbPool, encryptor: Option<&SecretEncryptor>, owner: HookOwner, actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
-    id: Option<i64>, form: &HookForm, expected_updated: Option<chrono::DateTime<chrono::Utc>>,
 ) -> Result<i64, HookError> {
     authorize(pool, actor, owner).await?;
     let mut fields = validated(form)?;
@@ -201,12 +172,12 @@ pub async fn save_with_revision(
     let secret = seal(encryptor, &form.secret)?;
     match id {
         None => {
-            let id = hooks::insert_webhook(pool, owner, actor.id, credential, &fields, secret.as_ref())
+            let id = hooks::insert_webhook(pool, owner, actor.id, &fields, secret.as_ref())
                 .await
-                .map_err(|error| write_error(owner, error))?
+                .map_err(unavailable)?
                 .ok_or(HookError::Denied)?;
             // A hook that was saved stays saved when its ping cannot be queued.
-            if ping(pool, owner, actor, credential, id).await.is_err() {
+            if ping(pool, owner, actor, id).await.is_err() {
                 tracing::warn!(webhook_id = id, "could not queue the webhook ping");
             }
             Ok(id)
@@ -218,15 +189,14 @@ pub async fn save_with_revision(
                 ));
             }
             let mut patch = hooks::WebhookPatch::from(&fields);
-            patch.expected_updated = expected_updated;
             patch.clear_secret = form.clear_secret;
             patch.clear_password = form.clear_password;
-            let updated = hooks::patch_webhook(pool, owner, actor.id, credential, id, &patch, secret.as_ref())
+            let updated = hooks::patch_webhook(pool, owner, actor.id, id, &patch, secret.as_ref())
                 .await
-                .map_err(|error| write_error(owner, error))?
+                .map_err(unavailable)?
                 .ok_or(HookError::Denied)?;
             if !updated {
-                return Err(if expected_updated.is_some() { HookError::Invalid("The webhook changed. Reload before saving; your submitted settings are preserved.") } else { HookError::NotFound });
+                return Err(HookError::NotFound);
             }
             Ok(id)
         }
@@ -238,7 +208,6 @@ pub async fn update(
     encryptor: Option<&SecretEncryptor>,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
     id: i64,
     patch: &HookPatch,
 ) -> Result<(), HookError> {
@@ -254,7 +223,6 @@ pub async fn update(
             .as_deref()
             .map(|password| sealed(encryptor, password))
             .transpose()?,
-        expected_updated: None,
         clear_password: false,
         payload_url: patch.payload_url.as_deref().map(validate_url).transpose()?,
         content_type: patch
@@ -267,8 +235,6 @@ pub async fn update(
             .as_ref()
             .map(|events| events::subscription(events).map_err(HookError::Invalid))
             .transpose()?,
-        add_events: patch.add_events.clone(),
-        remove_events: patch.remove_events.clone(),
         active: patch.active,
         ssl_verify: patch.ssl_verify,
         clear_secret: patch.secret.as_ref().is_some_and(String::is_empty),
@@ -279,9 +245,9 @@ pub async fn update(
         .map(|secret| seal(encryptor, secret))
         .transpose()?
         .flatten();
-    match hooks::patch_webhook(pool, owner, actor.id, credential, id, &fields, secret.as_ref())
+    match hooks::patch_webhook(pool, owner, actor.id, id, &fields, secret.as_ref())
         .await
-        .map_err(|error| write_error(owner, error))?
+        .map_err(unavailable)?
     {
         None => Err(HookError::Denied),
         Some(false) => Err(HookError::NotFound),
@@ -293,11 +259,10 @@ pub async fn delete(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
     authorize(pool, actor, owner).await?;
-    let deleted = hooks::delete_webhook(pool, owner, actor.id, credential, id)
+    let deleted = hooks::delete_webhook(pool, owner, actor.id, id)
         .await
         .map_err(unavailable)?
         .ok_or(HookError::Denied)?;
@@ -309,14 +274,15 @@ pub async fn delete(
 }
 
 /// Queues a ping to one hook, as the Test button does.
-pub async fn ping(pool: &DbPool, owner: HookOwner, actor: &User, credential: &db::users::accounts::AccountCredential<'_>, id: i64) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, Default::default())
-        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
-    let hook = snapshot.hook.ok_or(HookError::NotFound)?;
+pub async fn ping(pool: &DbPool, owner: HookOwner, actor: &User, id: i64) -> Result<(), HookError> {
+    authorize(pool, actor, owner).await?;
+    let hook = hooks::get_webhook(pool, owner, id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(HookError::NotFound)?;
     let payload = ping_payload(pool, owner, actor, &hook).await?;
     let json = payload.to_string();
-    let mut outgoing = outgoing(events::PING, None, &hook, &json);
-    outgoing.manual_actor = Some(actor.id);
+    let outgoing = outgoing(events::PING, None, &hook, &json);
     if enqueue(pool, hook, outgoing) {
         Ok(())
     } else {
@@ -329,47 +295,94 @@ pub async fn redeliver(
     pool: &DbPool,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
     hook_id: i64,
     delivery_id: i64,
 ) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(hook_id), Some(delivery_id), 0, Default::default())
-        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
-    let hook = snapshot.hook.ok_or(HookError::NotFound)?;
-    let recorded = snapshot.delivery.ok_or(HookError::NotFound)?;
-    let mut outgoing = super::delivery::redelivery(&recorded);
-    outgoing.manual_actor = Some(actor.id);
-    if enqueue(pool, hook, outgoing) {
+    authorize(pool, actor, owner).await?;
+    let hook = hooks::get_webhook(pool, owner, hook_id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(HookError::NotFound)?;
+    let recorded = hooks::get_delivery(pool, hook_id, delivery_id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(HookError::NotFound)?;
+    if enqueue(pool, hook, super::delivery::redelivery(&recorded)) {
         Ok(())
     } else {
         Err(HookError::Unavailable)
     }
 }
 
-/// Replays the latest persisted push, without reading newer Git state or moving a reference.
+/// Sends a representative push for the default branch without moving a reference.
 pub async fn test_push(
     pool: &DbPool,
+    cluster: Option<&crate::backend::cluster::NodeContext>,
     owner: HookOwner,
     actor: &User,
-    credential: &db::users::accounts::AccountCredential<'_>,
     id: i64,
 ) -> Result<(), HookError> {
-    let snapshot = hooks::read_settings(pool, owner, actor.id, credential, Some(id), None, 0, Default::default())
-        .await.map_err(unavailable)?.ok_or(HookError::Denied)?;
-    let hook = snapshot.hook.ok_or(HookError::NotFound)?;
-    if !events::subscribes(&hook.events, events::PUSH) { return Ok(()); }
-    let HookOwner::Repository(repo) = owner else {
+    authorize(pool, actor, owner).await?;
+    let hook = hooks::get_webhook(pool, owner, id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(HookError::NotFound)?;
+    if !events::subscribes(&hook.events, events::PUSH) {
+        return Err(HookError::Invalid("The webhook does not subscribe to push"));
+    }
+    let HookOwner::Repository(repo_id) = owner else {
         return Err(HookError::Invalid("A repository webhook is required"));
     };
-    let body = hooks::latest_push_for_hook(pool, actor.id, credential, repo, id, super::MAX_PAYLOAD_BYTES as i64)
-        .await.map_err(|error| if error.is::<hooks::HookAuthorityDenied>() { HookError::Denied } else { unavailable(error) })?;
-    let Some(body) = body else { return Ok(()); };
-    let payload: Value = serde_json::from_str(&body).map_err(unavailable)?;
-    if payload["repository"]["id"].as_i64() != Some(repo) { return Err(HookError::Unavailable); }
-    let mut send = outgoing(events::PUSH, None, &hook, &body);
+    let repo = db::repositories::records::get_repository_by_id(pool, repo_id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(HookError::NotFound)?;
+    let owner = db::repositories::records::repository_owner_name(pool, repo_id)
+        .await
+        .map_err(unavailable)?
+        .ok_or(HookError::NotFound)?;
+    let reference = format!("refs/heads/{}", repo.default_branch);
+    let commit = crate::backend::repositories::store::repo_store(&repo, cluster)
+        .commit(&reference)
+        .await
+        .map_err(unavailable)?;
+    // Bounded as real push payloads are, so a long commit message still fits the queue.
+    let pushed = payloads::PushedCommit {
+        id: commit.sha.clone(),
+        tree_id: commit.tree_sha,
+        message: payloads::bounded_text(&commit.message, 4096),
+        time: commit.timestamp,
+        author_name: payloads::bounded_text(&commit.author_name, 256),
+        author_email: payloads::bounded_text(&commit.author_email, 256),
+        committer_name: payloads::bounded_text(&commit.committer_name, 256),
+        committer_email: payloads::bounded_text(&commit.committer_email, 256),
+        committer_time: commit.committer_timestamp,
+    };
+    let commits = payloads::PushedCommits {
+        commits: vec![pushed.clone()],
+        head: Some(pushed),
+        forced: false,
+    };
+    let body = payloads::push(
+        &reference,
+        commit
+            .parents
+            .first()
+            .map(String::as_str)
+            .unwrap_or(&"0".repeat(40)),
+        &commit.sha,
+        &commits,
+        &repo,
+        &owner,
+        &payloads::Person::of(actor),
+    );
+    let mut send = outgoing(events::PUSH, None, &hook, &body.to_string());
     send.automatic = false;
-    send.manual_actor = Some(actor.id);
-    if enqueue(pool, hook, send) { Ok(()) } else { Err(HookError::Unavailable) }
+    if enqueue(pool, hook, send) {
+        Ok(())
+    } else {
+        Err(HookError::Unavailable)
+    }
 }
 
 async fn ping_payload(

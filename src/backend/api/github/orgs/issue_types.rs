@@ -57,18 +57,17 @@ async fn save(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &params["org"]).await?;
-    let Json(input) = input.map_err(super::super::json_error)?;
+    let Json(input) = input.map_err(|_| Error::invalid_simple("Invalid issue type"))?;
     let id = params
         .get("issue_type_id")
         .map(|id| id.parse::<i64>().map_err(|_| Error::missing()))
         .transpose()?;
-    let value = issue_attributes::configure_organization(
+    let id = issue_attributes::configure_organization(
         &state.pool,
         org.id,
-        actor.database_actor(),
+        actor.user.id,
         &Definition {
             id,
-            expected_updated: None,
             kind: "type".into(),
             name: input.name,
             description: input.description,
@@ -81,6 +80,12 @@ async fn save(
     )
     .await
     .map_err(|error| super::super::issue_attributes::error(error).simple())?;
+    let value = issue_attributes::organization_catalog(&state.pool, org.id, actor.user.id, "type")
+        .await
+        .map_err(|error| super::super::issue_attributes::error(error).simple())?
+        .into_iter()
+        .find(|value| value.id == id)
+        .ok_or_else(Error::missing)?;
     Ok(Json(payloads::issue_type(&value)))
 }
 async fn remove(
@@ -96,7 +101,7 @@ async fn remove(
     issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
-        actor.database_actor(),
+        actor.user.id,
         id,
         "type",
     )

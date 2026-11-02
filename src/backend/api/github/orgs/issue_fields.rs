@@ -111,7 +111,7 @@ async fn create(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     let Json(input) =
-        input.map_err(super::super::json_error)?;
+        input.map_err(|_| Error::invalid_simple("Invalid issue field configuration"))?;
     if matches!(input.data_type.as_str(), "single_select" | "multi_select")
         && input.options.is_none()
     {
@@ -120,10 +120,9 @@ async fn create(
     let field = issue_attributes::create_organization_field(
         &state.pool,
         org.id,
-        actor.database_actor(),
+        actor.user.id,
         &Definition {
             id: None,
-            expected_updated: None,
             kind: "field".into(),
             name: input.name,
             description: input.description,
@@ -160,11 +159,11 @@ async fn update(
         .parse()
         .map_err(|_| Error::missing())?;
     let Json(input) =
-        input.map_err(super::super::json_error)?;
+        input.map_err(|_| Error::invalid_simple("Invalid issue field configuration"))?;
     let field = issue_attributes::patch_organization_field(
         &state.pool,
         org.id,
-        actor.database_actor(),
+        actor.user.id,
         id,
         &FieldChanges {
             name: input.name,
@@ -192,7 +191,7 @@ async fn remove(
     issue_attributes::delete_organization_definition(
         &state.pool,
         org.id,
-        actor.database_actor(),
+        actor.user.id,
         id,
         "field",
     )

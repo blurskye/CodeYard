@@ -19,8 +19,8 @@ async fn list(
     Query(input): Query<activity::Query>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
-    let page = activity::page(&state.pool, repo.id, &input, auth.as_ref().map(|auth| auth.user.id))
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let page = activity::page(&state.pool, repo.id, &input)
         .await
         .map_err(|error| match error.downcast_ref::<InvalidQuery>() {
             Some(invalid) => Error::invalid_simple(invalid.to_string()),

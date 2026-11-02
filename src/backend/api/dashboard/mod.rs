@@ -63,9 +63,8 @@ async fn new_issue_page(
     let (own, own_count) = match db::repositories::records::list_user_repository_page(
         &ctx.state.pool,
         user.id,
-        ctx.session_id.as_deref(),
+        true,
         query,
-        false,
         30,
         offset,
     )
@@ -78,7 +77,6 @@ async fn new_issue_page(
         &ctx.state.pool,
         user.id,
         query,
-        false,
         30,
         offset,
     )
@@ -87,7 +85,6 @@ async fn new_issue_page(
         Ok(rows) => rows,
         Err(_) => return unavailable(),
     };
-    // Archived repositories take no new issues, so the queries leave them out before paging.
     let repos: Vec<_> = own
         .into_iter()
         .chain(shared.into_iter().map(|row| row.repository))
@@ -100,6 +97,7 @@ async fn new_issue_page(
         };
     let mut choices: Vec<RepositoryChoice> = repos
         .into_iter()
+        .filter(|repo| !repo.is_archived)
         .filter_map(|repo| {
             let owner = owners.get(&repo.id)?.clone();
             Some(RepositoryChoice {
@@ -152,13 +150,13 @@ async fn issues_page(
         .rows
         .into_iter()
         .map(|row| {
-            let created = row.created_at;
+            let created = row.entry.issue.created_at;
             WorkItem {
-                owner: row.repo_owner,
-                repo: row.repo_name,
-                number: row.number,
-                title: row.title,
-                state: row.state,
+                owner: row.entry.repo_owner,
+                repo: row.entry.repo_name,
+                number: row.entry.issue.number,
+                title: row.entry.issue.title,
+                state: row.entry.issue.state,
                 labels: row
                     .labels
                     .into_iter()
@@ -221,13 +219,13 @@ async fn pulls_page(
         .rows
         .into_iter()
         .map(|row| {
-            let created = row.created_at;
+            let created = row.pull_request.created_at;
             WorkItem {
                 owner: row.repo_owner,
                 repo: row.repo_name,
-                number: row.number,
-                title: row.title,
-                state: row.state,
+                number: row.pull_request.number,
+                title: row.pull_request.title,
+                state: row.pull_request.state,
                 labels: Vec::new(),
                 comments: None,
                 created: created.to_rfc3339(),

@@ -33,11 +33,34 @@ async fn handle(
     Path((owner, path)): Path<(String, String)>,
     request: Request,
 ) -> Response {
-    let anonymous = !request.headers().contains_key(header::AUTHORIZATION);
-    super::finish(tokio::time::timeout(
+    match tokio::time::timeout(
         Duration::from_secs(120),
         dispatch(&state, &owner, &path, request),
-    ).await, anonymous, super::RegistryFormat::Npm)
+    )
+    .await
+    {
+        Ok(Ok(mut response)) => {
+            response
+                .headers_mut()
+                .insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+            response
+        }
+        result => {
+            let error = match result {
+                Ok(Err(error)) => error,
+                _ => Error::unavailable(),
+            };
+            let mut response =
+                (error.0, Json(json!({"error":error.1,"reason":error.2}))).into_response();
+            if error.0 == StatusCode::UNAUTHORIZED {
+                response.headers_mut().insert(
+                    header::WWW_AUTHENTICATE,
+                    "Basic realm=\"Codeyard packages\"".parse().unwrap(),
+                );
+            }
+            response
+        }
+    }
 }
 
 /// Packages are scoped to their owner, as on GitHub: `@owner/name`. An unscoped name would
@@ -49,7 +72,7 @@ fn package_name<'a>(owner: &str, value: &'a str) -> Result<(&'a str, &'a str)> {
         return Err(Error::missing());
     }
     let (name, rest) = rest.split_once('/').unwrap_or((rest, ""));
-    if !crate::backend::npm::package_name(&format!("@{scope}/{name}")) {
+    if !packages::valid_name(name) || name.contains('/') {
         return Err(Error::invalid());
     }
     Ok((name, rest))
@@ -92,29 +115,6 @@ fn valid_version(version: &str) -> bool {
     true
 }
 
-fn valid_tag(tag: &str) -> bool {
-    !tag.is_empty() && tag.len() <= 128
-        && tag.bytes().all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-        && semver::VersionReq::parse(tag.trim_start_matches('v')).is_err()
-}
-
-fn version_metadata(namespace: &str, slug: &str, version: &db::packages::Version) -> Result<Value> {
-    if version.manifest.len() > db::packages::MAX_LISTED_METADATA_BYTES {
-        return Err(Error::unavailable());
-    }
-    let mut metadata: Value = serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
-    metadata["dist"]["tarball"] = json!(format!(
-        "{}/api/packages/{}/npm/@{}/{}/-/{}-{}.tgz",
-        crate::backend::api::http::config::link_origin(),
-        crate::webui::encode_component(namespace),
-        crate::webui::encode_component(namespace),
-        crate::webui::encode_component(slug),
-        crate::webui::encode_component(slug),
-        crate::webui::encode_component(&version.name),
-    ));
-    Ok(metadata)
-}
-
 async fn dispatch(
     state: &AppState,
     namespace: &str,
@@ -133,9 +133,6 @@ async fn dispatch(
                 .into_response(),
         );
     }
-    if let Some(path) = path.strip_prefix("-/package/") {
-        return dist_tags(state, namespace, path, auth.as_ref(), request).await;
-    }
     let (slug, rest) = package_name(namespace, path)?;
     let name = format!("@{namespace}/{slug}");
     let owner = super::owner(state, namespace).await?;
@@ -150,39 +147,29 @@ async fn dispatch(
     .await?;
     let token = auth.as_ref().map(|auth| auth.token.id.into());
     if read {
-        let _slot = state.storage.try_acquire_download().ok_or_else(Error::unavailable)?;
         if rest.is_empty() {
             // Versions and tags are separate reads. A publish between them can move
             // `latest` to a version this read missed, so read again when it is absent.
             let (mut versions, mut tags) = (Map::new(), Map::new());
             for _ in 0..3 {
                 (versions, tags) = (Map::new(), Map::new());
-                let mut before = i64::MAX;
-                let mut bytes = 0usize;
+                let mut offset = 0;
                 loop {
                     let rows =
-                        db::packages::version_page(&state.pool, package.id, token, before, false)
+                        db::packages::versions(&state.pool, package.id, token, false, offset, 100)
                             .await
                             .map_err(Error::db)?;
                     let count = rows.len();
                     for version in rows {
-                        before = version.id;
-                        bytes = bytes.saturating_add(version.manifest.len() + version.name.len() + 1024);
-                        if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
-                            return Err(Error::unavailable());
-                        }
-                        let metadata = version_metadata(namespace, slug, &version)?;
+                        let metadata: Value = serde_json::from_str(&version.manifest)
+                            .map_err(|_| Error::unavailable())?;
                         if metadata["name"] != name {
                             continue;
                         }
-                        for tag in db::packages::tags(&state.pool, package.id, token, version.id)
+                        for tag in db::packages::tags(&state.pool, version.id)
                             .await
                             .map_err(Error::db)?
                         {
-                            bytes = bytes.saturating_add(tag.len() + version.name.len() + 16);
-                            if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
-                                return Err(Error::unavailable());
-                            }
                             tags.insert(tag, json!(version.name));
                         }
                         versions.insert(version.name, metadata);
@@ -190,6 +177,7 @@ async fn dispatch(
                     if count < 100 {
                         break;
                     }
+                    offset += 100;
                 }
                 if versions.is_empty() || tags.contains_key("latest") {
                     break;
@@ -206,13 +194,9 @@ async fn dispatch(
                 .and_then(|value| value.strip_suffix(".tgz"))
                 .filter(|value| valid_version(value))
                 .ok_or_else(Error::missing)?;
-            let reference = version;
-            let version = db::packages::version(&state.pool, package.id, token, reference)
+            let version = db::packages::version(&state.pool, package.id, token, version)
                 .await
                 .map_err(Error::db)?;
-            if version.name != reference {
-                return Err(Error::missing());
-            }
             let blob = db::packages::blob(&state.pool, package.id, token, &version.digest)
                 .await
                 .map_err(Error::db)?;
@@ -221,10 +205,8 @@ async fn dispatch(
         let version = db::packages::version(&state.pool, package.id, token, rest)
             .await
             .map_err(Error::db)?;
-        if valid_version(rest) && version.name != rest {
-            return Err(Error::missing());
-        }
-        let metadata = version_metadata(namespace, slug, &version)?;
+        let metadata: Value =
+            serde_json::from_str(&version.manifest).map_err(|_| Error::unavailable())?;
         if metadata["name"] != name {
             return Err(Error::missing());
         }
@@ -263,9 +245,6 @@ async fn dispatch(
         .filter(|v| v.len() == 1)
         .ok_or_else(Error::invalid)?;
     let (version, metadata) = versions.iter().next().ok_or_else(Error::invalid)?;
-    if metadata.to_string().len() > db::packages::MAX_LISTED_METADATA_BYTES {
-        return Err(Error::invalid());
-    }
     if !valid_version(version)
         || metadata["version"] != version.as_str()
         || metadata["name"] != name
@@ -304,25 +283,24 @@ async fn dispatch(
     let tags = input["dist-tags"].as_object().ok_or_else(Error::invalid)?;
     if tags.len() > 100
         || tags.iter().any(|(tag, target)| {
-            !valid_tag(tag) || target != version.as_str()
+            tag.is_empty()
+                || tag.len() > 128
+                || !tag
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+                || target != version.as_str()
         })
     {
         return Err(Error::invalid());
     }
     let tags: Vec<_> = tags.keys().cloned().collect();
-    let blob = packages::store(
-        &state.pool,
-        &state.storage,
-        package.id,
-        token,
-        tarball,
-        db::packages::Charge::Upload,
-    )
+    let blob = packages::store(&state.pool, &state.storage, package.id, token, tarball)
         .await
         .map_err(Error::db)?;
     let mut metadata = metadata.clone();
     let base = format!(
-        "/api/packages/{}/npm/{}",
+        "{}/api/packages/{}/npm/{}",
+        crate::backend::api::http::config::link_origin(),
         crate::webui::encode_component(namespace),
         if name.starts_with('@') {
             format!(
@@ -356,79 +334,6 @@ async fn dispatch(
         Json(json!({"ok":true,"id":name,"rev":version})),
     )
         .into_response())
-}
-
-/// `npm dist-tag`: `GET .../dist-tags` lists the tags, and `PUT` or `DELETE .../dist-tags/<tag>`
-/// points a tag at a published version or removes it.
-async fn dist_tags(
-    state: &AppState,
-    namespace: &str,
-    path: &str,
-    auth: Option<&super::Authentication>,
-    request: Request,
-) -> Result<Response> {
-    let (slug, rest) = package_name(namespace, path)?;
-    let tag = match rest.strip_prefix("dist-tags") {
-        Some("") => None,
-        Some(tag) => Some(
-            tag.strip_prefix('/')
-                .filter(|tag| valid_tag(tag))
-                .ok_or_else(Error::invalid)?,
-        ),
-        None => return Err(Error::missing()),
-    };
-    let owner = super::owner(state, namespace).await?;
-    let package = super::package(state, &owner, "npm", slug, auth, false).await?;
-    let method = request.method().clone();
-    match (method, tag) {
-        (Method::GET | Method::HEAD, None) => {
-            let token = auth.map(|auth| auth.token.id.into());
-            let (mut tags, mut after, mut bytes) = (Map::new(), String::new(), 0usize);
-            loop {
-                let page = db::packages::tag_page(&state.pool, package.id, token, &after, 100)
-                    .await
-                    .map_err(Error::db)?;
-                let done = page.len() < 100;
-                for (tag, version) in page {
-                    bytes = bytes.saturating_add(tag.len() + version.len() + 16);
-                    if bytes > db::packages::MAX_METADATA_RESPONSE_BYTES {
-                        return Err(Error::unavailable());
-                    }
-                    after.clone_from(&tag);
-                    tags.insert(tag, json!(version));
-                }
-                if done {
-                    return Ok(Json(Value::Object(tags)).into_response());
-                }
-            }
-        }
-        (Method::PUT, Some(tag)) => {
-            let token = super::writer(auth)?.token.id;
-            let bytes = to_bytes(request.into_body(), 1024)
-                .await
-                .map_err(|_| Error::invalid())?;
-            let version: String = serde_json::from_slice(&bytes).map_err(|_| Error::invalid())?;
-            if !valid_version(&version) {
-                return Err(Error::invalid());
-            }
-            db::packages::set_tag(&state.pool, package.id, token, tag, &version)
-                .await
-                .map_err(Error::db)?;
-            Ok(Json(json!({"ok":true})).into_response())
-        }
-        (Method::DELETE, Some(tag)) => {
-            let token = super::writer(auth)?.token.id;
-            db::packages::delete_tag(&state.pool, package.id, token, tag)
-                .await
-                .map_err(Error::db)?;
-            Ok(Json(json!({"ok":true})).into_response())
-        }
-        _ => Err(Error(
-            StatusCode::METHOD_NOT_ALLOWED,
-            "UNSUPPORTED",
-            "Unsupported npm operation",
-        )),
-    }
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use axum::response::Response;
 use std::collections::HashMap;
 
 pub(crate) fn field(form: &HashMap<String, String>, name: &str) -> String {
-    crate::backend::api::user::responses::field(form, name).to_owned()
+    form.get(name).cloned().unwrap_or_default()
 }
 
 /// The values a repeated form field was sent with, in the order they were sent.

@@ -139,14 +139,12 @@ async fn real_engines(pg: bool) {
             "TOKEN",
             "repository-private-marker",
             Some(actor),
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await),
         )
         .await
         .unwrap();
         db::variables::save(
             f.pool(),
             actor,
-            &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await),
             repo.id,
             None,
             "REGION",
@@ -297,14 +295,12 @@ async fn fork_claims(pg: bool) {
         "TOKEN",
         "repository-private-claim-marker",
         Some(actor),
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await),
     )
     .await
     .unwrap();
     db::variables::save(
         f.pool(),
         actor,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await),
         repo.id,
         None,
         "REGION",
@@ -352,7 +348,7 @@ async fn fork_claims(pg: bool) {
             f.execute("UPDATE ci_runs SET is_fork=true WHERE id=$1", &[run.id])
                 .await;
             let claim = queue
-                .claim("worker", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+                .claim("worker", CiExecutionMode::Local)
                 .await
                 .unwrap()
                 .unwrap();
@@ -371,12 +367,12 @@ async fn fork_claims(pg: bool) {
                 .finish("worker", run.id, "success", None)
                 .await
                 .unwrap();
-            db::secrets::delete_secret(f.pool(), actor, repo.id, "TOKEN", &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), actor).await))
+            db::secrets::delete_secret(f.pool(), actor, repo.id, "TOKEN")
                 .await
                 .unwrap();
         } else {
             let error = queue
-                .claim("worker", CiExecutionMode::Local, &codeyard::backend::ci::CiConfig::default().platform_labels())
+                .claim("worker", CiExecutionMode::Local)
                 .await
                 .err()
                 .expect("environment secret must require the master key");

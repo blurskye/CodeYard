@@ -1,11 +1,7 @@
 use super::{
     auth, contents::store_error, pagination::Pagination, repo_url, repository, Error, Result,
 };
-use crate::backend::{
-    app::AppState,
-    db, dependency_graph,
-    repositories::{dependency_graph as inventory, store::repo_store},
-};
+use crate::backend::{app::AppState, db, dependency_graph, repositories::store::repo_store};
 use axum::{
     extract::{rejection::JsonRejection, OriginalUri, Path, Query, State},
     http::{header, HeaderMap, Method, StatusCode},
@@ -30,17 +26,13 @@ pub(super) fn handlers() -> Vec<(&'static str, MethodRouter<Arc<AppState>>)> {
 fn error(error: db::dependency_graph::GraphError) -> Error {
     use db::dependency_graph::GraphError;
     match error {
-        GraphError::Denied => Error::new(StatusCode::FORBIDDEN, GraphError::Denied.to_string()),
+        GraphError::Denied => Error::new(
+            StatusCode::FORBIDDEN,
+            "Must have write access to this repository",
+        ),
         GraphError::Invalid => Error::validation("Snapshot", "snapshot", "invalid"),
-        error @ (GraphError::Limit | GraphError::Disabled) => Error::new(StatusCode::UNPROCESSABLE_ENTITY, error.to_string()),
         _ => Error::unavailable(error),
     }
-}
-
-async fn readable(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<(db::models::Repository, db::dependency_graph::Reader)> {
-    let (repo, authentication) = repository(state, headers, owner, name, false).await?;
-    let actor = authentication.as_ref().map(|auth| auth.database_actor());
-    Ok((repo, db::dependency_graph::Reader::Viewer(actor)))
 }
 
 async fn submit(
@@ -64,7 +56,7 @@ async fn submit(
         .await
         .map_err(store_error)?
         .sha;
-    let submission = db::dependency_graph::submit(&state.pool, actor.database_actor(), repo.id, &snapshot)
+    let submission = db::dependency_graph::submit(&state.pool, actor.user.id, repo.id, &snapshot)
         .await
         .map_err(error)?;
     db::vulnerabilities::enqueue(&state.pool, repo.id)
@@ -91,12 +83,11 @@ async fn compare(
     OriginalUri(uri): OriginalUri,
     Query(query): Query<Compare>,
 ) -> Result<Response> {
-    let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let (base, head) = range
         .split_once("...")
         .filter(|(base, head)| !base.is_empty() && !head.is_empty())
         .ok_or_else(|| Error::new(StatusCode::BAD_REQUEST, "Invalid comparison"))?;
-    db::dependency_graph::check_read(&state.pool, &reader, repo.id).await.map_err(error)?;
     let store = repo_store(&repo, state.cluster.as_ref());
     let comparison = store
         .comparison_from(&store, base, head, 0, 1)
@@ -104,7 +95,6 @@ async fn compare(
         .map_err(store_error)?;
     let mut base = db::dependency_graph::snapshots(
         &state.pool,
-        &reader,
         repo.id,
         None,
         Some(&comparison.merge_base_commit.sha),
@@ -112,14 +102,11 @@ async fn compare(
     .await
     .map_err(error)?;
     let mut head =
-        db::dependency_graph::snapshots(&state.pool, &reader, repo.id, None, Some(&comparison.head_sha))
+        db::dependency_graph::snapshots(&state.pool, repo.id, None, Some(&comparison.head_sha))
             .await
             .map_err(error)?;
-    for (sha, snapshots) in [(&comparison.merge_base_commit.sha, &mut base), (&comparison.head_sha, &mut head)] {
-        inventory::append_native_snapshot(&state, &reader, &repo, sha, None, snapshots)
-            .await
-            .map_err(store_error)?;
-    }
+    append_inventory(&state, &repo, &comparison.merge_base_commit.sha, &mut base).await?;
+    append_inventory(&state, &repo, &comparison.head_sha, &mut head).await?;
     let changes = dependency_graph::diff(&base, &head, query.name.as_deref());
     let page = Pagination {
         page: query.page,
@@ -129,9 +116,6 @@ async fn compare(
     let has_more = offset.saturating_add(limit) < changes.len();
     // Only the requested page gets vulnerability lookups.
     let mut changes: Vec<_> = changes.into_iter().skip(offset).take(limit).collect();
-    let local = if changes.iter().any(|change| change["version"].as_str().is_some_and(|v| !v.is_empty())) {
-        db::dependabot_alerts::without_osv(&state.pool).await.map_err(Error::unavailable)?
-    } else { Vec::new() };
     for change in &mut changes {
         let package = crate::backend::repositories::dependency_graph::Package {
             manifest: change["manifest"].as_str().unwrap_or_default().into(),
@@ -141,38 +125,77 @@ async fn compare(
             package_url: change["package_url"].as_str().unwrap_or_default().into(),
             scope: change["scope"].as_str().unwrap_or("unknown").into(),
         };
-        if package.version.is_empty() {
-            change["vulnerabilities"] = json!([]);
-            continue;
-        }
-        let mut vulnerabilities = crate::backend::vulnerabilities::findings(&state.pool,&package)
+        change["vulnerabilities"] = json!(crate::backend::vulnerabilities::findings(&state.pool,&package)
             .await.map_err(Error::unavailable)?.iter().map(|a|json!({
                 "severity":a.severity(),
-                "advisory_ghsa_id":a.catalogue_id(),
+                "advisory_ghsa_id":a.aliases.iter().chain(std::iter::once(&a.id)).find(|id|id.starts_with("GHSA-")).unwrap_or(&a.id),
                 "advisory_summary":a.summary,
                 "advisory_url":format!("https://osv.dev/vulnerability/{}",crate::webui::encode_component(&a.id)),
-            })).collect::<Vec<_>>();
-        if let Some(ecosystem) = crate::backend::vulnerabilities::ecosystem(&package.ecosystem) {
-            for advisory in &local {
-                if !advisory["withdrawn_at"].is_null() { continue }
-                let affected = advisory["vulnerabilities"].as_array().into_iter().flatten().any(|entry| {
-                    crate::backend::vulnerabilities::ecosystem(entry["package"]["ecosystem"].as_str().unwrap_or("")) == Some(ecosystem)
-                        && crate::backend::vulnerabilities::name(ecosystem, entry["package"]["name"].as_str().unwrap_or("")) == crate::backend::vulnerabilities::name(ecosystem, &package.name)
-                        && crate::backend::vulnerabilities::in_range(ecosystem, &package.version, entry["vulnerable_version_range"].as_str().unwrap_or(""))
-                });
-                if affected {
-                    vulnerabilities.push(json!({"severity":advisory["severity"],"advisory_ghsa_id":advisory["ghsa_id"],"advisory_summary":advisory["summary"],"advisory_url":super::api_url(&format!("/advisories/{}", advisory["ghsa_id"].as_str().unwrap_or("")))}));
-                }
-            }
-        }
-        change["vulnerabilities"] = json!(vulnerabilities);
+            })).collect::<Vec<_>>());
     }
-    db::dependency_graph::check_read(&state.pool, &reader, repo.id).await.map_err(error)?;
     Ok((page.headers(&uri, has_more)?, Json(changes)).into_response())
 }
 
-async fn current(state: &AppState, reader: &db::dependency_graph::Reader, repo: &db::models::Repository, owner: &str) -> Result<Value> {
-    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(error)?;
+// Feed pinned native observations through the same typed SPDX and comparison projections as
+// submitted detector snapshots, retaining the latter's dependency relationships and metadata.
+async fn append_inventory(
+    state: &AppState,
+    repo: &db::models::Repository,
+    reference: &str,
+    snapshots: &mut Vec<dependency_graph::Snapshot>,
+) -> Result<()> {
+    use crate::backend::repositories::{dependency_graph as inventory, store::ErrorKind};
+    let (sha, packages) = match inventory::native_inventory(state, repo, reference).await {
+        Ok(inventory) => inventory,
+        // Submitted detector snapshots also support repositories with no native commits yet.
+        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
+            return Ok(())
+        }
+        Err(error) => return Err(store_error(error)),
+    };
+    let mut manifests = std::collections::BTreeMap::new();
+    for package in packages {
+        let manifest = manifests
+            .entry(package.manifest.clone())
+            .or_insert_with(|| dependency_graph::Manifest {
+                name: package.manifest.clone(),
+                file: None,
+                metadata: None,
+                resolved: Default::default(),
+            });
+        manifest.resolved.insert(
+            package.package_url.clone(),
+            dependency_graph::Dependency {
+                package_url: Some(package.package_url),
+                metadata: None,
+                relationship: None,
+                scope: Some(package.scope),
+                dependencies: Vec::new(),
+            },
+        );
+    }
+    snapshots.push(dependency_graph::Snapshot {
+        version: 0,
+        sha,
+        reference: reference.to_owned(),
+        job: dependency_graph::Job {
+            id: "native-inventory".into(),
+            correlator: "native-inventory".into(),
+            html_url: None,
+        },
+        detector: dependency_graph::Detector {
+            name: "Codeyard native inventory".into(),
+            version: env!("CARGO_PKG_VERSION").into(),
+            url: crate::backend::api::http::config::link_origin(),
+        },
+        scanned: chrono::Utc::now(),
+        metadata: None,
+        manifests,
+    });
+    Ok(())
+}
+
+async fn current(state: &AppState, repo: &db::models::Repository, owner: &str) -> Result<Value> {
     let (refs, branch) = repo_store(repo, state.cluster.as_ref())
         .refs_and_default()
         .await
@@ -181,22 +204,20 @@ async fn current(state: &AppState, reader: &db::dependency_graph::Reader, repo: 
     // One commit for both the saved snapshots and the live inventory, so a branch that moves
     // mid-request cannot mix versions.
     let Some(sha) = refs.get(&reference).cloned() else {
-        let value = dependency_graph::sbom(&format!("{owner}/{}", repo.name), &[]);
-        db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(error)?;
-        return Ok(value);
+        return Ok(dependency_graph::sbom(
+            &format!("{owner}/{}", repo.name),
+            &[],
+        ));
     };
     let mut snapshots =
-        db::dependency_graph::snapshots(&state.pool, reader, repo.id, Some(&reference), Some(&sha))
+        db::dependency_graph::snapshots(&state.pool, repo.id, Some(&reference), Some(&sha))
             .await
             .map_err(error)?;
-    // The native scan keeps the branch that selected the submitted snapshots, so snapshots of
-    // other branches at the same commit neither hide nor join its manifests.
-    inventory::append_native_snapshot(state, reader, repo, &reference, Some(&sha), &mut snapshots)
-        .await
-        .map_err(store_error)?;
-    let value = dependency_graph::sbom(&format!("{owner}/{}", repo.name), &snapshots);
-    db::dependency_graph::check_read(&state.pool, reader, repo.id).await.map_err(error)?;
-    Ok(value)
+    append_inventory(state, repo, &sha, &mut snapshots).await?;
+    Ok(dependency_graph::sbom(
+        &format!("{owner}/{}", repo.name),
+        &snapshots,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -210,15 +231,15 @@ async fn export(
     Path((owner, name)): Path<(String, String)>,
     Query(query): Query<Export>,
 ) -> Result<Json<Value>> {
-    let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     let value = if let Some(id) = query.report {
-        let body = db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
+        let body = db::dependency_graph::report(&state.pool, repo.id, &id)
             .await
             .map_err(error)?
             .ok_or_else(Error::missing)?;
         serde_json::from_str(&body).map_err(Error::unavailable)?
     } else {
-        current(&state, &reader, &repo, &owner).await?
+        current(&state, &repo, &owner).await?
     };
     Ok(Json(value))
 }
@@ -229,14 +250,13 @@ async fn generate(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<Response> {
-    let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
-    db::dependency_graph::check_read(&state.pool, &reader, repo.id).await.map_err(error)?;
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
     if method == Method::HEAD {
         return Ok(StatusCode::CREATED.into_response());
     }
-    let body = current(&state, &reader, &repo, &owner).await?;
+    let body = current(&state, &repo, &owner).await?;
     let id = uuid::Uuid::new_v4().to_string();
-    db::dependency_graph::save_report(&state.pool, &reader, repo.id, &id, &body.to_string())
+    db::dependency_graph::save_report(&state.pool, repo.id, &id, &body.to_string())
         .await
         .map_err(error)?;
     Ok((StatusCode::CREATED, Json(json!({"sbom_url":format!("{}/dependency-graph/sbom/fetch-report/{id}", repo_url(&owner, &name))}))).into_response())
@@ -247,8 +267,8 @@ async fn fetch(
     headers: HeaderMap,
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Response> {
-    let (repo, reader) = readable(&state, &headers, &owner, &name).await?;
-    if db::dependency_graph::report(&state.pool, &reader, repo.id, &id)
+    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    if db::dependency_graph::report(&state.pool, repo.id, &id)
         .await
         .map_err(error)?
         .is_none()

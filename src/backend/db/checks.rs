@@ -29,59 +29,6 @@ pub struct Suite {
 }
 
 #[derive(FromRow)]
-pub struct Publisher {
-    pub id: i64,
-    pub client_id: String,
-    pub name: String,
-    pub homepage: String,
-    pub created_at: DateTime<Utc>,
-    pub owner_id: i64,
-    pub owner_login: String,
-    pub owner_is_admin: bool,
-}
-
-#[derive(FromRow)]
-pub struct RunDetails {
-    pub run_id: i64,
-    #[sqlx(flatten)]
-    pub suite: Suite,
-    pub annotation_count: i64,
-}
-
-#[derive(FromRow)]
-pub struct SuiteDetails {
-    pub suite_id: i64,
-    pub run_count: i64,
-    pub ci_status: Option<String>,
-    pub ci_approval_required: bool,
-}
-
-pub(crate) fn projection_ids(ids: &[i64]) -> Result<()> {
-    ensure!(ids.len() <= 100 && ids.iter().all(|id| *id > 0), "Invalid Checks projection window");
-    Ok(())
-}
-
-pub(crate) fn projection_heads(heads: &[String]) -> Result<()> {
-    // An empty key represents an unavailable workflow head, not a Git object lookup.
-    ensure!(heads.len() <= 100 && heads.iter().all(|head| head.len() <= 64 && !head.contains('\0')), "Invalid Checks head projection window");
-    Ok(())
-}
-
-pub const ACTIONS_APP_ID: i64 = 15368;
-
-#[derive(Default)]
-pub struct AutomaticSuites {
-    pub after: i64,
-    pub has_next: bool,
-    pub suites: Vec<Suite>,
-}
-
-pub struct RunChange {
-    pub run: Run,
-    pub completed_suite: Option<Suite>,
-}
-
-#[derive(FromRow)]
 pub struct Run {
     pub id: i64,
     pub suite_id: i64,
@@ -93,26 +40,6 @@ pub struct Run {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
 }
-
-#[derive(Default, sqlx::FromRow)]
-pub struct CheckSummary {
-    pub total: i64,
-    pub failed: i64,
-    pub pending: i64,
-}
-native_operation!(crate::backend::db::postgres::checks::summary, crate::backend::db::sqlite::checks::summary,
-    fn summary(pool: &DbPool, repo: i64, sha: &str) -> Result<CheckSummary>);
-
-pub const ANNOTATIONS_PER_PAGE: usize = 8;
-pub struct PageSnapshot {
-    pub run: Run,
-    pub suite: Suite,
-    pub annotations: Vec<Json<Annotation>>,
-    pub total: i64,
-}
-
-native_operation!(crate::backend::db::postgres::checks::page_snapshot, crate::backend::db::sqlite::checks::page_snapshot,
-    fn page_snapshot(pool: &DbPool, viewer: Option<i64>, session: Option<&str>, repo: i64, id: i64, offset: i64) -> Result<PageSnapshot>);
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RunData {
@@ -375,22 +302,8 @@ impl RunPatch {
     }
 }
 
-pub(crate) fn validate_automatic(sha: &str, branch: &str, after: i64) -> Result<()> {
-    ensure!(crate::backend::git::is_full_commit_id(sha) && !branch.is_empty() && text(branch, 1024) && after >= 0, Refusal::Invalid);
-    Ok(())
-}
-
-native_operation!(crate::backend::db::postgres::checks::publishers, crate::backend::db::sqlite::checks::publishers,
-    fn publishers(pool: &DbPool, ids: &[i64]) -> Result<Vec<Publisher>>);
-native_operation!(crate::backend::db::postgres::checks::run_details, crate::backend::db::sqlite::checks::run_details,
-    fn run_details(pool: &DbPool, repo: i64, ids: &[i64]) -> Result<Vec<RunDetails>>);
-native_operation!(crate::backend::db::postgres::checks::suite_details, crate::backend::db::sqlite::checks::suite_details,
-    fn suite_details(pool: &DbPool, repo: i64, ids: &[i64]) -> Result<Vec<SuiteDetails>>);
-native_operation!(crate::backend::db::postgres::checks::pulls_many, crate::backend::db::sqlite::checks::pulls_many,
-    fn pulls_many(pool: &DbPool, repo: i64, heads: &[String]) -> Result<Vec<Pull>>);
-
-native_operation!(crate::backend::db::postgres::checks::recent_app, crate::backend::db::sqlite::checks::recent_app,
-    fn recent_app(pool: &DbPool, repo: i64, name: &str) -> Result<Option<i64>>);
+native_operation!(crate::backend::db::postgres::checks::application, crate::backend::db::sqlite::checks::application,
+    fn application(pool: &DbPool, id: i64) -> Result<Option<super::oauth_apps::Application>>);
 native_operation!(crate::backend::db::postgres::checks::pulls, crate::backend::db::sqlite::checks::pulls,
     fn pulls(pool: &DbPool, repo: i64, sha: &str) -> Result<Vec<Pull>>);
 
@@ -398,24 +311,12 @@ native_operation!(crate::backend::db::postgres::checks::suite, crate::backend::d
     fn suite(pool: &DbPool, repo: i64, id: i64) -> Result<Option<Suite>>);
 native_operation!(crate::backend::db::postgres::checks::run, crate::backend::db::sqlite::checks::run,
     fn run(pool: &DbPool, repo: i64, id: i64) -> Result<Option<Run>>);
-native_operation!(crate::backend::db::postgres::checks::automatic_suites, crate::backend::db::sqlite::checks::automatic_suites,
-    /// Newly requested suites for at most 100 active installed Apps. The cursor advances over
-    /// eligible Apps even when their suite already exists; a repeated push never requests it twice.
-    fn automatic_suites(pool: &DbPool, repo: &super::models::Repository, sha: &str, branch: &str, after: i64) -> Result<AutomaticSuites>);
 native_operation!(crate::backend::db::postgres::checks::create_suite, crate::backend::db::sqlite::checks::create_suite,
     fn create_suite(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>) -> Result<(Suite, bool)>);
 native_operation!(crate::backend::db::postgres::checks::create_run, crate::backend::db::sqlite::checks::create_run,
-    fn create_run(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>, input: &RunPatch) -> Result<RunChange>);
+    fn create_run(pool: &DbPool, credential: Credential<'_>, repo: i64, sha: &str, branch: Option<&str>, input: &RunPatch) -> Result<Run>);
 native_operation!(crate::backend::db::postgres::checks::update_run, crate::backend::db::sqlite::checks::update_run,
-    fn update_run(pool: &DbPool, credential: Credential<'_>, repo: i64, id: i64, input: &RunPatch) -> Result<RunChange>);
-// Rollups need metadata, not the potentially large check output documents.
-native_operation!(crate::backend::db::postgres::checks::rollup_runs, crate::backend::db::sqlite::checks::rollup_runs,
-    fn rollup_runs(pool: &DbPool, repo: i64, sha: &str, offset: i64, limit: i64) -> Result<Vec<Run>>);
-native_operation!(crate::backend::db::postgres::checks::rollup_counts, crate::backend::db::sqlite::checks::rollup_counts,
-    fn rollup_counts(pool: &DbPool, repo: i64, sha: &str) -> Result<Vec<(String, i64)>>);
-native_operation!(crate::backend::db::postgres::checks::workflow_metadata, crate::backend::db::sqlite::checks::workflow_metadata,
-    fn workflow_metadata(pool: &DbPool, repo: i64, suite: i64) -> Result<Option<(String, String, Option<String>)>>);
-
+    fn update_run(pool: &DbPool, credential: Credential<'_>, repo: i64, id: i64, input: &RunPatch) -> Result<Run>);
 native_operation!(crate::backend::db::postgres::checks::runs, crate::backend::db::sqlite::checks::runs,
     fn runs(pool: &DbPool, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Run>>);
 native_operation!(crate::backend::db::postgres::checks::run_count, crate::backend::db::sqlite::checks::run_count,
@@ -428,8 +329,6 @@ native_operation!(crate::backend::db::postgres::checks::annotations, crate::back
     fn annotations(pool: &DbPool, run: i64, offset: i64, limit: i64) -> Result<Vec<Json<Annotation>>>);
 native_operation!(crate::backend::db::postgres::checks::annotation_count, crate::backend::db::sqlite::checks::annotation_count,
     fn annotation_count(pool: &DbPool, run: i64) -> Result<i64>);
-native_operation!(crate::backend::db::postgres::checks::requested_action, crate::backend::db::sqlite::checks::requested_action,
-    fn requested_action(pool: &DbPool, credential: Credential<'_>, repo: i64, run: i64, identifier: &str) -> Result<Run>);
 native_operation!(crate::backend::db::postgres::checks::rerequest, crate::backend::db::sqlite::checks::rerequest,
     fn rerequest(pool: &DbPool, credential: Credential<'_>, repo: i64, suite: i64, run: Option<i64>) -> Result<()>);
 native_operation!(crate::backend::db::postgres::checks::preferences, crate::backend::db::sqlite::checks::preferences,

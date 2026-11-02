@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::http::session::{extract_session_id, get_current_user},
+    api::http::session::get_current_user,
     app::AppState,
     files::{self, DeleteError},
 };
@@ -25,7 +25,7 @@ pub async fn delete_file(
             "Invalid file ID format",
         )
     })?;
-    files::delete_owned_file(&state.pool, &state.storage, (user.id, extract_session_id(&headers).unwrap_or_default()), file_uuid)
+    files::delete_owned_file(&state.pool, &state.storage, user.id, file_uuid)
         .await
         .map_err(deletion_failure)?;
     Ok(StatusCode::NO_CONTENT)

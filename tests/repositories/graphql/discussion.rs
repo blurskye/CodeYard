@@ -554,14 +554,13 @@ async fn discussions(
     )
     .await;
     assert_eq!(deleted["comment"]["id"], comment);
-    let preserved = query(
+    refused(
         router,
         token,
         "query($id:ID!){node(id:$id){id}}",
         json!({"id":reply["id"]}),
     )
     .await;
-    assert_eq!(preserved["node"]["id"], reply["id"]);
     let deleted = mutation(
         router,
         token,

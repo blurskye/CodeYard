@@ -303,7 +303,7 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
         tasks.spawn(async move {
             admission::admit_password_attempt(&pool, None, "user:42")
                 .await
-                .unwrap().is_some()
+                .unwrap()
         });
     }
     let mut admitted = 0;
@@ -313,13 +313,13 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     assert_eq!(admitted, 10);
     assert!(!admission::admit_password_attempt(&other, None, "user:42")
         .await
-        .unwrap().is_some());
+        .unwrap());
     // A refusal by the account still spent the client's budget: 29 attempts remain.
     let client = Some("ip:198.51.100.1");
     assert!(
         !admission::admit_password_attempt(&fixture.pool, client, "user:42")
             .await
-            .unwrap().is_some()
+            .unwrap()
     );
     for index in 0..29 {
         assert!(admission::admit_password_attempt(
@@ -328,12 +328,12 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
             &format!("unknown:{index}")
         )
         .await
-        .unwrap().is_some());
+        .unwrap());
     }
     assert!(
         !admission::admit_password_attempt(&other, client, "unknown:denied")
             .await
-            .unwrap().is_some()
+            .unwrap()
     );
     let allocated: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM auth_login_limits WHERE account_key='unknown:denied'",
@@ -349,13 +349,14 @@ async fn client_and_account_password_budgets_are_shared_by_independent_handles()
     assert!(
         admission::admit_password_attempt(&other, Some("ip:198.51.100.2"), "unknown:denied")
             .await
-            .unwrap().is_some()
+            .unwrap()
     );
     // A right password gives its attempt back, from the client and the account alike.
     let third = Some("ip:198.51.100.3");
-    let receipt = admission::admit_password_attempt(&other, third, "user:7")
-        .await.unwrap().unwrap();
-    admission::forgive_password_attempt(&fixture.pool, &receipt)
+    assert!(admission::admit_password_attempt(&other, third, "user:7")
+        .await
+        .unwrap());
+    admission::forgive_password_attempt(&fixture.pool, third, "user:7")
         .await
         .unwrap();
     let spent: i64 = sqlx::query_scalar(
@@ -825,11 +826,9 @@ async fn issue_pr_numbers_rollback_and_exact_future_microsecond_revision_cas() {
         .is_none());
     db::issues::add_issue_comment(
         &fixture.pool,
-        issue.repo_id,
         issue.id,
         user.id,
         "comment bumps revision monotonically",
-        &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&fixture.pool, user.id).await),
     )
     .await
     .unwrap();
@@ -1538,7 +1537,7 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
         let issue = db::issues::create_issue(pool, repo.id, owner.id, "Issue", "")
             .await
             .unwrap();
-        let comment = db::issues::add_issue_comment(pool, issue.repo_id, issue.id, owner.id, "first", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await))
+        let comment = db::issues::add_issue_comment(pool, issue.id, owner.id, "first")
             .await
             .unwrap();
         let pr = new_pr(pool, repo.id, owner.id, &format!("comments{round}")).await;
@@ -1560,8 +1559,6 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
         )
         .await
         .unwrap();
-        let session = crate::support::live_session(pool, owner.id).await;
-        let credential = codeyard::backend::db::users::accounts::AccountCredential::Session(&session);
         let (edited, deleted_comment, deleted) =
             tokio::time::timeout(std::time::Duration::from_secs(30), async {
                 tokio::join!(
@@ -1572,8 +1569,7 @@ async fn postgres_comment_changes_and_repository_deletion_do_not_deadlock() {
                         issue.id,
                         comment.id,
                         "second",
-                        &comment.body,
-                        &credential
+                        &comment.body
                     ),
                     db::pull_requests::reviews::delete_pull_request_comment(
                         pool,
@@ -1864,7 +1860,7 @@ async fn native_schema_history_foreign_keys_and_integer_overflow_fail_closed() {
             .fetch_all(&fixture.raw)
             .await
             .unwrap();
-    assert_eq!(migrations, [1, 2, 3]);
+    assert_eq!(migrations, [1]);
     let pending_table: String = sqlx::query_scalar(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='pending_object_deletions'",
     )
@@ -2442,14 +2438,13 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     .await
     .unwrap()
     .unwrap();
-    db::issues::add_issue_comment(pool, issue.repo_id, issue.id, reader.id, "comment", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, reader.id).await))
+    db::issues::add_issue_comment(pool, issue.id, reader.id, "comment")
         .await
         .unwrap();
     db::pull_requests::reviews::add_pull_request_review(
         pool,
         pr.id,
         reader.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, reader.id).await),
         "approved",
         Some("review"),
         Some(&pr.head_sha),
@@ -2499,10 +2494,10 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     db::repositories::engagement::watch_repo(pool, reader.id, repo.id)
         .await
         .unwrap();
-    db::following::follow_user(pool, reader.id, owner.id, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, reader.id).await))
+    db::following::follow_user(pool, reader.id, owner.id)
         .await
         .unwrap();
-    assert!(db::following::follow_user(pool, reader.id, reader.id, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, reader.id).await))
+    assert!(db::following::follow_user(pool, reader.id, reader.id)
         .await
         .is_err());
     let rule = db::repositories::protection::upsert_branch_protection_rule(
@@ -2559,7 +2554,6 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         "TOKEN",
         "fixture-secret",
         Some(owner.id),
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await),
     )
     .await
     .unwrap();
@@ -2577,7 +2571,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         .await
         .unwrap());
     assert!(matches!(
-        db::users::accounts::set_user_avatar(pool, owner.id, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await), Some(avatar.id))
+        db::users::accounts::set_user_avatar(pool, owner.id, Some(avatar.id))
             .await
             .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(None)
@@ -2634,7 +2628,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
     let activity = db::users::accounts::list_admin_activity_points(pool, 7)
         .await
         .unwrap();
-    let mut emails: Vec<_> = db::users::accounts::commit_authors(
+    let emails = db::users::accounts::get_users_by_emails(
         pool,
         &[
             "reader@fixture.invalid".into(),
@@ -2642,11 +2636,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         ],
     )
     .await
-    .unwrap()
-    .into_iter()
-    .map(|author| (author.address, author.user.username))
-    .collect();
-    emails.sort();
+    .unwrap();
     let ids = db::users::accounts::get_users_by_ids(pool, &[reader.id, i64::MAX])
         .await
         .unwrap();
@@ -2656,7 +2646,7 @@ async fn populated_snapshot(pool: &db::DbPool) -> Value {
         "social":[repo.stars_count,repo.watchers_count,repo.forks_count],"followers":db::following::count_user_followers(pool,owner.id).await.unwrap(),"rule":[rule.required_status_checks,rule.push_allowances],
         "notification":db::notifications::records::list_notifications_for_user(pool,owner.id,10,false).await.unwrap()[0].metadata,"storage":[stats.total_files,stats.total_bytes,stats.avatar_count,stats.uploads_24h,stats.bytes_24h,stats.downloads_24h],
         "summaries":summaries.into_iter().map(|s|(s.username,s.total_files,s.total_bytes,s.commits_total,s.pushes_total,s.contributions_total)).collect::<Vec<_>>(),
-        "activity":activity.into_iter().map(|a|(a.commits,a.pulls_opened,a.pulls_merged,a.issues_opened,a.issues_closed,a.runs,a.daily_storage_bytes,a.cumulative_storage_bytes)).collect::<Vec<_>>(),"emails":emails,"ids":ids.into_iter().map(|u|u.username).collect::<Vec<_>>()})
+        "activity":activity.into_iter().map(|a|(a.commits,a.pulls_opened,a.pulls_merged,a.issues_opened,a.issues_closed,a.runs,a.daily_storage_bytes,a.cumulative_storage_bytes)).collect::<Vec<_>>(),"emails":emails.into_iter().map(|u|u.username).collect::<Vec<_>>(),"ids":ids.into_iter().map(|u|u.username).collect::<Vec<_>>()})
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -2924,7 +2914,7 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         .await
         .unwrap()
         .is_empty());
-    let issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Discussion", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await))
+    let issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Discussion")
         .await
         .unwrap();
     let comments = issues::list_issue_comments(pool, newer.id, 100, 0)
@@ -2933,10 +2923,10 @@ async fn check_list_display_projections(pool: &db::DbPool) {
     assert_eq!(comments.len(), 1);
     assert_eq!(comments[0].comment.id, issue_comment.id);
     assert_eq!(comments[0].author.username, owner.username);
-    let second_issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Second", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await))
+    let second_issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Second")
         .await
         .unwrap();
-    let third_issue_comment = issues::add_issue_comment(pool, newer.repo_id, newer.id, owner.id, "Third", &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, owner.id).await))
+    let third_issue_comment = issues::add_issue_comment(pool, newer.id, owner.id, "Third")
         .await
         .unwrap();
     let issue_comment_ids = |entries: &[issues::IssueCommentEntry]| {
@@ -3151,7 +3141,6 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, writer.id).await),
         "approved",
         Some("Future"),
         Some("ffffffffffffffffffffffffffffffffffffffff"),
@@ -3163,7 +3152,6 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, writer.id).await),
         "commented",
         Some("Unbound"),
         None,
@@ -3175,7 +3163,6 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, writer.id).await),
         "commented",
         Some("Review"),
         Some(&pull.head_sha),
@@ -3192,7 +3179,6 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, writer.id).await),
         "approved",
         Some("Ship it"),
         Some(&pull.head_sha),
@@ -3204,7 +3190,6 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, writer.id).await),
         "commented",
         Some("Still reading"),
         Some(&pull.head_sha),
@@ -3225,7 +3210,6 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         pool,
         pull.id,
         writer.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, writer.id).await),
         "changes_requested",
         Some("Fix it"),
         Some(&pull.head_sha),
@@ -3273,7 +3257,6 @@ async fn check_list_display_projections(pool: &db::DbPool) {
         pool,
         pull.id,
         second.id,
-        &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, second.id).await),
         "changes_requested",
         Some("Please change this"),
         Some(&pull.head_sha),
@@ -3363,7 +3346,7 @@ async fn postgres_list_projections_and_owned_notification_listener() {
         .unwrap();
     tokio::time::timeout(std::time::Duration::from_secs(5), async {
         loop {
-            if listener.recv().await.unwrap().as_deref() == Some(payload.as_str()) {
+            if listener.recv().await.unwrap() == payload {
                 break;
             }
         }
@@ -3422,16 +3405,11 @@ async fn insert_transfer_rows(
             "upload_rate_limit",
             "uploaded_at",
             uploaded_at,
-            ", file_size, confirmed_at",
+            ", file_size",
         ),
         ("download_rate_limit", "downloaded_at", downloaded_at, ""),
     ] {
-        let bytes = if size.is_empty() { "" } else {
-            match pool {
-                db::DbPool::Postgres(_) => ", 10, $3::timestamptz",
-                db::DbPool::Sqlite(_) => ", 10, ?3",
-            }
-        };
+        let bytes = if size.is_empty() { "" } else { ", 10" };
         match pool {
             db::DbPool::Postgres(raw) => {
                 sqlx::query(&format!(
@@ -4183,7 +4161,7 @@ async fn profile_after_update(
     organization: i64,
     profile: db::organizations::OrganizationProfile,
 ) -> (Option<String>, Option<String>) {
-    match db::organizations::update_organization_profile(pool, actor, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(pool, actor).await), organization, &profile)
+    match db::organizations::update_organization_profile(pool, actor, organization, &profile)
         .await
         .unwrap()
     {
@@ -4816,28 +4794,4 @@ async fn postgres_issue_and_pull_request_counts_and_search() {
     let fixture = PostgresDatabase::new().await;
     check_issue_and_pull_request_counts_and_search(&fixture.pool).await;
     fixture.pool.close().await;
-}
-
-#[tokio::test]
-async fn primary_emails_differing_only_in_case_conflict_on_both_engines() {
-    let postgres = PostgresDatabase::new().await;
-    let sqlite = NativeDatabase::new().await;
-    for pool in [&postgres.pool, &sqlite.pool] {
-        db::users::accounts::create_user(pool, "first_owner", Some("Owner@Example.test"))
-            .await
-            .unwrap();
-        let error =
-            db::users::accounts::create_user(pool, "second_owner", Some("owner@example.test"))
-                .await
-                .unwrap_err();
-        assert!(
-            error
-                .downcast_ref::<sqlx::Error>()
-                .and_then(sqlx::Error::as_database_error)
-                .is_some_and(|error| error.is_unique_violation()),
-            "{error:#}"
-        );
-    }
-    postgres.pool.close().await;
-    sqlite.close().await;
 }

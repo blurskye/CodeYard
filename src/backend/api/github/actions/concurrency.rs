@@ -43,7 +43,7 @@ fn page(
     }
     let after = query.after.as_deref().map(decode).transpose()?;
     let before = query.before.as_deref().map(decode).transpose()?;
-    let limit = crate::backend::api::github::pagination::page_size(query.per_page);
+    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
     let mut groups: Vec<_> = groups
         .into_iter()
         .filter(|group| {
@@ -108,14 +108,7 @@ fn group_url(owner: &str, repo: &str, group: &str) -> String {
 fn member(member: &db::action_concurrency::Member, owner: &str, repo: &str) -> Value {
     let run = &member.run;
     let id = run.workflow_run_id.unwrap_or(run.id);
-    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
-    if let Some(job) = member.job_id {
-        value["job_id"] = json!(job);
-        value["job_name"] = json!(member.job_name);
-        value["job_url"] = json!(format!("{}/actions/jobs/{job}", repo_url(owner, repo)));
-        value["job_html_url"] = value["run_html_url"].clone();
-    }
-    value
+    json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}})
 }
 
 async fn list(
@@ -161,13 +154,8 @@ async fn get_one(
     if members.is_empty() {
         return Err(Error::missing());
     }
-    if query.ahead_of_job.is_some() && query.ahead_of_run.is_some() {
-        return Err(Error::invalid("Use either ahead_of_job or ahead_of_run"));
-    }
-    if let Some(id) = query.ahead_of_job {
-        let position = members.iter().position(|member| member.job_id == Some(id))
-            .ok_or_else(|| Error::invalid("Job is not in this concurrency group"))?;
-        members.truncate(position + 1);
+    if query.ahead_of_job.is_some() {
+        return Err(Error::invalid("Job is not in this concurrency group"));
     }
     if let Some(id) = query.ahead_of_run {
         let position = members
@@ -208,10 +196,7 @@ async fn for_run(
             .map(|(index, item)| {
                 let mut value = member(item, &owner, &name);
                 value["position"] = json!(if item.holding { 0 } else { index.max(1) });
-                value["position_url"] = json!(match item.job_id {
-                    Some(job) => format!("{url}?ahead_of_job={job}"),
-                    None => format!("{url}?ahead_of_run={id}"),
-                });
+                value["position_url"] = json!(format!("{url}?ahead_of_run={id}"));
                 value
             })
             .collect();

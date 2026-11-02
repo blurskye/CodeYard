@@ -35,7 +35,7 @@ pub(crate) async fn form(
         "environment-create" => {
             values::create(
                 &ctx.state.pool,
-                ctx.database_actor(actor.id),
+                actor.id,
                 loaded.repository.id,
                 &environment,
             )
@@ -50,7 +50,7 @@ pub(crate) async fn form(
             values::save(
                 &ctx.state.pool,
                 ctx.state.secret_encryptor.as_deref(),
-                ctx.database_actor(actor.id),
+                actor.id,
                 loaded.repository.id,
                 &environment,
                 &Save {
@@ -71,7 +71,7 @@ pub(crate) async fn form(
             };
             values::delete(
                 &ctx.state.pool,
-                ctx.database_actor(actor.id),
+                actor.id,
                 loaded.repository.id,
                 &environment,
                 kind,

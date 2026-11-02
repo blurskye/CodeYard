@@ -63,11 +63,7 @@ pub fn profile_page(
                         if !profile.public_email.is_empty() { p { class: "identity-profile-bio", "{profile.public_email}" } }
                         if !profile.twitter_username.is_empty() { p { class: "identity-profile-bio", "Twitter: @{profile.twitter_username}" } }
                         for (provider, url) in &profile.social_accounts {
-                            p { class: "identity-profile-bio",
-                                if crate::website::parse(url).is_some() {
-                                    a { href: url.clone(), rel: "nofollow me", "{provider}: {url}" }
-                                } else { "{provider}: {url}" }
-                            }
+                            p { class: "identity-profile-bio", a { href: url.clone(), rel: "nofollow me", "{provider}: {url}" } }
                         }
                         div { class: "identity-profile-follow",
                             if own {
@@ -127,7 +123,7 @@ pub fn profile_page(
                         if stars.open {
                             ProfileStarList { path: path.clone(), stars: stars.clone(), own }
                         } else {
-                            ProfileRepositories { key: "{path}", path: path.clone(), repositories, own, total: repository_count, later_page: repositories_newer.is_some(), server_query: profile.repository_query.clone(), new_href: own.then(|| "/new".to_owned()) }
+                            ProfileRepositories { key: "{path}", path: path.clone(), repositories, own, new_href: own.then(|| "/new".to_owned()) }
                             {page_links(repositories_newer, repositories_older, "Profile repository pages")}
                             section { id: "profile-activity", class: "identity-profile-activity", "aria-labelledby": "profile-activity-heading",
                                 h2 { id: "profile-activity-heading", "Recent activity" }
@@ -257,9 +253,6 @@ pub fn ProfileRepositories(
     path: String,
     repositories: Vec<Repository>,
     own: bool,
-    #[props(default)] total: usize,
-    #[props(default)] later_page: bool,
-    #[props(default)] server_query: String,
     // Where the New repository button goes; no button without it.
     #[props(default)] new_href: Option<String>,
 ) -> Element {
@@ -291,12 +284,6 @@ pub fn ProfileRepositories(
     }
     rsx! {
         section { id: "profile-repositories", class: "identity-profile-repositories", "aria-label": "Repositories",
-            form { method: "get", action: path.clone(), class: "identity-profile-toolbar",
-                input { r#type: "hidden", name: "tab", value: "repositories" }
-                label { "Search the repository catalogue" crate::webui::components::DraftInput { name: "q", initial_value: server_query.clone() } }
-                button { r#type: "submit", "Search repositories" }
-                NavLink { href: path.clone(), "Clear catalogue search" }
-            }
             if !repositories.is_empty() {
                 div { class: "identity-profile-toolbar", role: "search", "aria-label": "Filter the repositories on this page",
                     label { class: "identity-profile-search",
@@ -337,8 +324,7 @@ pub fn ProfileRepositories(
                 if repositories.is_empty() {
                     div { class: "identity-profile-empty",
                         {profile_icon(ProfileIcon::Repository)}
-                        h3 { if later_page || total > 0 || !server_query.is_empty() { "No repositories on this page." } else if own { "You don't have any repositories yet." } else { "No repositories visible to you." } }
-                        if later_page { NavLink { href: format!("{path}?q={}", crate::webui::encode_component(&server_query)), "First page" } }
+                        h3 { if own { "You don't have any repositories yet." } else { "No repositories visible to you." } }
                         if own { NavLink { href: "/new".to_owned(), class: "identity-profile-button identity-profile-new", "Create a repository" } }
                     }
                 } else if rows.is_empty() {
@@ -434,7 +420,7 @@ pub fn ProfileStarList(path: String, stars: ProfileStars, own: bool) -> Element 
             })}
             if stars.repositories.is_empty() {
                 p { class: "identity-profile-empty",
-                    if stars.page > 1 || stars.count > 0 { "No starred repositories on this page. " NavLink { href: stars_href(&path, &stars, 1), "First page" } } else if !query.is_empty() { "No starred repositories match “{query}”." } else if own { "You have not starred any repository you can read yet." } else { "No starred repositories visible to you." }
+                    if !query.is_empty() { "No starred repositories match “{query}”." } else if own { "You have not starred any repository you can read yet." } else { "No starred repositories visible to you." }
                 }
             }
             for repo in &stars.repositories { {repository_card(repo)} }
@@ -542,8 +528,6 @@ pub(crate) fn profile_icon(icon: ProfileIcon) -> Element {
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Profile {
     pub username: String,
-    #[serde(default)]
-    pub repository_query: String,
     pub display_name: String,
     pub bio: String,
     pub location: String,
@@ -613,5 +597,18 @@ pub struct ProfileStars {
 /// Whitelist public website link schemes. Unsafe stored values remain editable text.
 pub(super) fn safe_website(raw: &str) -> Option<&str> {
     let value = raw.trim();
-    crate::website::parse(value).map(|_| value)
+    let has_scheme = |scheme: &str| {
+        value
+            .get(..scheme.len())
+            .is_some_and(|head| head.eq_ignore_ascii_case(scheme))
+    };
+    if !value.chars().any(|c| c.is_control() || c == '\\')
+        && (has_scheme("https://") || has_scheme("http://"))
+    {
+        let authority = value.split_once("://")?.1.split(['/', '?', '#']).next()?;
+        if !authority.is_empty() && !authority.contains('@') {
+            return Some(value);
+        }
+    }
+    None
 }

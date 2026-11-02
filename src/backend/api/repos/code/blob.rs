@@ -1,15 +1,14 @@
 use super::tree::view_entries;
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
+use crate::backend::api::repos::access::readable_repository;
 use crate::backend::api::repos::chrome::{
-    is_branch, ref_names_under, resolve, root_if_missing, store_error, Loaded,
+    is_branch, load_refs_from_repo, ref_names_under, resolve, root_if_missing, store_error, Loaded,
 };
 use crate::backend::api::repos::paging::number;
 use crate::backend::api::repos::refs::references::resolve_references;
 use crate::backend::app::AppState;
 use crate::backend::git::{MAX_BLAME_FILE_BYTES, MAX_BLAME_LINES};
-use crate::backend::git::repository::{PREVIEW_BYTES, PREVIEW_LINES};
 use crate::backend::repositories::files;
 use crate::backend::repositories::store::{
     repo_store, BlobBytes, BlobRange, RepoError, RepoStore, MAX_EDITOR_BYTES,
@@ -115,12 +114,21 @@ pub async fn get_blob(
             )
         })?;
 
+    let refs = load_refs_from_repo(&state, &repository).await?;
+    if refs.is_empty() {
+        return Err((
+            StatusCode::NOT_FOUND,
+            Json(ApiError::new("not_found", "Repository is empty")),
+        ));
+    }
+
+    const DEFAULT_PREVIEW_LIMIT: usize = 256 * 1024;
     const MAX_PREVIEW_LIMIT: usize = 2 * 1024 * 1024;
     const MAX_INLINE_BINARY_PREVIEW_BYTES: u64 = 8 * 1024 * 1024;
 
     let preview_limit = query
         .limit
-        .unwrap_or(PREVIEW_BYTES as usize)
+        .unwrap_or(DEFAULT_PREVIEW_LIMIT)
         .clamp(MIN_TEXT_WINDOW, MAX_PREVIEW_LIMIT);
     let store = repo_store(&repository, state.cluster.as_ref());
     let preview = store
@@ -215,12 +223,14 @@ pub async fn get_blob(
             )),
         )
     })?;
-    check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Response::builder()
         .header(axum::http::header::CONTENT_TYPE, "application/json")
         .body(crate::backend::api::http::middleware::buffered_download_body(response, permit))
         .expect("valid JSON response"))
 }
+
+const PREVIEW_BYTES: u64 = 256 * 1024;
+const PREVIEW_LINES: usize = 2000;
 
 /// The source bytes up to the end of the preview's last line. Lines are cut before text
 /// conversion, which can change the length, so the next page starts at the right byte.
@@ -237,7 +247,7 @@ fn limit_lines(bytes: &[u8]) -> &[u8] {
     bytes
 }
 
-/// The owning store scans one cat-file stream, including over RPC.
+/// Scan bounded chunks, keeping only the window to display and its global line number.
 async fn preview_at(
     store: &RepoStore,
     reference: &str,
@@ -245,11 +255,86 @@ async fn preview_at(
     offset: u64,
     target: Option<usize>,
 ) -> Result<(BlobBytes, usize), RepoError> {
-    let chunk = store.blob_range(reference, path, BlobRange::Preview {
-        offset, line: target.map(|line| line as u32),
-    }).await?;
-    let line = chunk.preview.as_ref().map(|metadata| metadata.first_line)
-        .ok_or_else(|| RepoError::new(crate::backend::repositories::store::ErrorKind::Unavailable, "Preview metadata is unavailable"))?;
+    let mut position = 0;
+    let mut line = 1;
+    let mut start = offset;
+    // Lines end at LF, CRLF or a lone CR, as in `limit_lines`. A CR that ends a chunk is a
+    // break unless the next chunk starts with LF.
+    let mut pending_cr = false;
+    loop {
+        if target.is_none() && position >= offset || target == Some(line) {
+            break;
+        }
+        let length = if target.is_none() {
+            PREVIEW_BYTES.min(offset - position)
+        } else {
+            PREVIEW_BYTES
+        };
+        let chunk = store
+            .blob_range(
+                reference,
+                path,
+                BlobRange::Window {
+                    offset: position,
+                    length,
+                },
+            )
+            .await?;
+        if chunk.is_binary {
+            return Ok((chunk, 1));
+        }
+        if chunk.bytes.is_empty() {
+            start = chunk.size;
+            break;
+        }
+        let bytes = &chunk.bytes;
+        let mut found = false;
+        if std::mem::take(&mut pending_cr) && bytes.first() != Some(&b'\n') {
+            line += 1;
+            if target == Some(line) {
+                start = position;
+                found = true;
+            }
+        }
+        for (index, byte) in bytes.iter().enumerate() {
+            if found {
+                break;
+            }
+            let lone_cr = *byte == b'\r' && bytes.get(index + 1) != Some(&b'\n');
+            if lone_cr && index + 1 == bytes.len() {
+                pending_cr = true;
+            } else if *byte == b'\n' || lone_cr {
+                line += 1;
+                if target == Some(line) {
+                    start = position + index as u64 + 1;
+                    found = true;
+                    break;
+                }
+            }
+        }
+        if found {
+            break;
+        }
+        position += chunk.bytes.len() as u64;
+        if position >= chunk.size {
+            start = chunk.size;
+            break;
+        }
+    }
+    // The previous page ended after that CR, so it closed a line.
+    if pending_cr && target.is_none() {
+        line += 1;
+    }
+    let chunk = store
+        .blob_range(
+            reference,
+            path,
+            BlobRange::Window {
+                offset: start,
+                length: PREVIEW_BYTES,
+            },
+        )
+        .await?;
     Ok((chunk, line))
 }
 
@@ -306,7 +391,6 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         size,
         offset: start,
         mode,
-        preview: metadata,
     } = preview;
     // Blame refuses a file with too many lines. The line count is known only when the preview
     // holds the whole file.
@@ -351,7 +435,6 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         content,
         binary,
         size,
-        download_limit: Some(super::raw::download_limit()),
         offset: start,
         first_line: Some(first_line),
         next: if end < size && !binary {
@@ -360,7 +443,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
             None
         },
         previous: if start > 0 && !binary {
-            metadata.and_then(|metadata| metadata.previous)
+            Some(start.saturating_sub(256 * 1024))
         } else {
             None
         },
@@ -408,9 +491,6 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         )
         .await?;
     }
-    check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
-        .await
-        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     let title = page.path.clone();
     Ok(ctx.page_model(
         &title,
@@ -494,7 +574,7 @@ pub(in crate::backend::api::repos) async fn page(
     >,
     headers: axum::http::HeaderMap,
     axum::extract::OriginalUri(uri): axum::extract::OriginalUri,
-    super::GitPathParams(params): super::GitPathParams,
+    axum::extract::Path(params): axum::extract::Path<std::collections::HashMap<String, String>>,
 ) -> axum::response::Response {
     let ctx =
         match crate::backend::api::http::context::PageContext::load(state, headers, &uri).await {

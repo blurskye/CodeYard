@@ -14,22 +14,6 @@ pub enum Refusal {
     Conflict,
 }
 
-/// Native environment holds; `d` and `e` are the deployment and its live environment.
-pub(crate) fn native_pending_sql(pg: bool) -> String {
-    let timer = if pg {
-        "d.created_at + make_interval(mins => e.wait_timer::int) > clock_timestamp()"
-    } else {
-        "strftime('%Y-%m-%dT%H:%M:%f000Z',d.created_at,'+' || e.wait_timer || ' minutes') > strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
-    };
-    format!("((e.wait_timer>0 AND {timer}) OR (d.status='pending' AND e.reviewers<>'[]'))")
-}
-
-/// Pending protection is a presentation phase, not a replacement for branch-policy admission.
-pub(crate) fn waiting_sql(pg: bool, run: &str) -> String {
-    let native = native_pending_sql(pg);
-    format!("({run}.status='queued' AND NOT EXISTS(SELECT 1 FROM deployment_protection_gates g WHERE g.run_id={run}.id AND g.state='rejected') AND (EXISTS(SELECT 1 FROM deployment_protection_gates g WHERE g.run_id={run}.id AND g.state='pending') OR EXISTS(SELECT 1 FROM ci_deployments d JOIN deployment_environments e ON e.repo_id=d.repo_id AND e.name_key=d.environment_key WHERE d.run_id={run}.id AND d.repo_id={run}.repo_id AND d.status IN ('pending','approved') AND {native})))")
-}
-
 #[derive(Debug, sqlx::FromRow)]
 pub struct Rule {
     pub id: i64,
@@ -70,9 +54,9 @@ native_operation!(crate::backend::db::postgres::deployment_protection::rules, cr
 native_operation!(crate::backend::db::postgres::deployment_protection::integrations, crate::backend::db::sqlite::deployment_protection::integrations,
     fn integrations(pool: &DbPool, repo: i64) -> Result<Vec<App>>);
 native_operation!(crate::backend::db::postgres::deployment_protection::create, crate::backend::db::sqlite::deployment_protection::create,
-    fn create(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, environment: i64, app: i64) -> Result<Rule>);
+    fn create(pool: &DbPool, actor: i64, repo: i64, environment: i64, app: i64) -> Result<Rule>);
 native_operation!(crate::backend::db::postgres::deployment_protection::disable, crate::backend::db::sqlite::deployment_protection::disable,
-    fn disable(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, environment: i64, rule: i64) -> Result<()>);
+    fn disable(pool: &DbPool, actor: i64, repo: i64, environment: i64, rule: i64) -> Result<()>);
 native_operation!(crate::backend::db::postgres::deployment_protection::gates, crate::backend::db::sqlite::deployment_protection::gates,
     fn gates(pool: &DbPool, run: i64) -> Result<Vec<Gate>>);
 

@@ -122,7 +122,6 @@ async fn row(forks: &Forks, id: i64) -> PullRequest {
 /// Opens a pull request from `head_branch` on the fork into `main` of the base.
 async fn open(forks: &Forks, head_branch: &str) -> PullRequest {
     let request = mutations::CreatePullRequestRequest {
-        suppress_ci: false,
         head_repo_id: Some(forks.fork.id),
         source: mutations::PullRequestSource::New {
             title: format!("From {head_branch}"),
@@ -162,7 +161,7 @@ async fn close(forks: &Forks, pull: &PullRequest) {
         &forks.ci,
         &forks.broadcaster,
         forks.alice,
-        (forks.base.id, pull.number),
+        ("alice".to_owned(), "proj".to_owned(), pull.number),
         edit,
     )
     .await
@@ -191,7 +190,6 @@ async fn refresh_leaves_a_closed_pull_request_alone_and_still_follows_an_open_on
         &mut ListedRefs::new(),
         captured,
         Some(crate::backend::db::models::AccessLevel::Owner),
-        None,
     )
     .await
     .unwrap();
@@ -216,7 +214,6 @@ async fn refresh_leaves_a_closed_pull_request_alone_and_still_follows_an_open_on
         &mut ListedRefs::new(),
         captured,
         Some(crate::backend::db::models::AccessLevel::Owner),
-        None,
     )
     .await
     .unwrap();
@@ -265,8 +262,7 @@ async fn refresh_recovers_a_published_head_after_the_fork_is_deleted() {
         forks.alice,
         &mut ListedRefs::new(),
         captured,
-        Some(crate::backend::db::models::AccessLevel::Owner),
-        None
+        Some(crate::backend::db::models::AccessLevel::Owner)
     )
     .await
     .unwrap());
@@ -346,7 +342,6 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
         "alice".into(),
         "proj".into(),
         mutations::CreatePullRequestRequest {
-            suppress_ci: false,
             head_repo_id: Some(forks.base.id),
             source: mutations::PullRequestSource::New {
                 title: "Owned".into(),
@@ -421,7 +416,6 @@ async fn refresh_records_a_published_head_before_publishing_a_newer_one() {
         &mut ListedRefs::new(),
         captured,
         Some(crate::backend::db::models::AccessLevel::Owner),
-        None,
     )
     .await
     .unwrap();

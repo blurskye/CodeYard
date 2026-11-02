@@ -39,7 +39,7 @@ pub use crate::backend::git::{
     MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES,
 };
 pub use editor::{
-    CommitIdentities, FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_FILES,
+    FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_FILES,
     MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
 use error::invalid_ref;
@@ -47,17 +47,13 @@ pub use error::{ErrorKind, RepoError, RepoErrorReason, MERGE_METHOD_NOT_ALLOWED,
 pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};
 pub use types::{
-    GitService, GitSession, GitStreams, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate, PullHeadActor,
-    allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobPreviewMetadata, BlobRange, BranchMergePublication,
+    allowed_merge_methods, AsyncMergePublication, BlobBytes, BlobRange, BranchMergePublication,
+    GitService, GitSession, GitStreams, MergeFailure, MergeMethod, MergeRequest, PullBranchUpdate,
     RestackMove, RevertRequest, UpstreamMerge, UpstreamMergeType, MAX_ARCHIVE_RESPONSE_BYTES,
     MAX_BLOB_RESPONSE_BYTES, MAX_COMMIT_OFFSET, MAX_COMMIT_PAGE_SIZE,
     MAX_CONTRIBUTOR_RESPONSE_BYTES,
 };
 pub(crate) use types::{BlobMetadata, WorkflowPayloadEntry, MAX_WORKFLOW_PAYLOAD_BYTES};
-
-pub(crate) fn primary_path(root: &Path, uuid: uuid::Uuid) -> std::path::PathBuf {
-    root.join(format!("{uuid}.git"))
-}
 
 /// The store for a repository row. Cheap to create and to clone.
 pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore {
@@ -70,7 +66,10 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
             let context = context.expect("this node owns the repository");
             match rpc::repository_uuid(&repo.disk_path) {
                 Ok(uuid) => RepoStore::on_node(
-                    &primary_path(&context.repos_path, uuid).to_string_lossy(),
+                    &context
+                        .repos_path
+                        .join(format!("{uuid}.git"))
+                        .to_string_lossy(),
                     id,
                 ),
                 Err(_) => RepoStore(Backend::Remote(remote::RemoteStore::new(
@@ -146,19 +145,11 @@ impl RepoStore {
                         Operation::GitTree {
                             revision: revision.into(),
                             recursive,
-                            raw_json: true,
                         },
                         b"",
                     )
                     .await
             }
-        }
-    }
-
-    pub async fn introduced_blobs(&self, sha: &str) -> Result<Vec<git::objects::TreeObjectEntry>, RepoError> {
-        match &self.0 {
-            Backend::Local(local) => local.introduced_blobs(sha).await,
-            Backend::Remote(remote) => remote.call(Operation::IntroducedBlobs { sha: sha.into() }, b"").await,
         }
     }
 
@@ -178,7 +169,7 @@ impl RepoStore {
             Backend::Local(local) => local.git_tag(sha).await,
             Backend::Remote(remote) => {
                 remote
-                    .call(Operation::GitTag { sha: sha.into(), raw_json: true }, b"")
+                    .call(Operation::GitTag { sha: sha.into() }, b"")
                     .await
             }
         }
@@ -188,12 +179,11 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         reference: &str,
         sha: &str,
         force: bool,
     ) -> Result<(String, String), RepoError> {
-        let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -203,10 +193,10 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor.user_id,
+                        actor,
                         Operation::UpdateReference {
                             reference: reference.into(),
-                            sha: rpc::wire::PublicationText::retain(sha, actor),
+                            sha: sha.into(),
                             force,
                         },
                         b"",
@@ -222,19 +212,18 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
-        token: Option<i64>,
         input: git::objects::ObjectWrite,
         bytes: &[u8],
     ) -> Result<String, RepoError> {
         match &self.0 {
             Backend::Local(local) => {
                 local
-                    .write_git_object(pool, repo_id, actor, token, input, bytes)
+                    .write_git_object(pool, repo_id, actor, input, bytes)
                     .await
             }
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor, Operation::WriteGitObject { input, token }, bytes)
+                    .call_as(actor, Operation::WriteGitObject { input }, bytes)
                     .await
             }
         }
@@ -339,18 +328,13 @@ impl RepoStore {
         repo_id: i64,
         actor: i64,
         import: crate::backend::repositories::imports::GitImport,
-        pack: Vec<u8>,
+        pack: &[u8],
     ) -> Result<(), RepoError> {
         match &self.0 {
-            Backend::Local(local) => {
-                let (local, pool) = (local.clone(), pool.clone());
-                tokio::spawn(async move {
-                    local.import_git(&pool, repo_id, actor, import, &pack).await
-                }).await.map_err(|_| RepoError::applied_followup_failed())?
-            }
+            Backend::Local(local) => local.import_git(pool, repo_id, actor, import, pack).await,
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor, Operation::ImportGit { import }, &pack)
+                    .call_as(actor, Operation::ImportGit { import }, pack)
                     .await
             }
         }
@@ -427,23 +411,21 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         source: &RepoStore,
         options: &CopyOptions,
     ) -> Result<(), RepoError> {
-        let authority = actor.into();
-        let actor = authority.user_id;
         match (&self.0, &source.0) {
             (Backend::Local(local), Backend::Local(from)) => {
                 local
-                    .initialize_copy(pool, repo_id, source_repo_id, authority, from, options)
+                    .initialize_copy(pool, repo_id, source_repo_id, actor, from, options)
                     .await
             }
             (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
                 let source = rpc::repository_uuid(&from.disk_path)?;
                 let operation = Operation::InitializeCopy {
                     source,
-                    default_branch: rpc::wire::PublicationText::retain(&options.default_branch, authority),
+                    default_branch: options.default_branch.clone(),
                     template: options.template,
                     default_branch_only: options.default_branch_only,
                 };
@@ -476,11 +458,11 @@ impl RepoStore {
 
     /// Removes a deleted repository. A local repository moves to `deleted/` under its
     /// parent directory and stays there for [`db::files::RESTORE_WINDOW_SECONDS`], so a database
-    /// restored to before the delete still finds its files. Remote storage uses the same retirement.
+    /// restored to before the delete still finds its files. A remote store removes it.
     pub async fn retire(&self) -> Result<(), RepoError> {
         match &self.0 {
             Backend::Local(local) => local.retire().await,
-            Backend::Remote(remote) => remote.call(Operation::Retire, b"").await,
+            Backend::Remote(remote) => remote.call(Operation::Remove, b"").await,
         }
     }
 
@@ -489,19 +471,6 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.exists().await,
             Backend::Remote(remote) => remote.call(Operation::Exists, b"").await.unwrap_or(false),
-        }
-    }
-
-    /// Accepted primary writes share one coalesced accounting owner with file mutations.
-    pub(crate) fn refresh_storage_size(&self, pool: db::DbPool, repo_id: i64) {
-        if let Backend::Local(store) = &self.0 { local::refresh_storage_size(pool, repo_id, store.clone()); }
-    }
-
-    /// Wait for this request's coalesced scan to be published, including on a remote primary.
-    pub(crate) async fn refresh_storage_size_now(&self, pool: &db::DbPool, repo_id: i64) -> Result<i64, RepoError> {
-        match &self.0 {
-            Backend::Local(store) => local::refresh_storage_size_now(pool.clone(), repo_id, store.clone()).await,
-            Backend::Remote(remote) => remote.call(Operation::RefreshStorageSize, b"").await,
         }
     }
 
@@ -521,14 +490,6 @@ impl RepoStore {
         match &self.0 {
             Backend::Local(local) => local.refs().await,
             Backend::Remote(remote) => remote.call(Operation::Refs, b"").await,
-        }
-    }
-
-    /// Public branches, tags and pull refs whose full names match this prefix.
-    pub async fn matching_refs(&self, prefix: &str) -> Result<HashMap<String, String>, RepoError> {
-        match &self.0 {
-            Backend::Local(local) => local.matching_refs(prefix).await,
-            Backend::Remote(remote) => remote.call(Operation::MatchingRefs { prefix: prefix.to_owned() }, b"").await,
         }
     }
 
@@ -561,13 +522,6 @@ impl RepoStore {
                     )
                     .await
             }
-        }
-    }
-
-    pub(crate) async fn existing_commits(&self, ids: &[String]) -> Result<std::collections::HashSet<String>, RepoError> {
-        match &self.0 {
-            Backend::Local(local) => local.existing_commits(ids).await,
-            Backend::Remote(_) => Err(rpc::wire::invalid("replica commit checks run on their node")),
         }
     }
 
@@ -681,22 +635,13 @@ impl RepoStore {
 
     /// Every file path at `git_ref`, sorted. The listing keeps at most `limit` paths.
     pub async fn file_paths(&self, git_ref: &str, limit: usize) -> Result<FileList, RepoError> {
-        self.file_paths_matching(git_ref, "", limit).await
-    }
-
-    /// Match across the entire tree before retaining the bounded sorted result.
-    pub async fn file_paths_matching(&self, git_ref: &str, query: &str, limit: usize) -> Result<FileList, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.file_paths(git_ref, limit, query).await,
+            Backend::Local(local) => local.file_paths(git_ref, limit).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::FilePaths {
-                            git_ref: if query.is_empty() {
-                                git_ref.into()
-                            } else {
-                                rpc::wire::FilePathQuery::Filtered { reference: git_ref.into(), query: query.into() }
-                            },
+                            git_ref: git_ref.into(),
                             limit,
                             raw_json: true,
                         },
@@ -729,7 +674,6 @@ impl RepoStore {
                         Operation::TemplateTexts {
                             revision: revision.into(),
                             paths: paths.to_vec(),
-                            raw_json: true,
                         },
                         b"",
                     )
@@ -764,14 +708,6 @@ impl RepoStore {
         self.blob_range(git_ref, path, BlobRange::Full).await
     }
 
-    /// Bounded bytes and metadata of a blob addressed by its immutable ID.
-    pub async fn blob_by_id_range(&self, id: &str, range: BlobRange) -> Result<BlobBytes, RepoError> {
-        match &self.0 {
-            Backend::Local(local) => local.blob_by_id_range(id, range).await,
-            Backend::Remote(remote) => remote.blob_by_id_range(id, range).await,
-        }
-    }
-
     /// A blob by its object ID, wherever it appears in the repository.
     pub async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
         match &self.0 {
@@ -781,7 +717,7 @@ impl RepoStore {
                     .bytes_with_limit(
                         Operation::BlobById { id: id.into() },
                         b"",
-                        git::objects::MAX_BLOB_WRITE_BYTES,
+                        MAX_BLOB_RESPONSE_BYTES,
                     )
                     .await
             }
@@ -868,7 +804,6 @@ impl RepoStore {
                             text: text.into(),
                             offset,
                             limit,
-                            raw_json: true,
                         },
                         b"",
                     )
@@ -877,24 +812,21 @@ impl RepoStore {
         }
     }
 
-    /// Full count and the requested offset/limit window within the oldest 250 commits. Limit zero counts only.
+    /// The full commit count and the first 250 commits of a pull request, oldest first.
     pub async fn pull_request_commits(
         &self,
         base_ref: &str,
         head_ref: &str,
-        offset: usize,
-        limit: usize,
     ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.pull_request_commits(base_ref, head_ref, offset, limit).await,
+            Backend::Local(local) => local.pull_request_commits(base_ref, head_ref).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::CommitsBetween {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
-                            offset,
-                            limit: limit.min(250),
+                            limit: 250,
                             raw_json: true,
                             pull_request: true,
                         },
@@ -913,16 +845,11 @@ impl RepoStore {
         head_ref: &str,
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        self.commits_between_page(base_ref, head_ref, 0, limit).await
-    }
-
-    /// A bounded range page, newest first; skipped commit bodies are never loaded.
-    pub async fn commits_between_page(&self, base_ref: &str, head_ref: &str, offset: usize, limit: usize) -> Result<Vec<CommitInfo>, RepoError> {
         if limit > MAX_COMMIT_PAGE_SIZE {
             return Err(RepoError::response_too_large());
         }
         match &self.0 {
-            Backend::Local(local) => local.commits_between(base_ref, head_ref, offset, limit).await,
+            Backend::Local(local) => local.commits_between(base_ref, head_ref, limit).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
@@ -930,7 +857,6 @@ impl RepoStore {
                             base_ref: base_ref.into(),
                             head_ref: head_ref.into(),
                             limit,
-                            offset,
                             raw_json: true,
                             pull_request: false,
                         },
@@ -1212,7 +1138,7 @@ impl RepoStore {
         offset: usize,
         limit: usize,
     ) -> Result<CommitComparison, RepoError> {
-        if limit > 250 {
+        if offset > MAX_COMMIT_OFFSET || limit > 250 {
             return Err(RepoError::response_too_large());
         }
         match (&self.0, &source.0) {
@@ -1295,15 +1221,6 @@ impl RepoStore {
         }
     }
 
-    /// Primary-only default-branch statistics. Remote owners also publish the cache
-    /// while holding their repository publication lease.
-    pub(crate) async fn languages_from_primary(&self, branch: &str) -> Result<Vec<LanguageStat>, RepoError> {
-        match &self.0 {
-            Backend::Local(local) => local.languages(branch).await,
-            Backend::Remote(remote) => remote.call(Operation::PrimaryLanguages { git_ref: branch.into() }, b"").await,
-        }
-    }
-
     /// Bytes per language at `git_ref`, from file extensions.
     pub async fn languages(&self, git_ref: &str) -> Result<Vec<LanguageStat>, RepoError> {
         match &self.0 {
@@ -1339,14 +1256,6 @@ impl RepoStore {
         }
     }
 
-    /// Count-only history on the default branch, including merge commits.
-    pub async fn branch_contributors(&self, branch: &str) -> Result<Vec<ContributorInfo>, RepoError> {
-        match &self.0 {
-            Backend::Local(local) => local.branch_contributors(branch).await,
-            Backend::Remote(remote) => remote.call(Operation::BranchContributors { branch: branch.into() }, b"").await,
-        }
-    }
-
     /// Authors across all branches with their commit counts.
     pub async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
         match &self.0 {
@@ -1359,17 +1268,14 @@ impl RepoStore {
     pub async fn commit_statistics(
         &self,
         branch: &str,
-        mode: git::StatisticsMode,
     ) -> Result<git::CommitStatistics, RepoError> {
         match &self.0 {
-            Backend::Local(local) => local.commit_statistics(branch, mode).await,
+            Backend::Local(local) => local.commit_statistics(branch).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
                         Operation::CommitStatistics {
                             branch: branch.into(),
-                            raw_json: true,
-                            mode,
                         },
                         b"",
                     )
@@ -1494,13 +1400,12 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         source_repo_id: i64,
-        actor: impl Into<PullHeadActor>,
+        actor: i64,
         source: &RepoStore,
         number: i32,
         head: &str,
         expected_head: Option<&str>,
     ) -> Result<(), RepoError> {
-        let actor = actor.into();
         match (&self.0, &source.0) {
             (Backend::Local(base), Backend::Local(from)) => {
                 base.fetch_pull_head(
@@ -1517,9 +1422,8 @@ impl RepoStore {
             }
             (Backend::Remote(base), Backend::Remote(from)) if base.node_id == from.node_id => {
                 base.call_as(
-                    actor.user,
+                    actor,
                     Operation::FetchPullHead {
-                        token: actor.token,
                         source: rpc::repository_uuid(&from.disk_path)?,
                         number,
                         head: head.into(),
@@ -1540,20 +1444,19 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         old: &str,
         new: &str,
     ) -> Result<String, RepoError> {
-        let authority = actor.into();
         match &self.0 {
-            Backend::Local(local) => local.rename_branch(pool, repo_id, authority, old, new).await,
+            Backend::Local(local) => local.rename_branch(pool, repo_id, actor, old, new).await,
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        authority.user_id,
+                        actor,
                         Operation::RenameBranch {
                             old: old.into(),
-                            new: rpc::wire::PublicationText::retain(new, authority),
+                            new: new.into(),
                         },
                         b"",
                     )
@@ -1570,12 +1473,11 @@ impl RepoStore {
         actor: i64,
         source: (i64, &RepoStore),
         branch: &str,
-        token: Option<i64>,
     ) -> Result<UpstreamMerge, RepoError> {
         match (&self.0, &source.1 .0) {
             (Backend::Local(local), Backend::Local(from)) => {
                 local
-                    .merge_upstream(pool, repo_id, actor, (source.0, from), branch, token)
+                    .merge_upstream(pool, repo_id, actor, (source.0, from), branch)
                     .await
             }
             (Backend::Remote(remote), Backend::Remote(from)) if remote.node_id == from.node_id => {
@@ -1585,7 +1487,6 @@ impl RepoStore {
                         Operation::MergeUpstream {
                             source: rpc::repository_uuid(&from.disk_path)?,
                             branch: branch.into(),
-                            token,
                         },
                         b"",
                     )
@@ -1602,11 +1503,10 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         name: &str,
         sha: &str,
     ) -> Result<String, RepoError> {
-        let actor = actor.into();
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
         }
@@ -1615,10 +1515,10 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor.user_id,
+                        actor,
                         Operation::CreateBranch {
                             name: name.into(),
-                            sha: rpc::wire::PublicationText::retain(sha, actor),
+                            sha: sha.into(),
                         },
                         b"",
                     )
@@ -1631,10 +1531,9 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         new_owner: &str,
     ) -> Result<db::models::Repository, RepoError> {
-        let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -1644,9 +1543,9 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor.user_id,
+                        actor,
                         Operation::TransferRepository {
-                            new_owner: rpc::wire::PublicationText::retain(new_owner, actor),
+                            new_owner: new_owner.into(),
                         },
                         b"",
                     )
@@ -1660,7 +1559,6 @@ impl RepoStore {
         pool: &db::DbPool,
         repo_id: i64,
         actor: i64,
-        credential: db::users::accounts::OwnedAccountCredential,
         feature: db::repositories::dependencies::Feature,
         enabled: bool,
         private_consent: bool,
@@ -1672,7 +1570,6 @@ impl RepoStore {
                         pool,
                         repo_id,
                         actor,
-                        credential,
                         feature,
                         enabled,
                         private_consent,
@@ -1684,7 +1581,6 @@ impl RepoStore {
                     .call_as(
                         actor,
                         Operation::ConfigureDependencySecurity {
-                            credential,
                             feature,
                             enabled,
                             private_consent,
@@ -1731,7 +1627,7 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         name: &str,
         changes: &db::repositories::records::RepositoryChanges<&str>,
     ) -> Result<db::models::Repository, RepoError> {
@@ -1739,7 +1635,6 @@ impl RepoStore {
             return Err(invalid_ref("branch"));
         }
         let changes = changes.owned();
-        let actor = actor.into();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -1749,9 +1644,9 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor.user_id,
+                        actor,
                         Operation::PatchRepository {
-                            default_branch: rpc::wire::PublicationText::retain(name, actor),
+                            default_branch: name.into(),
                             changes,
                         },
                         b"",
@@ -1766,10 +1661,9 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         name: &str,
     ) -> Result<(), RepoError> {
-        let actor = actor.into();
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
         }
@@ -1778,8 +1672,8 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor.user_id,
-                        Operation::SetDefaultBranch { name: rpc::wire::PublicationText::retain(name, actor) },
+                        actor,
+                        Operation::SetDefaultBranch { name: name.into() },
                         b"",
                     )
                     .await
@@ -1792,10 +1686,9 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         name: &str,
     ) -> Result<(), RepoError> {
-        let actor = actor.into();
         if git::branch_ref(name).is_none() {
             return Err(invalid_ref("branch"));
         }
@@ -1803,7 +1696,7 @@ impl RepoStore {
             Backend::Local(local) => local.delete_branch(pool, repo_id, actor, name).await,
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor.user_id, Operation::DeleteBranch { name: rpc::wire::PublicationText::retain(name, actor) }, b"")
+                    .call_as(actor, Operation::DeleteBranch { name: name.into() }, b"")
                     .await
             }
         }
@@ -1819,14 +1712,13 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         name: &str,
         sha: &str,
         message: Option<&str>,
         tagger_name: &str,
         tagger_email: &str,
     ) -> Result<TagInfo, RepoError> {
-        let actor = actor.into();
         if git::tag_ref(name).is_none() {
             return Err(invalid_ref("tag"));
         }
@@ -1848,10 +1740,10 @@ impl RepoStore {
             Backend::Remote(remote) => {
                 remote
                     .call_as(
-                        actor.user_id,
+                        actor,
                         Operation::CreateTag {
                             name: name.into(),
-                            sha: rpc::wire::PublicationText::retain(sha, actor),
+                            sha: sha.into(),
                             message: message.map(str::to_owned),
                             tagger_name: tagger_name.into(),
                             tagger_email: tagger_email.into(),
@@ -1868,10 +1760,9 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         name: &str,
     ) -> Result<(), RepoError> {
-        let actor = actor.into();
         if git::tag_ref(name).is_none() {
             return Err(invalid_ref("tag"));
         }
@@ -1879,7 +1770,7 @@ impl RepoStore {
             Backend::Local(local) => local.delete_tag(pool, repo_id, actor, name).await,
             Backend::Remote(remote) => {
                 remote
-                    .call_as(actor.user_id, Operation::DeleteTag { name: rpc::wire::PublicationText::retain(name, actor) }, b"")
+                    .call_as(actor, Operation::DeleteTag { name: name.into() }, b"")
                     .await
             }
         }
@@ -1893,14 +1784,9 @@ impl RepoStore {
         author: &str,
         email: &str,
     ) -> Result<PreparedFile, RepoError> {
-        self.prepare_file_with_identities(write, content, author, email, &CommitIdentities::default()).await
-    }
-
-    pub async fn prepare_file_with_identities(&self, write: &FileWrite, content: &[u8], author: &str, email: &str, identities: &CommitIdentities) -> Result<PreparedFile, RepoError> {
         write.validate()?;
-        identities.validate()?;
-        let prepared = match &self.0 {
-            Backend::Local(local) => local.prepare_file_with_identities(write, content, author, email, identities).await,
+        match &self.0 {
+            Backend::Local(local) => local.prepare_file(write, content, author, email).await,
             Backend::Remote(remote) => {
                 remote
                     .call(
@@ -1908,15 +1794,12 @@ impl RepoStore {
                             write: write.clone(),
                             author: author.into(),
                             email: email.into(),
-                            identities: identities.clone(),
                         },
                         content,
                     )
                     .await
             }
-        }?;
-        identities.check_prepared(&prepared.commit)?;
-        Ok(prepared)
+        }
     }
 
     #[expect(
@@ -2180,9 +2063,6 @@ impl RepoStore {
                         &publication.result,
                         MergeMethod::Merge,
                         WriteVia::Direct,
-                        publication.authority.token_id(),
-                        Some(&publication.authority),
-                        None,
                     )
                     .await
             }
@@ -2210,18 +2090,14 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         head_branch: &str,
         base_branch: &str,
         head: &str,
         base: &str,
         result: &str,
         method: MergeMethod,
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
-        let authority = actor.into();
-        let actor = authority.user_id;
-        let token = authority.token_id();
         match &self.0 {
             Backend::Local(local) => {
                 local
@@ -2235,9 +2111,6 @@ impl RepoStore {
                         result,
                         method,
                         WriteVia::Merge,
-                        token,
-                        Some(&authority),
-                        policy,
                     )
                     .await
             }
@@ -2252,8 +2125,6 @@ impl RepoStore {
                             base: base.into(),
                             result: result.into(),
                             method,
-                            token: rpc::wire::PublicationCredential::retain(authority),
-                            policy,
                         },
                         b"",
                     )
@@ -2273,16 +2144,12 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         heads: &[(String, String)],
         base_branch: &str,
         base: &str,
         result: &str,
-        policy: Option<crate::backend::db::pull_requests::merge_policy::Snapshot>,
     ) -> Result<(), RepoError> {
-        let authority = actor.into();
-        let actor = authority.user_id;
-        let token = authority.token_id();
         match &self.0 {
             Backend::Local(local) => {
                 let heads: Vec<(&str, &str)> = heads
@@ -2300,9 +2167,6 @@ impl RepoStore {
                         result,
                         MergeMethod::Merge,
                         WriteVia::Merge,
-                        token,
-                        Some(&authority),
-                        policy,
                     )
                     .await
             }
@@ -2315,8 +2179,6 @@ impl RepoStore {
                             base_branch: base_branch.into(),
                             base: base.into(),
                             result: result.into(),
-                            token: rpc::wire::PublicationCredential::retain(authority),
-                            policy,
                         },
                         b"",
                     )
@@ -2365,22 +2227,20 @@ impl RepoStore {
         &self,
         pool: &db::DbPool,
         repo_id: i64,
-        actor: impl Into<db::credentials::Actor>,
+        actor: i64,
         stack_id: i64,
         versions: &[(i64, i64)],
         base_branch: &str,
         base: &str,
         moves: &[RestackMove],
     ) -> Result<(), RepoError> {
-        let authority = actor.into();
-        let actor = authority.user_id;
         match &self.0 {
             Backend::Local(local) => {
                 local
                     .publish_restack(
                         pool,
                         repo_id,
-                        authority,
+                        actor,
                         stack_id,
                         versions,
                         base_branch,
@@ -2396,7 +2256,7 @@ impl RepoStore {
                         Operation::PublishRestack {
                             stack_id,
                             versions: versions.to_vec(),
-                            base_branch: rpc::wire::PublicationText::retain(base_branch, authority),
+                            base_branch: base_branch.into(),
                             base: base.into(),
                             moves: moves.to_vec(),
                         },

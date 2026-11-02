@@ -1,10 +1,10 @@
 use super::{
-    admission::AdmissionError,
+    admission::{self, AdmissionError},
     credentials::{
         validate_account, validate_email, validate_new_account_name, validate_new_password,
         AccountInputError, PasswordAccount,
     },
-    passwords::{self, CurrentPasswordError, PasswordError},
+    passwords::{self, PasswordError},
     sessions::{self, AccountAuthorityError},
     setup,
 };
@@ -17,7 +17,7 @@ use crate::backend::db::{
     },
     DbPool,
 };
-use crate::backend::email::links;
+use crate::backend::email::links::{self, Purpose};
 
 pub struct PasswordChange<'a> {
     pub current_password: &'a str,
@@ -45,13 +45,17 @@ pub async fn change_password(
         .await
         .map_err(PasswordChangeError::Authority)?;
     validate_new_password(input.new_password).map_err(PasswordChangeError::Input)?;
-    passwords::verify_current_password(pool, &user, input.current_password)
+    let attempt = admission::admit_login(pool, None, Some(user.id), &user.username)
         .await
-        .map_err(|error| match error {
-            CurrentPasswordError::Admission(error) => PasswordChangeError::Admission(error),
-            CurrentPasswordError::Password(error) => PasswordChangeError::Password(error),
-            CurrentPasswordError::Invalid => PasswordChangeError::InvalidCredentials,
-        })?;
+        .map_err(PasswordChangeError::Admission)?;
+    if !passwords::verify_password(input.current_password, user.password_hash.as_deref())
+        .await
+        .map_err(PasswordChangeError::Password)?
+        .valid
+    {
+        return Err(PasswordChangeError::InvalidCredentials);
+    }
+    admission::forgive_login(pool, &attempt).await;
     if user.must_change_password && input.current_password == input.new_password {
         return Err(PasswordChangeError::UnchangedPassword);
     }
@@ -74,7 +78,6 @@ pub async fn change_password(
 pub enum PasswordResetError {
     Input(AccountInputError),
     Password(PasswordError),
-    UnchangedPassword,
     /// The link is unknown, expired, already used, or no longer fits the account.
     InvalidLink,
     AccountUnavailable,
@@ -89,18 +92,17 @@ pub async fn reset_password(
 ) -> Result<(), PasswordResetError> {
     validate_new_password(new_password).map_err(PasswordResetError::Input)?;
     // Hashing is costly, so it waits until the link is known to be good.
-    let user = links::password_reset_account(pool, token).await
-        .map_err(|_| PasswordResetError::AccountUnavailable)?
-        .ok_or(PasswordResetError::InvalidLink)?;
-    if user.must_change_password && passwords::verify_password(new_password, user.password_hash.as_deref()).await
-        .map_err(PasswordResetError::Password)?.valid {
-        return Err(PasswordResetError::UnchangedPassword);
+    let valid = links::is_valid(pool, Purpose::Reset, token)
+        .await
+        .map_err(|_| PasswordResetError::AccountUnavailable)?;
+    if !valid {
+        return Err(PasswordResetError::InvalidLink);
     }
     let hash = passwords::hash_password(new_password)
         .await
         .map_err(PasswordResetError::Password)?;
     // Using the link, replacing the hash and ending the sessions commit together.
-    links::use_reset_link(pool, token, &hash, &user)
+    links::use_reset_link(pool, token, &hash)
         .await
         .map_err(|_| PasswordResetError::AccountUnavailable)?
         .map(|_| ())
@@ -119,7 +121,7 @@ pub enum EmailChangeError {
 }
 
 /// Changes the account's address after the current password is checked. The new address
-/// is trimmed and must be a valid address; a wrong password counts against the account's
+/// is trimmed and must look like `name@host`; a wrong password counts against the account's
 /// login budget.
 pub async fn change_email(
     pool: &DbPool,
@@ -131,16 +133,23 @@ pub async fn change_email(
         .await
         .map_err(EmailChangeError::Authority)?;
     let email = email.trim();
-    if validate_email(email).is_err() {
+    let well_formed = email.split_once('@').is_some_and(|(name, host)| {
+        !name.is_empty() && host.contains('.') && !email.contains(char::is_whitespace)
+    });
+    if !well_formed || validate_email(email).is_err() {
         return Err(EmailChangeError::InvalidEmail);
     }
-    passwords::verify_current_password(pool, &user, current_password)
+    let attempt = admission::admit_login(pool, None, Some(user.id), &user.username)
         .await
-        .map_err(|error| match error {
-            CurrentPasswordError::Admission(error) => EmailChangeError::Admission(error),
-            CurrentPasswordError::Password(error) => EmailChangeError::Password(error),
-            CurrentPasswordError::Invalid => EmailChangeError::InvalidCredentials,
-        })?;
+        .map_err(EmailChangeError::Admission)?;
+    if !passwords::verify_password(current_password, user.password_hash.as_deref())
+        .await
+        .map_err(EmailChangeError::Password)?
+        .valid
+    {
+        return Err(EmailChangeError::InvalidCredentials);
+    }
+    admission::forgive_login(pool, &attempt).await;
     match transitions::change_email(
         pool,
         user.id,
@@ -233,6 +242,7 @@ pub enum SignupReviewOutcome {
 #[derive(Debug, PartialEq, Eq)]
 pub enum SignupReviewError {
     Authority(AccountAuthorityError),
+    PrivateNodeRequired,
     InvalidDecision,
     Denied,
     Missing,
@@ -260,9 +270,14 @@ pub async fn review_signup(
     let admin = sessions::administrator(pool, administrator_session)
         .await
         .map_err(SignupReviewError::Authority)?;
+    let setup = setup::status(pool)
+        .await
+        .map_err(|_| SignupReviewError::AccountUnavailable)?;
+    if !setup.setup_completed || setup.node_mode != "private" {
+        return Err(SignupReviewError::PrivateNodeRequired);
+    }
     let decision = decision.ok_or(SignupReviewError::InvalidDecision)?;
-    // These named transactions also revalidate reviewer authority after locking, and queue the
-    // decision mail with the decision.
+    // These named transactions also revalidate reviewer authority after locking.
     match decision {
         SignupDecision::Approve => {
             let user = db::users::signup_requests::approve_signup_request(
@@ -275,11 +290,18 @@ pub async fn review_signup(
             )
             .await
             .map_err(review_failure)?;
+            crate::backend::email::signup_decision(
+                pool,
+                user.email.as_deref(),
+                &user.username,
+                true,
+            )
+            .await;
             let _ = links::send_verification(pool, &user).await;
             Ok(SignupReviewOutcome::Approved(Box::new(user)))
         }
         SignupDecision::Reject => {
-            db::users::signup_requests::reject_signup_request(
+            let (username, email) = db::users::signup_requests::reject_signup_request(
                 pool,
                 request_id,
                 (
@@ -289,6 +311,7 @@ pub async fn review_signup(
             )
             .await
             .map_err(review_failure)?;
+            crate::backend::email::signup_decision(pool, email.as_deref(), &username, false).await;
             Ok(SignupReviewOutcome::Rejected)
         }
     }

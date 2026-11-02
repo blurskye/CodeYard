@@ -204,11 +204,6 @@ async fn repository_pages(pg: bool) {
     let mut f = Database::new(pg).await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
-    let alice_session = uuid::Uuid::new_v4().to_string();
-    let bob_session = uuid::Uuid::new_v4().to_string();
-    for (actor, session) in [(alice, &alice_session), (bob, &bob_session)] {
-        db::users::sessions::create_session(f.pool(), session, actor, None, None, chrono::Utc::now() + chrono::Duration::days(1)).await.unwrap();
-    }
     for index in 0..65 {
         db::repositories::records::create_repository(
             f.pool(),
@@ -224,7 +219,7 @@ async fn repository_pages(pg: bool) {
     let (_, first, count) = codeyard::backend::identity::profiles::repositories_on_profile(
         f.pool(),
         "alice",
-        Some(&bob_session),
+        Some(bob),
         "",
         1,
     )
@@ -236,7 +231,7 @@ async fn repository_pages(pg: bool) {
     let (_, second, _) = codeyard::backend::identity::profiles::repositories_on_profile(
         f.pool(),
         "alice",
-        Some(&bob_session),
+        Some(bob),
         "",
         2,
     )
@@ -249,7 +244,7 @@ async fn repository_pages(pg: bool) {
     let (_, own, own_count) = codeyard::backend::identity::profiles::repositories_on_profile(
         f.pool(),
         "alice",
-        Some(&alice_session),
+        Some(alice),
         "",
         1,
     )

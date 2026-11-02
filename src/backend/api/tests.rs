@@ -106,10 +106,11 @@ async fn shutdown_keeps_git_task_admission_open_while_http_handlers_drain() {
     let mut state = closed_state().await;
     state.pool = raw.clone().into();
     let tasks = state.git_tasks.clone();
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let address = listener.local_addr().unwrap();
+    drop(listener);
     let (stop, receiver) = tokio::sync::watch::channel(false);
-    let server = tokio::spawn(run_web_listener(listener, state, receiver));
+    let server = tokio::spawn(run_web_server(address, state, receiver));
     let client = reqwest::Client::new();
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {

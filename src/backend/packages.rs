@@ -42,8 +42,9 @@ pub fn valid_kind(kind: &str) -> bool {
 }
 
 pub fn valid_package_name(kind: &str, name: &str) -> bool {
-    if kind == "container" { return valid_name(name); }
-    if kind == "npm" { return !name.starts_with('@') && !name.contains('/') && crate::backend::npm::package_name(name); }
+    if matches!(kind, "container" | "npm") {
+        return valid_name(name);
+    }
     let part = |s: &str| {
         !s.is_empty()
             && s.bytes()
@@ -73,19 +74,16 @@ pub async fn store(
     package: i64,
     token: i64,
     bytes: Vec<u8>,
-    charge: db::packages::Charge<'_>,
 ) -> Result<Blob> {
     ensure!(bytes.len() <= MAX_OBJECT_BYTES as usize, Refusal::Blob);
-    let io = std::sync::Arc::new(storage.try_acquire_io()?);
-    let hashing_io = io.clone();
-    let (hash, bytes) = tokio::task::spawn_blocking(move || {
-        let _io = hashing_io;
-        (digest(&bytes), bytes)
-    }).await?;
-    let blob = Blob { digest: hash, size: bytes.len() as i64 };
+    let blob = Blob {
+        digest: digest(&bytes),
+        size: bytes.len() as i64,
+    };
     let key = db::packages::object_key(&blob.digest);
     let _lock = storage.lock_file(&key).await?;
-    if !db::packages::reserve_blob(pool, package, token, &blob, charge).await? {
+    let _io = storage.try_acquire_io()?;
+    if !db::packages::reserve_blob(pool, package, token, &blob).await? {
         let upload = Upload {
             key: &key,
             bytes: blob.size,
@@ -106,14 +104,19 @@ pub async fn store(
 
 pub async fn read(storage: &ObjectStore, blob: &Blob) -> Result<Vec<u8>> {
     ensure!((0..=MAX_OBJECT_BYTES).contains(&blob.size), Refusal::Blob);
-    let io = std::sync::Arc::new(storage.try_acquire_io()?);
+    let _io = storage.try_acquire_io()?;
     let key = db::packages::object_key(&blob.digest);
-    let bytes = storage.read_object(&key, blob.size as usize).await?;
-    let (actual, bytes) = tokio::task::spawn_blocking(move || {
-        let _io = io;
-        (digest(&bytes), bytes)
-    }).await?;
-    ensure!(actual == blob.digest, "package object checksum mismatch");
+    let mut bytes = Vec::with_capacity(blob.size as usize);
+    while bytes.len() < blob.size as usize {
+        let length = (blob.size as usize - bytes.len()).min(1024 * 1024);
+        let chunk = storage.read_range(&key, bytes.len() as u64, length).await?;
+        ensure!(chunk.len() == length, "truncated package object");
+        bytes.extend(chunk);
+    }
+    ensure!(
+        digest(&bytes) == blob.digest,
+        "package object checksum mismatch"
+    );
     Ok(bytes)
 }
 
@@ -123,13 +126,9 @@ pub async fn collect(pool: &db::DbPool, storage: &ObjectStore) -> Result<()> {
     };
     for digest in db::packages::garbage(pool).await? {
         let key = db::packages::object_key(&digest);
-        let result = async {
-            let _lock = storage.lock_file(&key).await?;
-            storage.delete(&key).await?;
-            db::packages::removed_blob(pool, &digest).await?;
-            anyhow::Ok(())
-        }.await;
-        if let Err(error) = result { tracing::warn!(%digest, %error, "package blob cleanup deferred"); }
+        let _lock = storage.lock_file(&key).await?;
+        storage.delete(&key).await?;
+        db::packages::removed_blob(pool, &digest).await?;
     }
     Ok(())
 }

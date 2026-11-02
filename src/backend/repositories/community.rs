@@ -120,7 +120,7 @@ fn conduct_text(text: &str) -> String {
             .join("\n"),
     )
 }
-pub(crate) fn contributor_covenant(text: &str) -> bool {
+fn contributor_covenant(text: &str) -> bool {
     let text = conduct_text(text);
     [
         include_str!("templates/conduct/contributor-covenant-14.txt"),
@@ -163,8 +163,21 @@ fn file(owner: &str, repo: &Repository, reference: &str, entry: &TreeEntry) -> F
     }
 }
 
-/// The same pinned community-file search order is used by profiles and catalog search.
-pub(super) async fn directories(store: &RepoStore, reference: &str) -> Result<Vec<(&'static str, Vec<TreeEntry>)>, RepoError> {
+async fn discover(
+    repo: &Repository,
+    owner: &str,
+    cluster: Option<&NodeContext>,
+) -> Result<Profile, RepoError> {
+    let store = repo_store(repo, cluster);
+    let refs = store.refs_from_primary().await?;
+    if refs.is_empty() {
+        return Ok(Profile::default());
+    }
+    let reference = refs
+        .get(&format!("refs/heads/{}", repo.default_branch))
+        .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "The default branch does not exist"))?;
+    let mut profile = Profile::default();
+    // The root's README and license take priority; other community files prefer .github.
     let mut directories: Vec<(&str, Vec<TreeEntry>)> = Vec::new();
     for directory in ["", ".github", "docs"] {
         if !directory.is_empty()
@@ -176,27 +189,12 @@ pub(super) async fn directories(store: &RepoStore, reference: &str) -> Result<Ve
         {
             continue;
         }
-        match store.tree_metadata(reference, directory).await {
+        match store.tree(reference, directory).await {
             Ok(entries) => directories.push((directory, entries)),
             Err(error) if error.kind == ErrorKind::MissingPath => {}
             Err(error) => return Err(error),
         }
     }
-    Ok(directories)
-}
-
-async fn discover(
-    repo: &Repository,
-    owner: &str,
-    cluster: Option<&NodeContext>,
-) -> Result<Profile, RepoError> {
-    let store = repo_store(repo, cluster);
-    let refs = store.refs_from_primary().await?;
-    let Some(reference) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else {
-        return Ok(Profile::default());
-    };
-    let mut profile = Profile::default();
-    let directories = directories(&store, reference).await?;
     for (_, entries) in &directories {
         for entry in entries.iter().filter(|entry| entry.entry_type == "file") {
             match stem(&entry.name).as_str() {
@@ -278,10 +276,7 @@ pub async fn load(
     let mut profile = discover(repo, owner, cluster).await?;
     profile.description = repo.description.clone();
     profile.documentation = repo.website.clone();
-    let needs_defaults = profile.conduct.is_none() || profile.contributing.is_none()
-        || (profile.issue_template.is_none() && profile.issue_templates.is_none())
-        || (profile.pull_request_template.is_none() && profile.pull_request_templates.is_none());
-    if repo.name != ".github" && needs_defaults {
+    if repo.name != ".github" {
         if let Some(default) = db::repositories::records::get_repository(pool, owner, ".github")
             .await
             .map_err(RepoError::from)?
@@ -291,14 +286,7 @@ pub async fn load(
                     .await
                     .map_err(RepoError::from)?
             {
-                let inherited = match discover(&default, owner, cluster).await {
-                    Ok(inherited) => inherited,
-                    Err(_) => return Ok(profile), // Optional owner defaults cannot hide local files.
-                };
-                // Defaults are public inheritance, not a retained grant to a later private revision.
-                if access::check_read(pool, default.id, None).await.is_err() {
-                    return Ok(profile);
-                }
+                let inherited = discover(&default, owner, cluster).await?;
                 if profile.conduct.is_none() {
                     profile.conduct = inherited.conduct;
                     profile.contributor_covenant = inherited.contributor_covenant;

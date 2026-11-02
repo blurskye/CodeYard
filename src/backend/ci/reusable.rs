@@ -59,7 +59,6 @@ pub(super) struct Resolver<'a> {
     refs: BTreeMap<(i64, String), (String, String)>,
     pinned: BTreeMap<(i64, String, String), (String, String)>,
     snapshots: BTreeMap<String, (serde_json::Value, usize)>,
-    snapshot_bytes: usize,
 }
 
 /// Called-workflow commits a run's stored snapshots pin, keyed by repository, path and the ref
@@ -115,7 +114,6 @@ impl<'a> Resolver<'a> {
             refs: BTreeMap::new(),
             pinned,
             snapshots: BTreeMap::new(),
-            snapshot_bytes: 0,
         }
     }
 
@@ -125,7 +123,6 @@ impl<'a> Resolver<'a> {
         sha: String,
         path: String,
         content: String,
-        yaml: Option<Value>,
         depth: usize,
         // The ref this workflow was called at, as written and as a full ref name. None for a
         // root, which runs at the run's ref.
@@ -142,38 +139,55 @@ impl<'a> Resolver<'a> {
                 repository.id,
                 called_ref.as_ref().map_or("", |(name, _)| name.as_str())
             );
-            if depth >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS || !self.active.insert(identity.clone()) {
+            if depth > 3 || !self.active.insert(identity.clone()) {
                 return Err(AdmissionError::Invalid(
                     "Called workflows exceed four levels or contain a cycle",
                 ));
             }
-            if let Some((snapshot, height)) = self.snapshots.get(&identity) {
-                if depth + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS {
-                    return Err(AdmissionError::Invalid("Called workflows exceed four levels"));
-                }
-                self.active.remove(&identity);
-                return Ok(snapshot.clone());
-            }
-            let mut yaml = if let Some(yaml) = yaml {
-                yaml
-            } else {
-                let parsed = super::admission::parse_admission_workflow(path.clone(), content, self.environment.clone()).await?;
-                codeyard_actions::workflow::validate_called_concurrency(&parsed.yaml)
-                    .map_err(|_| AdmissionError::Invalid("Called workflow concurrency is unsupported"))?;
-                super::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
-                self.environment = parsed.environment;
-                parsed.yaml
-            };
+            let mut yaml = super::workflows::parse_yaml(content.as_bytes())
+                .map_err(|_| AdmissionError::Invalid("Called workflow YAML is invalid"))?;
             if depth > 0 {
                 self.called.insert(identity.clone());
-                if self.called.len() > codeyard_actions::workflow::MAX_CALLED_WORKFLOWS {
+                if self.called.len() > 20 {
                     return Err(AdmissionError::Invalid("More than twenty called workflows"));
                 }
-                if !codeyard_actions::workflow::events::declares_event(yaml.get("on"), "workflow_call") {
+                let on = yaml.get("on");
+                let callable = match on {
+                    Some(Value::String(event)) => event == "workflow_call",
+                    Some(Value::Sequence(events)) => events
+                        .iter()
+                        .any(|value| value.as_str() == Some("workflow_call")),
+                    Some(Value::Mapping(events)) => events.contains_key("workflow_call"),
+                    _ => false,
+                };
+                if !callable {
                     return Err(AdmissionError::Invalid(
                         "Called workflow does not declare workflow_call",
                     ));
                 }
+                let parsed = super::admission::parse_admission_workflow(
+                    path.clone(),
+                    content.clone(),
+                    self.environment.clone(),
+                )
+                .await?;
+                // The run's concurrency comes from its top-level workflow only, so a called one cannot be honored.
+                if parsed.concurrency.is_some() {
+                    return Err(AdmissionError::Invalid(
+                        "Called workflow concurrency is unsupported",
+                    ));
+                }
+                super::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
+                self.environment = parsed.environment;
+            }
+            if let Some((snapshot, height)) = self.snapshots.get(&identity) {
+                if depth + height > 3 {
+                    return Err(AdmissionError::Invalid(
+                        "Called workflows exceed four levels",
+                    ));
+                }
+                self.active.remove(&identity);
+                return Ok(snapshot.clone());
             }
             let mut height = 0;
             let jobs = yaml
@@ -197,7 +211,7 @@ impl<'a> Resolver<'a> {
                     )
                 } else {
                     let (source, reference) = reference
-                        .split_once('@')
+                        .rsplit_once('@')
                         .ok_or(AdmissionError::Invalid("Invalid called workflow reference"))?;
                     let mut parts = source.splitn(3, '/');
                     let owner = parts.next().unwrap_or("");
@@ -282,15 +296,19 @@ impl<'a> Resolver<'a> {
                     ".github/workflows/codeyard-call-{:x}.yml",
                     Sha256::digest(key.as_bytes())
                 );
-                let mut snapshot = if let Some((snapshot, height)) = self.snapshots.get(&key) {
-                    if self.active.contains(&key) || depth + 1 + height >= codeyard_actions::workflow::MAX_REUSABLE_LEVELS {
-                        return Err(AdmissionError::Invalid("Called workflows exceed four levels or contain a cycle"));
-                    }
-                    snapshot.clone()
-                } else {
-                    let file = repo_store(&target, self.context).ci_workflow_file(&target_sha, &target_path).await?;
-                    self.snapshot(target, target_sha, target_path, file.content, None, depth + 1, target_ref.clone()).await?
-                };
+                let file = repo_store(&target, self.context)
+                    .ci_workflow_file(&target_sha, &target_path)
+                    .await?;
+                let mut snapshot = self
+                    .snapshot(
+                        target,
+                        target_sha,
+                        target_path,
+                        file.content,
+                        depth + 1,
+                        target_ref.clone(),
+                    )
+                    .await?;
                 // The ref a call names is stored with its snapshot, so a called job's OIDC identity can name it.
                 if let (Some((called_ref, full_ref)), Some(stored)) =
                     (target_ref, snapshot.as_object_mut())
@@ -305,13 +323,8 @@ impl<'a> Resolver<'a> {
                     .insert("uses".into(), format!("./{file_name}").into());
             }
             self.active.remove(&identity);
-            let content = serde_yaml::to_string(&yaml).map_err(|_| AdmissionError::Unavailable)?;
-            self.snapshot_bytes = self.snapshot_bytes.saturating_add(content.len());
-            if self.snapshot_bytes > 2 * 1024 * 1024 {
-                return Err(AdmissionError::Invalid("Called workflow snapshots exceed size limit"));
-            }
             let stored = serde_json::json!({
-                "content": content,
+                "content": serde_yaml::to_string(&yaml).map_err(|_| AdmissionError::Unavailable)?,
                 "repository_id": repository.id, "sha": sha, "source_path": path,
             });
             self.snapshots.insert(identity, (stored.clone(), height));
@@ -322,4 +335,98 @@ impl<'a> Resolver<'a> {
 
 pub(super) fn content(value: &serde_json::Value) -> Option<&str> {
     value.get("content").and_then(serde_json::Value::as_str)
+}
+
+/// act inherits its original secret file instead of the immediate caller's secrets.
+/// Explicit expressions preserve the same scope through nested calls.
+pub(super) fn act_secrets(
+    definitions: BTreeMap<String, Vec<u8>>,
+    roots: &[String],
+    secrets: BTreeSet<String>,
+) -> anyhow::Result<BTreeMap<String, Vec<u8>>> {
+    use anyhow::Context;
+    let mut files = definitions
+        .into_iter()
+        .map(|(path, bytes)| Ok((path, super::workflows::parse_yaml(&bytes)?)))
+        .collect::<anyhow::Result<BTreeMap<_, _>>>()?;
+    let mut available: BTreeMap<_, _> = roots
+        .iter()
+        .map(|path| (path.clone(), secrets.clone()))
+        .collect();
+    loop {
+        let mut changed = false;
+        for (path, yaml) in &files {
+            let Some(names) = available.get(path).cloned() else {
+                continue;
+            };
+            for job in yaml
+                .get("jobs")
+                .and_then(Value::as_mapping)
+                .into_iter()
+                .flat_map(|jobs| jobs.values())
+            {
+                let Some(reference) = job.get("uses").and_then(Value::as_str) else {
+                    continue;
+                };
+                let target = reference
+                    .strip_prefix("./")
+                    .context("unresolved called workflow")?;
+                let mut passed = if job.get("secrets").and_then(Value::as_str) == Some("inherit") {
+                    names.clone()
+                } else {
+                    job.get("secrets")
+                        .and_then(Value::as_mapping)
+                        .into_iter()
+                        .flat_map(|values| values.keys())
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect()
+                };
+                passed.insert("GITHUB_TOKEN".into());
+                let target = available.entry(target.to_owned()).or_default();
+                let before = target.len();
+                target.extend(passed);
+                changed |= target.len() != before;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    for (path, yaml) in &mut files {
+        for job in yaml
+            .get_mut("jobs")
+            .and_then(Value::as_mapping_mut)
+            .into_iter()
+            .flat_map(|jobs| jobs.values_mut())
+        {
+            let Some(job) = job.as_mapping_mut().filter(|job| job.contains_key("uses")) else {
+                continue;
+            };
+            let mut passed = if job.get("secrets").and_then(Value::as_str) == Some("inherit") {
+                available
+                    .get(path)
+                    .into_iter()
+                    .flatten()
+                    .map(|name| {
+                        (
+                            Value::String(name.clone()),
+                            Value::String(format!("${{{{ secrets.{name} }}}}")),
+                        )
+                    })
+                    .collect::<serde_yaml::Mapping>()
+            } else {
+                job.get("secrets")
+                    .and_then(Value::as_mapping)
+                    .cloned()
+                    .unwrap_or_default()
+            };
+            passed.insert("GITHUB_TOKEN".into(), "${{ secrets.GITHUB_TOKEN }}".into());
+            job.insert("secrets".into(), Value::Mapping(passed));
+        }
+    }
+    files
+        .into_iter()
+        .map(|(path, yaml)| Ok((path, serde_yaml::to_string(&yaml)?.into_bytes())))
+        .collect()
 }

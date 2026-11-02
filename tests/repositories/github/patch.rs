@@ -95,7 +95,6 @@ fn github_repository_patch_preserves_nullable_presence_over_rpc() {
     use codeyard::backend::cluster::rpc::wire::Operation;
     use db::repositories::records::{MergeMethodUpdate, RepositoryChanges};
     let input = RepositoryChanges {
-        token: None,
         name: Some("renamed"),
         description: Some(None),
         website: None,
@@ -103,8 +102,6 @@ fn github_repository_patch_preserves_nullable_presence_over_rpc() {
         visibility_expected: None,
         archived: Some(false),
         is_template: None,
-        wiki: None,
-        discussions: None,
         merge_methods: MergeMethodUpdate::default(),
     };
     let operation = Operation::PatchRepository {

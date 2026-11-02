@@ -91,7 +91,7 @@ async fn grant_changes(pool: &db::DbPool) {
         let other = format!("{SECOND_WORKER}-{name}");
         let running = enqueue(pool, repo, writer, &trusted).await.unwrap();
         assert_eq!(
-            db::ci::claim_ci_run(pool, &slot, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
+            db::ci::claim_ci_run(pool, &slot, "podman", &trusted)
                 .await
                 .unwrap()
                 .unwrap()
@@ -123,7 +123,7 @@ async fn grant_changes(pool: &db::DbPool) {
 
         let queued_now = run(pool, queued.run_id).await;
         // Another slot asks, since the first one still holds its running run.
-        let claimed = db::ci::claim_ci_run(pool, &other, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        let claimed = db::ci::claim_ci_run(pool, &other, "podman", &trusted)
             .await
             .unwrap();
         if reduced {
@@ -179,7 +179,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
         .await
         .unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(&fixture.pool, WORKER, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(&fixture.pool, WORKER, "podman", &trusted)
             .await
             .unwrap()
             .unwrap()
@@ -188,7 +188,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
     );
     let admin_run = enqueue(&fixture.pool, repo, admin, &trusted).await.unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(&fixture.pool, SECOND_WORKER, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(&fixture.pool, SECOND_WORKER, "podman", &trusted)
             .await
             .unwrap()
             .unwrap()
@@ -228,7 +228,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
 
     // The ban holds the admin and target user locks while waiting for the writer's
     // run. Notifications for either user must still be able to take FK key-share.
-    let (finished_admin, admin_notifications, _) = tokio::time::timeout(
+    let (finished_admin, admin_notifications) = tokio::time::timeout(
         Duration::from_secs(30),
         db::ci::finish_ci_run(
             &fixture.pool,
@@ -247,7 +247,7 @@ async fn postgres_ban_allows_ci_finish_notification_foreign_keys() {
     assert_eq!(admin_notifications[0].0, admin);
     gate.commit().await.unwrap();
 
-    let (finished_writer, writer_notifications, _) =
+    let (finished_writer, writer_notifications) =
         tokio::time::timeout(Duration::from_secs(30), finishing)
             .await
             .expect("the target lock must not deadlock CI finish")
@@ -277,7 +277,7 @@ async fn claimed_run_behind_repository_lock(
     let trusted = [owner, writer];
     let run = enqueue(pool, repo, writer, &trusted).await.unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(pool, WORKER, "podman", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(pool, WORKER, "podman", &trusted)
             .await
             .unwrap()
             .unwrap()
@@ -317,7 +317,7 @@ async fn postgres_repository_lock_holder_takes_run_while_ci_finish_waits() {
         .await
         .expect("the run lock must not deadlock with CI finish");
     gate.commit().await.unwrap();
-    let (finished, _, _) = tokio::time::timeout(Duration::from_secs(30), finishing)
+    let (finished, _) = tokio::time::timeout(Duration::from_secs(30), finishing)
         .await
         .expect("CI finish must complete")
         .unwrap()
@@ -387,7 +387,7 @@ async fn postgres_repository_lock_holder_takes_run_while_cancellation_waits() {
         .await
         .expect("the run lock must not deadlock with the cancellation");
     gate.commit().await.unwrap();
-    let (cancelled, _, _) = tokio::time::timeout(Duration::from_secs(30), cancelling)
+    let (cancelled, _) = tokio::time::timeout(Duration::from_secs(30), cancelling)
         .await
         .expect("the cancellation must complete")
         .unwrap()
@@ -531,7 +531,7 @@ async fn cancellation_after_access_loss(pool: &db::DbPool) {
     let (owner, writer, repo) = repository_with_writer(pool, "starter_cancel").await;
     let running = enqueue(pool, repo, writer, &[writer]).await.unwrap();
     assert_eq!(
-        db::ci::claim_ci_run(pool, WORKER, "local", &[writer], &codeyard::backend::ci::CiConfig::default().platform_labels())
+        db::ci::claim_ci_run(pool, WORKER, "local", &[writer])
             .await
             .unwrap()
             .unwrap()
@@ -734,7 +734,7 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
     wait_until_blocked(raw, holder, 1).await;
     let pool = fixture.pool.clone();
     let claiming =
-        tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted, &codeyard::backend::ci::CiConfig::default().platform_labels()).await });
+        tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted).await });
     wait_until_blocked(raw, holder, 2).await;
     gate.commit().await.unwrap();
 

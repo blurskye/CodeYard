@@ -1,7 +1,6 @@
 use crate::backend::db::issue_attributes::{
-    AssignedType, Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption, ValueInput,
+    Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption, ValueInput,
 };
-use crate::backend::db::{credentials::Actor, users::accounts::AccountRestricted};
 use anyhow::Result;
 use serde_json::{json, Value};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
@@ -68,21 +67,6 @@ pub(crate) async fn assigned_connection(
 pub async fn assigned_type(pool: &PgPool, repo: i64, issue: i64) -> Result<Option<Attribute>> {
     assigned_connection(&mut *pool.acquire().await?, repo, issue).await
 }
-pub async fn assigned_types(
-    pool: &PgPool,
-    repo: i64,
-    ids: &[i64],
-) -> Result<Vec<AssignedType>> {
-    anyhow::ensure!(ids.len() <= 500, Refusal::Invalid);
-    if ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    Ok(sqlx::query_as("SELECT s.issue_id, a.* FROM issue_type_assignments s JOIN issue_attributes a ON a.id=s.attribute_id JOIN issues i ON i.id=s.issue_id JOIN repositories r ON r.id=i.repo_id WHERE r.id=$1 AND i.id IN (SELECT unnest($2::BIGINT[])) AND a.kind='type' AND (a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id)")
-        .bind(repo)
-        .bind(ids)
-        .fetch_all(pool)
-        .await?)
-}
 pub async fn values(
     pool: &PgPool,
     repo: i64,
@@ -93,15 +77,6 @@ pub async fn values(
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
         .await?;
-    // Repository privacy can change after the caller's access check; read it in this snapshot.
-    let readable: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND {})", super::repositories::access::readable_condition()))
-        .bind(repo)
-        .bind(viewer)
-        .fetch_one(&mut *tx)
-        .await?;
-    if !readable {
-        return Ok(Vec::new());
-    }
     let rows:Vec<(i64,i64,String)>=sqlx::query_as("SELECT v.id,v.attribute_id,v.value_json FROM issue_field_values v JOIN issues i ON i.id=v.issue_id WHERE i.id=$1 AND i.repo_id=$2 ORDER BY v.attribute_id").bind(issue).bind(repo).fetch_all(&mut *tx).await?;
     let catalog = if rows.is_empty() {
         Vec::new()
@@ -127,30 +102,19 @@ async fn owner_connection(c: &mut PgConnection, repo: i64, actor: i64) -> Result
 pub async fn owner_can_configure(pool: &PgPool, repo: i64, actor: i64) -> Result<bool> {
     owner_connection(&mut *pool.acquire().await?, repo, actor).await
 }
-async fn require_actor(tx: &mut Transaction<'_, Postgres>, actor: &Actor) -> Result<()> {
-    if let Some(credential) = actor.credential() {
-        super::users::transitions::require_account(tx, actor.user_id, &credential).await
-            .map_err(|error| if error.is::<AccountRestricted>() { Refusal::Denied.into() } else { error })?;
-    }
-    Ok(())
-}
-
-async fn begin_write<'a>(
-    pool: &'a PgPool,
+async fn begin_write(
+    pool: &PgPool,
     repo: i64,
-    authority: &Actor,
+    actor: i64,
     issue: Option<i64>,
     owner: bool,
-) -> Result<Transaction<'a, Postgres>> {
-    let actor = authority.user_id;
+) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
-    require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
-    anyhow::ensure!(super::credentials::repository(&mut tx, authority, repo, "issues", true).await?, Refusal::Denied);
     if owner {
         anyhow::ensure!(
             owner_connection(&mut tx, repo, actor).await?,
@@ -174,25 +138,14 @@ pub(crate) async fn lock_metadata(tx: &mut Transaction<'_, Postgres>) -> Result<
         .await?;
     Ok(())
 }
-pub async fn configure(pool: &PgPool, repo: i64, actor: impl Into<Actor>, d: &Definition) -> Result<i64> {
-    configure_checked(pool, repo, actor, d, (None, None)).await
-}
-
-pub async fn configure_checked(pool: &PgPool, repo: i64, actor: impl Into<Actor>, d: &Definition, (expected, owner): (Option<&str>, Option<&str>)) -> Result<i64> {
+pub async fn configure(pool: &PgPool, repo: i64, actor: i64, d: &Definition) -> Result<i64> {
     d.validate()?;
-    let authority = actor.into();
-    let actor = authority.user_id;
-    let mut tx = begin_write(pool, repo, &authority, None, true).await?;
+    let mut tx = begin_write(pool, repo, actor, None, true).await?;
     let (user, org): (Option<i64>, Option<i64>) =
         sqlx::query_as("SELECT owner_user_id,owner_org_id FROM repositories WHERE id=$1")
             .bind(repo)
             .fetch_one(&mut *tx)
             .await?;
-    if let Some(owner) = owner { anyhow::ensure!(owner == crate::backend::db::issue_attributes::owner_key(user, org), Refusal::Invalid); }
-    if let (Some(id), Some(expected)) = (d.id, expected) {
-        let old = catalog_owner(&mut tx, user, org, Some(actor), &d.kind).await?.into_iter().find(|a| a.id == id).ok_or(Refusal::Missing)?;
-        anyhow::ensure!(expected == crate::backend::db::issue_attributes::revision(&old)?, Refusal::Invalid);
-    }
     configure_owner(tx, actor, (user, org), d)
         .await
         .map(|attribute| attribute.id)
@@ -210,7 +163,6 @@ async fn configure_owner(
             .into_iter()
             .find(|a| a.id == id)
             .ok_or(Refusal::Missing)?;
-        anyhow::ensure!(d.expected_updated.is_none_or(|expected| expected == old.updated_at), Refusal::Conflict);
         anyhow::ensure!(old.data_type == d.data_type, Refusal::Invalid);
         Some(old)
     } else {
@@ -228,7 +180,7 @@ async fn configure_owner(
         anyhow::ensure!(d.options.iter().all(|o| o.id.is_none()), Refusal::Invalid);
     }
     let id = if let Some(id) = d.id {
-        sqlx::query("UPDATE issue_attributes SET name=$2,description=$3,visibility=$4,is_enabled=$5,color=$6,updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1").bind(id).bind(&d.name).bind(&d.description).bind(&d.visibility).bind(d.is_enabled).bind(&d.color).execute(&mut *tx).await?;
+        sqlx::query("UPDATE issue_attributes SET name=$2,description=$3,visibility=$4,is_enabled=$5,color=$6,updated_at=clock_timestamp() WHERE id=$1").bind(id).bind(&d.name).bind(&d.description).bind(&d.visibility).bind(d.is_enabled).bind(&d.color).execute(&mut *tx).await?;
         id
     } else {
         sqlx::query_scalar("INSERT INTO issue_attributes(owner_user_id,owner_org_id,kind,name,description,data_type,visibility,is_enabled,color) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id").bind(user).bind(org).bind(&d.kind).bind(&d.name).bind(&d.description).bind(&d.data_type).bind(&d.visibility).bind(d.is_enabled).bind(&d.color).fetch_one(&mut *tx).await?
@@ -286,20 +238,12 @@ async fn configure_owner(
             Some("single_select" | "multi_select")
         )
     {
-        // Bounded batches keep memory flat however many issues use the field.
-        let mut after = 0_i64;
-        loop {
-        let rows: Vec<(i64, i64, String)> =
-            sqlx::query_as("SELECT id,issue_id,value_json FROM issue_field_values WHERE attribute_id=$1 AND id>$2 ORDER BY id LIMIT 500")
+        let rows: Vec<(i64, String)> =
+            sqlx::query_as("SELECT id,value_json FROM issue_field_values WHERE attribute_id=$1")
                 .bind(id)
-                .bind(after)
                 .fetch_all(&mut *tx)
                 .await?;
-        let Some(last) = rows.last().map(|row| row.0) else {
-            break;
-        };
-        after = last;
-        for (value_id, issue, text) in rows {
+        for (value_id, text) in rows {
             let value: Value = serde_json::from_str(&text)?;
             let next = if d.data_type.as_deref() == Some("single_select") {
                 value
@@ -335,8 +279,6 @@ async fn configure_owner(
                     .execute(&mut *tx)
                     .await?;
             }
-            touch(&mut tx, issue).await?;
-        }
         }
     }
     let attribute = catalog_owner(&mut tx, user, org, Some(actor), &d.kind)
@@ -367,57 +309,52 @@ pub async fn organization_catalog(
     tx.commit().await?;
     Ok(result)
 }
-async fn begin_organization_write<'a>(
-    pool: &'a PgPool,
+async fn begin_organization_write(
+    pool: &PgPool,
     org: i64,
-    authority: &Actor,
-) -> Result<Transaction<'a, Postgres>> {
+    actor: i64,
+) -> Result<Transaction<'_, Postgres>> {
     use crate::backend::db::{models::OrgRole, organizations::OrganizationOutcome};
-    let actor = authority.user_id;
     let mut tx = pool.begin().await?;
     match super::organizations::authority::authority(&mut tx, actor, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner) => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
-    require_actor(&mut tx, authority).await?;
     lock_metadata(&mut tx).await?;
-    anyhow::ensure!(super::credentials::organization(&mut tx, authority, org, "organization_administration", true).await?, Refusal::Denied);
     Ok(tx)
 }
 pub async fn configure_organization(
     pool: &PgPool,
     org: i64,
-    actor: impl Into<Actor>,
+    actor: i64,
     d: &Definition,
-) -> Result<Attribute> {
+) -> Result<i64> {
     d.validate()?;
-    let authority = actor.into();
-    let tx = begin_organization_write(pool, org, &authority).await?;
-    configure_owner(tx, authority.user_id, (None, Some(org)), d).await
+    let tx = begin_organization_write(pool, org, actor).await?;
+    configure_owner(tx, actor, (None, Some(org)), d)
+        .await
+        .map(|attribute| attribute.id)
 }
 pub async fn create_organization_field(
     pool: &PgPool,
     org: i64,
-    actor: impl Into<Actor>,
+    actor: i64,
     d: &Definition,
 ) -> Result<Attribute> {
     anyhow::ensure!(d.id.is_none() && d.kind == "field", Refusal::Invalid);
     d.validate()?;
-    let authority = actor.into();
-    let tx = begin_organization_write(pool, org, &authority).await?;
-    configure_owner(tx, authority.user_id, (None, Some(org)), d).await
+    let tx = begin_organization_write(pool, org, actor).await?;
+    configure_owner(tx, actor, (None, Some(org)), d).await
 }
 pub async fn patch_organization_field(
     pool: &PgPool,
     org: i64,
-    actor: impl Into<Actor>,
+    actor: i64,
     id: i64,
     changes: &FieldChanges,
 ) -> Result<Attribute> {
-    let authority = actor.into();
-    let actor = authority.user_id;
-    let mut tx = begin_organization_write(pool, org, &authority).await?;
+    let mut tx = begin_organization_write(pool, org, actor).await?;
     let current = catalog_owner(&mut tx, None, Some(org), Some(actor), "field")
         .await?
         .into_iter()
@@ -427,25 +364,14 @@ pub async fn patch_organization_field(
     definition.validate()?;
     configure_owner(tx, actor, (None, Some(org)), &definition).await
 }
-/// Deleting an attribute removes its type or values from every issue that uses it, so those
-/// issues need a new revision for incremental readers.
-async fn touch_users(tx: &mut Transaction<'_, Postgres>, attribute: i64) -> Result<()> {
-    sqlx::query("UPDATE issues SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id IN (SELECT issue_id FROM issue_field_values WHERE attribute_id=$1 UNION SELECT issue_id FROM issue_type_assignments WHERE attribute_id=$1)")
-        .bind(attribute)
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
-}
 pub async fn delete_organization_definition(
     pool: &PgPool,
     org: i64,
-    actor: impl Into<Actor>,
+    actor: i64,
     id: i64,
     kind: &str,
 ) -> Result<()> {
-    let authority = actor.into();
-    let mut tx = begin_organization_write(pool, org, &authority).await?;
-    touch_users(&mut tx, id).await?;
+    let mut tx = begin_organization_write(pool, org, actor).await?;
     let deleted =
         sqlx::query("DELETE FROM issue_attributes WHERE id=$1 AND owner_org_id=$2 AND kind=$3")
             .bind(id)
@@ -457,12 +383,10 @@ pub async fn delete_organization_definition(
     tx.commit().await?;
     Ok(())
 }
-pub async fn delete_definition(pool: &PgPool, repo: i64, actor: impl Into<Actor>, id: i64) -> Result<()> {
-    let authority = actor.into();
-    let mut tx = begin_write(pool, repo, &authority, None, true).await?;
+pub async fn delete_definition(pool: &PgPool, repo: i64, actor: i64, id: i64) -> Result<()> {
+    let mut tx = begin_write(pool, repo, actor, None, true).await?;
     let exists:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM issue_attributes a JOIN repositories r ON r.id=$2 WHERE a.id=$1 AND (a.owner_user_id=r.owner_user_id OR a.owner_org_id=r.owner_org_id))").bind(id).bind(repo).fetch_one(&mut *tx).await?;
     anyhow::ensure!(exists, Refusal::Missing);
-    touch_users(&mut tx, id).await?;
     sqlx::query("DELETE FROM issue_attributes WHERE id=$1")
         .bind(id)
         .execute(&mut *tx)
@@ -473,14 +397,12 @@ pub async fn delete_definition(pool: &PgPool, repo: i64, actor: impl Into<Actor>
 pub async fn set_values(
     pool: &PgPool,
     repo: i64,
-    actor: impl Into<Actor>,
+    actor: i64,
     issue: i64,
     values: &[ValueInput],
     replace: bool,
 ) -> Result<()> {
-    let authority = actor.into();
-    let actor = authority.user_id;
-    let mut tx = begin_write(pool, repo, &authority, Some(issue), false).await?;
+    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
     fields_in_transaction(&mut tx, repo, actor, issue, values, replace).await?;
     tx.commit().await?;
     Ok(())
@@ -548,13 +470,11 @@ pub(crate) async fn fields_in_transaction(
 pub async fn delete_value(
     pool: &PgPool,
     repo: i64,
-    actor: impl Into<Actor>,
+    actor: i64,
     issue: i64,
     field: i64,
 ) -> Result<()> {
-    let authority = actor.into();
-    let actor = authority.user_id;
-    let mut tx = begin_write(pool, repo, &authority, Some(issue), false).await?;
+    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
     let fields = catalog_connection(&mut tx, repo, Some(actor), "field").await?;
     anyhow::ensure!(fields.iter().any(|f| f.id == field), Refusal::Missing);
     let result =
@@ -572,13 +492,11 @@ pub async fn delete_value(
 pub async fn set_type(
     pool: &PgPool,
     repo: i64,
-    actor: impl Into<Actor>,
+    actor: i64,
     issue: i64,
     kind: Option<i64>,
 ) -> Result<()> {
-    let authority = actor.into();
-    let actor = authority.user_id;
-    let mut tx = begin_write(pool, repo, &authority, Some(issue), false).await?;
+    let mut tx = begin_write(pool, repo, actor, Some(issue), false).await?;
     type_in_transaction(&mut tx, repo, actor, issue, kind).await?;
     tx.commit().await?;
     Ok(())
@@ -592,13 +510,6 @@ pub(crate) async fn type_in_transaction(
 ) -> Result<Option<i64>> {
     let old = assigned_connection(tx, repo, issue).await?;
     if old.as_ref().map(|a| a.id) == kind {
-        if kind.is_none() {
-            // A type left over from a previous owner is hidden but still stored; clearing removes it.
-            sqlx::query("DELETE FROM issue_type_assignments WHERE issue_id=$1")
-                .bind(issue)
-                .execute(&mut **tx)
-                .await?;
-        }
         return Ok(None);
     }
     let next = if let Some(id) = kind {
@@ -649,7 +560,7 @@ pub(crate) async fn event(
     detail: &str,
     previous: &str,
 ) -> Result<i64> {
-    super::timeline::append(tx, repo, "issue", issue, actor, kind, detail, previous).await
+    Ok(sqlx::query_scalar("INSERT INTO timeline_events(repo_id,subject_kind,subject_id,actor_id,kind,detail,previous) VALUES ($1,'issue',$2,$3,$4,$5,$6) RETURNING id").bind(repo).bind(issue).bind(actor).bind(kind).bind(detail).bind(previous).fetch_one(&mut **tx).await?)
 }
 pub(crate) async fn touch(tx: &mut Transaction<'_, Postgres>, issue: i64) -> Result<()> {
     sqlx::query("UPDATE issues SET updated_at=GREATEST(clock_timestamp(),updated_at+INTERVAL '1 microsecond') WHERE id=$1").bind(issue).execute(&mut **tx).await?;

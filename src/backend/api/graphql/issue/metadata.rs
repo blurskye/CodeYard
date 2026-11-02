@@ -1,27 +1,11 @@
 use super::*;
 use crate::backend::db::{
     discussion_search::{Search, Sort},
-    relationships::{Kind, Order},
+    relationships::Kind,
 };
 
-pub(in super::super) fn issue_type(item: &db::issue_attributes::Attribute, repo: i64) -> Value {
-    json!({"__typename":"IssueType","_repo":repo,"_scope":"issues","id":node_id::encode("IT",item.id),"name":item.name,"description":item.description,"color":item.color.as_deref().unwrap_or("gray").to_uppercase()})
-}
-
-pub(in super::super) async fn type_node(id: i64, request: &RequestContext) -> Result<Value> {
-    let mut after = 0;
-    loop {
-        let repositories = db::graphql::issue_type_repositories(&request.state.pool, id, after, request.auth.user.id).await.map_err(unavailable)?;
-        let done = repositories.len() < 100;
-        for repo in repositories {
-            after = repo;
-            if !repository::optional_authority(repo, "issues", request).await? { continue; }
-            if let Some(item) = db::issue_attributes::catalog(&request.state.pool, repo, Some(request.auth.user.id), "type").await.map_err(unavailable)?.into_iter().find(|item| item.id == id) {
-                return Ok(issue_type(&item, repo));
-            }
-        }
-        if done { return Err(missing()); }
-    }
+pub(in super::super) fn issue_type(item: &db::issue_attributes::Attribute) -> Value {
+    json!({"id":node_id::encode("IT",item.id),"name":item.name,"description":item.description,"color":item.color.as_deref().unwrap_or("gray").to_uppercase()})
 }
 
 pub(super) async fn resolve(
@@ -39,14 +23,27 @@ pub(super) async fn resolve(
             .await
             .map_err(unavailable)?
             .as_ref()
-            .map(|item| issue_type(item, repo.id))
+            .map(issue_type)
             .unwrap_or(Value::Null)),
         "subIssuesSummary" => {
+            // Counted from the sub-issues this viewer may list, so hidden children stay hidden.
             let (mut total, mut completed) = (0_i64, 0_i64);
-            for counts in db::relationships::summaries(pool, &[id]).await.map_err(unavailable)? {
-                if repository::optional_authority(counts.repo_id, "issues", request).await? {
-                    total += counts.total;
-                    completed += counts.completed;
+            loop {
+                let rows = db::relationships::list(
+                    pool,
+                    Some(request.auth.user.id),
+                    id,
+                    Kind::Children,
+                    total,
+                    100,
+                )
+                .await
+                .map_err(unavailable)?;
+                let done = rows.len() < 100;
+                total += rows.len() as i64;
+                completed += rows.iter().filter(|link| link.state == "closed").count() as i64;
+                if done {
+                    break;
                 }
             }
             Ok(
@@ -63,48 +60,24 @@ pub(super) async fn resolve(
             if field != "parent" {
                 connection::validate(ctx)?;
             }
-            let (mut order, mut descending) = (Order::Position, false);
-            if let Some(value) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
-                let value = value.object()?;
-                order = match value.try_get("field")?.enum_name()? {
-                    "CREATED_AT" => Order::CreatedAt,
-                    "DEPENDENCY_ADDED_AT" => Order::DependencyAddedAt,
-                    _ => return Err(Error::new("Unsupported issue dependency order")),
-                };
-                descending = value.try_get("direction")?.enum_name()? == "DESC";
-            }
-            let viewer = Some(request.auth.user.id);
-            let (mut total, mut visible) = (0_i64, Vec::new());
-            for (repo_id, count) in db::relationships::repository_counts(pool, viewer, id, kind)
-                .await
-                .map_err(unavailable)?
-            {
-                if repository::optional_authority(repo_id, "issues", request).await? {
-                    total += count;
-                    visible.push(repo_id);
-                }
-            }
-            let page = if field == "parent" { None } else { Some(Page::new(ctx, total)?) };
-            let (offset, limit) = page.as_ref().map_or((0, 1), |page| (page.offset, page.limit));
-            let links = if limit == 0 || visible.is_empty() {
-                Vec::new()
-            } else {
-                db::relationships::window(
+            let mut links = Vec::new();
+            loop {
+                let rows = db::relationships::list(
                     pool,
-                    &db::relationships::Window {
-                        viewer,
-                        root: id,
-                        kind,
-                        repositories: Some(&visible),
-                        order,
-                        descending,
-                        offset,
-                        limit,
-                    },
+                    Some(request.auth.user.id),
+                    id,
+                    kind,
+                    links.len() as i64,
+                    100,
                 )
                 .await
-                .map_err(unavailable)?
-            };
+                .map_err(unavailable)?;
+                let done = rows.len() < 100;
+                links.extend(rows);
+                if done {
+                    break;
+                }
+            }
             let mut nodes = Vec::new();
             for link in links {
                 let issue = db::issues::get_issue_by_id(pool, link.id)
@@ -113,12 +86,12 @@ pub(super) async fn resolve(
                     .ok_or_else(missing)?;
                 repository::by_id(issue.repo_id, request).await?;
                 request.authorize(issue.repo_id, "issues", false).await?;
-                request.charge(issue.title.len().saturating_add(issue.body.len()).saturating_mul(4))?;
                 nodes.push(object(&issue));
             }
-            match page {
-                None => Ok(nodes.into_iter().next().unwrap_or(Value::Null)),
-                Some(page) => Ok(page.finish(nodes)),
+            if field == "parent" {
+                Ok(nodes.into_iter().next().unwrap_or(Value::Null))
+            } else {
+                connection::slice(ctx, nodes)
             }
         }
         _ => super::super::collaboration::resolve(ty, field, ctx, request, parent, repo).await,
@@ -143,7 +116,7 @@ pub(in super::super) async fn repository(
         ctx,
         rows.iter()
             .filter(|s| s.is_enabled)
-            .map(|item| issue_type(item, repo.id))
+            .map(issue_type)
             .collect(),
     )
 }
@@ -170,7 +143,7 @@ pub(super) async fn list(
         query.push_str(&format!(" {key}:{}", quote(value)?));
         Ok(())
     };
-    for (arg, key) in [("baseRefName", "exact-base"), ("headRefName", "exact-head")] {
+    for (arg, key) in [("baseRefName", "base"), ("headRefName", "head")] {
         if let Some(value) = args.args.get(arg).filter(|v| !v.is_null()) {
             // `gh pr status` outside a clone asks for the head branch "", which no pull has.
             if value.string()?.is_empty() {
@@ -180,9 +153,8 @@ pub(super) async fn list(
         }
     }
     if let Some(labels) = args.args.get("labels").filter(|v| !v.is_null()) {
-        let labels: Value = labels.deserialize()?;
-        for value in super::super::metadata_mutations::list(&labels) {
-            add("exact-label", value.as_str().ok_or_else(missing)?)?;
+        for value in labels.deserialize::<Vec<String>>()? {
+            add("label", &value)?;
         }
     }
     if let Some(filter) = args.args.get("filterBy").filter(|v| !v.is_null()) {
@@ -191,27 +163,19 @@ pub(super) async fn list(
             ("assignee", "assignee"),
             ("createdBy", "author"),
             ("mentioned", "mentions"),
-            ("milestone", "milestone-number"),
+            ("milestone", "milestone"),
             ("milestoneNumber", "milestone-number"),
         ] {
             if let Some(value) = filter[name].as_str() {
-                if value == "*" && matches!(name, "assignee" | "milestone" | "milestoneNumber") {
-                    add("-no", if name == "assignee" { "assignee" } else { "milestone" })?;
-                } else if name == "milestone" {
-                    let id = value.parse::<i64>().map_err(|_| Error::new("milestone must be a database ID or *"))?;
-                    let Some(milestone) = db::milestones::get_milestone_by_id(&request.state.pool, repo_id, id).await.map_err(unavailable)? else {
-                        return connection::slice(args, Vec::new());
-                    };
-                    add(key, &milestone.milestone.number.to_string())?;
-                } else { add(key, value)?; }
+                add(key, value)?;
             }
         }
         if let Some(value) = filter["labels"].as_str() {
-            add("exact-label", value)?;
+            add("label", value)?;
         }
         if let Some(values) = filter["labels"].as_array() {
             for value in values {
-                add("exact-label", value.as_str().ok_or_else(missing)?)?;
+                add("label", value.as_str().ok_or_else(missing)?)?;
             }
         }
         if !filter["since"].is_null() {
@@ -235,9 +199,8 @@ pub(super) async fn list(
         }
     }
     if let Some(states) = args.args.get("states").filter(|v| !v.is_null()) {
-        let values: Value = states.deserialize()?;
-        let values = super::super::metadata_mutations::list(&values).iter().map(|value| value.as_str().ok_or_else(missing)).collect::<Result<Vec<_>>>()?;
-        add_states(&mut query, values.into_iter());
+        let values = states.deserialize::<Vec<String>>()?;
+        add_states(&mut query, values.iter().map(String::as_str));
     }
     let (mut sort, mut ascending) = (Sort::Created, false);
     if let Some(order) = args.args.get("orderBy").filter(|v| !v.is_null()) {
@@ -319,20 +282,21 @@ async fn results(
             request
                 .authorize(repo, if pull { "pull-requests" } else { "issues" }, false)
                 .await?;
-            let value = if pull {
-                let Some(row) = db::pull_requests::records::get_pull_request_by_id(pool, id)
-                    .await.map_err(unavailable)? else { continue };
-                request.authorize(row.repo_id, "pull-requests", false).await?;
-                request.charge(row.title.len().saturating_add(row.body.len()).saturating_mul(4))?;
-                pull_object(&row)
+            nodes.push(if pull {
+                pull_object(
+                    &db::pull_requests::records::get_pull_request_by_id(pool, id)
+                        .await
+                        .map_err(unavailable)?
+                        .ok_or_else(missing)?,
+                )
             } else {
-                let Some(row) = db::issues::get_issue_by_id(pool, id)
-                    .await.map_err(unavailable)? else { continue };
-                request.authorize(row.repo_id, "issues", false).await?;
-                request.charge(row.title.len().saturating_add(row.body.len()).saturating_mul(4))?;
-                object(&row)
-            };
-            nodes.push(value);
+                object(
+                    &db::issues::get_issue_by_id(pool, id)
+                        .await
+                        .map_err(unavailable)?
+                        .ok_or_else(missing)?,
+                )
+            });
         }
     }
     let mut value = page.finish(nodes);

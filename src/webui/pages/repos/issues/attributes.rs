@@ -25,17 +25,7 @@ fn color(name: &str, value: Option<&str>, nullable: bool) -> Element {
         }
     }
 }
-fn identity_fields(repo: &Repository, item_id: i64, owner_key: &str) -> Element {
-    rsx! {
-        {csrf(&repo.csrf)}
-        input { r#type: "hidden", name: "repository_id", value: "{repo.chrome.id}" }
-        input { r#type: "hidden", name: "item_id", value: "{item_id}" }
-        input { r#type: "hidden", name: "owner_key", value: owner_key.to_owned() }
-    }
-}
-
-fn definition(repo: &Repository, url: &str, a: &IssueAttribute, (item_id, owner_key): (i64, &str)) -> Element {
-    let csrf = |_: &str| identity_fields(repo, item_id, owner_key);
+fn definition(repo: &Repository, url: &str, a: &IssueAttribute) -> Element {
     let field = a.kind == "field";
     let kind = if field { "field" } else { "type" };
     rsx! {
@@ -48,7 +38,6 @@ fn definition(repo: &Repository, url: &str, a: &IssueAttribute, (item_id, owner_
                 class: "collaboration-form-fields",
                 {csrf(&repo.csrf)}
                 input { r#type: "hidden", name: "action", value: "configure" }
-                input { r#type: "hidden", name: "expected_revision", value: a.revision.clone() }
                 input { r#type: "hidden", name: "kind", value: kind }
                 if a.id > 0 {
                     input {
@@ -56,7 +45,6 @@ fn definition(repo: &Repository, url: &str, a: &IssueAttribute, (item_id, owner_
                         name: "attribute_id",
                         value: a.id.to_string(),
                     }
-                    input { r#type: "hidden", name: "expected_updated", value: a.updated.clone() }
                 }
                 label {
                     "Name"
@@ -271,9 +259,7 @@ fn field_value(a: &IssueAttribute) -> String {
 }
 fn blank(kind: &str) -> IssueAttribute {
     IssueAttribute {
-        revision: String::new(),
         id: 0,
-        updated: String::new(),
         kind: kind.into(),
         name: String::new(),
         description: None,
@@ -289,8 +275,7 @@ fn blank(kind: &str) -> IssueAttribute {
         value: None,
     }
 }
-pub(super) fn panel(repo: &Repository, url: &str, data: &IssueAttributes, item_id: i64) -> Element {
-    let csrf = |_: &str| identity_fields(repo, item_id, &data.owner_key);
+pub(super) fn panel(repo: &Repository, url: &str, data: &IssueAttributes) -> Element {
     let writer = repo.can_write && !repo.chrome.is_archived;
     let selected = data
         .types
@@ -450,17 +435,17 @@ pub(super) fn panel(repo: &Repository, url: &str, data: &IssueAttributes, item_i
                     for a in data.types.iter().chain(data.fields.iter()) {
                         details { key: "{url}:manage:{a.id}",
                             summary { "Edit {a.kind}: {a.name}" }
-                            {definition(repo, url, a, (item_id, &data.owner_key))}
+                            {definition(repo, url, a)}
                         }
                     }
                     details {
                         summary { "New issue type" }
-                        {definition(repo, url, &blank("type"), (item_id, &data.owner_key))}
+                        {definition(repo, url, &blank("type"))}
                     }
                     if data.organization {
                         details {
                             summary { "New issue field" }
-                            {definition(repo, url, &blank("field"), (item_id, &data.owner_key))}
+                            {definition(repo, url, &blank("field"))}
                         }
                     }
                 }

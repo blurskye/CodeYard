@@ -271,7 +271,6 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 scope,
                 owner,
-                &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), owner).await),
                 &WebhookFields {
                     username: None,
                     password: None,
@@ -306,13 +305,8 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
             .await
             .unwrap();
             let id = webhooks::list_deliveries(f.pool(), hook).await.unwrap()[0].id;
-            let revoked = crate::support::live_session(f.pool(), owner).await;
-            db::users::sessions::delete_session(f.pool(), &revoked).await.unwrap();
-            assert!(webhooks::delete_webhook(f.pool(), scope, owner,
-                &db::users::accounts::AccountCredential::Session(&revoked), hook)
-                .await.unwrap().is_none());
             let snapshot =
-                webhooks::read_settings(f.pool(), scope, admin, &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), admin).await), Some(hook), Some(id), 0, Default::default())
+                webhooks::read_settings(f.pool(), scope, admin, Some(hook), Some(id), 0, false)
                     .await
                     .unwrap()
                     .unwrap();
@@ -342,11 +336,10 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
                 f.pool(),
                 scope,
                 admin,
-                &db::users::accounts::AccountCredential::Session(&crate::support::live_session(f.pool(), admin).await),
                 Some(hook),
                 Some(id),
                 0,
-                Default::default()
+                false
             )
             .await
             .unwrap()

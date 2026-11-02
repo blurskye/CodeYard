@@ -19,29 +19,6 @@ pub mod raw;
 pub mod tree;
 pub mod upload;
 
-/// Path<String> rejects valid Git filenames before a handler runs. Decode the original URI
-/// into reversible path identities instead; account/repository names must still be UTF-8.
-pub struct GitPathParams(pub std::collections::HashMap<String, String>);
-
-#[axum::async_trait]
-impl<S: Send + Sync> axum::extract::FromRequestParts<S> for GitPathParams {
-    type Rejection = axum::http::StatusCode;
-    async fn from_request_parts(parts: &mut axum::http::request::Parts, _: &S) -> Result<Self, Self::Rejection> {
-        let uri = parts.extensions.get::<axum::extract::OriginalUri>().map(|uri| &uri.0).unwrap_or(&parts.uri);
-        let mut pieces = uri.path().trim_start_matches('/').splitn(4, '/');
-        let bad = axum::http::StatusCode::BAD_REQUEST;
-        let owner = crate::git_paths::from_url(pieces.next().ok_or(bad)?).ok_or(bad)?;
-        let repo = crate::git_paths::from_url(pieces.next().ok_or(bad)?).ok_or(bad)?;
-        if owner.contains('\0') || repo.contains('\0') { return Err(bad); }
-        let mut params = std::collections::HashMap::from([("owner".into(), owner), ("repo".into(), repo)]);
-        if pieces.next().is_some() {
-            let tail = crate::git_paths::from_url(pieces.next().unwrap_or("")).ok_or(bad)?;
-            params.insert("ref_path".into(), tail);
-        }
-        Ok(Self(params))
-    }
-}
-
 pub fn json_router() -> Router<Arc<AppState>> {
     Router::new()
         .route(

@@ -29,16 +29,14 @@ pub async fn integrations(pool: &PgPool, repo: i64) -> Result<Vec<App>> {
 
 pub async fn create(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     environment: i64,
     app: i64,
 ) -> Result<Rule> {
-    let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     let exists: bool = sqlx::query_scalar(
@@ -74,16 +72,14 @@ pub async fn create(
 
 pub async fn disable(
     pool: &PgPool,
-    actor: impl Into<crate::backend::db::credentials::Actor>,
+    actor: i64,
     repo: i64,
     environment: i64,
     rule: i64,
 ) -> Result<()> {
-    let actor = actor.into();
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
-        super::discussions::lock_repository_mutation_authority(&mut tx, actor.user_id, repo).await?
-            && super::credentials::repository(&mut tx, &actor, repo, "administration", true).await?,
+        super::discussions::lock_repository_mutation_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     let changed = sqlx::query("UPDATE deployment_protection_rules SET enabled=FALSE WHERE id=$1 AND environment_id=$2 AND EXISTS(SELECT 1 FROM deployment_environments WHERE id=$2 AND repo_id=$3)")
@@ -144,30 +140,24 @@ async fn native_state(tx: &mut PgConnection, run: &CiRun) -> Result<Option<Strin
     let Some(environment) = environment else {
         return Ok(None);
     };
-    let pending = crate::backend::db::deployment_protection::native_pending_sql(true);
-    let rules: Option<(i64, String, Option<String>, bool)> = sqlx::query_as(
-        &format!("SELECT e.id,d.status,e.branch_policy,{pending} FROM ci_deployments d JOIN deployment_environments e ON e.repo_id=d.repo_id AND e.name_key=$2 WHERE d.run_id=$1"),
+    let rules: Option<(i64, String, String, Option<String>, bool)> = sqlx::query_as(
+        "SELECT e.id, d.status, e.reviewers, e.branch_policy,
+                e.wait_timer > 0 AND d.created_at + make_interval(mins => e.wait_timer::int) > clock_timestamp()
+           FROM ci_deployments d
+           JOIN deployment_environments e ON e.repo_id = d.repo_id AND e.name_key = $2
+          WHERE d.run_id = $1",
     )
     .bind(run.id)
     .bind(environment.to_lowercase())
     .fetch_optional(&mut *tx)
     .await?;
-    let Some((environment_id, status, branch_policy, pending)) = rules else {
+    let Some((environment_id, status, reviewers, branch_policy, timer_running)) = rules else {
         return Ok(None);
     };
     if status == "rejected" {
         return Ok(Some("rejected".to_owned()));
     }
-    let pull: Option<i64> = if run.event == "pull_request" {
-        sqlx::query_scalar("SELECT number FROM pull_requests WHERE id=$1 AND repo_id=$2")
-            .bind(run.pull_request_id).bind(run.repo_id).fetch_optional(&mut *tx).await?
-    } else { None };
-    let reference = match run.workflow_reference(pull) {
-        Some(reference) => reference,
-        None if branch_policy.is_none() => String::new(),
-        None => return Ok(Some("rejected".to_owned())),
-    };
-    let (kind, name) = deployment_ref(&reference);
+    let (kind, name) = deployment_ref(&run.branch);
     let branch_allowed = match branch_policy.as_deref() {
         None => true,
         Some("custom") => {
@@ -189,7 +179,7 @@ async fn native_state(tx: &mut PgConnection, run: &CiRun) -> Result<Option<Strin
                     .bind(run.repo_id)
                     .fetch_all(&mut *tx)
                     .await?;
-            patterns.is_empty() || patterns
+            patterns
                 .iter()
                 .any(|pattern| github_glob_matches(pattern, name))
         }
@@ -198,7 +188,7 @@ async fn native_state(tx: &mut PgConnection, run: &CiRun) -> Result<Option<Strin
     if !branch_allowed {
         return Ok(Some("rejected".to_owned()));
     }
-    if pending {
+    if timer_running || (status == "pending" && reviewers != "[]") {
         return Ok(Some("pending".to_owned()));
     }
     Ok(None)
@@ -218,10 +208,7 @@ pub async fn review(
         .bind(repo)
         .fetch_optional(&mut *tx)
         .await?;
-    // Match suspension/uninstall: installation first, then its child credential rows.
-    let _: Option<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE t.token_id=$1 FOR SHARE OF i")
-        .bind(token).fetch_optional(&mut *tx).await?;
-    let credential: Option<(i64, String, String, String)> = sqlx::query_as("SELECT a.id,t.permissions,t.repositories,a.permissions FROM github_app_tokens t JOIN personal_access_tokens p ON p.id=t.token_id JOIN github_app_installations i ON i.id=t.installation_id JOIN github_apps a ON a.id=i.app_id JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id JOIN repositories r ON r.id=$2 WHERE t.token_id=$1 AND NOT t.user_token AND p.user_id=bot.id AND p.scope='write' AND (p.expires_at IS NULL OR p.expires_at>clock_timestamp()) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) FOR SHARE OF t,p")
+    let credential: Option<(i64, String, String, String)> = sqlx::query_as("SELECT a.id,t.permissions,t.repositories,a.permissions FROM github_app_tokens t JOIN personal_access_tokens p ON p.id=t.token_id JOIN github_app_installations i ON i.id=t.installation_id JOIN github_apps a ON a.id=i.app_id JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id JOIN repositories r ON r.id=$2 WHERE t.token_id=$1 AND NOT t.user_token AND p.user_id=bot.id AND p.scope='write' AND (p.expires_at IS NULL OR p.expires_at>clock_timestamp()) AND i.suspended_at IS NULL AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) FOR SHARE OF t,p,i,a,owner,bot")
         .bind(token).bind(repo).fetch_optional(&mut *tx).await?;
     let (app, permissions, repositories, granted) = credential.ok_or(Refusal::Denied)?;
     let permissions = serde_json::from_str(&permissions)?;

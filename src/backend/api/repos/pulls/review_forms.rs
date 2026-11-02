@@ -293,7 +293,6 @@ pub(crate) async fn reviewers(
             .flatten()
             .collect()
     };
-    let requested_ids: HashSet<i64> = requested.iter().map(|user| user.id).collect();
     let mut reviewers: Vec<pulls::Reviewer> = decisions
         .into_iter()
         .filter_map(|decision| {
@@ -309,17 +308,16 @@ pub(crate) async fn reviewers(
                 status,
                 stale: status != pulls::ReviewerStatus::Dismissed
                     && decision.commit_sha.as_deref() != Some(head),
-                pending: requested_ids.contains(&decision.author_id),
+                pending: requested.iter().any(|user| user.id == decision.author_id),
                 code_owner,
             })
         })
         .collect();
-    let mut seen: HashSet<String> = reviewers
-        .iter()
-        .map(|reviewer| reviewer.username.clone())
-        .collect();
     for user in requested {
-        if seen.insert(user.username.clone()) {
+        if !reviewers
+            .iter()
+            .any(|reviewer| reviewer.username == user.username)
+        {
             let code_owner = owner_ids.contains(&user.id);
             reviewers.push(pulls::Reviewer {
                 username: user.username,
@@ -472,7 +470,6 @@ pub(crate) async fn native_review(
         commit_sha: Some(compare.head_sha.clone()),
         // The pending review the form showed; another one started since is not published.
         review_id: submitted.pending_review,
-        token: None,
     };
     let user = ctx.require_user()?.id;
     match review_rules::create_pull_request_review(
@@ -480,13 +477,7 @@ pub(crate) async fn native_review(
         ctx.state.cluster.as_ref(),
         &ctx.state.notification_broadcaster,
         user,
-        &db::users::accounts::AccountCredential::Session(&crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default()),
-        review_rules::ReviewTarget {
-            owner: owner.clone(),
-            name: name.clone(),
-            number,
-            expected: Some((repo.record.id, value.id, submitted.pending_review)),
-        },
+        (owner.clone(), name.clone(), number),
         request,
     )
     .await
@@ -565,18 +556,18 @@ pub(crate) async fn native_request_reviewer(
     let repo = repository(&ctx, &owner, &name).await?;
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-    require_reviewer_repository(&ctx, &form, repo.record.id)?;
     let username = field(&form, "username");
     let request = RequestReviewerRequest {
         username: username.clone(),
     };
-    match review_rules::request_reviewer_bound(
+    match review_rules::request_reviewer(
         &ctx.state.pool,
         &ctx.state.notification_broadcaster,
         user,
-        (owner, name, number),
+        owner,
+        name,
+        number,
         request,
-        Some(repo.record.id),
     )
     .await
     .map_err(operation_error)
@@ -616,13 +607,13 @@ pub(crate) async fn native_remove_requested_reviewer(
     let repo = repository(&ctx, &owner, &name).await?;
     let user = ctx.require_user()?.id;
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-    require_reviewer_repository(&ctx, &form, repo.record.id)?;
-    match review_rules::remove_requested_reviewer_bound(
+    match review_rules::remove_requested_reviewer(
         &ctx.state.pool,
         user,
-        (owner, name, number),
+        owner,
+        name,
+        number,
         reviewer,
-        Some(repo.record.id),
     )
     .await
     .map_err(operation_error)
@@ -645,19 +636,6 @@ pub(crate) async fn native_remove_requested_reviewer(
     }
 }
 
-fn require_reviewer_repository(ctx: &PageContext, form: &HashMap<String, String>, id: i64) -> ResultPage<()> {
-    if field(form, "repository_id").parse::<i64>().ok() != Some(id) {
-        return Err(ctx.error(StatusCode::CONFLICT, "The repository changed. Reload before changing reviewers."));
-    }
-    Ok(())
-}
-
-fn submitted_path(ctx: &PageContext, form: &HashMap<String, String>) -> ResultPage<String> {
-    form.get("path_json").map(|value| serde_json::from_str::<String>(value)
-        .map_err(|_| ctx.error(StatusCode::UNPROCESSABLE_ENTITY, "Invalid file path.")))
-        .unwrap_or_else(|| Ok(field(form, "path")))
-}
-
 /// A comment on the Conversation tab, or on a line or thread of the diff. The diff sends the
 /// head it showed as `commit_sha`, which must still be the pull request head.
 pub(crate) async fn native_pull_comment(
@@ -673,7 +651,7 @@ pub(crate) async fn native_pull_comment(
     let value = item(&ctx, &repo, Kind::Pull, number).await?;
     let line = LineComment {
         repository_id: field(&form, "repository_id").parse().ok(),
-        path: submitted_path(&ctx, &form)?,
+        path: field(&form, "path"),
         side: field(&form, "side"),
         line: field(&form, "line"),
         start_line: field(&form, "start_line"),
@@ -721,12 +699,7 @@ pub(crate) async fn native_pull_comment(
         )
         .await;
     }
-    // A reply sits in its thread, wherever the thread was written, so only a new conversation
-    // must match the displayed revisions.
-    if inline
-        && line.in_reply_to.is_none()
-        && (line.commit != head || line.base != compare.base_sha)
-    {
+    if inline && (line.commit != head || line.base != compare.base_sha) {
         return refuse_comment(
             &ctx,
             &repo,
@@ -885,27 +858,21 @@ pub(crate) async fn native_set_viewed(
         ));
     }
     let base = format!("{}/{}", repo.view.family_url(Kind::Pull), number);
-    let path = submitted_path(&ctx, &form)?;
+    let path = field(&form, "path");
     if path.len() > db::pull_requests::reviews::MAX_COMMENT_PATH_BYTES || path.contains('\0') {
         return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid diff path."));
     }
-    // Clearing a mark needs no Git read. A new mark names the file's blob in the diff the page
-    // shows, which a retargeted stack layer compares against its fork point.
-    let blob_sha = if field(&form, "viewed") == "yes" {
-        let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
-            .diff_file(pull.diff_base(), &pull.head_sha, &path)
-            .await
-            .map_err(|error| crate::backend::api::repos::chrome::store_error(&ctx, None, error))?;
-        let file = diff
-            .files
-            .into_iter()
-            .find(|file| file.filename == path)
-            .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Choose a file in this diff."))?;
-        Some(file.blob_sha)
-    } else {
-        None
-    };
-    let blob = blob_sha.as_deref();
+    let diff = repo_store(&repo.record, ctx.state.cluster.as_ref())
+        .diff_file(&pull.base_sha, &pull.head_sha, &path)
+        .await
+        .map_err(|error| crate::backend::api::repos::chrome::store_error(&ctx, None, error))?;
+    let blob_sha = diff
+        .files
+        .into_iter()
+        .find(|file| file.filename == path)
+        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Choose a file in this diff."))?
+        .blob_sha;
+    let blob = (field(&form, "viewed") == "yes").then_some(blob_sha.as_str());
     db::pull_requests::viewed::set_pull_request_file_viewed(
         &ctx.state.pool,
         pull.id,

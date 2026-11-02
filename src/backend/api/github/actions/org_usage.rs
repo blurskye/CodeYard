@@ -30,11 +30,12 @@ async fn report(
         .await
         .map_err(Error::unavailable)?
     {
-        OrganizationOutcome::Denied => Err(Error::new(
+        OrganizationOutcome::Applied(usage) => Ok(usage),
+        OrganizationOutcome::Missing => Err(Error::missing()),
+        _ => Err(Error::new(
             StatusCode::FORBIDDEN,
             "Organization administration required",
         )),
-        other => crate::backend::api::github::orgs::outcome(other),
     }
 }
 

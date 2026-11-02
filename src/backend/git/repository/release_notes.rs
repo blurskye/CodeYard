@@ -26,17 +26,20 @@ pub(crate) async fn release_history(
         command.current_dir(path).args([
             "describe",
             "--tags",
-            "--long",
+            "--abbrev=0",
             "--always",
             &format!("--exclude={exclude_tag}"),
             &head,
         ]);
         let (status, output) = process::buffered(command, b"", 4096, COMMIT_WALK_TIMEOUT).await?;
         ensure!(status.success(), "Git could not select the previous tag");
-        let output = std::str::from_utf8(&output)?;
-        let described = output.strip_suffix('\n').unwrap_or(output);
-        // --long tags end in -<distance>-g<hash>; --always's hash-only fallback does not.
-        described.rsplit_once("-g").and_then(|(tag, _)| tag.rsplit_once('-')).filter(|(_, distance)| distance.parse::<u64>().is_ok()).map(|(tag, _)| tag.to_owned())
+        let name = std::str::from_utf8(&output)?.trim();
+        let repo = Repository::open_bare(path)?;
+        let tag = repo
+            .find_reference(&format!("refs/tags/{name}"))
+            .ok()
+            .map(|_| name.to_owned());
+        tag
     };
     let range = {
         let repo = Repository::open_bare(path)?;
@@ -73,7 +76,7 @@ pub(crate) async fn release_history(
     ensure!(
         commits
             .iter()
-            .all(crate::git_ids::is_full_commit_id),
+            .all(|sha| sha.len() == 40 && sha.bytes().all(|ch| ch.is_ascii_hexdigit())),
         "Git returned invalid commit IDs"
     );
     Ok(ReleaseHistory {

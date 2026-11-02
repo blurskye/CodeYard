@@ -2,12 +2,11 @@ use crate::webui::{navigation::NavLink, pages::fields::csrf};
 use dioxus::prelude::*;
 use std::collections::BTreeMap;
 
-pub const TOGGLES: [(&str, &str); 5] = [
+pub const TOGGLES: [(&str, &str); 4] = [
     ("secret_scanning", "Secret scanning"),
     ("secret_scanning_push_protection", "Push protection"),
     ("dependabot_alerts", "Dependabot alerts"),
     ("dependency_graph", "Dependency graph"),
-    ("private_vulnerability_reporting", "Private vulnerability reporting"),
 ];
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Configuration {
@@ -23,10 +22,6 @@ pub struct Page {
     pub org_name: String,
     pub csrf_token: String,
     pub configurations: Vec<Configuration>,
-    #[serde(default)]
-    pub writable: bool,
-    pub before: Option<i64>,
-    pub next_before: Option<i64>,
 }
 
 fn editor(page: &Page, row: Option<&Configuration>) -> Element {
@@ -57,14 +52,10 @@ pub fn render(page: Page) -> Element {
             NavLink {href:format!("/settings/organizations/{}",page.org_id),"← Organization settings"}
             h1 {"{page.org_name}: Code security configurations"}
             p {"Configurations store repository security settings. CodeQL default setup is off; upload SARIF from an Actions workflow for code scanning."}
-            if page.writable {
-                h2 {"New configuration"}
-                {editor(&page,None)}
-            } else {
-                p {class:"flash flash-warn","Read-only: this organization's owners are restricted."}
-            }
+            h2 {"New configuration"}
+            {editor(&page,None)}
             for row in &page.configurations {
-                fieldset {disabled:!page.writable,aria_label:row.name.clone(),id:format!("code-security-{}",row.id),class:"repo-security-alert",
+                section {id:format!("code-security-{}",row.id),class:"repo-security-alert",
                     h2 {"{row.name}"}
                     {editor(&page,Some(row))}
                     form {method:"post",action:format!("{base}/defaults"),class:"repo-security-dismiss",
@@ -94,10 +85,6 @@ pub fn render(page: Page) -> Element {
                         button {r#type:"submit",class:"btn btn-danger","Delete configuration"}
                     }
                 }
-            }
-            nav {class:"pagination",
-                if page.before.is_some() { NavLink {href:base.clone(),"Newest configurations"} }
-                if let Some(before)=page.next_before { NavLink {href:format!("{base}?before={before}"),"Older configurations"} }
             }
         }
     }

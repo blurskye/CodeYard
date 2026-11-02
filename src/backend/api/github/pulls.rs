@@ -3,12 +3,11 @@ mod async_merge;
 mod comments;
 mod merge;
 mod mutations;
-pub(super) use mutations::operation_error;
 mod reviews;
 mod stacks;
 mod team_reviewers;
 use super::{
-    contents::store_error,
+    contents::{path_url, store_error},
     pagination::Pagination,
     repo_url, repository, Error, Result,
 };
@@ -20,7 +19,7 @@ use crate::backend::{
 };
 use axum::{
     extract::{OriginalUri, Path, Query, State},
-    http::{HeaderMap, StatusCode},
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, MethodRouter},
     Json,
@@ -61,14 +60,27 @@ pub(super) async fn association(
         .map_err(Error::unavailable)
 }
 
-pub(super) async fn readable_head(
+async fn readable_head(
     state: &AppState,
-    auth: Option<&super::auth::Authentication>,
+    headers: &HeaderMap,
     pull: &db::models::PullRequest,
 ) -> Result<Option<db::models::Repository>> {
-    match pull.head_repo_id {
-        Some(id) => super::auth::referenced_repository(state, auth, id).await,
-        None => Ok(None),
+    let head = match pull.head_repo_id {
+        Some(id) => db::repositories::records::get_repository_by_id(&state.pool, id)
+            .await
+            .map_err(Error::unavailable)?,
+        None => None,
+    };
+    let auth = super::auth::authenticate(state, headers, false).await?;
+    match head {
+        Some(head)
+            if access::can_read(&state.pool, auth.as_ref().map(|auth| &auth.user), &head)
+                .await
+                .map_err(Error::unavailable)? =>
+        {
+            Ok(Some(head))
+        }
+        _ => Ok(None),
     }
 }
 
@@ -80,7 +92,6 @@ pub(super) async fn document(
     pull: &db::models::PullRequest,
     detail: bool,
 ) -> Result<Value> {
-    let viewer = super::auth::authenticate(state, headers, false).await?;
     let author = db::users::accounts::get_user_by_id(&state.pool, pull.author_id)
         .await
         .map_err(Error::unavailable)?
@@ -92,8 +103,12 @@ pub(super) async fn document(
     if repo.owner_kind == "org" {
         value["base"]["user"] = value["base"]["repo"]["owner"].clone();
     }
-    // The base shares the retained revision, not authority over the source repository.
-    let (head_label, head_user, head_repo) = if let Some(head) = readable_head(state, viewer.as_ref(), pull).await? {
+    // A hidden fork is still refused. A deleted fork keeps its pull request with a null head
+    // repository, as GitHub reports it.
+    let (head_label, head_user, head_repo) = if pull.head_repo_id.is_some() {
+        let head = readable_head(state, headers, pull)
+            .await?
+            .ok_or_else(Error::missing)?;
         let head_owner = db::repositories::records::repository_owner_name(&state.pool, head.id)
             .await
             .map_err(Error::unavailable)?
@@ -151,9 +166,7 @@ pub(super) async fn document(
         requested.push(person(state, user.id).await?);
     }
     value["requested_reviewers"] = json!(requested);
-    value["auto_merge"] = crate::backend::webhooks::documents::auto_merge(&state.pool, pull.id)
-        .await
-        .map_err(Error::unavailable)?;
+    let viewer = super::auth::authenticate(state, headers, false).await?;
     value["requested_teams"] = json!(
         team_reviewers::documents(
             state,
@@ -170,7 +183,7 @@ pub(super) async fn document(
             .await
             .map_err(store_error)?;
         let (commits, _) = store
-            .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 0)
+            .pull_request_commits(pull.diff_base(), &pull.head_sha)
             .await
             .map_err(store_error)?;
         let (comments, review_comments) =
@@ -291,7 +304,7 @@ pub(super) async fn diff_response(
     let store = repo_store(repo, state.cluster.as_ref());
     if media == super::diff_media::Media::Patch {
         let (total, commits) = store
-            .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 250)
+            .pull_request_commits(pull.diff_base(), &pull.head_sha)
             .await
             .map_err(store_error)?;
         let total = usize::try_from(total).unwrap_or(usize::MAX);
@@ -322,7 +335,7 @@ async fn merged(
     } else {
         StatusCode::NOT_FOUND
     };
-    Ok(super::empty(status))
+    Ok((status, [(header::CONTENT_LENGTH, "0")]).into_response())
 }
 
 async fn commits(
@@ -334,11 +347,12 @@ async fn commits(
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let (offset, limit) = page.window()?;
-    let (total, rows) = repo_store(&repo, state.cluster.as_ref())
-        .pull_request_commits(pull.diff_base(), &pull.head_sha, offset, limit)
+    let (_, rows) = repo_store(&repo, state.cluster.as_ref())
+        .pull_request_commits(pull.diff_base(), &pull.head_sha)
         .await
         .map_err(store_error)?;
-    let has_next = (offset as u64).saturating_add(limit as u64) < total.min(250);
+    let has_next = rows.len() > offset + limit;
+    let rows: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
     let items = super::commits::documents(&state, repo.id, &rows, &owner, &name).await?;
     page.response(&uri, items, has_next)
 }
@@ -352,16 +366,24 @@ async fn files(
 ) -> Result<Response> {
     let (repo, pull) = target(&state, &headers, &owner, &name, number).await?;
     let (offset, limit) = page.window()?;
-    let store = repo_store(&repo, state.cluster.as_ref());
-    let page_files = super::commits::file_page(&store, pull.diff_base(), &pull.head_sha, offset, limit).await?;
-    let has_next = page_files.has_next;
-    let files = page_files.files;
-    let base = if files.iter().any(|file| file.status == "removed") {
-        store.comparison_from(&store, pull.diff_base(), &pull.head_sha, 0, 0).await.map_err(store_error)?.merge_base_commit.sha
-    } else {
-        pull.diff_base().to_owned()
-    };
-    let items = super::commits::diff_files(files, &owner, &name, &pull.head_sha, Some((&owner, &name, &base)));
+    let diff = repo_store(&repo, state.cluster.as_ref())
+        .diff(pull.diff_base(), &pull.head_sha)
+        .await
+        .map_err(store_error)?;
+    let has_next = diff.files.len().min(3000) > offset + limit;
+    let items = diff.files.into_iter().take(3000).skip(offset).take(limit).map(|file| {
+        let mut value = json!({
+            "sha": file.blob_sha, "filename": file.filename, "status": file.status, "additions": file.additions, "deletions": file.deletions,
+            "changes": file.additions + file.deletions, "patch": file.patch,
+            "blob_url": format!("{}/{owner}/{name}/blob/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),
+            "raw_url": format!("{}/{owner}/{name}/raw/{}/{}", crate::backend::api::http::config::link_origin(), pull.head_sha, path_url(&file.filename)),
+            "contents_url": format!("{}/contents/{}?ref={}", repo_url(&owner, &name), path_url(&file.filename), pull.head_sha),
+        });
+        if let Some(previous) = file.previous_filename {
+            value["previous_filename"] = json!(previous);
+        }
+        value
+    }).collect();
     page.response(&uri, items, has_next)
 }
 

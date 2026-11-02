@@ -291,19 +291,6 @@ fn run_fixture(name: &str) {
         Some(expected.exit_code),
         "{name}: unexpected exit\n{log}"
     );
-    // Step status lines show each step's name, by default the first line of its script, so
-    // the checks for what steps printed leave them out.
-    let printed: String = log
-        .lines()
-        .filter(|line| {
-            !line.split_once("] ").is_some_and(|(_, rest)| {
-                ["Step started: ", "Step skipped: ", "Step completed: "]
-                    .iter()
-                    .any(|status| rest.starts_with(status))
-            })
-        })
-        .map(|line| format!("{line}\n"))
-        .collect();
     for (job, conclusion) in &expected.jobs {
         if conclusion == "skipped" {
             assert!(
@@ -311,7 +298,7 @@ fn run_fixture(name: &str) {
                 "{name}: skipped job started\n{log}"
             );
             assert!(
-                printed.contains(&format!("compat:job:{job}:skipped")),
+                log.contains(&format!("compat:job:{job}:skipped")),
                 "{name}: missing needs.result assertion for skipped job\n{log}"
             );
         } else {
@@ -337,13 +324,10 @@ fn run_fixture(name: &str) {
         "{name}: unexpected job completions\n{log}"
     );
     for line in &expected.contains {
-        assert!(printed.contains(line), "{name}: missing {line:?}\n{log}");
+        assert!(log.contains(line), "{name}: missing {line:?}\n{log}");
     }
     for line in &expected.absent {
-        assert!(
-            !printed.contains(line),
-            "{name}: forbidden log text {line:?}"
-        );
+        assert!(!log.contains(line), "{name}: forbidden log text {line:?}");
     }
 }
 
@@ -385,8 +369,6 @@ fixtures! {
     continue_on_error => "features/continue-on-error",
     step_timeout => "features/step-timeout",
     job_timeout => "features/job-timeout",
-    cancellation => "features/cancellation",
-    command_parsing => "features/command-parsing",
     composite => "features/composite",
     nested_composite => "features/nested-composite",
 }

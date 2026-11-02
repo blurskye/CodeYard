@@ -1,7 +1,6 @@
 //! Forks and template generation use the same authoritative creation and storage pipeline as forms.
 use super::{
     auth,
-    optional_json::OptionalJson,
     repos::{document, lifecycle_error},
     repository, Error, Result,
 };
@@ -60,13 +59,12 @@ async fn fork(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
-    OptionalJson(body): OptionalJson<Value>,
+    body: Option<Json<Value>>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) = repository(&state, &headers, &owner, &name, true).await?;
-    let auth = actor.ok_or_else(auth::required)?;
-    let actor = &auth.user;
+    let actor = actor.ok_or_else(auth::required)?.user;
     let input = body
-        .map(serde_json::from_value::<Option<Fork>>)
+        .map(|Json(value)| serde_json::from_value::<Option<Fork>>(value))
         .transpose()
         .map_err(|_| Error::invalid("Invalid fork fields"))?
         .flatten()
@@ -75,7 +73,6 @@ async fn fork(
         Some(slug) => organization_owner(&state, actor.id, slug).await?,
         None => RepositoryCreationOwner::personal(actor.id),
     };
-    auth::require_copy_owner(&state, &auth, target.target).await?;
     let repo = lifecycle::fork_into(
         &state.pool,
         state.cluster.as_ref(),
@@ -86,7 +83,6 @@ async fn fork(
             name: input.name.as_deref(),
             default_branch_only: input.default_branch_only,
             properties: &[],
-            authority: Some(&auth.database_actor()),
         },
         source.id,
         &owner,
@@ -95,7 +91,7 @@ async fn fork(
     .map_err(lifecycle_error)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(document(&state, &repo, Some(&auth)).await?),
+        Json(document(&state, &repo, Some(&actor)).await?),
     ))
 }
 
@@ -117,9 +113,8 @@ async fn generate(
 ) -> Result<(StatusCode, Json<Value>)> {
     let (source, actor) =
         repository(&state, &headers, &template_owner, &template_name, true).await?;
-    let auth = actor.ok_or_else(auth::required)?;
-    let target = owner(&state, &auth.user, input.owner.as_deref()).await?;
-    auth::require_copy_owner(&state, &auth, target.target).await?;
+    let actor = actor.ok_or_else(auth::required)?.user;
+    let target = owner(&state, &actor, input.owner.as_deref()).await?;
     let repo = lifecycle::generate(
         (&state.pool, state.cluster.as_ref()),
         &state.repos_path,
@@ -131,14 +126,13 @@ async fn generate(
             private: input.private,
             all_branches: input.include_all_branches,
             properties: &[],
-            authority: Some(&auth.database_actor()),
         },
     )
     .await
     .map_err(lifecycle_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(document(&state, &repo, Some(&auth)).await?),
+        Json(document(&state, &repo, Some(&actor)).await?),
     ))
 }
 

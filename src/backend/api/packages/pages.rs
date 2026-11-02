@@ -19,7 +19,7 @@ use axum::{
 };
 use std::{collections::HashMap, sync::Arc};
 
-pub(in crate::backend::api) fn router() -> Router<Arc<AppState>> {
+pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
         .route("/users/:username/packages", get(show))
         .route("/orgs/:org/packages", get(show))
@@ -50,7 +50,7 @@ fn owner_view(owner: &Owner) -> view::Owner {
     let name = crate::webui::encode_component(&owner.name);
     view::Owner {
         name: owner.name.clone(),
-        profile: crate::webui::profile_path(&owner.name),
+        profile: format!("/{name}"),
         packages: format!(
             "/{}/{name}/packages",
             if owner.kind == "org" { "orgs" } else { "users" }
@@ -114,8 +114,7 @@ async fn card(
     owner: &Owner,
     package: &Package,
 ) -> Result<view::Package, Response> {
-    let session = ctx.user.as_ref().and_then(|_| session::extract_session_id(&ctx.headers));
-    let versions = db::packages::version_count(&ctx.state.pool, package.id, session.as_deref().map(Credential::Session))
+    let versions = db::packages::version_count(&ctx.state.pool, package.id)
         .await
         .map_err(|error| failure(ctx, error))?;
     let updated = chrono::DateTime::from_timestamp(package.updated_at, 0)
@@ -140,7 +139,7 @@ fn version_card(base: &str, version: &db::packages::Version, tags: Vec<String>) 
         name: version.name.clone(),
         digest: version.digest.clone(),
         tags,
-        href: if version.deleted_at.is_some() { format!("{base}/settings") } else { format!("{base}/versions/{}", version.id) },
+        href: format!("{base}/versions/{}", version.id),
         created: chrono::DateTime::from_timestamp(version.created_at, 0)
             .unwrap_or_default()
             .format("%b %e, %Y")
@@ -238,21 +237,17 @@ async fn model(
         .map_err(|error| failure(ctx, error))?;
         let mut more = versions.len() > 30;
         versions.truncate(30);
-        // The page lists versions without metadata, so the selected one is read whole.
-        let selected = match params.get("version") {
-            Some(id) => Some(
-                id.parse()
-                    .map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Package version not found."))?,
-            ),
-            None => versions.first().map(|version| version.id),
-        };
-        let selected = match selected {
-            Some(id) => Some(
+        let selected = if let Some(id) = params.get("version") {
+            let id = id
+                .parse()
+                .map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Package version not found."))?;
+            Some(
                 db::packages::version_by_id(&ctx.state.pool, package.id, credential, id)
                     .await
                     .map_err(|error| failure(ctx, error))?,
-            ),
-            None => None,
+            )
+        } else {
+            versions.first().cloned()
         };
         if settings {
             let mut deleted = db::packages::versions(
@@ -272,14 +267,14 @@ async fn model(
         let card = card(ctx, owner, &package).await?;
         let mut rows = Vec::new();
         for version in versions {
-            let tags = db::packages::tags(&ctx.state.pool, package.id, credential, version.id)
+            let tags = db::packages::tags(&ctx.state.pool, version.id)
                 .await
                 .map_err(|error| failure(ctx, error))?;
             rows.push(version_card(&card.href, &version, tags));
         }
         let selected_view = if params.contains_key("version") {
             if let Some(version) = &selected {
-                let tags = db::packages::tags(&ctx.state.pool, package.id, credential, version.id)
+                let tags = db::packages::tags(&ctx.state.pool, version.id)
                     .await
                     .map_err(|error| failure(ctx, error))?;
                 Some(version_card(&card.href, version, tags))
@@ -295,14 +290,13 @@ async fn model(
             .or_else(|| origin.strip_prefix("http://"))
             .unwrap_or(&origin);
         let (command, registry) = if package.package_type == "container" {
-            let namespace = db::packages::container_namespace(&ctx.state.pool, owner).await.map_err(|error| failure(ctx, error))?;
             let reference = selected
                 .as_ref()
                 .map_or(":latest".into(), |version| format!("@{}", version.digest));
             (
                 format!(
                     "docker pull {host}/{}/{}{reference}",
-                    namespace, package.name
+                    owner.name, package.name
                 ),
                 None,
             )
@@ -469,12 +463,7 @@ async fn model(
         cards.push(card(ctx, &owner, &package).await?);
     }
     let base = ctx.path.clone();
-    let container_namespace = match owner.as_ref() {
-        Some(owner) => Some(db::packages::container_namespace(&ctx.state.pool, owner).await.map_err(|error| failure(ctx, error))?),
-        None => None,
-    };
     Ok(view::Page::List(Box::new(view::Listing {
-        container_namespace,
         title: if explore {
             "Explore packages".into()
         } else {

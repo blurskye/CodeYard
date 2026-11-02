@@ -10,18 +10,10 @@ pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) 
         .ok_or_else(Error::missing)?;
     let store = repo_store(&loaded.repository, state.cluster.as_ref());
     let mut files = Map::new();
+    let mut remaining = 1024 * 1024;
     for entry in &loaded.snapshot.files {
-        let remaining = 1024 * 1024;
         let content = if contents {
-            let mut bytes = store.blob_range(&loaded.snapshot.sha, &entry.path, crate::backend::repositories::store::BlobRange::Window {
-                offset: 0, length: (remaining + 3) as u64,
-            }).await.map_err(failure_store)?.bytes;
-            if let Err(error) = std::str::from_utf8(&bytes) {
-                if error.error_len().is_none() {
-                    bytes.truncate(error.valid_up_to());
-                }
-            }
-            Some(bytes)
+            Some(store.blob_by_id(&entry.sha).await.map_err(failure_store)?)
         } else {
             None
         };
@@ -30,6 +22,7 @@ pub(super) async fn base(state: &AppState, loaded: &LoadedGist, contents: bool) 
             if let Some(text) = domain::text_preview(bytes, remaining) {
                 length = text.len();
             }
+            remaining -= length;
             &bytes[..length]
         });
         files.insert(
@@ -60,7 +53,7 @@ pub(super) async fn detail(state: &AppState, loaded: &LoadedGist) -> Result<Valu
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
-        entries.push(json!({"id":fork.id,"url":super::super::api_url(&format!("/gists/{}",fork.id)),"user":payloads::user(&user),"created_at":fork.created_at,"updated_at":fork.updated_at}));
+        entries.push(json!({"id":fork.id,"url":super::super::api_url(&format!("/gists/{}",fork.id)),"user":super::super::users::document(state,&user,false).await?,"created_at":fork.created_at,"updated_at":fork.updated_at}));
     }
     value["forks"] = json!(entries);
     value["fork_of"] = Value::Null;
@@ -93,14 +86,13 @@ pub(super) async fn history(
         )
         .await
         .map_err(failure_store)?;
-    let emails = revisions.iter().map(|revision| revision.author_email.clone()).collect::<Vec<_>>();
-    let authors = crate::backend::repositories::reads::commit_authors(&state.pool, &emails)
-        .await
-        .map_err(Error::unavailable)?;
     let mut entries = Vec::new();
     for revision in revisions {
+        let author = db::gists::commit_user(&state.pool, &revision.author_email)
+            .await
+            .map_err(Error::unavailable)?;
         entries.push(
-            payloads::gist_revision(&loaded.gist.id, &revision, authors.get(&revision.author_email))
+            payloads::gist_revision(&loaded.gist.id, &revision, author.as_ref())
                 .map_err(failure_store)?,
         );
     }

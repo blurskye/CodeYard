@@ -8,31 +8,29 @@ function Install-Msi([string] $Path, [string] $Properties = '') {
     if ($p.ExitCode -notin @(0, 3010)) { throw "MSI failed: $Path ($($p.ExitCode))" }
 }
 
-function Get-SignedInstaller([string] $Uri, [string] $Destination) {
-    Invoke-WebRequest -UseBasicParsing -TimeoutSec 600 $Uri -OutFile $Destination
-    if ((Get-AuthenticodeSignature $Destination).Status -ne 'Valid') {
-        throw "Invalid installer signature: $Destination"
-    }
-    return $Destination
-}
-
 try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
     $downloads = 'C:\ProgramData\Codeyard\downloads'
     New-Item -ItemType Directory -Force $downloads | Out-Null
 
     # Official PowerShell release; Authenticode is checked before running installers.
-    $pwsh = Get-SignedInstaller 'https://github.com/PowerShell/PowerShell/releases/download/v7.4.13/PowerShell-7.4.13-win-x64.msi' (Join-Path $downloads 'powershell.msi')
+    $pwsh = Join-Path $downloads 'powershell.msi'
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/PowerShell/PowerShell/releases/download/v7.4.13/PowerShell-7.4.13-win-x64.msi' -OutFile $pwsh
+    if ((Get-AuthenticodeSignature $pwsh).Status -ne 'Valid') { throw 'Invalid PowerShell installer signature' }
     Install-Msi $pwsh 'ADD_PATH=1 ENABLE_PSREMOTING=0 REGISTER_MANIFEST=1'
 
-    $git = Get-SignedInstaller 'https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/Git-2.49.0-64-bit.exe' (Join-Path $downloads 'git.exe')
+    $git = Join-Path $downloads 'git.exe'
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/git-for-windows/git/releases/download/v2.49.0.windows.1/Git-2.49.0-64-bit.exe' -OutFile $git
+    if ((Get-AuthenticodeSignature $git).Status -ne 'Valid') { throw 'Invalid Git installer signature' }
     $p = Start-Process $git -ArgumentList '/VERYSILENT /NORESTART /NOCANCEL /SP- /o:PathOption=Cmd' -Wait -PassThru
     if ($p.ExitCode -ne 0) { throw "Git installer failed: $($p.ExitCode)" }
 
     $releases = Invoke-RestMethod 'https://nodejs.org/dist/index.json'
     $nodeVersion = ($releases | Where-Object { $_.lts -ne $false } | Select-Object -First 1).version
     if ($nodeVersion -notmatch '^v\d+\.\d+\.\d+$') { throw 'Invalid Node LTS version' }
-    $node = Get-SignedInstaller "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-x64.msi" (Join-Path $downloads 'node.msi')
+    $node = Join-Path $downloads 'node.msi'
+    Invoke-WebRequest -UseBasicParsing "https://nodejs.org/dist/$nodeVersion/node-$nodeVersion-x64.msi" -OutFile $node
+    if ((Get-AuthenticodeSignature $node).Status -ne 'Valid') { throw 'Invalid Node installer signature' }
     Install-Msi $node
 
     Add-WindowsCapability -Online -Name OpenSSH.Server~~~~0.0.1.0 | Out-Null

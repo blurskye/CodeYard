@@ -1,7 +1,6 @@
 //! Admin list of the cluster's nodes, with approve and revoke.
 use crate::webui::{
     components::{count_label, CopyButton},
-    navigation::NavLink,
     pages::admin::{admin_layout, Section},
     pages::fields::notice,
 };
@@ -27,8 +26,6 @@ pub struct Node {
 pub struct Page {
     pub csrf_token: String,
     pub nodes: Vec<Node>,
-    pub next_after: Option<String>,
-    pub has_previous: bool,
     pub message: Option<String>,
     /// Cluster mode is on; otherwise only the server and runners may connect.
     pub cluster_enabled: bool,
@@ -39,7 +36,7 @@ pub fn render(page: Page) -> Element {
         Section::Nodes,
         "Cluster nodes",
         &format!(
-            "{} shown on this page.",
+            "{} connected to this installation.",
             count_label(page.nodes.len(), "node", "nodes")
         ),
         rsx! {
@@ -89,7 +86,7 @@ pub fn render(page: Page) -> Element {
                             td { class: "identity-num", "{node.disk_free}" }
                             td { class: "identity-table-action",
                                 form { method: "post", action: format!("/admin/nodes/{}/{}", node.name, if node.status == "active" { "revoke" } else { "approve" }),
-                                    {crate::webui::pages::fields::csrf(&page.csrf_token)}
+                                    input { r#type: "hidden", name: "csrf_token", value: page.csrf_token.clone() }
                                     if node.status == "active" {
                                         button { r#type: "submit", class: "btn btn-sm btn-danger", "Revoke" }
                                     } else {
@@ -99,12 +96,6 @@ pub fn render(page: Page) -> Element {
                             }
                         } } }
                     } }
-                }
-                nav { aria_label: "Node pages",
-                    if page.has_previous { NavLink { href: "/admin/nodes", "First page" } }
-                    if let Some(after) = &page.next_after {
-                        NavLink { href: format!("/admin/nodes?after={}", crate::webui::encode_component(after)), "Next page" }
-                    }
                 }
                 p { class: "identity-admin-hint", "Revoked nodes lose access on their next connection." }
             }
@@ -142,8 +133,6 @@ mod tests {
     fn each_node_gets_the_action_its_status_allows() {
         let page = Page {
             csrf_token: "csrf-marker".into(),
-            next_after: None,
-            has_previous: false,
             nodes: vec![
                 node("store-1", "active", true),
                 node("store-2", "pending", false),
@@ -170,12 +159,10 @@ mod tests {
             nodes: vec![],
             message: None,
             cluster_enabled: true,
-            next_after: None,
-            has_previous: false,
         }));
         assert!(html.contains("aria-label=\"Administration\""));
         assert!(html.contains("Cluster nodes"));
-        assert!(html.contains("0 nodes shown on this page."));
+        assert!(html.contains("0 nodes connected to this installation."));
         assert!(html.contains("href=\"/admin/storage\""));
     }
 
@@ -186,8 +173,6 @@ mod tests {
             nodes: vec![],
             message: None,
             cluster_enabled: true,
-            next_after: None,
-            has_previous: false,
         }));
         assert!(html.contains("No nodes have joined."));
         assert!(html.contains("Mode: cluster"));
@@ -207,8 +192,6 @@ mod tests {
         let html = dioxus_ssr::render_element(render(Page {
             csrf_token: String::new(),
             nodes: vec![node("runner-1", "active", false)],
-            next_after: None,
-            has_previous: false,
             message: None,
             cluster_enabled: false,
         }));

@@ -31,8 +31,6 @@ use uuid::Uuid;
 
 mod filtered_history;
 
-fn platforms() -> Vec<String> { codeyard::backend::ci::CiConfig::default().platform_labels() }
-
 const WORKER: &str = "worker-1";
 const ACCESS_LOST: &str = db::ci::ACCESS_LOST_MESSAGE;
 const WORKFLOW: &str = ".github/workflows/ci.yml";
@@ -215,7 +213,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
 
     // The oldest run belongs to the collaborator, who is gone: it is cancelled and the
     // claim moves on to the owner's deployment.
-    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
         .await
         .unwrap()
         .expect("the owner's run may still start");
@@ -255,7 +253,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     // The run queued behind it is dealt with by the next claim, from another slot, since the
     // first slot still holds the deployment.
     assert!(
-        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted, &platforms())
+        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
             .await
             .unwrap()
             .is_none()
@@ -292,7 +290,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
         let run = db.enqueue(w.repo, w.collab, false, &trusted).await;
         db.execute(apply, &[id]).await;
         assert!(
-            db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted, &platforms())
+            db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
                 .await
                 .unwrap()
                 .is_none(),
@@ -305,7 +303,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     // Being trusted to run workflows is part of the permission, and is read from the
     // configuration of the node that claims.
     let run = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    assert!(db::ci::claim_ci_run(db.pool(), "worker-2", "local", &[], &platforms())
+    assert!(db::ci::claim_ci_run(db.pool(), "worker-2", "local", &[])
         .await
         .unwrap()
         .is_none());
@@ -319,7 +317,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     )
     .await;
     assert!(
-        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted, &platforms())
+        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
             .await
             .unwrap()
             .is_none()
@@ -335,7 +333,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
     )
     .await;
     assert!(
-        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted, &platforms())
+        db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
             .await
             .unwrap()
             .is_none()
@@ -344,7 +342,7 @@ async fn claim_checks_the_starters_access_again(db: &Database) {
 
     // A person who still has access gets the run.
     let fine = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    let claimed = db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted, &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), "worker-2", "local", &trusted)
         .await
         .unwrap()
         .expect("access is intact");
@@ -370,7 +368,7 @@ async fn a_long_line_of_denied_runs_does_not_hide_later_work(db: &Database) {
     .await;
 
     // One claim passes every denied run, cancels each of them and reaches the run that may start.
-    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
         .await
         .unwrap()
         .expect("the owner's run is reached");
@@ -394,7 +392,7 @@ async fn revocations_stop_queued_and_running_runs(db: &Database) {
         // A run a worker has started, with more of the collaborator's runs and the
         // owner's own run waiting.
         let running = db.enqueue(w.repo, w.collab, false, &trusted).await;
-        let started = db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+        let started = db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
             .await
             .unwrap()
             .expect("claim");
@@ -566,7 +564,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
 
     let running = db.enqueue(affected.repo, runner, false, &trusted).await;
     assert_eq!(
-        db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+        db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
             .await
             .unwrap()
             .unwrap()
@@ -577,7 +575,7 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     // A second slot holds the deployment, since the first one still holds its run.
     let deploy_worker = "worker-2";
     assert_eq!(
-        db::ci::claim_ci_run(db.pool(), deploy_worker, "local", &trusted, &platforms())
+        db::ci::claim_ci_run(db.pool(), deploy_worker, "local", &trusted)
             .await
             .unwrap()
             .unwrap()
@@ -736,12 +734,12 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
 
     // Finished by its worker, then found by a sweep: the first outcome stands.
     let run = db.enqueue(w.repo, w.owner, true, &trusted).await;
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
         .await
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
-    let (finished, _, _) = db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
+    let (finished, _) = db::ci::finish_ci_run(db.pool(), run.id, WORKER, "success", None)
         .await
         .unwrap()
         .expect("the worker owns the run");
@@ -776,12 +774,12 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
 
     // Found by a sweep, then finished by the worker that came back: still the sweep's.
     let run = db.enqueue(w.repo, w.owner, true, &trusted).await;
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
         .await
         .unwrap()
         .expect("claim");
     db.stop_heartbeat(run.id).await;
-    let (failed, created, _) = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
+    let (failed, created) = db::ci::fail_stale_ci_runs(db.pool(), 90).await.unwrap();
     assert_eq!(failed.len(), 1);
     assert_eq!(created.len(), 1);
     assert_eq!(created[0].0, w.owner);
@@ -831,7 +829,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
             .unwrap()
             .0
     );
-    assert!(db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    assert!(db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
         .await
         .unwrap()
         .is_none());
@@ -846,7 +844,7 @@ async fn finish_sweep_and_cancel_do_not_overwrite_each_other(db: &Database) {
     // Cancelled while running: the worker is asked, ends it as cancelled, and a later
     // sweep leaves it alone.
     let running = db.enqueue(w.repo, w.owner, false, &trusted).await;
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
         .await
         .unwrap()
         .expect("claim");
@@ -933,7 +931,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
         // Two slots each take one of the runs, as two workers would.
         let slots = [format!("{WORKER}-0"), format!("{WORKER}-1")];
         for slot in &slots {
-            db::ci::claim_ci_run(db.pool(), slot, "local", &[], &platforms())
+            db::ci::claim_ci_run(db.pool(), slot, "local", &[])
                 .await
                 .unwrap()
                 .unwrap();
@@ -984,7 +982,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
 
     let sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
     let older = enqueue(db, &w, sha, ".github/workflows/test.yml").await;
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
         .await
         .unwrap()
         .unwrap();
@@ -999,7 +997,7 @@ async fn workflows_keep_separate_statuses_and_newer_attempts_win(db: &Database) 
         .unwrap();
     assert_eq!(statuses[0].state, "pending");
     assert_eq!(db.scalar("SELECT COUNT(*) FROM commit_statuses WHERE ci_run_id = $1 AND context = 'gitserv/workflow/.github/workflows/test.yml'", &[newer.id]).await, 1);
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
         .await
         .unwrap()
         .unwrap();
@@ -1070,7 +1068,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
 
     // A cancelled run tells no one.
     let cancelled = db.enqueue(w.repo, w.owner, false, &[]).await;
-    assert!(service.cancel_run(cancelled.run_id, w.owner, None).await.unwrap());
+    assert!(service.cancel_run(cancelled.run_id, w.owner).await.unwrap());
     assert!(
         subscriber.try_recv().is_err(),
         "a cancelled run sends nothing"
@@ -1078,7 +1076,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
 
     // A failed run sends one notice, and an unowned finish sends nothing.
     let run = db.enqueue(w.repo, w.owner, false, &[]).await;
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
         .await
         .unwrap()
         .unwrap();
@@ -1127,7 +1125,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
         .await
         .unwrap()
         .is_none());
-    assert!(!service.cancel_run(run.run_id, w.owner, None).await.unwrap());
+    assert!(!service.cancel_run(run.run_id, w.owner).await.unwrap());
     assert!(!queue
         .finish(WORKER, run.id, "failed", failure)
         .await
@@ -1143,7 +1141,7 @@ async fn finishing_and_cancelling_broadcast_only_the_created_notification(db: &D
 /// The collaborator's own run is queued, claimed and finished by the worker.
 async fn finish_collaborator_run(db: &Database, w: &World) {
     let run = db.enqueue(w.repo, w.collab, false, &[w.collab]).await;
-    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.collab], &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.collab])
         .await
         .unwrap()
         .expect("claim");
@@ -1481,7 +1479,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
     for (character, count) in [('x', 1100), ('"', 600)] {
         let run = db.enqueue(repo.id, w.owner, false, &[]).await;
         assert_eq!(
-            db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+            db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
                 .await
                 .unwrap()
                 .unwrap()
@@ -1650,7 +1648,7 @@ async fn pull_request_runs_use_exact_approval_identity(db: &Database) {
         .await
         .unwrap();
     assert!(pending.approval_required && pending.is_fork);
-    assert!(db::ci::claim_ci_run(db.pool(), "unapproved", "local", &[], &platforms())
+    assert!(db::ci::claim_ci_run(db.pool(), "unapproved", "local", &[])
         .await
         .unwrap()
         .is_none());
@@ -1756,7 +1754,7 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
         .unwrap();
     assert_eq!(duplicate.id, queued.id);
     assert_eq!(duplicate.pull_request_event, queued.pull_request_event);
-    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
         .await
         .unwrap()
         .unwrap();
@@ -1772,11 +1770,11 @@ async fn queued_pull_request_inputs_survive_base_and_title_changes(db: &Database
     assert_eq!(db.run(queued.run_id).await.mode, "local");
     let next = db.enqueue(w.repo, w.owner, false, &[]).await;
     assert_eq!(next.mode, "unassigned");
-    assert!(db::ci::claim_ci_run(db.pool(), "worker-2", "invalid", &[], &platforms())
+    assert!(db::ci::claim_ci_run(db.pool(), "worker-2", "invalid", &[])
         .await
         .is_err());
     assert_eq!(db.run(next.run_id).await.status, "queued");
-    let claimed = db::ci::claim_ci_run(db.pool(), "worker-2", "podman", &[], &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), "worker-2", "podman", &[])
         .await
         .unwrap()
         .unwrap();
@@ -1849,7 +1847,7 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
     // while the attempt is still queued.
     assert_eq!(admit(false).await.unwrap().id, first.id);
     assert_eq!(admit(true).await.unwrap().id, first.id);
-    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
         .await
         .unwrap()
         .expect("the attempt is claimed");
@@ -1875,7 +1873,7 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
     assert_eq!(admit(false).await.unwrap().id, second.id);
 
     // Once attempt 2 has finished, the next request starts attempt 3.
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
         .await
         .unwrap()
         .expect("the second attempt is claimed");
@@ -1885,7 +1883,7 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
         .expect("the second attempt is finished");
     let third = admit(true).await.unwrap();
     assert_eq!(third.attempt, 3);
-    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
         .await
         .unwrap()
         .expect("the third attempt is claimed");
@@ -1956,7 +1954,7 @@ async fn a_person_starts_a_new_attempt_once_the_last_one_has_finished(db: &Datab
         .await
         .unwrap();
     assert!(fork_first.is_fork);
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
         .await
         .unwrap()
         .expect("the fork attempt is claimed");
@@ -1977,14 +1975,14 @@ async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
     let trusted = [w.collab];
     let first = db.enqueue(w.repo, w.collab, false, &trusted).await;
     let second = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    let claimed = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted, &platforms())
+    let claimed = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted)
         .await
         .unwrap()
         .expect("the first run is claimed");
     assert_eq!(claimed.id, first.id);
 
     // The reply to that claim was lost, so the same slot asks again and gets the same run.
-    let retried = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted, &platforms())
+    let retried = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted)
         .await
         .unwrap()
         .expect("the retried claim returns the run it holds");
@@ -1992,7 +1990,7 @@ async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
     assert_eq!(retried.status, "running");
 
     // Another slot takes the next queued run.
-    let other = db::ci::claim_ci_run(db.pool(), "node/slot-2", "local", &trusted, &platforms())
+    let other = db::ci::claim_ci_run(db.pool(), "node/slot-2", "local", &trusted)
         .await
         .unwrap()
         .expect("another slot takes the queued run");
@@ -2004,7 +2002,7 @@ async fn a_retried_claim_gets_back_the_run_its_worker_holds(db: &Database) {
         .unwrap()
         .expect("the slot still holds its run");
     let third = db.enqueue(w.repo, w.collab, false, &trusted).await;
-    let next = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted, &platforms())
+    let next = db::ci::claim_ci_run(db.pool(), "node/slot-1", "local", &trusted)
         .await
         .unwrap()
         .expect("the finished slot takes the next run");
@@ -2025,7 +2023,7 @@ async fn commit_status_descriptions_redact_runner_messages(db: &Database) {
         (None, "CI run completed"),
     ] {
         let run = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
-        db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+        db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
             .await
             .unwrap()
             .unwrap();
@@ -2050,7 +2048,7 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
     use codeyard::backend::ci::queue::LogLine;
     let w = world(db, "batch_order").await;
     let run = db.enqueue(w.repo, w.owner, false, &[w.owner]).await;
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner], &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.owner])
         .await
         .unwrap()
         .unwrap();
@@ -2093,7 +2091,7 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
 /// A claim as `node_key` must fail and leave the run queued with no worker.
 async fn refused_claim(db: &Database, node_key: &str, run: i64, trusted: &[i64]) {
     let worker = format!("{node_key}/slot-1");
-    let claimed = db::ci::claim_ci_run_on_node(db.pool(), node_key, &worker, "local", trusted, &platforms())
+    let claimed = db::ci::claim_ci_run_on_node(db.pool(), node_key, &worker, "local", trusted)
         .await
         .unwrap();
     assert!(claimed.is_none(), "{node_key} claimed a run it may not run");
@@ -2165,7 +2163,7 @@ async fn cluster_claim_needs_an_active_runner_node(db: &Database) {
     refused_claim(db, &key, queued.id, &trusted).await;
 
     let worker = format!("{rekeyed}/slot-1");
-    let claimed = db::ci::claim_ci_run_on_node(db.pool(), &rekeyed, &worker, "local", &trusted, &platforms())
+    let claimed = db::ci::claim_ci_run_on_node(db.pool(), &rekeyed, &worker, "local", &trusted)
         .await
         .unwrap()
         .expect("the active actions worker claims the queued run");
@@ -2207,7 +2205,7 @@ async fn stale_failures_are_broadcast_after_commit(db: &Database) {
     use std::sync::Arc;
     let w = world(db, "stale_live").await;
     let run = db.enqueue(w.repo, w.owner, false, &[]).await;
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
         .await
         .unwrap()
         .unwrap();
@@ -2241,7 +2239,7 @@ async fn stale_failures_are_broadcast_after_commit(db: &Database) {
 async fn ci_notification_links_follow_renames_and_transfers(db: &Database) {
     let w = world(db, "ci_links").await;
     let run = db.enqueue(w.repo, w.owner, false, &[]).await;
-    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+    db::ci::claim_ci_run(db.pool(), WORKER, "local", &[])
         .await
         .unwrap()
         .unwrap();
@@ -2299,7 +2297,7 @@ async fn ci_lookup_indexes_and_one_deployment_per_run(db: &Database) {
     let w = world(db, "ci_indexes").await;
     let run = db.enqueue(w.repo, w.owner, true, &[]).await;
     let sql =
-        "INSERT INTO ci_deployments(run_id, repo_id, environment, environment_key) VALUES ($1, $2, 'production', 'production')";
+        "INSERT INTO ci_deployments(run_id, repo_id, environment) VALUES ($1, $2, 'production')";
     let duplicate = match db {
         Database::Postgres(f) => sqlx::query(sql)
             .bind(run.id)
@@ -2383,7 +2381,7 @@ mod interleaved {
     /// A claimed run: queued by the owner and started by `WORKER`.
     async fn running_run(db: &Database, w: &World) -> CiRun {
         let run = db.enqueue(w.repo, w.owner, false, &[w.collab]).await;
-        let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.collab], &platforms())
+        let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.collab])
             .await
             .unwrap()
             .expect("claim");
@@ -2438,7 +2436,7 @@ mod interleaved {
             .unwrap();
         let pool = db.pool().clone();
         let claiming =
-            tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[], &platforms()).await });
+            tokio::spawn(async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[]).await });
         wait_until_blocked(raw, holder, 1).await;
         let released_at: chrono::DateTime<chrono::Utc> =
             sqlx::query_scalar("SELECT clock_timestamp()")
@@ -2474,13 +2472,13 @@ mod interleaved {
         let pool = db.pool().clone();
         let claiming =
             tokio::spawn(
-                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner], &platforms()).await },
+                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner]).await },
             );
         wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         let pool = db.pool().clone();
         let retrying =
             tokio::spawn(
-                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner], &platforms()).await },
+                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &[w.owner]).await },
             );
         wait_until_blocked(&fixture(&db).raw, holder, 2).await;
         gate.commit().await.unwrap();
@@ -2617,14 +2615,14 @@ mod interleaved {
         let (held, _) = lock_run(&fixture(&db).raw, first.id).await;
         let claimed = promptly(
             "the claim",
-            db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.collab], &platforms()),
+            db::ci::claim_ci_run(db.pool(), WORKER, "local", &[w.collab]),
         )
         .await
         .unwrap()
         .expect("the second run is free");
         assert_eq!(claimed.id, second.id);
         held.rollback().await.unwrap();
-        let claimed = db::ci::claim_ci_run(db.pool(), "worker-2", "local", &[w.collab], &platforms())
+        let claimed = db::ci::claim_ci_run(db.pool(), "worker-2", "local", &[w.collab])
             .await
             .unwrap()
             .expect("the first run is free again");
@@ -2645,7 +2643,7 @@ mod interleaved {
             let pool = db.pool().clone();
             let trusted = [w.collab];
             claims.push(tokio::spawn(async move {
-                db::ci::claim_ci_run(&pool, &format!("worker-{index}"), "local", &trusted, &platforms()).await
+                db::ci::claim_ci_run(&pool, &format!("worker-{index}"), "local", &trusted).await
             }));
         }
         let mut claimed = Vec::new();
@@ -2689,7 +2687,7 @@ mod interleaved {
         let trusted = [runner];
         let running = db.enqueue(organization.repo, runner, false, &trusted).await;
         assert_eq!(
-            db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted, &platforms())
+            db::ci::claim_ci_run(db.pool(), WORKER, "local", &trusted)
                 .await
                 .unwrap()
                 .unwrap()
@@ -2818,7 +2816,7 @@ mod interleaved {
         let pool = db.pool().clone();
         let claiming =
             tokio::spawn(
-                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted, &platforms()).await },
+                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted).await },
             );
         wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         revocation.commit().await.unwrap();
@@ -2903,7 +2901,7 @@ mod interleaved {
         let pool = db.pool().clone();
         let claiming =
             tokio::spawn(
-                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted, &platforms()).await },
+                async move { db::ci::claim_ci_run(&pool, WORKER, "local", &trusted).await },
             );
         wait_until_blocked(&fixture(&db).raw, holder, 1).await;
         ban.commit().await.unwrap();

@@ -154,7 +154,7 @@ async fn upload(
     {
         return Err(Error::validation("Sarif", "commit_sha", "invalid"));
     }
-    if input.ref_name.len() > code_scanning::MAX_REFERENCE_BYTES
+    if input.ref_name.len() > 4096
         || !["refs/heads/", "refs/tags/", "refs/pull/"]
             .iter()
             .any(|p| input.ref_name.starts_with(p))
@@ -191,7 +191,7 @@ async fn upload(
     let upload = records::enqueue(
         &state.pool,
         &records::NewUpload {
-            actor: auth.database_actor(),
+            actor: auth.user.id,
             repo: repo.id,
             ref_name: &input.ref_name,
             commit_sha: &commit.sha,
@@ -210,7 +210,7 @@ async fn upload_status(
     Path((owner, name, id)): Path<(String, String, String)>,
 ) -> Result<Json<Value>> {
     let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
-    let upload = records::upload_status(&state.pool, repo.id, &id)
+    let upload = records::upload(&state.pool, repo.id, &id)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -243,10 +243,6 @@ fn normalize_ref(reference: &str) -> String {
     }
 }
 impl Filters {
-    fn pull_request(&self, resource: &str) -> Result<Option<i32>> {
-        if self.pr.is_some_and(|number| number <= 0) { return Err(Error::validation(resource, "pr", "invalid")); }
-        Ok(self.pr)
-    }
     fn pagination(&self) -> Pagination {
         Pagination {
             page: self.page,
@@ -264,12 +260,15 @@ impl Filters {
         {
             return Err(Error::validation("Analysis", "direction", "invalid"));
         }
+        if self.pr.is_some_and(|number| number <= 0) {
+            return Err(Error::validation("Analysis", "pr", "invalid"));
+        }
         Ok(records::AnalysisFilters {
             reference: None,
             tool_name: self.tool_name.as_deref(),
             tool_guid: self.tool_guid.as_deref(),
             sarif_id: self.sarif_id.as_deref(),
-            pull_request: self.pull_request("Analysis")?,
+            pull_request: self.pr,
             ascending: self.direction.as_deref() == Some("asc"),
         })
     }
@@ -318,7 +317,6 @@ impl Filters {
             tool_guid: self.tool_guid.as_deref(),
             state: self.state.as_deref(),
             severity: self.severity.as_deref(),
-            pull_request: self.pull_request("Alert")?,
             sort,
         })
     }
@@ -378,60 +376,43 @@ async fn analysis(
         .and_then(|v| v.to_str().ok())
         .is_some_and(|v| v.contains("application/sarif+json"))
     {
-        // An analysis keeps up to 100 MiB of SARIF. The shared download slots bound how many
-        // are loaded and rewritten at once, the rewrite runs off the async workers, and the
-        // slot is held until the client has the last byte.
-        let permit = crate::backend::api::http::middleware::wait_for_slot(
-            &state.repository_downloads,
-        )
-        .await
-        .ok_or_else(|| Error::unavailable(()))?;
         let raw = records::analysis_sarif(&state.pool, repo.id, id)
             .await
             .map_err(failure)?
             .ok_or_else(Error::missing)?;
+        let mut sarif: Value = serde_json::from_str(&raw).map_err(Error::unavailable)?;
+        drop(raw);
         let alerts = records::analysis_alerts(&state.pool, row.id)
             .await
             .map_err(failure)?;
-        let alerts_url = format!("{}/code-scanning/alerts", repo_url(&owner, &name));
-        let bytes = tokio::task::spawn_blocking(move || sarif_download(raw, alerts, &alerts_url))
-            .await
-            .map_err(Error::unavailable)?
-            .map_err(Error::unavailable)?;
+        let mut source = match sarif["runs"][0]["results"].take() {
+            Value::Array(results) => results,
+            _ => Vec::new(),
+        };
+        let mut results = Vec::new();
+        for (index, number) in alerts {
+            let mut result = source
+                .get_mut(index as usize)
+                .map(Value::take)
+                .ok_or_else(|| Error::unavailable(()))?;
+            if !result["properties"].is_object() {
+                result["properties"] = json!({});
+            }
+            result["properties"]["github/alertNumber"] = json!(number);
+            result["properties"]["github/alertUrl"] = json!(format!(
+                "{}/code-scanning/alerts/{number}",
+                repo_url(&owner, &name)
+            ));
+            results.push(result);
+        }
+        sarif["runs"][0]["results"] = json!(results);
         return Ok((
             [(header::CONTENT_TYPE, "application/sarif+json")],
-            crate::backend::api::http::middleware::buffered_download_body(bytes, permit),
+            Json(sarif),
         )
             .into_response());
     }
     Ok(Json(analysis_document(row, &owner, &name, entry.deletable)?).into_response())
-}
-/// The stored SARIF with only the results that became alerts, each tagged with its alert
-/// number and URL as GitHub returns it.
-fn sarif_download(raw: String, alerts: Vec<(i64, i64)>, alerts_url: &str) -> anyhow::Result<Vec<u8>> {
-    let mut sarif: Value = serde_json::from_str(&raw)?;
-    drop(raw);
-    let mut source = match sarif["runs"][0]["results"].take() {
-        Value::Array(results) => results,
-        _ => Vec::new(),
-    };
-    let mut results = Vec::with_capacity(alerts.len());
-    for (index, number) in alerts {
-        let mut result = usize::try_from(index)
-            .ok()
-            .and_then(|index| source.get_mut(index))
-            .map(Value::take)
-            .ok_or_else(|| anyhow::anyhow!("alert {number} names no stored result"))?;
-        if !result["properties"].is_object() {
-            result["properties"] = json!({});
-        }
-        result["properties"]["github/alertNumber"] = json!(number);
-        result["properties"]["github/alertUrl"] = json!(format!("{alerts_url}/{number}"));
-        results.push(result);
-    }
-    drop(source);
-    sarif["runs"][0]["results"] = json!(results);
-    Ok(serde_json::to_vec(&sarif)?)
 }
 async fn delete_analysis(
     State(state): State<Arc<AppState>>,
@@ -442,7 +423,7 @@ async fn delete_analysis(
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, true).await?;
     let next = records::delete_analysis(
         &state.pool,
-        auth.database_actor(),
+        auth.user.id,
         repo.id,
         id,
         query.confirm_delete.as_deref() == Some("true"),
@@ -454,14 +435,6 @@ async fn delete_analysis(
         json!({"next_analysis_url":url,"confirm_delete_url":url.map(|url|format!("{url}?confirm_delete=true"))}),
     ))
 }
-async fn alert_repository(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<db::models::Repository> {
-    let (repo, _) = repository(state, headers, owner, name, false).await?;
-    if repo.is_private {
-        scope(state, headers, owner, name, false, false).await?;
-    }
-    Ok(repo)
-}
-
 async fn find_alert(state: &AppState, repo: i64, number: i64) -> Result<records::Alert> {
     records::alert(&state.pool, repo, number)
         .await
@@ -474,9 +447,8 @@ async fn alert_document(
     owner: &str,
     name: &str,
     reference: Option<&str>,
-    pull_request: Option<i32>,
 ) -> Result<Value> {
-    let instance = records::instance_filtered(&state.pool, row.id, reference, pull_request)
+    let instance = records::instance(&state.pool, row.id, reference)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -498,7 +470,7 @@ async fn alerts(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let repo = alert_repository(&state, &headers, &owner, &name).await?;
+    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
     let mut filters = query.alert_filters()?;
@@ -515,7 +487,7 @@ async fn alerts(
     let next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
-        values.push(listed_alert(&state, row, &repo, &owner, reference.as_deref(), filters.pull_request).await?);
+        values.push(listed_alert(&state, row, &repo, &owner, reference.as_deref()).await?);
     }
     query.pagination().response(&uri, values, next)
 }
@@ -525,10 +497,11 @@ async fn listed_alert(
     repo: &db::models::Repository,
     owner: &str,
     reference: Option<&str>,
-    pull_request: Option<i32>,
 ) -> Result<Value> {
-    let default = pull_request.is_none().then(|| format!("refs/heads/{}", repo.default_branch));
-    alert_document(state, row, owner, &repo.name, reference.or(default.as_deref()), pull_request).await
+    let reference = reference
+        .map(str::to_owned)
+        .unwrap_or_else(|| format!("refs/heads/{}", repo.default_branch));
+    alert_document(state, row, owner, &repo.name, Some(&reference)).await
 }
 async fn org_alerts(
     State(state): State<Arc<AppState>>,
@@ -537,18 +510,28 @@ async fn org_alerts(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
+    use db::organizations::{self, OrganizationOutcome};
     let auth = auth::authenticate(&state, &headers, true)
         .await?
         .ok_or_else(auth::required)?;
     let org = super::orgs::target(&state, &name).await?;
+    let role = organizations::membership::get_organization_role(&state.pool, auth.user.id, org.id)
+        .await
+        .map_err(Error::unavailable)?;
+    if !matches!(
+        role,
+        OrganizationOutcome::Applied(db::models::OrgRole::Owner | db::models::OrgRole::Admin)
+    ) {
+        return Err(Error::new(
+            StatusCode::FORBIDDEN,
+            "Must have organization security access",
+        ));
+    }
     let (offset, limit) = query.pagination().window()?;
-    let reference = query.ref_name.as_deref().map(normalize_ref);
-    let mut filters = query.alert_filters()?;
-    filters.reference = reference.as_deref();
-    let rows = records::organization_alert_page(
+    let filters = query.alert_filters()?;
+    let rows = records::alert_page(
         &state.pool,
-        auth.user.id,
-        org.id,
+        records::AlertScope::Organization(org.id),
         &filters,
         offset as i64,
         (limit + 1) as i64,
@@ -558,9 +541,12 @@ async fn org_alerts(
     let next = rows.len() > limit;
     let mut values = Vec::new();
     for row in rows.iter().take(limit) {
-        let repo = &row.repository;
-        let mut alert = payloads::code_scanning_alert(&row.alert, std::slice::from_ref(&row.instance), &name, &repo.name, row.dismissed_by.as_ref().map(payloads::user)).map_err(Error::unavailable)?;
-        alert["repository"] = payloads::repository(repo, &name);
+        let repo = db::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
+            .await
+            .map_err(Error::unavailable)?
+            .ok_or_else(Error::missing)?;
+        let mut alert = listed_alert(&state, row, &repo, &name, None).await?;
+        alert["repository"] = payloads::repository(&repo, &name);
         values.push(alert);
     }
     query.pagination().response(&uri, values, next)
@@ -570,10 +556,10 @@ async fn alert(
     headers: HeaderMap,
     Path((owner, name, number)): Path<(String, String, i64)>,
 ) -> Result<Json<Value>> {
-    let repo = alert_repository(&state, &headers, &owner, &name).await?;
+    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
     let row = find_alert(&state, repo.id, number).await?;
     Ok(Json(
-        alert_document(&state, &row, &owner, &name, None, None).await?,
+        alert_document(&state, &row, &owner, &name, None).await?,
     ))
 }
 #[derive(Deserialize)]
@@ -597,11 +583,11 @@ async fn update_alert(
     input
         .validate()
         .map_err(|e| Error::invalid(e.to_string()))?;
-    let row = code_scanning::dismiss(&state.pool, auth.database_actor(), repo.id, number, &input)
+    let row = code_scanning::dismiss(&state.pool, auth.user.id, repo.id, number, &input)
         .await
         .map_err(failure)?;
     Ok(Json(
-        alert_document(&state, &row, &owner, &name, None, None).await?,
+        alert_document(&state, &row, &owner, &name, None).await?,
     ))
 }
 async fn instances(
@@ -611,15 +597,14 @@ async fn instances(
     Query(query): Query<Filters>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let repo = alert_repository(&state, &headers, &owner, &name).await?;
+    let (repo, _) = scope(&state, &headers, &owner, &name, false, false).await?;
     let row = find_alert(&state, repo.id, number).await?;
     let (offset, limit) = query.pagination().window()?;
     let reference = query.ref_name.as_deref().map(normalize_ref);
-    let rows = records::instances_filtered(
+    let rows = records::instances(
         &state.pool,
         row.id,
         reference.as_deref(),
-        query.pull_request("AlertInstance")?,
         offset as i64,
         (limit + 1) as i64,
     )
@@ -630,7 +615,12 @@ async fn instances(
         .iter()
         .take(limit)
         .map(|instance| {
-            payloads::code_scanning_instance(instance, &owner, &name, number).map_err(Error::unavailable)
+            let mut value = payloads::code_scanning_instance(instance, &owner, &name, number)
+                .map_err(Error::unavailable)?;
+            if row.state == "dismissed" {
+                value["state"] = json!("dismissed");
+            }
+            Ok(value)
         })
         .collect::<Result<Vec<_>>>()?;
     query.pagination().response(&uri, values, next)

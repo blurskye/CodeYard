@@ -6,19 +6,11 @@ use anyhow::Result;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 use OrganizationOutcome::{Applied, Denied, Missing, Suspended};
 
-/// Revalidate the initiating credential only after the operation has acquired its authority locks.
-pub(super) async fn credential(connection: &mut PgConnection, actor: &crate::backend::db::credentials::Actor, org: i64, permission: &str) -> Result<bool> {
-    match actor.token_id() {
-        Some(token) => super::super::users::tokens::permits_write(connection, actor.user_id, token, None, Some(org), permission).await,
-        None => Ok(true),
-    }
-}
-
 pub(super) async fn begin(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
     Ok(pool.begin().await?)
 }
 // Authorization and projection share a committed snapshot; no locks or effects.
-pub(in crate::backend::db::postgres) async fn begin_read(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
+pub(super) async fn begin_read(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
         .execute(&mut *tx)
@@ -175,7 +167,7 @@ pub(super) async fn metadata(
     org: i64,
 ) -> Result<OrganizationMetadata> {
     Ok(sqlx::query_as(
-        "SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended,o.avatar_file_id FROM organizations o WHERE o.id=$1",
+        "SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=o.id AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended FROM organizations o WHERE o.id=$1",
     )
     .bind(org)
     .fetch_one(connection)
@@ -216,23 +208,6 @@ pub(super) async fn scoped_repo(
 ) -> Result<bool> {
     Ok(sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2 AND owner_user_id IS NULL FOR UPDATE")
         .bind(repo).bind(org).fetch_optional(connection).await?.is_some())
-}
-/// All of `ids` are repositories of `org`, locked in id order like transfers lock them. At most
-/// `MAX_SCOPED_REPOSITORIES` distinct ids are accepted so one selection stays one bounded query.
-pub(super) async fn scoped_repos(
-    connection: &mut PgConnection,
-    org: i64,
-    ids: &[i64],
-) -> Result<bool> {
-    let mut ids = ids.to_vec();
-    ids.sort_unstable();
-    ids.dedup();
-    if ids.len() > MAX_SCOPED_REPOSITORIES {
-        return Ok(false);
-    }
-    let found: Vec<i64> = sqlx::query_scalar("SELECT id FROM repositories WHERE id=ANY($1) AND owner_kind='org' AND owner_org_id=$2 AND owner_user_id IS NULL ORDER BY id FOR UPDATE")
-        .bind(&ids).bind(org).fetch_all(connection).await?;
-    Ok(found.len() == ids.len())
 }
 // The three cancel helpers pick the runs the revocation affects; `stop_ci_runs`
 // cancels the queued ones and asks workers to stop the running ones.

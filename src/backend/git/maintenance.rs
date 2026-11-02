@@ -1,7 +1,7 @@
 //! Packing after writes. Git's automatic gc is off for every command this server runs, so
 //! nothing else packs a repository. A repository that keeps receiving small pushes would keep
 //! its loose objects forever, and large pushes and replica transfers would keep adding packs.
-//! After an accepted push the server runs non-pruning `git gc` in the background when loose
+//! After an accepted push the server runs `git gc --auto` in the background when loose
 //! objects exceed `gc.auto` or packs exceed `gc.autoPackLimit`. After a replica transfer it
 //! checks only packs.
 use super::repository::process;
@@ -72,7 +72,7 @@ pub(crate) async fn after_copy(repo_id: i64, mirror: &Path) {
     }
 }
 
-/// Runs non-pruning `git gc` when loose objects or packs exceed their limits. A push that
+/// Runs `git gc --auto` when loose objects or packs exceed their limits. A push that
 /// finds a run already queued or running for `path` leaves packing to a later push.
 async fn pack_if_needed(path: &Path, threshold: usize) -> Result<()> {
     let Some(_lock) = RunLock::take(path) else {
@@ -91,10 +91,10 @@ async fn pack_if_needed(path: &Path, threshold: usize) -> Result<()> {
         .acquire_owned()
         .await
         .context("repository packing closed")?;
-    run_gc(path).await
+    run_gc_auto(path, threshold).await
 }
 
-/// Runs non-pruning `git gc` on a replica copy that has more than `PACK_LIMIT` packs. A copy
+/// Runs `git gc --auto` on a replica copy that has more than `PACK_LIMIT` packs. A copy
 /// receives packs rather than loose objects, so only its packs are counted.
 async fn pack_mirror_if_needed(mirror: &Path) -> Result<()> {
     let packs = mirror.join("objects").join("pack");
@@ -108,21 +108,28 @@ async fn pack_mirror_if_needed(mirror: &Path) -> Result<()> {
     let Ok(_slot) = SLOTS.clone().try_acquire_owned() else {
         return Ok(());
     };
-    run_gc(mirror).await
+    run_gc_auto(mirror, LOOSE_OBJECT_LIMIT).await
 }
 
-/// The caller already counted the threshold crossing. Force packing instead of sampling the
-/// loose-object distribution again. Unreachable objects remain available to pulls and queued runs.
-async fn run_gc(path: &Path) -> Result<()> {
+/// Runs `git gc --auto` with `gc.auto` set to `threshold` and `gc.autoPackLimit` set to
+/// `PACK_LIMIT`. Git's own estimate decides whether anything is packed. Nothing is pruned:
+/// an unreachable commit can still be a closed pull request's revision, a queued run's
+/// commit, or an object of a push in progress, so a run only packs. Space is not reclaimed.
+async fn run_gc_auto(path: &Path, threshold: usize) -> Result<()> {
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path);
+    // Later `-c` options override the scrubbed defaults set in `process::std_command`.
+    command.arg("-c").arg(format!("gc.auto={threshold}"));
+    let pack_limit = format!("gc.autoPackLimit={PACK_LIMIT}");
+    command.arg("-c").arg(pack_limit);
     command.arg("-c").arg("gc.pruneExpire=never");
+    // Without this, `gc --auto` detaches into its own session and escapes the timeout.
     command.arg("-c").arg("gc.autoDetach=false");
-    command.args(["gc", "--no-prune", "--quiet"]);
+    command.args(["gc", "--auto", "--quiet"]);
     let output = process::run(command, b"", OUTPUT_LIMIT, RUN_TIMEOUT).await?;
     ensure!(
         output.status.success(),
-        "git gc exited with {}",
+        "git gc --auto exited with {}",
         output.status
     );
     Ok(())

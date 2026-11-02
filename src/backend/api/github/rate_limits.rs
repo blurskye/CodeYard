@@ -83,51 +83,36 @@ pub(super) async fn enforce(
             .path()
             .strip_prefix("/api/v3")
             .unwrap_or(request.uri().path());
-        let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
-        let logs = auth::read_method(request.method()) && matches!(parts.as_slice(),
-            ["repos", _, _, "actions", "runs" | "jobs", _, "logs"]
-            | ["repos", _, _, "actions", "runs", _, "attempts", _, "logs"]
-            | ["repos", _, _, "actions", "jobs", _, "steps", _, "logs"]);
-        let no_authorization = !request.headers().contains_key(axum::http::header::AUTHORIZATION);
-        let mut key = None;
-        let authentication = if auth::application_credentials(path) {
-            if super::apps::client_credentials(path) {
-                let app = super::apps::application(&state, request.headers(), parts[1]).await?;
-                key = Some(format!("oauth-app:{}", app.id));
-            } else if let Some(value) = auth::credential(request.headers()) {
-                if let Some(app) = crate::backend::identity::github_apps::authenticate(&state.pool, value)
-                    .await.map_err(Error::unavailable)? {
-                    key = Some(format!("app:{}", app.id));
+        // JWT and Basic credentials are validated by the application endpoint, never as PATs.
+        // A valid app JWT has its app's own budget. Anything else there consumes the anonymous
+        // IP budget; no credential bypasses limits.
+        let (auth, app) = if auth::application_credentials(path) {
+            let app = match auth::credential(request.headers()) {
+                Some(value) => {
+                    crate::backend::identity::github_apps::authenticate(&state.pool, value)
+                        .await
+                        .ok()
+                        .flatten()
                 }
-            }
-            None
-        } else if logs && no_authorization {
-            // Only log downloads/polling accept sessions and capabilities; all other REST
-            // routes retain token-only authentication. The handler validates the capability.
-            let capability = request.uri().query().is_some_and(|query|
-                url::form_urlencoded::parse(query.as_bytes()).any(|(key, _)| key == "codeyard_download"));
-            if !capability && session::has_session_cookie(request.headers()) {
-                let user = session::get_current_user(&state.pool, request.headers()).await
-                    .map_err(|(status, axum::Json(error))| Error::new(status, error.message))?;
-                key = Some(format!("user:{}", user.id));
-            }
-            None
+                None => None,
+            };
+            (None, app)
         } else {
-            auth::authenticate(&state, request.headers(), false).await?
+            (
+                auth::authenticate(&state, request.headers(), false).await?,
+                None,
+            )
         };
-        if let Some(auth) = authentication {
-            key = Some(if auth.is_job() {
-                let job = crate::backend::db::ci_tokens::get(&state.pool, auth.token.id)
-                    .await.map_err(Error::unavailable)?.ok_or_else(auth::required)?;
-                format!("job-repository:{}", job.repo_id)
-            } else {
-                format!("user:{}", auth.user.id)
-            });
-        }
         let requester = Requester {
-            authenticated: key.is_some(),
-            key: key.unwrap_or_else(|| format!("ip:{}",
-                session::client_address(request.headers()).unwrap_or("unknown"))),
+            authenticated: auth.is_some() || app.is_some(),
+            key: match (auth, app) {
+                (Some(auth), _) => format!("user:{}", auth.user.id),
+                (None, Some(app)) => format!("app:{}", app.id),
+                (None, None) => format!(
+                    "ip:{}",
+                    session::client_address(request.headers()).unwrap_or("unknown")
+                ),
+            },
         };
         let path = request
             .uri()

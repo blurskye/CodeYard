@@ -11,7 +11,7 @@ pub async fn release_note_rows(
         let mut query=QueryBuilder::<Sqlite>::new("SELECT p.number,p.title,u.username,l.name FROM pull_requests p JOIN users u ON u.id=p.author_id LEFT JOIN pr_labels pl ON pl.pull_request_id=p.id LEFT JOIN labels l ON l.id=pl.label_id AND l.repo_id=p.repo_id WHERE p.repo_id=");
         query
             .push_bind(repo_id)
-            .push(" AND p.merged AND p.merge_commit_sha IN (");
+            .push(" AND p.merged=TRUE AND p.merge_commit_sha IN (");
         let mut values = query.separated(",");
         for sha in chunk {
             values.push_bind(sha);

@@ -17,10 +17,9 @@ use codeyard::backend::{
         models::OrgRole,
         organizations::{self as orgs, OrganizationOutcome},
         webhooks::{HookOwner, WebhookFields},
-        users::accounts::AccountCredential,
     },
     storage::ObjectStore,
-    crypto::hmac_sha256,
+    webhooks::delivery::hmac_sha256,
 };
 use database::Database;
 use pulls::Client;
@@ -501,19 +500,6 @@ async fn pull_request_comment_hooks(pg: bool, url: &str) {
     let rows = deliveries(&database, hook, 3).await;
     assert_eq!(rows[0].event, "pull_request_review_comment");
     assert_eq!(rows[0].action.as_deref(), Some("created"));
-    // The inline comment carries its diff context and position, as the REST comment does.
-    let sent: Value = serde_json::from_str(&rows[0].request_body).unwrap();
-    assert!(
-        sent["comment"]["diff_hunk"]
-            .as_str()
-            .unwrap()
-            .contains("+topic.txt"),
-        "{sent}"
-    );
-    assert_eq!(sent["comment"]["position"], 1);
-    assert_eq!(sent["comment"]["original_position"], 1);
-    assert_eq!(sent["comment"]["reactions"]["total_count"], 0);
-    assert_eq!(sent["comment"]["start_line"], Value::Null);
     alice.expect("POST", &format!("/api/repos/alice/proj/pulls/{number}/merge"),
         json!({"expected_head": head, "expected_base": pull["base_sha"], "merge_method": "merge"}), StatusCode::OK).await;
     alice
@@ -551,7 +537,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
         active: true,
         ssl_verify: true,
     };
-    let id = db::webhooks::insert_webhook(pool, owner, actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), &fields, None)
+    let id = db::webhooks::insert_webhook(pool, owner, actor, &fields, None)
         .await
         .unwrap()
         .unwrap();
@@ -571,14 +557,14 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
     assert_eq!(rows[0].status_code, Some(200));
     assert_eq!(rows[0].response_body.as_deref(), Some("ok\\0binary"));
     fields.active = false;
-    db::webhooks::update_webhook(pool, owner, actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), id, &fields, None)
+    db::webhooks::update_webhook(pool, owner, actor, id, &fields, None)
         .await
         .unwrap();
     delivery::send(pool, &hook, &outgoing).await;
     assert_eq!(receiver.received().len(), 1, "disabled queued hook sent");
     fields.active = true;
     fields.payload_url.push_str("/changed");
-    db::webhooks::update_webhook(pool, owner, actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), id, &fields, None)
+    db::webhooks::update_webhook(pool, owner, actor, id, &fields, None)
         .await
         .unwrap();
     delivery::send(pool, &hook, &outgoing).await;
@@ -601,7 +587,7 @@ async fn stale_hooks_and_binary_responses(pg: bool) {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     assert_eq!(receiver.received().len(), 2);
-    db::webhooks::delete_webhook(pool, owner, actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), id)
+    db::webhooks::delete_webhook(pool, owner, actor, id)
         .await
         .unwrap();
     sending.await.unwrap();
@@ -643,7 +629,7 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
         ssl_verify: true,
     };
     let hook =
-        db::webhooks::insert_webhook(pool, HookOwner::Repository(repo.id), actor, &AccountCredential::Session(&crate::support::live_session(pool, actor).await), &fields, None)
+        db::webhooks::insert_webhook(pool, HookOwner::Repository(repo.id), actor, &fields, None)
             .await
             .unwrap()
             .unwrap();
@@ -659,25 +645,8 @@ async fn api_ref_hooks_and_release_authors(pg: bool, url: &str) {
     )
     .unwrap();
     assert_eq!(push["head_commit"]["id"], base);
-    assert_eq!(push["head_commit"]["distinct"], true);
-    assert_eq!(push["head_commit"]["added"], json!(["README.md"]));
     alice.branch("topic", &base).await;
-    let rows = deliveries(&database, hook, 4).await;
-    let topic: Value = serde_json::from_str(
-        &rows
-            .iter()
-            .find(|row| row.event == "push" && row.request_body.contains("refs/heads/topic"))
-            .unwrap()
-            .request_body,
-    )
-    .unwrap();
-    // The new branch brings no commit that main did not already have.
-    assert_eq!(topic["commits"], json!([]));
-    assert_eq!(topic["head_commit"]["distinct"], false);
-    assert!(topic["compare"]
-        .as_str()
-        .unwrap()
-        .ends_with(&format!("/commit/{base}")));
+    deliveries(&database, hook, 4).await;
     alice
         .expect(
             "DELETE",
@@ -878,7 +847,6 @@ async fn server_ref_events(pg: bool, url: &str) {
             &first.sha,
             &merged,
             MergeMethod::Merge,
-            None,
         )
         .await
         .unwrap();
@@ -948,7 +916,6 @@ async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
         pool,
         HookOwner::Organization(org.id),
         actor,
-        &AccountCredential::Session(&crate::support::live_session(pool, actor).await),
         &WebhookFields {
             username: None,
             password: None,
@@ -1096,24 +1063,24 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     };
     let organization = HookOwner::Organization(org.id);
     assert_eq!(
-        db::webhooks::insert_webhook(pool, organization, owner, &AccountCredential::Session(&crate::support::live_session(pool, owner).await), &fields, None)
+        db::webhooks::insert_webhook(pool, organization, owner, &fields, None)
             .await
             .unwrap(),
         None,
         "a demoted owner created an organization hook"
     );
-    let hook = db::webhooks::insert_webhook(pool, organization, second, &AccountCredential::Session(&crate::support::live_session(pool, second).await), &fields, None)
+    let hook = db::webhooks::insert_webhook(pool, organization, second, &fields, None)
         .await
         .unwrap()
         .expect("a current owner creates a hook");
     assert_eq!(
-        db::webhooks::update_webhook(pool, organization, owner, &AccountCredential::Session(&crate::support::live_session(pool, owner).await), hook, &fields, None)
+        db::webhooks::update_webhook(pool, organization, owner, hook, &fields, None)
             .await
             .unwrap(),
         None
     );
     assert_eq!(
-        db::webhooks::delete_webhook(pool, organization, owner, &AccountCredential::Session(&crate::support::live_session(pool, owner).await), hook)
+        db::webhooks::delete_webhook(pool, organization, owner, hook)
             .await
             .unwrap(),
         None
@@ -1128,24 +1095,24 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
 
     let repository = HookOwner::Repository(repo.id);
     assert_eq!(
-        db::webhooks::insert_webhook(pool, repository, outsider, &AccountCredential::Session(&crate::support::live_session(pool, outsider).await), &fields, None)
+        db::webhooks::insert_webhook(pool, repository, outsider, &fields, None)
             .await
             .unwrap(),
         None,
         "a user without access created a repository hook"
     );
-    let repository_hook = db::webhooks::insert_webhook(pool, repository, owner, &AccountCredential::Session(&crate::support::live_session(pool, owner).await), &fields, None)
+    let repository_hook = db::webhooks::insert_webhook(pool, repository, owner, &fields, None)
         .await
         .unwrap()
         .expect("the repository owner creates a hook");
     assert_eq!(
-        db::webhooks::update_webhook(pool, repository, outsider, &AccountCredential::Session(&crate::support::live_session(pool, outsider).await), repository_hook, &fields, None)
+        db::webhooks::update_webhook(pool, repository, outsider, repository_hook, &fields, None)
             .await
             .unwrap(),
         None
     );
     assert_eq!(
-        db::webhooks::delete_webhook(pool, repository, outsider, &AccountCredential::Session(&crate::support::live_session(pool, outsider).await), repository_hook)
+        db::webhooks::delete_webhook(pool, repository, outsider, repository_hook)
             .await
             .unwrap(),
         None

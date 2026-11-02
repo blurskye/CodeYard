@@ -280,7 +280,7 @@
   line-height: 20px;
   font-weight: 500;
 }
-.identity-auth-form input:not([type="hidden"]):not([type="checkbox"]):not([type="radio"]), .identity-auth-form select {
+.identity-auth-form input:not([type="hidden"]), .identity-auth-form select {
   width: 100%;
   min-width: 0;
   min-height: 40px;
@@ -488,7 +488,7 @@
   .identity-account-table td:first-child::before, .identity-account-table td.identity-table-action::before { content: none; }
   .identity-account-table td.identity-table-action { justify-content: flex-end; }
 }
-.identity-table td p { overflow-wrap: anywhere; margin: 3px 0 0; color: var(--muted-foreground); font-size: 11px; }
+.identity-table td p { margin: 3px 0 0; color: var(--muted-foreground); font-size: 11px; }
 .identity-table-action { text-align: right; white-space: nowrap; }
 .identity-row-menu { display: inline-block; text-align: left; }
 .identity-row-menu-button { position: relative; display: inline-flex; align-items: center; justify-content: center; width: 28px; height: 28px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; transition: background-color .12s ease, border-color .12s ease, color .12s ease; }
@@ -498,10 +498,10 @@
 .identity-row-menu-panel button.site-menu-link { font: inherit; font-size: 14px; cursor: pointer; }
 .site-menu-link.identity-menu-danger { color: var(--destructive); }
 .site-menu-link.identity-menu-danger:hover { background: var(--destructive); color: var(--destructive-foreground, #fff); }
-.identity-account-name { overflow-wrap: anywhere; color: var(--primary); font-weight: 600; text-decoration: none; }
+.identity-account-name { color: var(--primary); font-weight: 600; text-decoration: none; }
 .identity-account-name:hover { text-decoration: underline; }
 .identity-status { display: inline-flex; padding: 1px 7px; border: 1px solid var(--border); border-radius: 20px; font-size: 11px; font-weight: 600; }
-.identity-status-success { color: var(--success); }
+.identity-status-success { color: var(--chart-2); }
 .identity-status-danger { color: var(--destructive); }
 .identity-muted { color: var(--muted-foreground); font-size: 12px; }
 .identity-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }

@@ -97,25 +97,20 @@ async fn package(
     .map_err(error)
 }
 
-async fn documents(state: &AppState, owner: &Owner, packages: &[Package], auth: Option<&auth::Authentication>) -> Result<Vec<Value>> {
-    let ids: Vec<_> = packages.iter().map(|package| package.id).collect();
-    let counts: HashMap<_, _> = db::packages::version_counts(&state.pool, &ids).await.map_err(error)?.into_iter().collect();
-    let ids: Vec<_> = packages.iter().filter_map(|package| package.repo_id).collect();
-    let snapshots = db::repository_stats::readable_snapshots(&state.pool, auth.map(|auth| auth.user.id), &ids).await.map_err(error)?;
-    let mut repositories = HashMap::new();
-    for snapshot in snapshots {
-        if snapshot.repository.is_private {
-            if let Some(auth) = auth {
-                match auth.repository_scope(&state.pool, snapshot.repository.id, "metadata", false).await {
-                    Ok(()) => {}
-                    Err(auth::ScopeError::Missing | auth::ScopeError::Denied) => continue,
-                    Err(error) => return Err(auth::scope_error(error)),
-                }
-            }
-        }
-        repositories.insert(snapshot.repository.id, payloads::repository_snapshot(&snapshot));
-    }
-    Ok(packages.iter().map(|package| payloads::package(owner, package, counts.get(&package.id).copied().unwrap_or(0), package.repo_id.and_then(|id| repositories.get(&id).cloned()))).collect())
+async fn document(state: &AppState, owner: &Owner, package: &Package) -> Result<Value> {
+    let count = db::packages::version_count(&state.pool, package.id)
+        .await
+        .map_err(error)?;
+    let repository = if let Some(id) = package.repo_id {
+        let repository = db::repositories::records::get_repository_by_id(&state.pool, id)
+            .await
+            .map_err(error)?
+            .ok_or_else(Error::missing)?;
+        Some(payloads::repository(&repository, &owner.name))
+    } else {
+        None
+    };
+    Ok(payloads::package(owner, package, count, repository))
 }
 
 #[derive(Deserialize)]
@@ -137,7 +132,6 @@ async fn list(
     let (offset, limit) = page.window()?;
     let token = auth.as_ref().map(|auth| auth.token.id.into());
     let mut items = Vec::new();
-    let has_next;
     if params.contains_key("package_name") {
         let package = package(&state, &owner, &params, auth.as_ref(), false).await?;
         let deleted = match query.state.as_deref() {
@@ -145,7 +139,7 @@ async fn list(
             Some("deleted") => true,
             _ => return Err(Error::validation("PackageVersion", "state", "invalid")),
         };
-        let mut versions = db::packages::versions(
+        let versions = db::packages::versions(
             &state.pool,
             package.id,
             token,
@@ -155,15 +149,11 @@ async fn list(
         )
         .await
         .map_err(error)?;
-        has_next = versions.len() > limit;
-        versions.truncate(limit);
-        let ids: Vec<_> = versions.iter().map(|version| version.id).collect();
-        let mut tags: HashMap<i64, Vec<String>> = HashMap::new();
-        for (id, tag) in db::packages::version_tags(&state.pool, &ids).await.map_err(error)? {
-            tags.entry(id).or_default().push(tag);
-        }
         for version in versions {
-            items.push(payloads::package_version(&owner, &package, &version, &tags.remove(&version.id).unwrap_or_default()));
+            let tags = db::packages::tags(&state.pool, version.id)
+                .await
+                .map_err(error)?;
+            items.push(payloads::package_version(&owner, &package, &version, &tags));
         }
     } else {
         let kind = kind(query.package_type.as_deref())?;
@@ -174,7 +164,7 @@ async fn list(
         {
             return Err(Error::validation("Package", "visibility", "invalid"));
         }
-        let mut packages = db::packages::list(
+        let packages = db::packages::list(
             &state.pool,
             token,
             db::packages::Listing {
@@ -188,10 +178,11 @@ async fn list(
         )
         .await
         .map_err(error)?;
-        has_next = packages.len() > limit;
-        packages.truncate(limit);
-        items = documents(&state, &owner, &packages, auth.as_ref()).await?;
+        for package in packages {
+            items.push(document(&state, &owner, &package).await?);
+        }
     }
+    let has_next = items.len() > limit;
     page.response(&uri, items, has_next)
 }
 
@@ -216,23 +207,22 @@ async fn get_one(
 ) -> Result<Json<Value>> {
     let (owner, auth) = namespace(&state, &headers, &params, false).await?;
     let package = package(&state, &owner, &params, auth.as_ref(), false).await?;
-    let token = auth.as_ref().map(|auth| auth.token.id.into());
     let value = if let Some(id) = params.get("package_version_id") {
         let id = id.parse().map_err(|_| Error::missing())?;
         let version = db::packages::version_by_id(
             &state.pool,
             package.id,
-            token,
+            auth.as_ref().map(|auth| auth.token.id.into()),
             id,
         )
         .await
         .map_err(error)?;
-        let tags = db::packages::tags(&state.pool, package.id, token, version.id)
+        let tags = db::packages::tags(&state.pool, version.id)
             .await
             .map_err(error)?;
         payloads::package_version(&owner, &package, &version, &tags)
     } else {
-        documents(&state, &owner, std::slice::from_ref(&package), auth.as_ref()).await?.pop().ok_or_else(Error::missing)?
+        document(&state, &owner, &package).await?
     };
     Ok(Json(value))
 }
