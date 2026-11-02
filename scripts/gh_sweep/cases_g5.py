@@ -21,6 +21,14 @@ def _failure(result, contains):
     return result
 
 
+def _denied(result, message=None):
+    """GitHub answers another user's write with 403, or hides it behind 404 (gh may reword that as `message`)."""
+    assert not result.timed_out and result.rc == 1, result
+    assert re.search(r"\bHTTP 40[34]\b", result.stderr) or (message and message in result.stderr), result.stderr
+    assert not re.search(r"panic:|panic at|segmentation fault|fatal error:", result.stderr, re.I), result.stderr
+    return result
+
+
 def _other(ctx):
     return next(account for account in ctx.sweep.accounts if account != ctx.account)
 
@@ -85,13 +93,15 @@ def gist_create_secret(ctx):
     assert row["public"] is False, row
     assert set(row["files"]) == {first.name, second.name}, row
     assert row["files"][first.name]["content"] == "one\n", row
-    expect_error(ctx.gh("gist", "create", "-", "--filename", ctx.name("empty"), input="", ok=None), status=422)
+    # GitHub refuses a blank file with 422, which gh reports in its own words.
+    _failure(ctx.gh("gist", "create", "-", "--filename", ctx.name("empty"), input="", ok=None),
+             "a gist file cannot be blank")
 
 
 @case(command="gist create", variant="missing local file", serial_group="g5-gist-writes")
 def gist_create_missing_file(ctx):
     path = ctx.directory / ctx.name("absent")
-    _failure(ctx.gh("gist", "create", str(path), ok=None), "no such file")
+    _failure(ctx.gh("gist", "create", str(path), ok=None), "no matches found")
 
 
 @case(command="gist clone", variant="id explicit destination and URL default destination", serial_group="g5-gist-writes")
@@ -119,14 +129,14 @@ def gist_clone_failures(ctx):
 @case(command="gist delete", variant="id URL repeat and nonowner", serial_group="g5-gist-writes")
 def gist_delete(ctx):
     row = _gist(ctx)
-    expect_error(ctx.sweep.gh(_other(ctx), "gist", "delete", row["id"], "--yes", ok=None),
-                 status=403, contains="Gist permission denied")
+    _denied(ctx.sweep.gh(_other(ctx), "gist", "delete", row["id"], "--yes", ok=None), "not owned by you")
     expect_ok(ctx.gh("gist", "delete", row["id"], "--yes"))
-    expect_error(ctx.gh("gist", "view", row["id"], "--raw", ok=None), contains="Not Found")
-    expect_error(ctx.gh("gist", "delete", row["id"], "--yes", ok=None), contains="Not Found")
+    # gh turns a gist 404 into its own "not found" message.
+    _failure(ctx.gh("gist", "view", row["id"], "--raw", ok=None), "not found")
+    _failure(ctx.gh("gist", "delete", row["id"], "--yes", ok=None), "not found")
     second = _gist(ctx, public=False)
     expect_ok(ctx.gh("gist", "delete", second["html_url"], "--yes"))
-    expect_error(ctx.gh("gist", "view", second["id"], "--raw", ok=None), contains="Not Found")
+    _failure(ctx.gh("gist", "view", second["id"], "--raw", ok=None), "not found")
 
 
 @case(command="gist edit", variant="replace file add remove and description", serial_group="g5-gist-writes")
@@ -145,17 +155,19 @@ def gist_edit(ctx):
     assert ctx.api("GET", "gists/" + row["id"])["files"][extra.name]["content"] == "extra contents\n"
     expect_ok(ctx.gh("gist", "edit", row["id"], "--remove", extra.name))
     assert set(ctx.api("GET", "gists/" + row["id"])["files"]) == {"note.txt"}
+    # Without a source file gh opens the editor, so pass the unchanged content to change only the description.
     description = ctx.name("description-only")
-    expect_ok(ctx.gh("gist", "edit", row["id"], "--desc", description))
+    expect_ok(ctx.gh("gist", "edit", row["id"], str(replacement), "--filename", "note.txt", "--desc", description))
     assert ctx.api("GET", "gists/" + row["id"])["description"] == description
 
 
 @case(command="gist edit", variant="nonowner missing gist missing file and last file", serial_group="g5-gist-writes")
 def gist_edit_failures(ctx):
     row = _gist(ctx)
-    expect_error(ctx.sweep.gh(_other(ctx), "gist", "edit", row["id"], "--desc", ctx.name("denied"), ok=None),
-                 status=404, contains="Not Found")
-    expect_error(ctx.gh("gist", "edit", _missing_gist(ctx), "--desc", "absent", ok=None), contains="Not Found")
+    # gh checks the owner itself before it sends the update.
+    _failure(ctx.sweep.gh(_other(ctx), "gist", "edit", row["id"], "--desc", ctx.name("denied"), ok=None),
+             "you do not own this gist")
+    _failure(ctx.gh("gist", "edit", _missing_gist(ctx), "--desc", "absent", ok=None), "gist not found")
     replacement = ctx.directory / ctx.name("replacement")
     replacement.write_text("replacement\n")
     _failure(ctx.gh("gist", "edit", row["id"], str(replacement), "--filename", ctx.name("absent"), ok=None), "file")
@@ -183,10 +195,11 @@ def gist_list(ctx):
     assert len(limited.stdout.strip().splitlines()) == 1, limited.stdout
 
 
-@case(command="gist list", variant="invalid regex incompatible visibility and limit", serial_group="g5-gist-writes")
+@case(command="gist list", variant="invalid regex public with secret and limit", serial_group="g5-gist-writes")
 def gist_list_bad_input(ctx):
     _failure(ctx.gh("gist", "list", "--filter", "[", ok=None), "regexp")
-    _failure(ctx.gh("gist", "list", "--public", "--secret", ok=None), "public")
+    # gh accepts both visibility flags and lets --secret win.
+    expect_ok(ctx.gh("gist", "list", "--public", "--secret", "--limit", "1"))
     _failure(ctx.gh("gist", "list", "--limit", "0", ok=None), "limit")
 
 
@@ -199,9 +212,9 @@ def gist_rename(ctx):
     assert "old.txt" not in changed["files"] and changed["files"][new_name]["content"] == "old\n", changed
     _failure(ctx.gh("gist", "rename", row["id"], ctx.name("absent"), "new.txt", ok=None), "file")
     _failure(ctx.gh("gist", "rename", row["id"], new_name, "other.txt", ok=None), "already exists")
-    expect_error(ctx.sweep.gh(_other(ctx), "gist", "rename", row["id"], new_name, "denied.txt", ok=None),
-                 status=404, contains="Not Found")
-    expect_error(ctx.gh("gist", "rename", _missing_gist(ctx), "old.txt", "new.txt", ok=None), contains="Not Found")
+    _failure(ctx.sweep.gh(_other(ctx), "gist", "rename", row["id"], new_name, "denied.txt", ok=None),
+             "you do not own this gist")
+    _failure(ctx.gh("gist", "rename", _missing_gist(ctx), "old.txt", "new.txt", ok=None), "gist not found")
 
 
 @case(command="gist view", variant="default raw filename and files", serial_group="g5-gist-writes")
@@ -217,7 +230,7 @@ def gist_view(ctx):
     assert "sweep gist" in all_raw.stdout and "second body" in all_raw.stdout, all_raw.stdout
     # Secret gists are unlisted, not private: another account can read a known ID.
     secret = _gist(ctx, public=False)
-    shared = expect_ok(ctx.sweep.gh(_other(ctx), "gist", "view", secret["id"], "--raw"))
+    shared = expect_ok(ctx.sweep.gh(_other(ctx), "gist", "view", secret["id"], "--raw", "--filename", "note.txt"))
     assert shared.stdout == "sweep gist\n", shared.stdout
 
 
@@ -228,13 +241,15 @@ def gist_view_escapes(ctx):
     safe = expect_ok(ctx.gh("gist", "view", row["id"], "--raw", "--filename", "escape.txt"))
     assert "sweep red" in safe.stdout and "\x1b" not in safe.stdout, safe.stdout
     raw = expect_ok(ctx.gh("gist", "view", row["id"], "--raw", "--filename", "escape.txt", "--allow-escape-sequences"))
-    assert raw.stdout == content, repr(raw.stdout)
+    # gh's HTTP client rewrites control characters in JSON responses to caret notation, so the
+    # escape byte never reaches the command, even with --allow-escape-sequences.
+    assert raw.stdout == content.replace("\x1b", "^["), repr(raw.stdout)
 
 
 @case(command="gist view", variant="missing gist and filename", serial_group="g5-gist-writes")
 def gist_view_failures(ctx):
     row = _gist(ctx)
-    expect_error(ctx.gh("gist", "view", _missing_gist(ctx), "--raw", ok=None), contains="Not Found")
+    _failure(ctx.gh("gist", "view", _missing_gist(ctx), "--raw", ok=None), "not found")
     _failure(ctx.gh("gist", "view", row["id"], "--filename", ctx.name("absent"), ok=None), "file")
 
 
@@ -357,8 +372,8 @@ def release_create_failures(ctx):
     _failure(ctx.gh("release", "create", ctx.release["tag_name"], "--repo", ctx.repo, "--notes", "duplicate", ok=None), "already exists")
     expect_error(ctx.gh("release", "create", ctx.name("invalid") + "..bad", "--repo", ctx.repo, "--notes", "bad", ok=None), status=422)
     expect_error(ctx.gh("release", "create", ctx.name("tag"), "--repo", _missing_repo(ctx), "--notes", "missing", ok=None), contains="Not Found")
-    expect_error(ctx.sweep.gh(_other(ctx), "release", "create", ctx.name("tag"), "--repo", ctx.repo,
-                              "--notes", "denied", ok=None), status=403)
+    _denied(ctx.sweep.gh(_other(ctx), "release", "create", ctx.name("tag"), "--repo", ctx.repo,
+                         "--notes", "denied", ok=None))
 
 
 @case(command="release delete", variant="keep tag cleanup tag and draft", needs=("repo",))
@@ -379,7 +394,7 @@ def release_delete(ctx):
 def release_delete_failures(ctx):
     _failure(ctx.gh("release", "delete", ctx.name("missing-tag"), "--repo", ctx.repo, "--yes", ok=None), "release not found")
     _failure(ctx.gh("release", "delete", ctx.name("tag"), "--repo", _missing_repo(ctx), "--yes", ok=None), "release not found")
-    expect_error(ctx.sweep.gh(_other(ctx), "release", "delete", ctx.release["tag_name"], "--repo", ctx.repo, "--yes", ok=None), status=403)
+    _denied(ctx.sweep.gh(_other(ctx), "release", "delete", ctx.release["tag_name"], "--repo", ctx.repo, "--yes", ok=None))
     _release_fields(ctx, ctx.release["tag_name"], id=ctx.release["id"])
 
 
@@ -406,8 +421,8 @@ def release_upload_failures(ctx):
     asset.write_text("asset\n")
     _failure(ctx.gh("release", "upload", ctx.name("missing"), str(asset), "--repo", ctx.repo, ok=None), "release not found")
     _failure(ctx.gh("release", "upload", ctx.name("missing"), str(asset), "--repo", _missing_repo(ctx), ok=None), "release not found")
-    _failure(ctx.gh("release", "upload", ctx.release["tag_name"], str(ctx.directory / ctx.name("absent")), "--repo", ctx.repo, ok=None), "no such file")
-    expect_error(ctx.sweep.gh(_other(ctx), "release", "upload", ctx.release["tag_name"], str(asset), "--repo", ctx.repo, ok=None), status=403)
+    _failure(ctx.gh("release", "upload", ctx.release["tag_name"], str(ctx.directory / ctx.name("absent")), "--repo", ctx.repo, ok=None), "no matches found")
+    _denied(ctx.sweep.gh(_other(ctx), "release", "upload", ctx.release["tag_name"], str(asset), "--repo", ctx.repo, ok=None))
     assert _release_fields(ctx, ctx.release["tag_name"])["assets"] == []
 
 
@@ -417,7 +432,7 @@ def release_delete_asset(ctx):
     asset = ctx.directory / (ctx.name("asset") + ".txt")
     asset.write_text("asset to delete\n")
     expect_ok(ctx.gh("release", "upload", tag, str(asset), "--repo", ctx.repo))
-    expect_error(ctx.sweep.gh(_other(ctx), "release", "delete-asset", tag, asset.name, "--repo", ctx.repo, "--yes", ok=None), status=403)
+    _denied(ctx.sweep.gh(_other(ctx), "release", "delete-asset", tag, asset.name, "--repo", ctx.repo, "--yes", ok=None))
     expect_ok(ctx.gh("release", "delete-asset", tag, asset.name, "--repo", ctx.repo, "--yes"))
     assert _release_fields(ctx, tag)["assets"] == []
     _failure(ctx.gh("release", "delete-asset", tag, asset.name, "--repo", ctx.repo, "--yes", ok=None), "not found")
@@ -457,8 +472,9 @@ def release_download_escapes(ctx):
     asset.write_text(content)
     tag = ctx.release["tag_name"]
     expect_ok(ctx.gh("release", "upload", tag, str(asset), "--repo", ctx.repo))
-    safe = expect_ok(ctx.gh("release", "download", tag, "--repo", ctx.repo, "--pattern", asset.name, "--output", "-"))
-    assert "sweep asset" in safe.stdout and "\x1b" not in safe.stdout, repr(safe.stdout)
+    # Piped standard output refuses escape sequences instead of rewriting them.
+    _failure(ctx.gh("release", "download", tag, "--repo", ctx.repo, "--pattern", asset.name, "--output", "-", ok=None),
+             "terminal escape sequences")
     raw = expect_ok(ctx.gh("release", "download", tag, "--repo", ctx.repo, "--pattern", asset.name,
                           "--output", "-", "--allow-escape-sequences"))
     assert raw.stdout == content, repr(raw.stdout)
@@ -483,7 +499,7 @@ def release_download_failures(ctx):
     _failure(ctx.gh("release", "download", ctx.name("missing"), "--repo", _missing_repo(ctx), ok=None), "release not found")
     _failure(ctx.gh("release", "download", ctx.release["tag_name"], "--repo", ctx.repo, "--pattern", ctx.name("absent"), ok=None), "no assets")
     _failure(ctx.gh("release", "download", ctx.release["tag_name"], "--repo", ctx.repo, "--clobber", "--skip-existing", ok=None), "specify only one")
-    _failure(ctx.gh("release", "download", ctx.release["tag_name"], "--repo", ctx.repo, "--archive", "rar", ok=None), "invalid")
+    _failure(ctx.gh("release", "download", ctx.release["tag_name"], "--repo", ctx.repo, "--archive", "rar", ok=None), "must be one of")
 
 
 @case(command="release edit", variant="draft metadata retag target verify publish prerelease and latest", needs=("repo",))
@@ -530,7 +546,7 @@ def release_edit_failures(ctx):
     _failure(ctx.gh("release", "edit", tag, "--repo", _missing_repo(ctx), "--title", "absent", ok=None), "release not found")
     _failure(ctx.gh("release", "edit", tag, "--repo", ctx.repo, "--tag", ctx.name("missing-tag"), "--verify-tag", ok=None), "--verify-tag")
     expect_error(ctx.gh("release", "edit", tag, "--repo", ctx.repo, "--tag", ctx.name("invalid") + "..bad", ok=None), status=422)
-    expect_error(ctx.sweep.gh(_other(ctx), "release", "edit", tag, "--repo", ctx.repo, "--notes", "denied", ok=None), status=403)
+    _denied(ctx.sweep.gh(_other(ctx), "release", "edit", tag, "--repo", ctx.repo, "--notes", "denied", ok=None))
     _release_fields(ctx, tag, body=ctx.release["body"])
 
 
@@ -584,8 +600,10 @@ def release_list_private(ctx):
 @case(command="release view", variant="tag latest JSON jq template and rendered text", needs=("release",))
 def release_view(ctx):
     tag = ctx.release["tag_name"]
+    # The fixture has no notes: the API returns a null body and gh prints it as "".
+    body = ctx.release["body"] or ""
     row = expect_json(ctx.gh("release", "view", tag, "--repo", ctx.repo, "--json", "tagName,name,body,isDraft,isPrerelease,assets"),
-                      {"tagName": tag, "name": ctx.release["name"], "body": ctx.release["body"],
+                      {"tagName": tag, "name": ctx.release["name"], "body": body,
                        "isDraft": False, "isPrerelease": False, "assets": []})
     assert row["tagName"] == tag
     latest = expect_json(ctx.gh("release", "view", "--repo", ctx.repo, "--json", "tagName"), {"tagName": tag})
@@ -595,7 +613,7 @@ def release_view(ctx):
     template = expect_ok(ctx.gh("release", "view", tag, "--repo", ctx.repo, "--json", "name,tagName", "--template", "{{.name}}:{{.tagName}}"))
     assert template.stdout.strip() == ctx.release["name"] + ":" + tag, template.stdout
     text = expect_ok(ctx.gh("release", "view", tag, "--repo", ctx.repo))
-    assert ctx.release["name"] in text.stdout and ctx.release["body"] in text.stdout, text.stdout
+    assert ctx.release["name"] in text.stdout and body in text.stdout, text.stdout
 
 
 @case(command="release view", variant="missing repo tag and draft visibility", needs=("repo",))
@@ -642,8 +660,8 @@ def release_verify(ctx):
 
 @case(command="release verify", variant="missing tag repo and invalid format", needs=("repo",))
 def release_verify_failures(ctx):
-    expect_error(ctx.gh("release", "verify", ctx.name("missing"), "--repo", ctx.repo, ok=None), status=404)
-    expect_error(ctx.gh("release", "verify", ctx.name("missing"), "--repo", _missing_repo(ctx), ok=None), status=404)
+    _failure(ctx.gh("release", "verify", ctx.name("missing"), "--repo", ctx.repo, ok=None), "release not found")
+    _failure(ctx.gh("release", "verify", ctx.name("missing"), "--repo", _missing_repo(ctx), ok=None), "release not found")
     _failure(ctx.gh("release", "verify", ctx.name("tag"), "--repo", ctx.repo, "--format", "yaml", ok=None), "format")
 
 
@@ -665,6 +683,6 @@ def release_verify_asset_failures(ctx):
     asset = ctx.directory / (ctx.name("asset") + ".txt")
     asset.write_text("unsigned\n")
     _failure(ctx.gh("release", "verify-asset", ctx.release["tag_name"], str(ctx.directory / ctx.name("absent")), "--repo", ctx.repo, ok=None), "no such file")
-    expect_error(ctx.gh("release", "verify-asset", ctx.name("missing"), str(asset), "--repo", ctx.repo, ok=None), status=404)
-    expect_error(ctx.gh("release", "verify-asset", ctx.name("missing"), str(asset), "--repo", _missing_repo(ctx), ok=None), status=404)
+    _failure(ctx.gh("release", "verify-asset", ctx.name("missing"), str(asset), "--repo", ctx.repo, ok=None), "release not found")
+    _failure(ctx.gh("release", "verify-asset", ctx.name("missing"), str(asset), "--repo", _missing_repo(ctx), ok=None), "release not found")
     _failure(ctx.gh("release", "verify-asset", ctx.release["tag_name"], str(asset), "--repo", ctx.repo, "--format", "yaml", ok=None), "format")
