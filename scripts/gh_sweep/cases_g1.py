@@ -26,15 +26,35 @@ def clean_failure(result, contains):
 def missing(result):
     if "HTTP 404" in result.stderr:
         return expect_error(result, status=404, contains="Not Found")
-    # GraphQL missing nodes are returned with HTTP 200 and errors[].
-    return clean_failure(result, "Not Found")
+    # GraphQL missing nodes come back with HTTP 200 and a NOT_FOUND error, which GitHub words
+    # "Could not resolve to a Repository with the name 'owner/name'."
+    return clean_failure(result, "Could not resolve to a")
+
+
+def admin_missing(result):
+    # gh replaces an autolink 404 with its own hint, as GitHub hides autolinks from non-admins.
+    return expect_error(result, status=404, contains="Perhaps you are missing admin rights")
+
+
+def refused(result):
+    # Admin-only endpoints refuse a non-admin with 403, or hide the repository with 404.
+    match = re.search(r"\bHTTP (403|404)\b", result.stderr)
+    assert match, result
+    return expect_error(result, status=match.group(1))
+
+
+def no_results(result):
+    # gh reports an empty list as "no results", which prints nothing and exits 0 off a terminal.
+    expect_ok(result)
+    assert result.stdout == "", result.stdout
+    return result
 
 
 def permission_denied(result):
     # gh can reject a mutation from viewerPermission before issuing HTTP, or
     # print the server's GraphQL denial. Both must be explicit permission errors.
     assert not result.timed_out and result.rc == 1, result
-    assert re.search(r"permission|denied|forbidden|administrat", result.stderr, re.I), result.stderr
+    assert re.search(r"permission|denied|forbidden|administrat|not allowed", result.stderr, re.I), result.stderr
     assert not re.search(r"panic:|panic at|segmentation fault|fatal error:", result.stderr, re.I), result.stderr
     return result
 
@@ -70,9 +90,14 @@ def file_fixture(ctx, content=b"sweep file\n", path=None):
     return path
 
 
+def autolink_prefix():
+    # Short and unique: a key prefix is limited in length, unlike ctx.name().
+    return "SW" + secrets.token_hex(4).upper() + "-"
+
+
 def autolink_fixture(ctx):
     return ctx.api("POST", f"repos/{ctx.repo}/autolinks",
-                   {"key_prefix": ctx.name("ref") + "-", "url_template": "https://example.test/<num>",
+                   {"key_prefix": autolink_prefix(), "url_template": "https://example.test/<num>",
                     "is_alphanumeric": True})
 
 
@@ -93,7 +118,7 @@ def key_fixture(ctx):
                    {"title": ctx.name("deploy"), "key": key, "read_only": True})
 
 
-def ruleset_fixture(ctx, *, org=None, name=None, enforcement="active"):
+def ruleset_fixture(ctx, *, org=None, name=None, enforcement="evaluate"):
     conditions = {"ref_name": {"include": ["~DEFAULT_BRANCH"], "exclude": []}}
     if org:
         conditions["repository_name"] = {"include": ["~ALL"], "exclude": [], "protected": False}
@@ -112,6 +137,8 @@ def fork_fixture(ctx):
 @case(command="licenses", variant="bundled dependency notices")
 def licenses(ctx):
     result = expect_ok(ctx.gh("licenses"))
+    if result.stdout == "License information is only available in official release builds.\n":
+        return  # the builder's gh comes from nixpkgs, which does not embed the notices
     assert "Copyright" in result.stdout and "license" in result.stdout.lower(), result.stdout
 
 
@@ -165,7 +192,7 @@ def repo_unarchive_errors(ctx):
 
 @case(command="repo autolink create", variant="alphanumeric and numeric", needs=("repo",))
 def autolink_create(ctx):
-    alpha, numeric = ctx.name("alpha") + "-", ctx.name("numeric") + "-"
+    alpha, numeric = autolink_prefix(), autolink_prefix()
     expect_ok(ctx.gh("repo", "autolink", "create", alpha, "https://example.test/<num>", "--repo", ctx.repo))
     expect_ok(ctx.gh("repo", "autolink", "create", numeric, "https://example.test/n/<num>", "--numeric", "--repo", ctx.repo))
     rows = ctx.api("GET", f"repos/{ctx.repo}/autolinks")
@@ -177,13 +204,15 @@ def autolink_create_errors(ctx):
     row = autolink_fixture(ctx)
     expect_error(ctx.gh("repo", "autolink", "create", row["key_prefix"], row["url_template"], "--repo", ctx.repo, ok=None), status=422)
     expect_error(ctx.gh("repo", "autolink", "create", "BAD-", "https://example.test/no-variable", "--repo", ctx.repo, ok=None), status=422)
-    missing(ctx.gh("repo", "autolink", "create", "X-", "https://example.test/<num>", "--repo", absent_repo(ctx), ok=None))
-    expect_error(ctx.sweep.gh(other_account(ctx), "repo", "autolink", "create", "X-", "https://example.test/<num>", "--repo", ctx.repo, ok=None), status=403)
+    # gh rewords any 404 from autolink create as "Must have admin rights to Repository."
+    expect_error(ctx.gh("repo", "autolink", "create", "X-", "https://example.test/<num>", "--repo", absent_repo(ctx), ok=None),
+                 status=404, contains="Must have admin rights")
+    refused(ctx.sweep.gh(other_account(ctx), "repo", "autolink", "create", "X-", "https://example.test/<num>", "--repo", ctx.repo, ok=None))
 
 
 @case(command="repo autolink list", variant="empty table json jq template", needs=("repo",))
 def autolink_list(ctx):
-    expect_json(ctx.gh("repo", "autolink", "list", "--repo", ctx.repo, "--json", "id,keyPrefix"), [])
+    no_results(ctx.gh("repo", "autolink", "list", "--repo", ctx.repo, "--json", "id,keyPrefix"))
     row = autolink_fixture(ctx)
     assert row["key_prefix"] in expect_ok(ctx.gh("repo", "autolink", "list", "--repo", ctx.repo)).stdout
     rows = expect_json(ctx.gh("repo", "autolink", "list", "--repo", ctx.repo, "--json", "id,keyPrefix,urlTemplate,isAlphanumeric"),
@@ -195,8 +224,8 @@ def autolink_list(ctx):
 
 @case(command="repo autolink list", variant="missing and admin-only", needs=("repo",))
 def autolink_list_errors(ctx):
-    missing(ctx.gh("repo", "autolink", "list", "--repo", absent_repo(ctx), ok=None))
-    expect_error(ctx.sweep.gh(other_account(ctx), "repo", "autolink", "list", "--repo", ctx.repo, ok=None), status=403)
+    admin_missing(ctx.gh("repo", "autolink", "list", "--repo", absent_repo(ctx), ok=None))
+    refused(ctx.sweep.gh(other_account(ctx), "repo", "autolink", "list", "--repo", ctx.repo, ok=None))
 
 
 @case(command="repo autolink view", variant="table json jq template", needs=("repo",))
@@ -213,19 +242,19 @@ def autolink_view(ctx):
 @case(command="repo autolink view", variant="missing id repo and denied", needs=("repo",))
 def autolink_view_errors(ctx):
     row = autolink_fixture(ctx)
-    missing(ctx.gh("repo", "autolink", "view", "2147483647", "--repo", ctx.repo, ok=None))
-    missing(ctx.gh("repo", "autolink", "view", str(row["id"]), "--repo", absent_repo(ctx), ok=None))
-    expect_error(ctx.sweep.gh(other_account(ctx), "repo", "autolink", "view", str(row["id"]), "--repo", ctx.repo, ok=None), status=403)
+    admin_missing(ctx.gh("repo", "autolink", "view", "2147483647", "--repo", ctx.repo, ok=None))
+    admin_missing(ctx.gh("repo", "autolink", "view", str(row["id"]), "--repo", absent_repo(ctx), ok=None))
+    refused(ctx.sweep.gh(other_account(ctx), "repo", "autolink", "view", str(row["id"]), "--repo", ctx.repo, ok=None))
 
 
 @case(command="repo autolink delete", variant="delete missing and denied", needs=("repo",))
 def autolink_delete(ctx):
     row = autolink_fixture(ctx)
-    expect_error(ctx.sweep.gh(other_account(ctx), "repo", "autolink", "delete", str(row["id"]), "--repo", ctx.repo, "--yes", ok=None), status=403)
+    refused(ctx.sweep.gh(other_account(ctx), "repo", "autolink", "delete", str(row["id"]), "--repo", ctx.repo, "--yes", ok=None))
     expect_ok(ctx.gh("repo", "autolink", "delete", str(row["id"]), "--repo", ctx.repo, "--yes"))
     assert ctx.api("GET", f"repos/{ctx.repo}/autolinks") == []
-    missing(ctx.gh("repo", "autolink", "delete", str(row["id"]), "--repo", ctx.repo, "--yes", ok=None))
-    missing(ctx.gh("repo", "autolink", "delete", str(row["id"]), "--repo", absent_repo(ctx), "--yes", ok=None))
+    admin_missing(ctx.gh("repo", "autolink", "delete", str(row["id"]), "--repo", ctx.repo, "--yes", ok=None))
+    admin_missing(ctx.gh("repo", "autolink", "delete", str(row["id"]), "--repo", absent_repo(ctx), "--yes", ok=None))
 
 
 @case(command="repo clone", variant="ordinary repository", needs=("repo",))
@@ -249,7 +278,8 @@ def repo_clone_upstream(ctx):
     expect_ok(ctx.gh("repo", "clone", fork, str(disabled), "--no-upstream"))
     assert git(ctx, "remote", cwd=disabled).stdout.split() == ["origin"]
     assert git(ctx, "config", "--get", "remote.parent.gh-resolved", cwd=custom).stdout.strip() == "base"
-    assert git(ctx, "config", "--get", "remote.origin.gh-resolved", cwd=disabled, ok=(1,)).stdout == ""
+    # Without an upstream remote gh makes the fork itself the default repository.
+    assert git(ctx, "config", "--get", "remote.origin.gh-resolved", cwd=disabled).stdout.strip() == "base"
 
 
 @case(command="repo clone", variant="missing and private hidden")
@@ -396,11 +426,12 @@ def deploy_key_add_errors(ctx):
 
 @case(command="repo deploy-key list", variant="empty table json jq template", needs=("repo",))
 def deploy_key_list(ctx):
-    expect_json(ctx.gh("repo", "deploy-key", "list", "--repo", ctx.repo, "--json", "id,title"), [])
+    no_results(ctx.gh("repo", "deploy-key", "list", "--repo", ctx.repo, "--json", "id,title"))
     row = key_fixture(ctx)
     assert row["title"] in expect_ok(ctx.gh("repo", "deploy-key", "list", "--repo", ctx.repo)).stdout
+    # gh prints its whole deploy-key struct under the REST names, whatever --json picks.
     rows = expect_json(ctx.gh("repo", "deploy-key", "list", "--repo", ctx.repo, "--json", "id,title,key,readOnly,createdAt"),
-                       [{"id": row["id"], "title": row["title"], "key": str, "readOnly": True, "createdAt": str}])
+                       [{"id": row["id"], "title": row["title"], "key": str, "read_only": True, "created_at": str}])
     assert len(rows) == 1
     assert expect_ok(ctx.gh("repo", "deploy-key", "list", "--repo", ctx.repo, "--json", "title", "--jq", ".[0].title")).stdout.strip() == row["title"]
     assert expect_ok(ctx.gh("repo", "deploy-key", "list", "--repo", ctx.repo, "--json", "title", "--template", "{{range .}}{{.title}}{{end}}")).stdout == row["title"]
@@ -556,13 +587,13 @@ def repo_fork(ctx):
     ctx.sweep.api(account, "POST", f"repos/{source}/git/refs", {"ref": "refs/heads/" + branch, "sha": sha})
     org, name = ctx.org(), ctx.name("fork")
     result = expect_ok(ctx.gh("repo", "fork", source, "--org", org, "--fork-name", name,
-                              "--default-branch-only", "--clone=false", "--remote=false"))
+                              "--default-branch-only", "--clone=false"))
     assert name in result.stdout + result.stderr
     row = ctx.api("GET", f"repos/{org}/{name}")
     assert row["fork"] is True and row["parent"]["full_name"] == source
     assert {entry["name"] for entry in ctx.api("GET", f"repos/{org}/{name}/branches")} == {default}
     full_name = ctx.name("all-branches")
-    expect_ok(ctx.gh("repo", "fork", source, "--fork-name", full_name, "--clone=false", "--remote=false"))
+    expect_ok(ctx.gh("repo", "fork", source, "--fork-name", full_name, "--clone=false"))
     assert {entry["name"] for entry in ctx.api("GET", f"repos/{ctx.account.name}/{full_name}/branches")} == {default, branch}
 
 
@@ -584,10 +615,10 @@ def repo_fork_clone_remote(ctx):
 
 @case(command="repo fork", variant="missing and private source hidden")
 def repo_fork_errors(ctx):
-    missing(ctx.gh("repo", "fork", absent_repo(ctx), "--clone=false", "--remote=false", ok=None))
+    missing(ctx.gh("repo", "fork", absent_repo(ctx), "--clone=false", ok=None))
     account = other_account(ctx)
     private = ctx.sweep.create_repo(account, ctx.name("private"), private=True)["full_name"]
-    missing(ctx.gh("repo", "fork", private, "--clone=false", "--remote=false", ok=None))
+    missing(ctx.gh("repo", "fork", private, "--clone=false", ok=None))
 
 
 @case(command="repo gitignore list", variant="catalog")
@@ -600,7 +631,8 @@ def gitignore_list(ctx):
 def gitignore_view(ctx):
     output = expect_ok(ctx.gh("repo", "gitignore", "view", "Python")).stdout
     assert "__pycache__" in output, output
-    missing(ctx.gh("repo", "gitignore", "view", ctx.name("unknown"), ok=None))
+    # gh turns the 404 into its own hint.
+    clean_failure(ctx.gh("repo", "gitignore", "view", ctx.name("unknown"), ok=None), "is not a valid gitignore template")
 
 
 @case(command="repo license list", variant="catalog")
@@ -614,7 +646,7 @@ def license_view(ctx):
     by_key = expect_ok(ctx.gh("repo", "license", "view", "mit")).stdout
     by_spdx = expect_ok(ctx.gh("repo", "license", "view", "MIT")).stdout
     assert by_key == by_spdx and "Permission is hereby granted" in by_key, by_key
-    missing(ctx.gh("repo", "license", "view", ctx.name("unknown"), ok=None))
+    clean_failure(ctx.gh("repo", "license", "view", ctx.name("unknown"), ok=None), "is not a valid license name or SPDX ID")
 
 
 @case(command="repo list", variant="owner private source json jq template")
@@ -671,7 +703,13 @@ def repo_list_forks(ctx):
 
 @case(command="repo list", variant="unknown owner and invalid limit")
 def repo_list_errors(ctx):
-    missing(ctx.gh("repo", "list", ctx.name("absent-owner"), ok=None))
+    # GitHub answers an unknown repositoryOwner with null, which gh lists as nothing; a NOT_FOUND
+    # error is also a clean answer.
+    result = ctx.gh("repo", "list", ctx.name("absent-owner"), ok=None)
+    if result.rc == 0:
+        assert result.stdout == "", result.stdout
+    else:
+        missing(result)
     clean_failure(ctx.gh("repo", "list", ctx.account.name, "--limit", "0", ok=None), "limit")
 
 
@@ -681,11 +719,12 @@ def repo_read_dir(ctx):
     file_fixture(ctx, path=folder + "/entry.txt")
     default = ctx.api("GET", f"repos/{ctx.repo}")["default_branch"]
     assert folder in expect_ok(ctx.gh("repo", "read-dir", "--repo", ctx.repo)).stdout
-    rows = expect_json(ctx.gh("repo", "read-dir", folder, "--repo", ctx.repo, "--ref", default, "--json", "name,path,type,size,gitSHA"),
-                       [{"name": "entry.txt", "path": folder + "/entry.txt", "type": "file", "size": len(b"sweep file\n"), "gitSHA": str}])
-    assert len(rows) == 1
-    assert expect_ok(ctx.gh("repo", "read-dir", folder, "--repo", ctx.repo, "--json", "name", "--jq", ".[0].name")).stdout.strip() == "entry.txt"
-    assert expect_ok(ctx.gh("repo", "read-dir", folder, "--repo", ctx.repo, "--json", "path", "--template", "{{range .}}{{.path}}{{end}}")).stdout == folder + "/entry.txt"
+    # gh exports the directory itself: {gitSHA, id, entries: [...]}, with the fields picked per entry.
+    tree = expect_json(ctx.gh("repo", "read-dir", folder, "--repo", ctx.repo, "--ref", default, "--json", "name,path,type,size,gitSHA"),
+                       {"gitSHA": str, "entries": [{"name": "entry.txt", "path": folder + "/entry.txt", "type": "file", "size": len(b"sweep file\n"), "gitSHA": str}]})
+    assert len(tree["entries"]) == 1
+    assert expect_ok(ctx.gh("repo", "read-dir", folder, "--repo", ctx.repo, "--json", "name", "--jq", ".entries[0].name")).stdout.strip() == "entry.txt"
+    assert expect_ok(ctx.gh("repo", "read-dir", folder, "--repo", ctx.repo, "--json", "path", "--template", "{{range .entries}}{{.path}}{{end}}")).stdout == folder + "/entry.txt"
 
 
 @case(command="repo read-dir", variant="nondefault ref changes directory contents", needs=("repo",))
@@ -696,16 +735,17 @@ def repo_read_dir_ref(ctx):
     ctx.api("POST", f"repos/{ctx.repo}/git/refs", {"ref": "refs/heads/" + branch, "sha": sha})
     ctx.api("PUT", f"repos/{ctx.repo}/contents/{path}",
             {"message": "branch-only file", "branch": branch, "content": base64.b64encode(b"branch only\n").decode()})
-    original = expect_json(ctx.gh("repo", "read-dir", "--repo", ctx.repo, "--json", "name"), [{"name": str}])
-    selected = expect_json(ctx.gh("repo", "read-dir", "--repo", ctx.repo, "--ref", branch, "--json", "name"), [{"name": str}])
-    assert path not in {row["name"] for row in original}
-    assert path in {row["name"] for row in selected}
+    original = expect_json(ctx.gh("repo", "read-dir", "--repo", ctx.repo, "--json", "name"), {"entries": [{"name": str}]})
+    selected = expect_json(ctx.gh("repo", "read-dir", "--repo", ctx.repo, "--ref", branch, "--json", "name"), {"entries": [{"name": str}]})
+    assert path not in {row["name"] for row in original["entries"]}, original
+    assert path in {row["name"] for row in selected["entries"]}, selected
 
 
 @case(command="repo read-dir", variant="missing path ref repo and private hidden", needs=("repo",))
 def repo_read_dir_errors(ctx):
-    missing(ctx.gh("repo", "read-dir", ctx.name("absent"), "--repo", ctx.repo, ok=None))
-    missing(ctx.gh("repo", "read-dir", "--repo", ctx.repo, "--ref", ctx.name("bad-ref"), ok=None))
+    # GitHub returns a null object for a missing path or ref, which gh reports as "could not find".
+    clean_failure(ctx.gh("repo", "read-dir", ctx.name("absent"), "--repo", ctx.repo, ok=None), "could not find")
+    clean_failure(ctx.gh("repo", "read-dir", "--repo", ctx.repo, "--ref", ctx.name("bad-ref"), ok=None), "could not find")
     missing(ctx.gh("repo", "read-dir", "--repo", absent_repo(ctx), ok=None))
     ctx.api("PATCH", f"repos/{ctx.repo}", {"private": True})
     missing(ctx.sweep.gh(other_account(ctx), "repo", "read-dir", "--repo", ctx.repo, ok=None))
@@ -797,7 +837,9 @@ def repo_set_default(ctx):
     expect_ok(ctx.gh("repo", "set-default", "--unset", cwd=local))
     result = git(ctx, "config", "--get", "remote.origin.gh-resolved", cwd=local, ok=(1,))
     assert not result.stdout
-    clean_failure(ctx.gh("repo", "set-default", "--view", cwd=local, ok=None), "default")
+    # With no default set, --view explains that on stderr and still exits 0.
+    result = expect_ok(ctx.gh("repo", "set-default", "--view", cwd=local))
+    assert "No default remote repository has been set" in result.stderr, result
 
 
 @case(command="repo set-default", variant="outside git repository")
@@ -814,11 +856,20 @@ def repo_sync(ctx):
                   {"message": "advance upstream", "content": base64.b64encode(b"advance\n").decode()})
     expect_ok(ctx.gh("repo", "sync", fork))
     source_sha = ctx.api("GET", f"repos/{source}/git/ref/heads/{branch}")["object"]["sha"]
-    assert ctx.api("GET", f"repos/{fork}/git/ref/heads/{branch}")["object"]["sha"] == source_sha
-    ctx.api("PUT", f"repos/{fork}/contents/diverge.txt",
-            {"message": "diverge", "content": base64.b64encode(b"diverge\n").decode()})
+    fork_sha = ctx.api("GET", f"repos/{fork}/git/ref/heads/{branch}")["object"]["sha"]
+    assert fork_sha == source_sha, ("fast-forward sync", fork_sha, source_sha)
+    # A conflicting change on each side: merge-upstream refuses it with 409, and gh --force then
+    # resets the fork's branch to the source commit. (A clean divergence would be merged instead.)
+    fork_blob = ctx.api("GET", f"repos/{fork}/contents/advance.txt")["sha"]
+    ctx.api("PUT", f"repos/{fork}/contents/advance.txt",
+            {"message": "diverge", "sha": fork_blob, "content": base64.b64encode(b"fork side\n").decode()})
+    source_blob = ctx.sweep.api(account, "GET", f"repos/{source}/contents/advance.txt")["sha"]
+    ctx.sweep.api(account, "PUT", f"repos/{source}/contents/advance.txt",
+                  {"message": "upstream side", "sha": source_blob, "content": base64.b64encode(b"upstream side\n").decode()})
+    source_sha = ctx.api("GET", f"repos/{source}/git/ref/heads/{branch}")["object"]["sha"]
     expect_ok(ctx.gh("repo", "sync", fork, "--source", source, "--branch", branch, "--force"))
-    assert ctx.api("GET", f"repos/{fork}/git/ref/heads/{branch}")["object"]["sha"] == source_sha
+    fork_sha = ctx.api("GET", f"repos/{fork}/git/ref/heads/{branch}")["object"]["sha"]
+    assert fork_sha == source_sha, ("forced sync", fork_sha, source_sha)
 
 
 @case(command="repo sync", variant="missing branch destination and non-owner")
@@ -867,7 +918,8 @@ def repo_view_errors(ctx):
 
 @case(command="ruleset check", variant="default explicit branch and nonmatching branch", needs=("repo",))
 def ruleset_check(ctx):
-    ruleset_fixture(ctx)
+    # Only active rulesets apply to a branch; the other cases use evaluate mode.
+    ruleset_fixture(ctx, enforcement="active")
     default = ctx.api("GET", f"repos/{ctx.repo}")["default_branch"]
     result = expect_ok(ctx.gh("ruleset", "check", "--default", "--repo", ctx.repo))
     assert "deletion" in result.stdout.lower(), result.stdout
@@ -901,8 +953,7 @@ def ruleset_list(ctx):
 
 @case(command="ruleset list", variant="empty missing and unauthorized org", needs=("repo",))
 def ruleset_list_errors(ctx):
-    result = expect_ok(ctx.gh("ruleset", "list", "--repo", ctx.repo))
-    assert "no rulesets" in (result.stdout + result.stderr).lower(), result
+    no_results(ctx.gh("ruleset", "list", "--repo", ctx.repo))
     missing(ctx.gh("ruleset", "list", "--repo", absent_repo(ctx), ok=None))
     org = ctx.org()
     clean_failure(ctx.sweep.gh(other_account(ctx), "ruleset", "list", "--org", org, ok=None), "organization access")
@@ -919,7 +970,9 @@ def ruleset_view(ctx):
     assert parent["name"] in result.stdout, result.stdout
     result = expect_ok(ctx.gh("ruleset", "view", str(parent["id"]), "--org", org, "--parents=false"))
     assert parent["name"] in result.stdout and "deletion" in result.stdout.lower(), result.stdout
-    missing(ctx.gh("ruleset", "view", str(parent["id"]), "--repo", ctx.repo, "--parents=false", ok=None))
+    # --parents only filters gh's interactive picker; a ruleset id is fetched as it is.
+    result = expect_ok(ctx.gh("ruleset", "view", str(parent["id"]), "--repo", ctx.repo, "--parents=false"))
+    assert parent["name"] in result.stdout, result.stdout
 
 
 @case(command="ruleset view", variant="missing id repo org and denied", needs=("repo",))
