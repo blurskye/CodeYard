@@ -32,74 +32,74 @@
       "expected": {"rc": 1, "contains": "gh attestation does not currently support GHES"}
     },
     "codespace code": {
-      "kind": "interactive_only",
-      "reason": "Codespaces requires a github.com codespace OAuth login, not the GHES PAT provisioned by this harness. Assert the noninteractive auth refusal for selectors/insiders, then use real gh api to assert the live GHES route's 404. Supplying cloud credentials would target the wrong server.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace cp": {
-      "kind": "interactive_only",
-      "reason": "The CLI requires cloud Codespaces authentication before copying or opening SSH. Check the guard with real local source files, copy directions, recursive/expand/profile modes and selectors; separately check the live GHES HTTP boundary. No remote shell is started.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace create": {
-      "kind": "interactive_only",
-      "reason": "No github.com Codespaces OAuth identity is provisioned: creation flags and missing repository selection stop at the client auth guard. An adjacent real-gh POST checks Codeyard's clean GHES HTTP 404. Successful machines cannot exist on GHES.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace delete": {
-      "kind": "interactive_only",
-      "reason": "Cloud OAuth is required before named, bulk, age, owner or organization deletion. Test that refusal (including a second-account organization selection) and the live GHES DELETE 404; do not create or delete real cloud workspaces.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace edit": {
-      "kind": "interactive_only",
-      "reason": "Name/machine edits and selection modes require cloud OAuth before reaching a service. Assert the auth refusal plus Codeyard's actual GHES PATCH 404. Rename and resize success cannot be provisioned on this host.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace jupyter": {
-      "kind": "interactive_only",
-      "reason": "Jupyter requires a running cloud codespace and github.com OAuth; the CLI refuses the harness's GHES-only login first. Exercise all selectors and the live GHES GET 404 without launching a browser or Jupyter process.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace list": {
-      "kind": "interactive_only",
-      "reason": "User/repository/org listing and output modes encounter the cloud OAuth guard before HTTP. Test the refusal and separately assert live user/org Codespaces REST 404s. The organization/user selection uses a second harness account, not a cloud subscription.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace logs": {
-      "kind": "interactive_only",
-      "reason": "Snapshot/follow and selector modes require cloud OAuth. Assert a bounded immediate auth failure and a live GHES GET 404, not an invented successful log stream.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace ports forward": {
-      "kind": "interactive_only",
-      "reason": "Forwarding requires cloud OAuth and a cloud tunnel. Test auth refusal with loopback/all-interface flags and selectors plus the actual GHES 404. Port zero avoids reserving a fixed local port if selection ever proceeds; no successful tunnel can be hosted by GHES.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace ports visibility": {
-      "kind": "interactive_only",
-      "reason": "Public/private/org visibility modes and selectors require cloud OAuth. Assert the CLI refusal and live GHES GET 404. The forge has no forwarded Codespaces ports whose visibility can be changed.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace rebuild": {
-      "kind": "interactive_only",
-      "reason": "Incremental/full rebuild and selectors stop at the cloud auth guard. Assert that clean failure and the live GHES HTTP boundary; no rebuild RPC is available on GHES.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace ssh": {
-      "kind": "interactive_only",
-      "reason": "SSH, config generation, debug/profile/port and selectors all require a github.com Codespaces login. Assert the auth refusal and live GHES GET 404; a successful SSH connection requires an external cloud machine and is deliberately not emulated.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace stop": {
-      "kind": "interactive_only",
-      "reason": "Named/filtered and organization second-user stops require cloud OAuth. Assert the client refusal and actual GHES POST 404; Codeyard cannot own a running cloud codespace.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "codespace view": {
-      "kind": "interactive_only",
-      "reason": "Details, output modes and selectors stop at cloud OAuth validation. Assert the refusal and the live GHES GET 404 instead of treating a nonexistent cloud machine as a successful details fixture.",
-      "expected": {"rc": 4, "contains": "gh auth login -s codespace"}
+      "kind": "unsupported_on_ghes",
+      "reason": "gh sends Codespaces calls to the GHES API host, which has no Codespaces endpoints, so every selector and flag ends in a clean HTTP 404 as on GHES. No cloud credentials are used.",
+      "expected": {"status": 404, "contains": "Not Found"}
     },
     "copilot": {
       "kind": "local_only",
@@ -120,7 +120,7 @@
     },
     "extension install": {
       "kind": "covered",
-      "reason": "Install a local test-owned executable, check duplicate/force behavior, then request unique missing GHES repositories with normal, pinned and forced modes and assert actual HTTP 404."
+      "reason": "Install a local test-owned executable, check duplicate/force behavior, then request unique missing GHES repositories with normal, pinned and forced modes and assert gh's not-found message for the server's 404."
     },
     "extension list": {
       "kind": "local_only",
@@ -158,7 +158,7 @@
     },
     "skill publish": {
       "kind": "covered",
-      "reason": "Validate a local skill tree with dry-run (including a tag), run fix and reject invalid frontmatter; actual tagged publishing is checked for the explicit GHES Skills refusal. A cloud release is not fabricated and no local git commit is made."
+      "reason": "Validate a local skill tree with dry-run (including a tag), run fix and reject invalid frontmatter; a tagged publish stops after validation, because gh publishes only from github.com or ghe.com remotes. A cloud release is not fabricated and no local git commit is made."
     },
     "skill search": {
       "kind": "interactive_only",

@@ -8,6 +8,7 @@ paths; extension operations share a mutex because gh stores them per account.
 """
 import base64
 import re
+import shutil
 
 from gh_sweep.harness import case, expect_error, expect_json, expect_ok, expect_unsupported
 
@@ -29,7 +30,8 @@ def attestation_guard(result):
 
 
 def codespace_guard(result):
-    rejected(result, "gh auth login -s codespace", rc=4)
+    # With a GHES host gh sends Codespaces calls to its API, which has none: HTTP 404, as on GHES.
+    rejected(result, "HTTP 404: Not Found")
 
 
 def skill_guard(result):
@@ -350,7 +352,7 @@ def copilot_remove(ctx):
     # Never launch Copilot: that can execute a PATH binary or download from GitHub.
     result = ctx.gh("copilot", "--remove", ok=None)
     assert not result.timed_out and result.rc in (0, 1), result
-    assert "Copilot CLI was not installed" in result.stderr + result.stdout, result
+    assert "Copilot CLI not installed" in result.stderr + result.stdout, result
 
 
 @case(command="extension browse", variant="non-TTY refusal", serial_group="g8-extensions")
@@ -366,7 +368,8 @@ def extension_create(ctx):
     result = expect_ok(ctx.gh("extension", "create", name))
     directory = ctx.directory / ("gh-" + name)
     assert (directory / ("gh-" + name)).is_file(), result
-    for language in ("go", "other"):
+    # A Go scaffold runs `go mod init`; without Go, `other` still covers --precompiled.
+    for language in ("go", "other") if shutil.which("go") else ("other",):
         name = ctx.name("scaffold")
         result = expect_ok(ctx.gh("extension", "create", name, "--precompiled", language))
         directory = ctx.directory / ("gh-" + name)
@@ -393,16 +396,21 @@ def extension_install(ctx):
     name, directory = script_extension(ctx)
     expect_ok(ctx.gh("extension", "install", ".", cwd=directory))
     try:
-        rejected(ctx.gh("extension", "install", ".", cwd=directory, ok=None), "already installed")
-        expect_ok(ctx.gh("extension", "install", ".", "--force", cwd=directory))
+        rejected(ctx.gh("extension", "install", ".", cwd=directory, ok=None),
+                 "already an installed extension that provides")
+        # --force upgrades remote extensions only; a local one is still refused.
+        rejected(ctx.gh("extension", "install", ".", "--force", cwd=directory, ok=None),
+                 "already an installed extension that provides")
+        # gh lists a local extension by name only, with empty repository and version columns.
         listed = expect_ok(ctx.gh("extension", "list"))
-        assert name[3:] in listed.stdout and str(directory) in listed.stdout, listed
+        assert name[3:] in listed.stdout, listed
     finally:
         expect_ok(ctx.gh("extension", "remove", name[3:]))
     url = "https://codeyard-e2e.test/" + ctx.account.name + "/gh-" + ctx.name("absent")
-    expect_unsupported(ctx.gh("extension", "install", url, ok=None))
-    expect_unsupported(ctx.gh("extension", "install", url, "--pin", "v0.0.1", ok=None))
-    expect_unsupported(ctx.gh("extension", "install", url, "--force", ok=None))
+    # gh turns the 404 for a missing extension repository into its own message.
+    for flags in ((), ("--pin", "v0.0.1"), ("--force",)):
+        rejected(ctx.gh("extension", "install", url, *flags, ok=None),
+                 f"Could not find extension '{url}' on host codeyard-e2e.test")
     rejected(ctx.gh("extension", "install", ".", "--pin", "v0.0.1", cwd=directory, ok=None),
              "local extensions cannot be pinned")
 
@@ -415,7 +423,7 @@ def extension_list(ctx):
     expect_ok(ctx.gh("extension", "install", ".", cwd=directory))
     try:
         listed = expect_ok(ctx.gh("extension", "list"))
-        assert name[3:] in listed.stdout and str(directory) in listed.stdout, listed
+        assert name[3:] in listed.stdout, listed
     finally:
         expect_ok(ctx.gh("extension", "remove", name[3:]))
     assert name not in expect_ok(ctx.gh("extension", "list")).stdout
@@ -535,13 +543,15 @@ def skill_publish(ctx):
     root = ctx.directory / ctx.name("checkout")
     expect_ok(ctx.sweep.execute(ctx.account, ["git", "clone", ctx.sweep.base + "/" + ctx.repo + ".git", str(root)]))
     result = expect_ok(ctx.gh("skill", "publish", str(root), "--dry-run"))
-    assert "valid" in (result.stdout + result.stderr).lower(), result
+    assert "Dry run complete" in result.stdout + result.stderr, result
     result = expect_ok(ctx.gh("skill", "publish", str(root), "--dry-run", "--tag", ctx.name("v1")))
-    assert "valid" in (result.stdout + result.stderr).lower(), result
+    assert "Dry run complete" in result.stdout + result.stderr, result
     result = expect_ok(ctx.gh("skill", "publish", str(root), "--fix"))
     assert (root / "skills" / name / "SKILL.md").read_text() == text, result
-    # Publishing, unlike --dry-run and --fix, needs the unavailable cloud host.
-    skill_guard(ctx.gh("skill", "publish", str(root), "--tag", ctx.name("v1"), ok=None))
+    # gh publishes only from github.com or ghe.com remotes; with a GHES remote it stops after validating.
+    result = expect_ok(ctx.gh("skill", "publish", str(root), "--tag", ctx.name("v1")))
+    assert "is not a GitHub repository" in result.stdout, result
+    assert "Set up a GitHub remote to publish" in result.stderr, result
     (root / "skills" / name / "SKILL.md").write_text("---\nname: INVALID NAME\n---\n")
     rejected(ctx.gh("skill", "publish", str(root), "--dry-run", ok=None), "validation", "Validation", "invalid", "description")
 
@@ -567,8 +577,7 @@ def skill_update(ctx):
         assert list(directory.iterdir()) == []
     root, name, text = skill_tree(ctx)
     result = expect_ok(ctx.gh("skill", "update", "--dir", str(root / "skills"), "--all", "--dry-run"))
-    assert name in result.stdout + result.stderr, result
-    assert "skip" in (result.stdout + result.stderr).lower(), result
+    assert name + " has no GitHub metadata" in result.stdout + result.stderr, result
     assert (root / "skills" / name / "SKILL.md").read_text() == text
 
 
