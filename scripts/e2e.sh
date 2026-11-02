@@ -1628,6 +1628,16 @@ t_ci_api_save() {
     wait_ci_run "$id" "$deadline"
 }
 
+# Every gh command and flag against this round's server; opt in with E2E_GH_SWEEP=1.
+t_gh_sweep() {
+    local rc=0
+    "$GITHUB_PYTHON" -I "$ROOT/scripts/gh_sweep/harness.py" --base "$BASE" --workers "${E2E_GH_SWEEP_WORKERS:-4}" \
+        --per-account 2 --record-output "$RUN/gh-sweep-argv.json" || rc=$?
+    "$GITHUB_PYTHON" -I "$ROOT/scripts/gh_sweep/harness.py" --check --records "$RUN/gh-sweep-argv.json" \
+        | "$GITHUB_PYTHON" -I -c 'import json, sys; r = json.load(sys.stdin); print("gh sweep flags not exercised:", len(r["missing_flags"]), "waived:", r["waived"])'
+    return $rc
+}
+
 # The GHES TLS tunnel and webhook receiver belong to this helper and stop before it returns.
 t_github_clients() {
     local token id engine rc=0
@@ -2425,6 +2435,7 @@ run_round() {
         step -f 'organization: created for real GitHub clients' t_org
         step -f 'tokens: created for real GitHub clients' t_tokens
         step 'real clients: GHES gh commands, native github-script and schema-checked webhooks' t_github_clients
+        [[ ${E2E_GH_SWEEP:-0} != 1 ]] || step 'real gh sweep: every gh command and flag, several accounts at once' t_gh_sweep
         ROUND_BLOCKED=0
         step 'log: the server log has no panic' t_log_clean
         step -i 'shutdown: SIGTERM exits with status 0' stop_server
@@ -2466,6 +2477,7 @@ run_round() {
     step 'ci: act ran the workflow, run succeeded, logs contain hello' t_ci_result
     step 'ci: an API file save queues the push workflow' t_ci_api_save
     step 'real clients: GHES gh commands, native github-script and schema-checked webhooks' t_github_clients
+    [[ ${E2E_GH_SWEEP:-0} != 1 ]] || step 'real gh sweep: every gh command and flag, several accounts at once' t_gh_sweep
     step -i 'restart: SIGTERM stops the server cleanly' stop_server
     step -f -i 'restart: server starts again on the same data' start_server
     step 'restart: sessions, repositories, CI history and SSH host key survive' t_after_restart
