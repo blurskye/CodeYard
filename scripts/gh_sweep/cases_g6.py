@@ -36,6 +36,11 @@ def _client_error(result, text):
     assert "panic:" not in result.stderr.lower(), result.stderr
 
 
+def _no_workflow(result):
+    """gh rewrites a workflow 404 as "workflow X not found on the default branch"."""
+    return expect_error(result, status=404, contains="not found on the default branch")
+
+
 def _env(ctx):
     name = ctx.name("environment")
     ctx.api("PUT", f"repos/{ctx.repo}/environments/{name}", {})
@@ -232,11 +237,13 @@ def cache_list_objects(ctx):
 def cache_delete_empty(ctx):
     result = ctx.gh("cache", "delete", "--repo", ctx.repo, "--all", ok=None)
     _client_error(result, "no caches")
+    # The success note is for terminals only.
     result = expect_ok(ctx.gh("cache", "delete", "--repo", ctx.repo, "--all", "--succeed-on-no-caches"))
-    assert "no caches" in (result.stdout + result.stderr).lower(), result
-    expect_unsupported(ctx.gh("cache", "delete", MISSING_ID, "--repo", ctx.repo, ok=None))
-    expect_unsupported(ctx.gh("cache", "delete", ctx.name("cache"), "--ref", "refs/heads/main",
-                              "--repo", ctx.repo, ok=None))
+    assert result.stdout == "", result
+    # gh rewrites a 404 for an id or key as "Could not find a cache matching ...".
+    _client_error(ctx.gh("cache", "delete", MISSING_ID, "--repo", ctx.repo, ok=None), "Could not find a cache matching")
+    _client_error(ctx.gh("cache", "delete", ctx.name("cache"), "--ref", "refs/heads/main",
+                         "--repo", ctx.repo, ok=None), "Could not find a cache matching")
     expect_unsupported(ctx.gh("cache", "delete", "--all", "--repo", _missing(ctx), ok=None))
     _client_error(ctx.gh("cache", "delete", "--repo", ctx.repo, "--succeed-on-no-caches", ok=None), "--all")
 
@@ -248,7 +255,8 @@ def cache_delete_objects(ctx):
     prefix = workflow["cache_prefix"]
     victim = next(row for row in rows if row["key"] == prefix + "0")
     wrong_ref = "refs/heads/" + ctx.name("absent")
-    expect_unsupported(ctx.gh("cache", "delete", prefix + "0", "--repo", ctx.repo, "--ref", wrong_ref, ok=None))
+    _client_error(ctx.gh("cache", "delete", prefix + "0", "--repo", ctx.repo, "--ref", wrong_ref, ok=None),
+                  "Could not find a cache matching")
     _client_error(ctx.gh("cache", "delete", "--all", "--repo", ctx.repo, "--ref", wrong_ref, ok=None), "no caches")
     expect_ok(ctx.gh("cache", "delete", "--all", "--repo", ctx.repo, "--ref", wrong_ref, "--succeed-on-no-caches"))
     assert len(ctx.api("GET", f"repos/{ctx.repo}/actions/caches")["actions_caches"]) == 3
@@ -266,7 +274,9 @@ def cache_delete_objects(ctx):
 
 @case(command="workflow list", variant="empty and 404", needs=("repo",))
 def workflow_list_empty(ctx):
-    expect_json(ctx.gh("workflow", "list", "--repo", ctx.repo, "--json", "id,name,path,state"), [])
+    # An empty list prints nothing and succeeds off a terminal, even with --json.
+    result = expect_ok(ctx.gh("workflow", "list", "--repo", ctx.repo, "--json", "id,name,path,state"))
+    assert result.stdout == "", result
     expect_unsupported(ctx.gh("workflow", "list", "--repo", _missing(ctx), ok=None))
 
 
@@ -293,9 +303,12 @@ def workflow_disable(ctx):
     expect_ok(ctx.gh("workflow", "disable", str(workflow["id"]), "--repo", ctx.repo))
     assert ctx.api("GET", f"repos/{ctx.repo}/actions/workflows/{workflow['id']}")["state"] == "disabled_manually"
     expect_ok(ctx.gh("workflow", "disable", workflow["filename"], "--repo", ctx.repo))
+    # By name gh looks only among active workflows.
+    ctx.api("PUT", f"repos/{ctx.repo}/actions/workflows/{workflow['id']}/enable")
     expect_ok(ctx.gh("workflow", "disable", workflow["name"], "--repo", ctx.repo))
-    expect_unsupported(ctx.gh("workflow", "disable", MISSING_ID, "--repo", ctx.repo, ok=None))
-    expect_unsupported(ctx.gh("workflow", "disable", MISSING_ID, "--repo", _missing(ctx), ok=None))
+    assert ctx.api("GET", f"repos/{ctx.repo}/actions/workflows/{workflow['id']}")["state"] == "disabled_manually"
+    _no_workflow(ctx.gh("workflow", "disable", MISSING_ID, "--repo", ctx.repo, ok=None))
+    _no_workflow(ctx.gh("workflow", "disable", MISSING_ID, "--repo", _missing(ctx), ok=None))
     foreign = _foreign(ctx)
     # Seed the foreign repository as its owner, never mutate an existing shared repo.
     other = _other(ctx)
@@ -311,9 +324,12 @@ def workflow_enable(ctx):
     expect_ok(ctx.gh("workflow", "enable", workflow["filename"], "--repo", ctx.repo))
     assert ctx.api("GET", f"repos/{ctx.repo}/actions/workflows/{workflow['id']}")["state"] == "active"
     expect_ok(ctx.gh("workflow", "enable", str(workflow["id"]), "--repo", ctx.repo))
+    # By name gh looks only among disabled workflows.
+    ctx.api("PUT", f"repos/{ctx.repo}/actions/workflows/{workflow['id']}/disable")
     expect_ok(ctx.gh("workflow", "enable", workflow["name"], "--repo", ctx.repo))
-    expect_unsupported(ctx.gh("workflow", "enable", MISSING_ID, "--repo", ctx.repo, ok=None))
-    expect_unsupported(ctx.gh("workflow", "enable", MISSING_ID, "--repo", _missing(ctx), ok=None))
+    assert ctx.api("GET", f"repos/{ctx.repo}/actions/workflows/{workflow['id']}")["state"] == "active"
+    _no_workflow(ctx.gh("workflow", "enable", MISSING_ID, "--repo", ctx.repo, ok=None))
+    _no_workflow(ctx.gh("workflow", "enable", MISSING_ID, "--repo", _missing(ctx), ok=None))
     foreign = _foreign(ctx)
     ctx.sweep.api(_other(ctx), "PUT", f"repos/{foreign}/contents/.github/workflows/proof.yml",
                   {"message": "fixture", "content": base64.b64encode(workflow["source"].encode()).decode()})
@@ -329,10 +345,10 @@ def workflow_view(ctx):
                               "--yaml", "--ref", workflow["branch"])).stdout
     assert source.strip() == workflow["source"].strip(), source
     assert workflow["name"] in expect_ok(ctx.gh("workflow", "view", workflow["name"], "--repo", ctx.repo)).stdout
-    expect_unsupported(ctx.gh("workflow", "view", MISSING_ID, "--repo", ctx.repo, ok=None))
-    expect_unsupported(ctx.gh("workflow", "view", MISSING_ID, "--repo", _missing(ctx), ok=None))
-    expect_unsupported(ctx.gh("workflow", "view", workflow["filename"], "--yaml", "--ref", ctx.name("absent"),
-                              "--repo", ctx.repo, ok=None))
+    _no_workflow(ctx.gh("workflow", "view", MISSING_ID, "--repo", ctx.repo, ok=None))
+    _no_workflow(ctx.gh("workflow", "view", MISSING_ID, "--repo", _missing(ctx), ok=None))
+    _client_error(ctx.gh("workflow", "view", workflow["filename"], "--yaml", "--ref", ctx.name("absent"),
+                         "--repo", ctx.repo, ok=None), "could not find workflow file")
 
 
 @case(command="workflow run", variant="default ref, raw/typed/file fields and JSON stdin", needs=("repo",), timeout=240)
@@ -361,8 +377,10 @@ def workflow_run_inputs(ctx):
 @case(command="workflow run", variant="missing, invalid ref/inputs/JSON, disabled, no dispatch, denied", needs=("repo",))
 def workflow_run_errors(ctx):
     workflow = _workflow(ctx)
-    expect_unsupported(ctx.gh("workflow", "run", MISSING_ID, "--repo", ctx.repo, ok=None))
-    expect_unsupported(ctx.gh("workflow", "run", MISSING_ID, "--repo", _missing(ctx), ok=None))
+    _no_workflow(ctx.gh("workflow", "run", MISSING_ID, "--repo", ctx.repo, ok=None))
+    # Without --ref gh first reads the repository's default branch over GraphQL.
+    _client_error(ctx.gh("workflow", "run", MISSING_ID, "--repo", _missing(ctx), ok=None),
+                  "Could not resolve to a Repository")
     expect_error(ctx.gh("workflow", "run", workflow["filename"], "--repo", ctx.repo, "--ref", ctx.name("absent"), "--raw-field", "message=bad-ref", ok=None), status=422)
     expect_error(ctx.gh("workflow", "run", workflow["filename"], "--repo", ctx.repo,
                         "--raw-field", "unknown=value", ok=None), status=422)
@@ -514,7 +532,8 @@ def run_rerun_errors(ctx):
     expect_unsupported(ctx.gh("run", "rerun", "--job", MISSING_ID, "--repo", ctx.repo, ok=None))
     expect_unsupported(ctx.gh("run", "rerun", MISSING_ID, "--repo", _missing(ctx), ok=None))
     expect_unsupported(ctx.gh("run", "rerun", MISSING_ID, "--repo", _foreign(ctx, private=True), ok=None))
-    _client_error(ctx.gh("run", "rerun", MISSING_ID, "--failed", "--job", MISSING_ID, "--repo", ctx.repo, ok=None), "--failed")
+    # With --job gh ignores the run ID and --failed, and looks the job up.
+    expect_unsupported(ctx.gh("run", "rerun", MISSING_ID, "--failed", "--job", MISSING_ID, "--repo", ctx.repo, ok=None))
     foreign, run_id = _foreign_finished(ctx)
     expect_error(ctx.gh("run", "rerun", run_id, "--repo", foreign, ok=None), status=403)
     expect_error(ctx.gh("run", "rerun", run_id, "--failed", "--repo", foreign, ok=None), status=403)
@@ -669,10 +688,11 @@ def variable_get(ctx):
 @case(command="variable get", variant="missing name/repo/env/org and permission", needs=("repo",))
 def variable_get_errors(ctx):
     name = _name(ctx)
-    expect_unsupported(ctx.gh("variable", "get", name, "--repo", ctx.repo, ok=None))
-    expect_unsupported(ctx.gh("variable", "get", name, "--repo", _missing(ctx), ok=None))
-    expect_unsupported(ctx.gh("variable", "get", name, "--repo", ctx.repo, "--env", ctx.name("missing"), ok=None))
-    expect_unsupported(ctx.gh("variable", "get", name, "--org", ctx.name("missing"), ok=None))
+    # gh reports any 404 as "variable X was not found".
+    _client_error(ctx.gh("variable", "get", name, "--repo", ctx.repo, ok=None), "was not found")
+    _client_error(ctx.gh("variable", "get", name, "--repo", _missing(ctx), ok=None), "was not found")
+    _client_error(ctx.gh("variable", "get", name, "--repo", ctx.repo, "--env", ctx.name("missing"), ok=None), "was not found")
+    _client_error(ctx.gh("variable", "get", name, "--org", ctx.name("missing"), ok=None), "was not found")
     expect_error(ctx.gh("variable", "get", name, "--repo", _foreign(ctx), ok=None), status=403)
     foreign_repo, foreign_env = _foreign_env(ctx)
     expect_error(ctx.gh("variable", "get", name, "--repo", foreign_repo, "--env", foreign_env, ok=None), status=403)
@@ -780,16 +800,22 @@ def secret_set_org(ctx):
     org, name = ctx.org(), _name(ctx)
     repo = ctx.sweep.create_repo(ctx.account, ctx.name("org-repo"), org=org)
     expect_ok(ctx.gh("secret", "set", name, "--org", org, "--body", "private"))
-    assert _values(ctx, "secrets", org=org)[0]["visibility"] == "private"
+    rows = _values(ctx, "secrets", org=org)
+    assert rows[0]["visibility"] == "private", rows
     for visibility in ("all", "private"):
         expect_ok(ctx.gh("secret", "set", name, "--org", org, "--visibility", visibility, "--body", "value"))
-        assert _values(ctx, "secrets", org=org)[0]["visibility"] == visibility
+        rows = _values(ctx, "secrets", org=org)
+        assert rows[0]["visibility"] == visibility, rows
     expect_ok(ctx.gh("secret", "set", name, "--org", org, "--visibility", "selected", "--repos", repo["name"], "--body", "selected"))
     selected = ctx.api("GET", f"orgs/{org}/actions/secrets/{name}/repositories")["repositories"]
     assert [row["id"] for row in selected] == [repo["id"]], selected
-    expect_ok(ctx.gh("secret", "set", name, "--org", org, "--no-repos-selected", "--body", "none"))
-    assert ctx.api("GET", f"orgs/{org}/actions/secrets/{name}/repositories")["repositories"] == []
-    assert _values(ctx, "secrets", org=org)[0]["visibility"] == "selected"
+    # gh sends visibility=selected without a repository list, so check it on a new secret.
+    empty = _name(ctx)
+    expect_ok(ctx.gh("secret", "set", empty, "--org", org, "--no-repos-selected", "--body", "none"))
+    selected = ctx.api("GET", f"orgs/{org}/actions/secrets/{empty}/repositories")["repositories"]
+    assert selected == [], selected
+    row = next(row for row in _values(ctx, "secrets", org=org) if row["name"] == empty)
+    assert row["visibility"] == "selected", row
     imported = _name(ctx)
     expect_ok(ctx.gh("secret", "set", "--org", org, "--visibility", "all", "--env-file", "-", input=f"{imported}=value\n"))
     _secret_present(ctx, imported, org=org)
