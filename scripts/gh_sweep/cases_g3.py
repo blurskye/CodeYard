@@ -694,7 +694,8 @@ def label_create(ctx):
     expect_ok(ctx.gh("label", "create", name, "--repo", ctx.repo, "--color", "AABBCC", "--description", "first description"))
     row = ctx.api("GET", f"repos/{ctx.repo}/labels/{name}")
     assert (row["name"], row["color"], row["description"]) == (name, "aabbcc", "first description"), row
-    expect_error(ctx.gh("label", "create", name, "--repo", ctx.repo, ok=None), status=422)
+    # gh turns GitHub's already_exists 422 into its own message.
+    _failure(ctx.gh("label", "create", name, "--repo", ctx.repo, ok=None), "already exists; use `--force`")
     expect_ok(ctx.gh("label", "create", name, "--repo", ctx.repo, "--force", "--color", "001122", "--description", "replacement"))
     row = ctx.api("GET", f"repos/{ctx.repo}/labels/{name}")
     assert (row["color"], row["description"]) == ("001122", "replacement"), row
@@ -714,7 +715,7 @@ def label_edit(ctx):
     row = ctx.api("GET", f"repos/{ctx.repo}/labels/{renamed}")
     assert (row["name"], row["color"], row["description"]) == (renamed, "abcdef", "new description"), row
     existing = _label(ctx)["name"]
-    expect_error(ctx.gh("label", "edit", renamed, "--repo", ctx.repo, "--name", existing, ok=None), status=422)
+    _failure(ctx.gh("label", "edit", renamed, "--repo", ctx.repo, "--name", existing, ok=None), "already exists")
     # gh cannot clear a description: an empty --description alone counts as no change.
     _failure(ctx.gh("label", "edit", renamed, "--repo", ctx.repo, "--description", "", ok=None), "specify at least one")
     expect_error(ctx.gh("label", "edit", name, "--repo", ctx.repo, "--description", "missing", ok=None), status=404, contains="Not Found")

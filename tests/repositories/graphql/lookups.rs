@@ -10,7 +10,8 @@ async fn refused(router: &Router, token: &str, document: &str) -> Value {
     body
 }
 
-pub(super) async fn exercise(router: &Router, token: &str) {
+pub(super) async fn exercise(router: &Router, (token, other): (&str, &str)) {
+    refused_changes(router, (token, other)).await;
     let body = refused(
         router,
         token,
@@ -84,4 +85,109 @@ pub(super) async fn exercise(router: &Router, token: &str) {
     );
     assert_eq!(data["repository"]["absent"], Value::Null);
     assert_eq!(data["repository"]["gone"], Value::Null);
+}
+
+async fn created(router: &Router, token: &str, path: &str, body: Value) -> Value {
+    let (status, saved) = request(router, Some(token), "POST", path, body).await;
+    assert_eq!(status, StatusCode::CREATED, "{path}: {saved}");
+    saved
+}
+
+/// A reader of a public repository who may not change its issue or draft status gets
+/// GitHub's FORBIDDEN wording. gh's empty classic projectIds list is accepted.
+async fn refused_changes(router: &Router, (token, other): (&str, &str)) {
+    created(
+        router,
+        token,
+        "/api/v3/user/repos",
+        json!({"name":"lookups-public","auto_init":true}),
+    )
+    .await;
+    let base = "/api/v3/repos/graphql-alice/lookups-public";
+    let (status, main) = request(
+        router,
+        Some(token),
+        "GET",
+        &format!("{base}/git/ref/heads/main"),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{main}");
+    created(
+        router,
+        token,
+        &format!("{base}/git/refs"),
+        json!({"ref":"refs/heads/feature","sha":main["object"]["sha"]}),
+    )
+    .await;
+    let (status, saved) = request(
+        router,
+        Some(token),
+        "PUT",
+        &format!("{base}/contents/feature.txt"),
+        json!({"message":"Feature","content":"aGVsbG8K","branch":"feature"}),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{saved}");
+    let pull = created(
+        router,
+        token,
+        &format!("{base}/pulls"),
+        json!({"title":"Draft","head":"feature","base":"main","draft":true}),
+    )
+    .await;
+    let issue = created(
+        router,
+        token,
+        &format!("{base}/issues"),
+        json!({"title":"Public issue"}),
+    )
+    .await;
+    for (mutation, input) in [
+        (
+            "UpdateIssue",
+            json!({"id":issue["node_id"],"title":"Denied"}),
+        ),
+        ("CloseIssue", json!({"issueId":issue["node_id"]})),
+        (
+            "MarkPullRequestReadyForReview",
+            json!({"pullRequestId":pull["node_id"]}),
+        ),
+    ] {
+        let field = format!("{}{}", mutation[..1].to_ascii_lowercase(), &mutation[1..]);
+        let (status, body) = call(
+            router,
+            Some(other),
+            &format!(
+                "mutation($input:{mutation}Input!){{{field}(input:$input){{clientMutationId}}}}"
+            ),
+            json!({"input":input}),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{body}");
+        assert_eq!(body["errors"][0]["type"], "FORBIDDEN", "{body}");
+        assert_eq!(
+            body["errors"][0]["message"],
+            format!("graphql-bob does not have the correct permissions to execute `{mutation}`")
+        );
+    }
+    let update = "mutation($input:UpdateIssueInput!){updateIssue(input:$input){issue{title}}}";
+    let data = query(
+        router,
+        token,
+        update,
+        json!({"input":{"id":issue["node_id"],"projectIds":[]}}),
+    )
+    .await;
+    assert_eq!(data["updateIssue"]["issue"]["title"], "Public issue");
+    let body = refused(
+        router,
+        token,
+        &format!(
+            "mutation{{updateIssue(input:{{id:{},projectIds:[\"PRO_missing\"]}}){{issue{{id}}}}}}",
+            issue["node_id"]
+        ),
+    )
+    .await;
+    assert_eq!(body["errors"][0]["message"], "Could not resolve to a node");
 }

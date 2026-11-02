@@ -299,6 +299,19 @@ pub(super) fn error(message: impl Into<String>, kind: &str) -> Error {
     Error::new(message).extend_with(|_, e| e.set("type", kind))
 }
 
+/// GitHub's answer when the viewer can see the object but may not run this mutation.
+fn forbidden(field: &str, request: &RequestContext) -> Error {
+    let (first, rest) = field.split_at(field.len().min(1));
+    error(
+        format!(
+            "{} does not have the correct permissions to execute `{}{rest}`",
+            request.auth.user.username,
+            first.to_ascii_uppercase()
+        ),
+        "FORBIDDEN",
+    )
+}
+
 fn error_kind(error: &Error) -> Option<&str> {
     match error.extensions.as_ref()?.get("type")? {
         async_graphql::Value::String(kind) => Some(kind),

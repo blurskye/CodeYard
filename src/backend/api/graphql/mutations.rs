@@ -62,6 +62,21 @@ pub(super) fn issue_error(error: issues::OperationError) -> Error {
     };
     Error::new(error.to_string()).extend_with(|_, e| e.set("type", kind))
 }
+/// The viewer can read the repository, so a refused change to someone else's issue is
+/// GitHub's FORBIDDEN, not a missing repository.
+pub(super) fn issue_change_error(
+    error: issues::OperationError,
+    author_id: i64,
+    field: &str,
+    request: &RequestContext,
+) -> Error {
+    match error {
+        issues::OperationError::Missing { .. } if author_id != request.auth.user.id => {
+            super::forbidden(field, request)
+        }
+        error => issue_error(error),
+    }
+}
 
 pub(super) async fn resolve(
     field: &str,
@@ -129,6 +144,7 @@ pub(super) async fn resolve(
             "labelIds",
             "assigneeIds",
             "milestoneId",
+            "projectIds",
             "clientMutationId",
         ],
         "createPullRequest" => &[
@@ -152,6 +168,7 @@ pub(super) async fn resolve(
             "labelIds",
             "assigneeIds",
             "milestoneId",
+            "projectIds",
             "clientMutationId",
         ],
         "archiveRepository" | "unarchiveRepository" => &["repositoryId", "clientMutationId"],
@@ -209,6 +226,12 @@ pub(super) async fn resolve(
         return Err(Error::new(format!(
             "Codeyard does not support {field}.{name} yet"
         )));
+    }
+    // projectIds lists classic projects, which Codeyard does not have. gh sends an empty
+    // list beside its Projects edits; any ID in it names nothing.
+    let projects = &input["projectIds"];
+    if !(projects.is_null() || projects.as_array().is_some_and(Vec::is_empty)) {
+        return Err(missing());
     }
     if request.bounded()
         && matches!(
@@ -275,7 +298,7 @@ pub(super) async fn resolve(
                         },
                     )
                     .await
-                    .map_err(issue_error)?
+                    .map_err(|error| issue_change_error(error, current.author_id, field, request))?
                 };
                 super::metadata_mutations::apply(
                     &repo,
@@ -499,7 +522,12 @@ pub(super) async fn resolve(
                         field == "convertPullRequestToDraft",
                     )
                     .await
-                    .map_err(pull_error)?
+                    .map_err(|error| match error {
+                        pull_requests::OperationError::Denied { .. } => {
+                            super::forbidden(field, request)
+                        }
+                        error => pull_error(error),
+                    })?
                 } else if field == "mergePullRequest" {
                     request.authorize(repo.id, "contents", true).await?;
                     let method = merge_method(&input, &current)?;

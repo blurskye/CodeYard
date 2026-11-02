@@ -994,7 +994,7 @@ async fn contract(pg: bool) {
         node_id::encode("R", repo.id).into(),
     )
     .await;
-    lookups::exercise(&router, token).await;
+    lookups::exercise(&router, (token, &credentials[1])).await;
     f.execute(
         "UPDATE graphql_rate_limits SET used=5000 WHERE token_id=$1",
         &[token_ids[0]],
