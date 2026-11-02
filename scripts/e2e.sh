@@ -1796,7 +1796,7 @@ t_runners_share() {
         [[ -n $sha ]]
         put "shared_$n" "$run $sha"
     done
-    until [[ $(pg_query "SELECT count(DISTINCT worker) FROM ci_runs WHERE status='running' AND repository_id=(SELECT id FROM repositories WHERE name='runners')") == 2 ]]; do
+    until [[ $(pg_query "SELECT count(DISTINCT worker) FROM ci_runs WHERE status='running' AND repo_id=(SELECT id FROM repositories WHERE name='runners')") == 2 ]]; do
         ((SECONDS < deadline)) || { rm -f "$RUN/runner-latch"; echo 'both runners did not claim work' >&2; return 1; }
         sleep 0.2
     done
