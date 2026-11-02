@@ -102,10 +102,13 @@ def serving(server):
 
 
 class Client:
-    def __init__(self, base, directory, proxy, certificate):
+    def __init__(self, base, directory, proxy, certificate, skip_runs=""):
         self.failures = []
         self.passes = []
         self.diagnostics = []
+        # Why runs cannot finish on this host; checks that need a finished run are skipped.
+        self.skip_runs = skip_runs
+        self.skips = []
         self.command_number = 0
         self.base = base
         self.directory = directory
@@ -191,6 +194,10 @@ class Client:
     def checked(self, name):
         self.passes.append(name)
         print("PASS real-client " + name, flush=True)
+
+    def skipped(self, name):
+        self.skips.append(name)
+        print(f"SKIP real-client {name}: {self.skip_runs}", flush=True)
 
     def url(self, result, path):
         value = result.stdout.strip()
@@ -413,24 +420,28 @@ jobs:
         self.git("add", ".github/workflows/client.yml")
         self.git("commit", "-m", "Run real github-script against Codeyard")
         self.git("push", "origin", "main", git_auth=True)
-        with self.check("actions/github-script on Codeyard with GITHUB_TOKEN"):
+        script_check = "actions/github-script on Codeyard with GITHUB_TOKEN"
+        with self.check("github-script push queues a run" if self.skip_runs else script_check):
             deadline = time.monotonic() + 330
             while True:
                 runs = self.native("GET", "/api/ci/jobs?owner=e2e-org&repo=gh-client")["jobs"]
                 run = next((row for row in runs if row["head_sha"] == self.git("rev-parse", "HEAD") and row["event"] == "push"), None)
                 if run:
                     (self.directory.parent / "state-files/gh_run_id").write_text(run["id"])
-                    if run["status"] in ("success", "failed", "cancelled"):
+                    if self.skip_runs or run["status"] in ("success", "failed", "cancelled"):
                         break
                 assert time.monotonic() < deadline, "github-script push run did not finish"
                 time.sleep(1)
-            text = self.page(f"/e2e-org/gh-client/actions?job={run['id']}&view=logs&log_limit=5000")
-            assert SECRET not in text, "workflow logs leaked the stored secret"
-            assert run["status"] == "success", text
-            for marker in ("GH_SCRIPT_REST_OK " + REPO, "GH_SCRIPT_GRAPHQL_OK github-actions[bot]", "GH_SCRIPT_WRITE_OK"):
-                assert marker in text, (marker, text)
-            comments = self.api(f"repos/{REPO}/issues/{self.issue}/comments")
-            assert any(row["body"] == "github-script job token: push-client-proof" and row["user"]["login"] == "github-actions[bot]" for row in comments), comments
+            if not self.skip_runs:
+                text = self.page(f"/e2e-org/gh-client/actions?job={run['id']}&view=logs&log_limit=5000")
+                assert SECRET not in text, "workflow logs leaked the stored secret"
+                assert run["status"] == "success", text
+                for marker in ("GH_SCRIPT_REST_OK " + REPO, "GH_SCRIPT_GRAPHQL_OK github-actions[bot]", "GH_SCRIPT_WRITE_OK"):
+                    assert marker in text, (marker, text)
+                comments = self.api(f"repos/{REPO}/issues/{self.issue}/comments")
+                assert any(row["body"] == "github-script job token: push-client-proof" and row["user"]["login"] == "github-actions[bot]" for row in comments), comments
+        if self.skip_runs:
+            self.skipped(script_check)
         with self.check("gh workflow list"):
             workflows = self.data("workflow", "list", "-R", REPO, "--json", "id,name,path,state")
             assert any(row["path"] == ".github/workflows/client.yml" and row["name"] == "Real github-script client" and row["state"] == "active" for row in workflows), workflows
@@ -452,6 +463,11 @@ jobs:
             self.run_id = run["databaseId"]
         if not hasattr(self, "run_id"):
             print("BLOCKED real-client gh run view/watch/log: gh run list returned no usable run ID", flush=True)
+            return
+        if self.skip_runs:
+            for name in ("gh run watch", "gh run view", "gh run view --log",
+                         "actions/github-script on Codeyard: real job-token REST read/write, GraphQL, secrets and vars"):
+                self.skipped(name)
             return
         with self.check("gh run watch"):
             watched = self.gh("run", "watch", self.run_id, "-R", REPO, "--exit-status", "--interval", "1")
@@ -671,8 +687,10 @@ jobs:
         with self.check("gh pr checks"):
             head = self.git("rev-parse", "HEAD")
             self.gh("api", f"repos/{REPO}/statuses/{head}", "-f", "state=success", "-f", "context=ci/sweep")
-            # gh exits 8 while a check is still pending, which is expected right after the push.
-            assert "ci/sweep" in self.gh("pr", "checks", number, "-R", REPO, ok=(0, 8)).stdout
+            # gh exits 8 while a check is still pending, which is expected right after the push,
+            # and 1 for a failed check, which a workflow run is where runs cannot execute.
+            allowed = (0, 1, 8) if self.skip_runs else (0, 8)
+            assert "ci/sweep" in self.gh("pr", "checks", number, "-R", REPO, ok=allowed).stdout
         self.step("gh pr view --comments", "pr", "view", number, "-R", REPO, "--comments")
         self.step("gh pr comment", "pr", "comment", number, "-R", REPO, "--body", "pull comment")
         self.step("gh label create bug", "label", "create", "bug", "-R", REPO, "--color", "d73a4a")
@@ -719,12 +737,16 @@ jobs:
         self.step("gh workflow enable", "workflow", "enable", "client.yml", "-R", REPO)
         self.step("gh run list", "run", "list", "-R", REPO, "--json", "databaseId", expect=str(self.run_id))
         self.step("gh run view --json", "run", "view", self.run_id, "-R", REPO, "--json", "jobs")
-        self.step("gh run view --log-failed", "run", "view", self.run_id, "-R", REPO, "--log-failed")
-        with self.check("gh run rerun"):
-            self.gh("run", "rerun", self.run_id, "-R", REPO)
-            self.gh("run", "watch", self.run_id, "-R", REPO, "--exit-status", "--interval", "1")
-            result = self.data("run", "view", self.run_id, "-R", REPO, "--json", "status,conclusion")
-            assert result == {"status": "completed", "conclusion": "success"}, result
+        if self.skip_runs:
+            self.skipped("gh run view --log-failed")
+            self.skipped("gh run rerun")
+        else:
+            self.step("gh run view --log-failed", "run", "view", self.run_id, "-R", REPO, "--log-failed")
+            with self.check("gh run rerun"):
+                self.gh("run", "rerun", self.run_id, "-R", REPO)
+                self.gh("run", "watch", self.run_id, "-R", REPO, "--exit-status", "--interval", "1")
+                result = self.data("run", "view", self.run_id, "-R", REPO, "--json", "status,conclusion")
+                assert result == {"status": "completed", "conclusion": "success"}, result
         self.step("gh cache list", "cache", "list", "-R", REPO)
         self.step("gh disposable secret set", "secret", "set", "DELETE_ME", "-R", REPO, "--body", "disposable")
         self.step("gh secret delete", "secret", "delete", "DELETE_ME", "-R", REPO)
@@ -822,6 +844,9 @@ jobs:
 
     def sweep_slow_run(self):
         """A run that is still going, for gh run cancel and delete."""
+        if self.skip_runs:
+            self.skipped("gh run cancel and delete")
+            return
         self.git("checkout", "main")
         self.git("pull", "--ff-only", "origin", "main", git_auth=True)
         (self.clone / ".github/workflows/slow.yml").write_text('''name: Slow
@@ -902,12 +927,13 @@ def schema_report(failures):
     return "".join(f"{event}/{action}: " + "\n".join(errors) + "\n" for (event, action), errors in sorted(failures.items(), key=str))
 
 
-def check_deliveries(receiver, secret, directory):
+def check_deliveries(receiver, secret, directory, finished_runs=True):
     required = {("repository", "created"), ("push", None), ("create", None),
                 ("issues", "opened"), ("issues", "closed"), ("issue_comment", "created"),
                 ("pull_request", "opened"), ("pull_request", "closed"),
-                ("pull_request_review", "submitted"), ("release", "published"),
-                ("workflow_run", "completed"), ("workflow_job", "completed")}
+                ("pull_request_review", "submitted"), ("release", "published")}
+    if finished_runs:
+        required |= {("workflow_run", "completed"), ("workflow_job", "completed")}
     schemas, registry = webhook_schemas()
     seen = set()
     checked = 0
@@ -955,6 +981,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--base", required=True)
     parser.add_argument("--run", type=Path, required=True)
+    parser.add_argument("--skip-runs", metavar="REASON", default="",
+                        help="skip the checks that need a finished workflow run, for this reason")
     args = parser.parse_args()
     assert shutil.which("gh") and shutil.which("openssl"), "gh and OpenSSL are required"
     directory = args.run / "github-client"
@@ -971,7 +999,7 @@ def main():
     receiver.deliveries = []
     secret = secrets.token_hex(32)
     with serving(proxy), serving(receiver):
-        client = Client(args.base, directory, f"http://127.0.0.1:{proxy.server_port}", cert)
+        client = Client(args.base, directory, f"http://127.0.0.1:{proxy.server_port}", cert, args.skip_runs)
         client.login()
         hook = client.api("orgs/e2e-org/hooks", "--method", "POST", "--input", "-", input=json.dumps({
             "name": "web", "active": True, "events": ["*"],
@@ -983,13 +1011,17 @@ def main():
                 with client.check(operation.__name__ + " setup and remaining checks"):
                     operation()
             with client.check("signed webhook schemas"):
-                check_deliveries(receiver, secret, directory)
+                check_deliveries(receiver, secret, directory, finished_runs=not args.skip_runs)
+            if args.skip_runs:
+                client.skipped("workflow_run and workflow_job completed webhooks")
             for operation in (client.sweep_account, client.sweep_fine_grained, client.sweep_repositories, client.sweep_issues, client.sweep_pulls,
                               client.sweep_releases, client.sweep_actions, client.sweep_projects, client.sweep_discussions, client.sweep_login, client.sweep_slow_run, client.sweep_git_setup):
                 with client.check(operation.__name__):
                     operation()
             for name in client.passes:
                 print("PASS real-client summary " + name, flush=True)
+            for name in client.skips:
+                print(f"SKIP real-client summary {name}: {args.skip_runs}", flush=True)
             for diagnostic in client.diagnostics:
                 print("FAIL real-client summary " + diagnostic, flush=True)
             assert not client.failures, "real client checks failed: " + ", ".join(client.failures)
