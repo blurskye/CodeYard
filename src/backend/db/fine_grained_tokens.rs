@@ -22,6 +22,13 @@ pub struct Token {
     pub last_used_ip: Option<String>,
 }
 
+/// Portable policy predicate for trusted SQL parameter/column expressions, never request values.
+/// Non-classic credentials retain their own grant checks; an absent policy allows classic tokens.
+pub(in crate::backend::db) fn classic_allowed_condition(token: &str, organization: &str) -> String {
+    let token = format!("CAST({token} AS BIGINT)");
+    format!("NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id={organization} AND NOT policy.classic_allowed AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id={token}) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id={token}))")
+}
+
 /// A token's bounds with the live organization facts its access depends on.
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Bounds {
@@ -58,6 +65,9 @@ impl Bounds {
 /// An expiry fits a maximum of `days` when it is no later than the end of the day `days`
 /// after `from`, which is how the token form picks dates. `None` days allow no expiry.
 pub fn within(expires_at: Option<DateTime<Utc>>, from: DateTime<Utc>, days: Option<i64>) -> bool {
+    if !super::users::tokens::supported_expiry(expires_at) {
+        return false;
+    }
     match (days, expires_at) {
         (None, _) => true,
         (Some(_), None) => false,
@@ -84,6 +94,16 @@ impl Default for Policy {
     }
 }
 
+pub const MAX_REPOSITORIES: usize = 100;
+
+pub struct RepositoryChoices {
+    pub selected: Vec<(i64, String)>,
+    pub matching: Vec<(i64, String)>,
+}
+
+native_operation!(crate::backend::db::postgres::fine_grained_tokens::repository_choices, crate::backend::db::sqlite::fine_grained_tokens::repository_choices,
+    fn repository_choices(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: Option<i64>, query: &str, selected: &[i64]) -> Result<RepositoryChoices>);
+
 pub struct NewToken<'a> {
     pub name: &'a str,
     pub description: &'a str,
@@ -106,14 +126,16 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::regenerate,
     fn regenerate(pool: &DbPool, user: i64, session: &str, token: i64, hash: &str, expires_at: Option<DateTime<Utc>>) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::get, crate::backend::db::sqlite::fine_grained_tokens::get,
     fn get(pool: &DbPool, token: i64) -> Result<Option<Token>>);
-native_operation!(crate::backend::db::postgres::fine_grained_tokens::list, crate::backend::db::sqlite::fine_grained_tokens::list,
-    /// The user's newest 100 fine-grained tokens.
-    fn list(pool: &DbPool, user: i64) -> Result<Vec<Token>>);
+native_operation!(crate::backend::db::postgres::fine_grained_tokens::list_before, crate::backend::db::sqlite::fine_grained_tokens::list_before,
+    /// The user's newest 100 fine-grained tokens, older than `before` when it is given.
+    fn list_before(pool: &DbPool, user: i64, before: Option<i64>) -> Result<Vec<Token>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::bounds, crate::backend::db::sqlite::fine_grained_tokens::bounds,
     fn bounds(pool: &DbPool, token: i64) -> Result<Option<Bounds>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::repositories, crate::backend::db::sqlite::fine_grained_tokens::repositories,
-    /// The selected repositories' ids and names, at most 100.
-    fn repositories(pool: &DbPool, token: i64) -> Result<Vec<(i64, String)>>);
+    /// The selected repositories' ids and names, at most 100, that are still in the token's
+    /// owner domain and readable by `actor`. Only the token's user or an owner of its
+    /// organization sees them, through a live `credential`.
+    fn repositories(pool: &DbPool, token: i64, actor: i64, credential: &super::users::accounts::AccountCredential<'_>) -> Result<Vec<(i64, String)>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::selected, crate::backend::db::sqlite::fine_grained_tokens::selected,
     fn selected(pool: &DbPool, token: i64, repo: i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, crate::backend::db::sqlite::fine_grained_tokens::policy,
@@ -121,14 +143,52 @@ native_operation!(crate::backend::db::postgres::fine_grained_tokens::policy, cra
     fn policy(pool: &DbPool, org: i64) -> Result<Policy>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::set_policy, crate::backend::db::sqlite::fine_grained_tokens::set_policy,
     /// Saves the policy while `actor` owns the organization; false when they do not.
-    fn set_policy(pool: &DbPool, actor: i64, org: i64, policy: &Policy) -> Result<bool>);
+    fn set_policy(pool: &DbPool, actor: impl Into<super::credentials::Actor>, org: i64, policy: &Policy) -> Result<bool>);
+/// Which of an organization's tokens a listing shows: those in `status` whose users are still
+/// members and that pass every filter given, newest first unless `ascending`.
+#[derive(Default)]
+pub struct TokenFilter<'a> {
+    pub status: &'a str,
+    /// The usernames of the tokens' users; any user when empty.
+    pub owners: &'a [String],
+    /// Any token when empty.
+    pub token_ids: &'a [i64],
+    /// A repository the token must reach.
+    pub repository: Option<i64>,
+    /// A catalog permission the token must hold, at this level when one is given.
+    pub permission: Option<(&'a str, Option<&'a str>)>,
+    pub last_used_before: Option<DateTime<Utc>>,
+    pub last_used_after: Option<DateTime<Utc>>,
+    pub ascending: bool,
+    /// Only tokens with a lower id: the cursor of a newest-first page.
+    pub before: Option<i64>,
+}
+
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::organization_tokens, crate::backend::db::sqlite::fine_grained_tokens::organization_tokens,
-    /// The organization's newest 1000 tokens with `status` whose users are still members.
-    fn organization_tokens(pool: &DbPool, org: i64, status: &str) -> Result<Vec<Token>>);
+    /// A page of the organization's tokens that `filter` shows.
+    fn organization_tokens(pool: &DbPool, org: i64, filter: &TokenFilter<'_>, offset: i64, limit: i64) -> Result<Vec<Token>>);
+
+/// One page of the owners' token tab, read in one snapshot.
+pub struct OwnerTokens {
+    pub policy: Policy,
+    pub pending: Vec<Token>,
+    pub approved: Vec<Token>,
+    /// The listed tokens' selected repositories as (token id, name), at most 100 per token.
+    pub repositories: Vec<(i64, String)>,
+}
+
+native_operation!(crate::backend::db::postgres::fine_grained_tokens::owner_tokens, crate::backend::db::sqlite::fine_grained_tokens::owner_tokens,
+    /// None unless `actor` is an active owner of `org` through the live `session`. Each list
+    /// holds at most `limit` tokens, newest first, below its cursor in `before` (pending,
+    /// approved); a cursor of 0 starts at the newest.
+    fn owner_tokens(pool: &DbPool, actor: i64, session: &str, org: i64, before: (i64, i64), limit: i64) -> Result<Option<OwnerTokens>>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::review, crate::backend::db::sqlite::fine_grained_tokens::review,
     /// Moves the organization's tokens in `from` to `status` while `reviewer` owns the
     /// organization, and returns how many changed.
-    fn review(pool: &DbPool, org: i64, reviewer: i64, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+    fn review(pool: &DbPool, org: i64, reviewer: impl Into<super::credentials::Actor>, tokens: &[i64], from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
+native_operation!(crate::backend::db::postgres::fine_grained_tokens::review_all, crate::backend::db::sqlite::fine_grained_tokens::review_all,
+    /// `review` for every token in `from` whose user is still a member, in one statement.
+    fn review_all(pool: &DbPool, org: i64, reviewer: impl Into<super::credentials::Actor>, from: &str, status: &str, reason: Option<&str>) -> Result<u64>);
 native_operation!(crate::backend::db::postgres::fine_grained_tokens::classic_refused, crate::backend::db::sqlite::fine_grained_tokens::classic_refused,
     /// Whether `token` is a classic personal token and `org` refuses classic tokens. OAuth,
     /// App, job and fine-grained tokens are never classic.

@@ -5,7 +5,7 @@ use crate::backend::{
     db::{self, interactions},
     repositories::{
         access,
-        store::{repo_store, CommitFilter, ErrorKind},
+        store::{repo_store, CommitFilter},
     },
 };
 use anyhow::Result;
@@ -18,14 +18,7 @@ pub async fn prepare(
     actor: &db::models::User,
     repository: &db::models::Repository,
 ) -> Result<()> {
-    let Some(restriction) = interactions::effective_restriction(&state.pool, repository.id).await?
-    else {
-        return Ok(());
-    };
-    if restriction.limit == "collaborators_only"
-        || (restriction.limit == "existing_users"
-            && actor.created_at <= chrono::Utc::now() - chrono::Duration::days(1))
-    {
+    if !interactions::proof_required(&state.pool, actor.id, repository.id).await? {
         return Ok(());
     }
     if !access::can_read(&state.pool, Some(actor), repository).await?
@@ -53,40 +46,22 @@ pub async fn prepare(
     let store = repo_store(repository, state.cluster.as_ref());
     let deadline = Instant::now() + crate::backend::git::COMMIT_WALK_TIMEOUT;
     // The tip comes from the primary, so a stale replica cannot record a proof for an old head.
-    let head = match store
-        .commit_from_primary(&format!("refs/heads/{}", source.default_branch))
-        .await
-    {
-        Ok(commit) => Some(commit.sha),
-        Err(error) if error.kind == ErrorKind::NotFound => None,
-        Err(error) => return Err(error.into()),
+    let head = store
+        .refs_from_primary()
+        .await?
+        .remove(&format!("refs/heads/{}", source.default_branch));
+    let contributed = if let Some(head) = head.filter(|_| !emails.is_empty()) {
+        let filter = CommitFilter {
+            author_emails: emails.clone(),
+            ..CommitFilter::default()
+        };
+        !store
+            .commits_until(&head, 0, 1, &filter, deadline)
+            .await?
+            .is_empty()
+    } else {
+        false
     };
-    let mut contributed = false;
-    if let Some(head) = head {
-        'addresses: for email in &emails {
-            let filter = CommitFilter {
-                author: Some(email.clone()),
-                ..CommitFilter::default()
-            };
-            let mut offset = 0;
-            loop {
-                let page = store
-                    .commits_until(&head, offset, 100, &filter, deadline)
-                    .await?;
-                if page
-                    .iter()
-                    .any(|commit| commit.author_email.eq_ignore_ascii_case(email))
-                {
-                    contributed = true;
-                    break 'addresses;
-                }
-                if page.len() < 100 {
-                    break;
-                }
-                offset += page.len();
-            }
-        }
-    }
     anyhow::ensure!(
         interactions::save_proof(&state.pool, actor.id, &source, &emails, contributed).await?,
         "Contributor proof source changed"

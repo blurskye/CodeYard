@@ -98,6 +98,8 @@ enums!(
     PullRequestReviewDecision,
     StatusState,
     CheckRunState,
+    CheckStatusState,
+    CheckConclusionState,
     IssueSearchType,
     LexicalFallbackReason,
     LockReason,
@@ -273,6 +275,10 @@ objects!(
     PullRequestChangedFileEdge,
     Status,
     StatusContext,
+    CheckRun,
+    CheckSuite,
+    WorkflowRun,
+    Workflow,
     StatusCheckRollup,
     StatusCheckRollupContextConnection,
     StatusCheckRollupContextEdge,
@@ -323,7 +329,7 @@ macro_rules! abstract_types {
         }
     };
 }
-abstract_types!(Node: Team,CommitComment,User,Bot, Organization, Repository, Issue, PullRequest, Label, IssueComment,Milestone,Commit,Ref,Blob,Tree,Tag,Reaction,Release,ReleaseAsset,PullRequestReview,PullRequestReviewComment,StatusContext,Status,StatusCheckRollup,ReviewRequest,ProjectV2,ProjectV2Item,ProjectV2Field,ProjectV2SingleSelectField,ProjectV2IterationField,DraftIssue,MergedEvent,ReadyForReviewEvent,ClosedEvent,ReopenedEvent,RenamedTitleEvent,LabeledEvent,UnlabeledEvent,AssignedEvent,UnassignedEvent,MilestonedEvent,DemilestonedEvent,LockedEvent,UnlockedEvent,Discussion,DiscussionCategory,DiscussionComment,Gist);
+abstract_types!(Node: CheckRun,CheckSuite,IssueType,LinkedBranch,RepositoryRuleset,Team,CommitComment,User,Bot, Organization, Repository, Issue, PullRequest, Label, IssueComment,Milestone,Commit,Ref,Blob,Tree,Tag,Reaction,Release,ReleaseAsset,PullRequestReview,PullRequestReviewComment,StatusContext,Status,StatusCheckRollup,ReviewRequest,ProjectV2,ProjectV2Item,ProjectV2Field,ProjectV2SingleSelectField,ProjectV2IterationField,DraftIssue,MergedEvent,ReadyForReviewEvent,ClosedEvent,ReopenedEvent,RenamedTitleEvent,LabeledEvent,UnlabeledEvent,AssignedEvent,UnassignedEvent,MilestonedEvent,DemilestonedEvent,LockedEvent,UnlockedEvent,Discussion,DiscussionCategory,DiscussionComment,Gist);
 abstract_types!(Actor: User,Bot);
 abstract_types!(Assignee: User);
 abstract_types!(IssueOrPullRequest: Issue, PullRequest);
@@ -333,9 +339,9 @@ abstract_types!(Assignable: Issue, PullRequest);
 abstract_types!(Lockable: Issue, PullRequest);
 abstract_types!(RepositoryOwner: User, Organization);
 abstract_types!(GitObject: Commit,Blob,Tree,Tag);
-abstract_types!(Reactable: Issue,PullRequest,IssueComment,PullRequestReview,PullRequestReviewComment);
+abstract_types!(Reactable: Issue,PullRequest,IssueComment,PullRequestReview,PullRequestReviewComment,Release,CommitComment);
 abstract_types!(RequestedReviewer: User,Bot,Team);
-abstract_types!(StatusCheckRollupContext: StatusContext);
+abstract_types!(StatusCheckRollupContext: StatusContext,CheckRun);
 abstract_types!(Starrable: Repository);
 abstract_types!(Subscribable: Repository);
 abstract_types!(RuleSource: Organization, Repository);
@@ -366,6 +372,13 @@ impl Object {
         arguments: &Arguments,
         request: &RequestContext,
     ) -> Result<Value> {
+        if ty == "Mutation" {
+            request
+                .auth
+                .require_live(&request.state.pool)
+                .await
+                .map_err(|error| error.graphql())?;
+        }
         if let Some(repo) = self.0.get("_repo").and_then(Value::as_i64).or_else(|| {
             (ty == "Repository")
                 .then(|| self.0["databaseId"].as_i64())
@@ -373,7 +386,7 @@ impl Object {
         }) {
             let scope = match ty {
                 "Repository" => match field {
-                    "issue" | "issues" | "labels" | "milestone" | "milestones"
+                    "issue" | "issues" | "issueTypes" | "labels" | "milestone" | "milestones"
                     | "assignableUsers" | "mentionableUsers" => "issues",
                     "pullRequest" | "pullRequests" => "pull-requests",
                     "discussion"
@@ -414,6 +427,31 @@ impl Object {
             };
             request.authorize(repo, scope, false).await?;
         }
+        if ty == "StatusCheckRollup" {
+            let repo = self.0["_repo"].as_i64().ok_or_else(missing)?;
+            request.authorize(repo, "statuses", false).await?;
+            request.authorize(repo, "checks", false).await?;
+        }
+        if ty == "Organization"
+            && matches!(
+                field,
+                "team"
+                    | "rulesets"
+                    | "projects"
+                    | "projectsV2"
+                    | "projectV2"
+                    | "viewerCanCreateProjects"
+            )
+        {
+            request
+                .authorize_organization(self.0["databaseId"].as_i64().ok_or_else(missing)?)
+                .await?;
+        }
+        if self.0["_ownerKind"] == "org" {
+            request
+                .authorize_organization(self.0["_owner"].as_i64().ok_or_else(missing)?)
+                .await?;
+        }
         if request.bounded()
             && ((ty == "Query" && matches!(field, "user" | "organization" | "repositoryOwner"))
                 || (matches!(ty, "User" | "Organization")
@@ -430,6 +468,24 @@ impl Object {
             return Err(super::token_denied());
         }
         match (ty, field) {
+            ("GitActor", "user") => {
+                let email = self.0["_email"].as_str().ok_or_else(missing)?;
+                let authors = crate::backend::repositories::reads::commit_authors(
+                    &request.state.pool,
+                    &[email.to_owned()],
+                )
+                .await
+                .map_err(unavailable)?;
+                Ok(authors
+                    .into_values()
+                    .next()
+                    .filter(|user| !user.is_banned)
+                    .map_or(Value::Null, |row| user::object(&row, request.auth.user.id)))
+            }
+            ("UpdateProjectV2ItemPositionPayload", "items") => {
+                boxed(|| super::projects::resolve("ProjectV2", field, arguments, request, &self.0))
+                    .await
+            }
             (_, "repository")
                 if matches!(
                     ty,
@@ -461,6 +517,7 @@ impl Object {
                 Some(value) => Ok(value.clone()),
                 None => boxed(|| super::release::field(field, arguments, &self.0, request)).await,
             },
+            ("Blob", "text") => super::git_objects::blob_text(&self.0, request).await,
             ("Tag", "target") => {
                 let repo =
                     repository::by_id(self.0["_repo"].as_i64().ok_or_else(missing)?, request)
@@ -473,6 +530,9 @@ impl Object {
                 .await
             }
             ("TreeEntry", "object") => {
+                if self.0["mode"].as_i64() == Some(0o160000) {
+                    return Ok(Value::Null);
+                }
                 super::git_objects::load(
                     &repository::by_id(self.0["_repo"].as_i64().ok_or_else(missing)?, request)
                         .await?,
@@ -520,6 +580,10 @@ impl Object {
                 value["lexicalFallbackReason"] = Value::Null;
                 Ok(value)
             }
+            ("ReviewRequest", "pullRequest") => {
+                let id = self.0["_pull"].as_i64().ok_or_else(missing)?;
+                boxed(|| super::review_requests::pull_projection(id, request)).await
+            }
             ("User", "organizations") => {
                 boxed(|| super::repository_list::organizations(arguments, request, &self.0)).await
             }
@@ -531,7 +595,7 @@ impl Object {
                 boxed(|| node(&id, request)).await
             }
             ("Query", "rateLimit") => Ok(
-                json!({"limit":5000,"cost":1,"remaining":5000-request.rate.used,"used":request.rate.used,"nodeCount":request.nodes.load(Ordering::Relaxed),"resetAt":request.rate.reset_at}),
+                json!({"limit":db::graphql::QUERY_LIMIT,"cost":1,"remaining":db::graphql::QUERY_LIMIT.saturating_sub(request.rate.used).max(0),"used":request.rate.used,"nodeCount":request.nodes.load(Ordering::Relaxed),"resetAt":request.rate.reset_at}),
             ),
             ("Query", "resource") => boxed(|| super::projects::resource(arguments, request)).await,
             ("Mutation", _) if field.contains("ProjectV2") => {
@@ -568,9 +632,12 @@ impl Object {
             ("User" | "Organization", _) => {
                 boxed(|| user::resolve(ty, field, arguments, request, &self.0)).await
             }
-            ("Ref", "branchProtectionRule" | "compare") => {
+            ("Ref", "target" | "branchProtectionRule" | "compare") => {
                 boxed(|| super::git_objects::reference_field(field, arguments, &self.0, request))
                     .await
+            }
+            ("CheckRun" | "CheckSuite" | "WorkflowRun" | "Workflow", _) => {
+                boxed(|| super::checks::resolve(ty, field, arguments, request, &self.0)).await
             }
             ("Commit" | "Status" | "StatusContext" | "StatusCheckRollup", _) => {
                 boxed(|| super::git::resolve(ty, field, arguments, request, &self.0)).await
@@ -598,7 +665,9 @@ macro_rules! fields {
             Box::pin(async move {
                 let arguments = Arguments::new([$( (field_name(stringify!($arg)), InputType::to_value(&$arg)), )*]).with_selection(ctx);
                 let field = field_name(stringify!($method));
-                let value = self.resolve($ty, &field, &arguments, ctx.data::<RequestContext>()?).await?;
+                let request = ctx.data::<RequestContext>()?;
+                let value = self.resolve($ty, &field, &arguments, request).await?;
+                request.charge_value(&value)?;
                 Decode::decode(value)
             })
         }
@@ -630,7 +699,10 @@ impl gql::QueryResolver for Object {
             let request = ctx.data::<RequestContext>()?;
             let mut nodes = Vec::with_capacity(ids.len());
             for (index, id) in ids.iter().enumerate() {
-                match node(id.as_str(), request).await.and_then(gql::Node::decode) {
+                match node(id.as_str(), request).await.and_then(|value| {
+                    request.charge_value(&value)?;
+                    gql::Node::decode(value)
+                }) {
                     Ok(node) => nodes.push(Some(node)),
                     Err(error) => {
                         let mut error = ctx.set_error_path(error.into_server_error(ctx.item.pos));

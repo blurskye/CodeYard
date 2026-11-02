@@ -56,6 +56,10 @@ pub enum Page {
     },
     OAuthApplications {
         applications: Vec<(String, String, String)>,
+        #[serde(default)]
+        previous: Option<String>,
+        #[serde(default)]
+        next: Option<String>,
     },
     GitHubApps {
         csrf_token: String,
@@ -73,6 +77,7 @@ pub enum Page {
     ResetCode {
         csrf_token: String,
         email: String,
+        redirect: String,
         message: Option<String>,
         is_error: bool,
     },
@@ -209,9 +214,11 @@ pub fn render(page: Page) -> Element {
             csrf_token,
             credentials,
         } => crate::webui::pages::auth::oauth::register(&csrf_token, credentials),
-        Page::OAuthApplications { applications } => {
-            crate::webui::pages::auth::oauth::applications(applications)
-        }
+        Page::OAuthApplications {
+            applications,
+            previous,
+            next,
+        } => crate::webui::pages::auth::oauth::applications(applications, previous, next),
         Page::GitHubApps { csrf_token, model } => {
             crate::webui::pages::auth::apps::page(&csrf_token, model)
         }
@@ -231,9 +238,10 @@ pub fn render(page: Page) -> Element {
         Page::ResetCode {
             csrf_token,
             email,
+            redirect,
             message,
             is_error,
-        } => reset_code_page(&csrf_token, &email, message.as_deref(), is_error),
+        } => reset_code_page(&csrf_token, &email, &redirect, message.as_deref(), is_error),
         Page::ResetPassword {
             csrf_token,
             token,
@@ -392,6 +400,7 @@ mod tests {
             Page::ResetCode {
                 csrf_token: "csrf-marker".into(),
                 email: "alice@example.test".into(),
+                redirect: "/".into(),
                 message: Some("<b>Validation error</b>".into()),
                 is_error: true,
             },
@@ -419,6 +428,7 @@ mod tests {
                         }],
                         tokens: vec![],
                         sessions: vec![],
+                        session_pagination: Default::default(),
                         new_token: None,
                         password_supported: true,
                         email_notifications: true,

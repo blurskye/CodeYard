@@ -1,6 +1,10 @@
 # https://github.com/erlef/setup-beam/tree/54075bcc5e249e4758d363f27d099f55d843f124
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -15,10 +15,12 @@ pub const MAX_TEMPLATES: usize = 20;
 
 const ISSUE_TEMPLATE_DIRECTORY: &str = ".github/ISSUE_TEMPLATE";
 const ISSUE_TEMPLATE_FILE: &str = ".github/ISSUE_TEMPLATE.md";
-pub const PULL_REQUEST_TEMPLATE_PATHS: [&str; 4] = [
+pub const PULL_REQUEST_TEMPLATE_PATHS: [&str; 6] = [
     ".github/pull_request_template.md",
     ".github/PULL_REQUEST_TEMPLATE.md",
+    "pull_request_template.md",
     "PULL_REQUEST_TEMPLATE.md",
+    "docs/pull_request_template.md",
     "docs/PULL_REQUEST_TEMPLATE.md",
 ];
 
@@ -71,7 +73,7 @@ pub struct FormElement {
     /// Textarea only: a language that fences the text as code in the issue.
     pub render: String,
     /// Dropdown only: the option chosen at the start.
-    pub default: usize,
+    pub default: Option<usize>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -171,7 +173,7 @@ fn is_template_name(name: &str) -> bool {
         || ((name.ends_with(".yml") || name.ends_with(".yaml")) && !name.starts_with("config."))
 }
 
-fn template_paths(entries: Vec<super::store::TreeEntry>) -> Vec<String> {
+pub(super) fn template_paths(entries: Vec<super::store::TreeEntry>) -> Vec<String> {
     let mut paths: Vec<String> = entries
         .into_iter()
         .filter(|entry| entry.entry_type == "file" && is_template_name(&entry.name))
@@ -265,7 +267,7 @@ fn parse_form_template(path: &str, text: &str) -> Option<IssueTemplate> {
     if elements.len() > 50 {
         return None;
     }
-    let form: Vec<FormElement> = elements.iter().filter_map(form_element).collect();
+    let form: Vec<FormElement> = elements.iter().map(form_element).collect::<Option<_>>()?;
     if !form
         .iter()
         .any(|element| element.kind != FormKind::Markdown)
@@ -343,8 +345,7 @@ fn form_element(element: &serde_yaml::Value) -> Option<FormElement> {
         .and_then(|map| map.get("default"))
         .and_then(serde_yaml::Value::as_u64)
         .and_then(|index| usize::try_from(index).ok())
-        .filter(|index| *index < options.len())
-        .unwrap_or(0);
+        .filter(|index| *index < options.len());
     Some(FormElement {
         kind,
         label,
@@ -381,7 +382,9 @@ pub fn compose_form_body(form: &[FormElement], answers: &[Vec<String>]) -> Strin
                 if text.trim().is_empty() || element.render.is_empty() {
                     text
                 } else {
-                    format!("```{}\n{}\n```", element.render, text.trim_end())
+                    let longest = text.split(|ch| ch != '`').map(str::len).max().unwrap_or(0);
+                    let fence = "`".repeat(3.max(longest + 1));
+                    format!("{fence}{}\n{}\n{fence}", element.render, text.trim_end())
                 }
             }
             FormKind::Dropdown => given.join(", "),
@@ -419,7 +422,10 @@ pub fn first_missing_answer<'a>(
         let given = answers.get(index).map(Vec::as_slice).unwrap_or(&[]);
         let missing = match element.kind {
             FormKind::Markdown => false,
-            FormKind::Input | FormKind::Textarea | FormKind::Dropdown => {
+            FormKind::Input | FormKind::Textarea => {
+                element.required && given.first().is_none_or(|text| text.trim().is_empty())
+            }
+            FormKind::Dropdown => {
                 element.required && given.iter().all(|text| text.trim().is_empty())
             }
             FormKind::Checkboxes => {

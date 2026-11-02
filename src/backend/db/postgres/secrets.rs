@@ -4,6 +4,14 @@ use sqlx::PgPool;
 use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{RepoSecret, RepoSecretMeta};
 
+pub async fn encryption_samples(pool: &PgPool) -> anyhow::Result<Vec<(Vec<u8>, Vec<u8>)>> {
+    Ok(
+        sqlx::query_as(crate::backend::db::secrets::ENCRYPTION_SAMPLES_SQL)
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
 pub async fn create_or_update_secret(
     pool: &PgPool,
     encryptor: &SecretEncryptor,
@@ -11,6 +19,7 @@ pub async fn create_or_update_secret(
     name: &str,
     value: &str,
     created_by_id: Option<i64>,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     let actor_id = created_by_id.ok_or(SecretsError::Denied)?;
     let (encrypted_value, nonce) = encryptor.encrypt(value.as_bytes())?;
@@ -18,6 +27,12 @@ pub async fn create_or_update_secret(
     // The repository row is locked exclusively, so two writes cannot both count the same
     // number of secrets and together pass the limit.
     if !super::discussions::lock_repository_mutation_authority(&mut tx, actor_id, repo_id)
+        .await
+        .map_err(SecretsError::authority)?
+    {
+        return Err(SecretsError::Denied);
+    }
+    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, true)
         .await
         .map_err(SecretsError::authority)?
     {
@@ -59,6 +74,9 @@ pub async fn create_or_update_secret(
     .bind(Some(actor_id))
     .execute(&mut *tx)
     .await?;
+    if matches!(kind, SecretKind::Actions) {
+        delivery_budget(&mut tx, repo_id).await?;
+    }
     tx.commit().await?;
 
     Ok(!exists)
@@ -70,6 +88,7 @@ pub async fn repository_secret_key(
     encryptor: &SecretEncryptor,
     actor_id: i64,
     repo_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError> {
     let mut tx = pool.begin().await?;
     if !super::discussions::lock_repository_mutation_authority(&mut tx, actor_id, repo_id)
@@ -78,8 +97,13 @@ pub async fn repository_secret_key(
     {
         return Err(SecretsError::Denied);
     }
-    let key = crypto_box::SecretKey::generate(&mut rand::thread_rng());
-    let (encrypted, nonce) = encryptor.encrypt(&key.to_bytes())?;
+    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, false)
+        .await
+        .map_err(SecretsError::authority)?
+    {
+        return Err(SecretsError::Denied);
+    }
+    let (encrypted, nonce) = encryptor.generate_sealed_box_key()?;
     let table = kind.keys_table();
     sqlx::query(&format!(
         "INSERT INTO {table} (repo_id, key_id, encrypted_key, nonce) VALUES ($1, $2, $3, $4) ON CONFLICT(repo_id) DO NOTHING",
@@ -96,12 +120,20 @@ pub async fn repository_secret_key(
     .bind(repo_id)
     .fetch_one(&mut *tx)
     .await?;
-    let bytes: [u8; 32] = encryptor
-        .decrypt(&encrypted, &nonce)?
-        .try_into()
-        .map_err(|_| crate::backend::crypto::SecretError::DecryptionFailed)?;
+    let key = encryptor.sealed_box_key(&encrypted, &nonce)?;
     tx.commit().await?;
-    Ok((id, crypto_box::SecretKey::from(bytes)))
+    Ok((id, key))
+}
+
+/// Call under the owning organization/repository authority locks, after the proposed edit.
+/// Ciphertext length is plaintext length plus the fixed AES-GCM tag; no decryption needed.
+pub(crate) async fn delivery_budget(
+    c: &mut sqlx::PgConnection,
+    repo: i64,
+) -> Result<(), SecretsError> {
+    let (count, bytes): (i64, i64) = sqlx::query_as("WITH inherited AS (SELECT v.name,octet_length(v.name)+octet_length(v.encrypted_value)-16 AS bytes FROM org_actions_values v JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=v.org_id WHERE r.id=$1 AND v.kind='secret' AND (v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id))) ORDER BY v.name LIMIT 100), delivered AS (SELECT i.bytes FROM inherited i WHERE NOT EXISTS(SELECT 1 FROM repo_secrets s WHERE s.repo_id=$1 AND upper(s.name)=upper(i.name)) UNION ALL SELECT octet_length(name)+octet_length(encrypted_value)-16 FROM repo_secrets WHERE repo_id=$1) SELECT COUNT(*),COALESCE(SUM(bytes),0)::BIGINT FROM delivered")
+        .bind(repo).fetch_one(c).await?;
+    crate::backend::db::secrets::ensure_workflow_budget(count, bytes)
 }
 
 pub async fn repository_has_secrets(pool: &PgPool, repo_id: i64) -> Result<bool, SecretsError> {
@@ -158,9 +190,16 @@ pub async fn delete_secret(
     actor_id: i64,
     repo_id: i64,
     name: &str,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
 ) -> Result<bool, SecretsError> {
     let mut tx = pool.begin().await?;
-    if !super::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
+    if !super::discussions::lock_repository_mutation_authority(&mut tx, actor_id, repo_id)
+        .await
+        .map_err(SecretsError::authority)?
+    {
+        return Err(SecretsError::Denied);
+    }
+    if !super::users::transitions::credential_live(&mut tx, actor_id, credential, true)
         .await
         .map_err(SecretsError::authority)?
     {
@@ -174,6 +213,10 @@ pub async fn delete_secret(
     .bind(name)
     .execute(&mut *tx)
     .await?;
+    // Removing an override can expose a larger inherited secret.
+    if matches!(kind, SecretKind::Actions) {
+        delivery_budget(&mut tx, repo_id).await?;
+    }
     tx.commit().await?;
 
     Ok(result.rows_affected() > 0)

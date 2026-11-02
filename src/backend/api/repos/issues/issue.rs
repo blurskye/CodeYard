@@ -30,12 +30,12 @@ pub async fn update_issue(
     Json(req): Json<UpdateIssueRequest>,
 ) -> Result<Json<IssueResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
+    let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
     let issue = crate::backend::issues::mutations::update_issue(
         &state.pool,
         &state.notification_broadcaster,
         current_actor.id,
-        owner,
-        repo,
+        repository.id,
         number,
         req,
     )
@@ -98,7 +98,7 @@ pub(crate) async fn load_issue_response(
     issue: db::models::Issue,
     author: Option<UserResponse>,
 ) -> anyhow::Result<IssueResponse> {
-    let labels = db::labels::get_issue_labels(pool, issue.id).await?;
+    let labels = db::labels::get_issue_labels(pool, issue.repo_id, issue.id).await?;
     let comments_count = db::issues::count_issue_comments(pool, &[issue.id])
         .await?
         .first()
@@ -177,9 +177,26 @@ pub(crate) async fn native_detail(
                         .await
                         .map_err(|_| unavailable(&ctx))?
                         .ok_or_else(|| unavailable(&ctx))?;
-                return Ok(
-                    ctx.redirect(&format!("/{owner}/{}/issues/{}", target.name, moved.number))
-                );
+                // The comment and the page the old link asked for still apply at the new home.
+                let comment = ctx
+                    .query
+                    .get("comment")
+                    .and_then(|id| id.parse::<i64>().ok())
+                    .filter(|id| *id > 0);
+                let page = ctx
+                    .query
+                    .get("page")
+                    .and_then(|page| page.parse::<usize>().ok())
+                    .filter(|page| (2..=crate::backend::issues::MAX_COMMENT_PAGE).contains(page));
+                let suffix = match (comment, page) {
+                    (Some(id), _) => format!("?comment={id}#comment-{id}"),
+                    (None, Some(page)) => format!("?page={page}"),
+                    (None, None) => String::new(),
+                };
+                return Ok(ctx.redirect(&format!(
+                    "/{owner}/{}/issues/{}{suffix}",
+                    target.name, moved.number
+                )));
             }
             let pull_request = db::pull_requests::records::get_pull_request(
                 &ctx.state.pool,
@@ -318,17 +335,11 @@ pub(crate) async fn native_detail(
         kind,
         &value,
         &DetailDraft::default(),
-        ctx.query
-            .contains_key("creation_warning")
-            .then_some(CREATION_WARNING),
+        None,
         StatusCode::OK,
     )
     .await
 }
-
-/// Shown on the page of a new issue when its assignees, labels or milestone could not be saved.
-/// The redirect only names the warning, so a link cannot carry text of its own.
-pub(super) const CREATION_WARNING: &str = "Issue created, but some details could not be applied. Check the sidebar and choose the assignees, labels and milestone again.";
 
 pub(crate) async fn native_edit(
     State(state): State<Arc<AppState>>,
@@ -345,10 +356,10 @@ pub(crate) async fn native_edit(
     let draft = submitted_detail(&form, "edit");
     let title = field(&form, "title");
     let body = field(&form, "body");
-    if !repo.view.can_write {
+    if !value.can_edit {
         return Err(ctx.error(
             StatusCode::FORBIDDEN,
-            "Write access is required to edit this entry.",
+            "Only the author or a repository writer may edit this entry.",
         ));
     }
     if let Err(message) = expected(&form, &value) {
@@ -384,7 +395,7 @@ pub(crate) async fn native_edit(
         &ctx,
         kind,
         ctx.require_user()?.id,
-        (owner, name, number),
+        (repo.record.id, number),
         EntryChange {
             title: Some(title),
             body: Some(body),
@@ -418,7 +429,7 @@ pub(crate) async fn save_entry_change(
     ctx: &PageContext,
     kind: Kind,
     actor_id: i64,
-    (owner, name, number): (String, String, i32),
+    (repository_id, number): (i64, i32),
     text: EntryChange,
 ) -> Result<(), ApiFailure> {
     match kind {
@@ -426,8 +437,7 @@ pub(crate) async fn save_entry_change(
             &ctx.state.pool,
             &ctx.state.notification_broadcaster,
             actor_id,
-            owner,
-            name,
+            repository_id,
             number,
             crate::backend::issues::mutations::UpdateIssueRequest {
                 expected_state: text.expected_state,
@@ -446,7 +456,7 @@ pub(crate) async fn save_entry_change(
             &ctx.state.ci_runs,
             &ctx.state.notification_broadcaster,
             actor_id,
-            (owner, name, number),
+            (repository_id, number),
             crate::backend::repositories::pull_requests::mutations::UpdatePullRequestRequest {
                 expected_state: text.expected_state,
                 expected_updated: text.expected_updated,
@@ -508,7 +518,7 @@ pub(crate) async fn native_change_state(
         &ctx,
         kind,
         ctx.require_user()?.id,
-        (owner, name, number),
+        (repo.record.id, number),
         EntryChange {
             title: None,
             body: None,
@@ -549,6 +559,7 @@ mod tests {
             labels: vec![],
             comparison: None,
             comment_count: 0,
+            can_edit: false,
             can_tick: false,
             tasks: Default::default(),
             commit_count: None,

@@ -1,12 +1,22 @@
 use crate::backend::db::{
     oidc::{Inclusion, Refusal, Scope, Settings, TokenSettings},
-    organizations::{self, properties::PropertyValue, OrganizationOutcome},
+    organizations::{
+        self,
+        properties::{DefinitionRow, PropertyValue},
+        OrganizationOutcome,
+    },
 };
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::BTreeMap;
 
-async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, scope: Scope) -> Result<()> {
+async fn authorize(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    scope: Scope,
+) -> Result<()> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let allowed = match scope {
         Scope::Repository(repo) => {
             super::discussions::lock_admin_authority(tx, actor, repo).await?
@@ -16,6 +26,29 @@ async fn authorize(tx: &mut Transaction<'_, Postgres>, actor: i64, scope: Scope)
         }
     };
     ensure!(allowed, Refusal::Denied);
+    let (repo, org, permission) = match scope {
+        Scope::Repository(repo) => (Some(repo), None, "administration"),
+        Scope::Organization(org) => (None, Some(org), "organization_administration"),
+    };
+    ensure!(
+        super::credentials::writes(tx, &credential, repo, org, permission).await?,
+        Refusal::Denied
+    );
+    Ok(())
+}
+
+/// `authorize`, then the actor's original credential must still be live for writing.
+async fn authorize_write(
+    tx: &mut Transaction<'_, Postgres>,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    scope: Scope,
+) -> Result<()> {
+    let actor = actor.into();
+    authorize(tx, actor.clone(), scope).await?;
+    ensure!(
+        super::credentials::live(tx, &actor, true).await?,
+        Refusal::Denied
+    );
     Ok(())
 }
 
@@ -42,10 +75,15 @@ pub async fn get(pool: &PgPool, actor: i64, scope: Scope) -> Result<Settings> {
     Ok(result)
 }
 
-pub async fn save(pool: &PgPool, actor: i64, scope: Scope, settings: &Settings) -> Result<()> {
+pub async fn save(
+    pool: &PgPool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    scope: Scope,
+    settings: &Settings,
+) -> Result<()> {
     settings.validate()?;
     let mut tx = pool.begin().await?;
-    authorize(&mut tx, actor, scope).await?;
+    authorize_write(&mut tx, actor, scope).await?;
     let (table, column, id) = scope.storage();
     let keys = if settings.use_default {
         None
@@ -79,15 +117,19 @@ pub async fn inclusions(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<Inclu
 
 pub async fn change_inclusion(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     name: &str,
     remove: bool,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    authorize(&mut tx, actor, Scope::Organization(org)).await?;
-    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM organization_repository_properties WHERE org_id=$1 AND property_name=$2 AND value_type IN ('string','single_select','multi_select','true_false')")
-        .bind(org).bind(name).fetch_optional(&mut *tx).await?;
+    authorize_write(&mut tx, actor, Scope::Organization(org)).await?;
+    let id: Option<i64> = sqlx::query_scalar(crate::backend::db::oidc::INCLUSION_PROPERTY_SQL)
+        .bind(org)
+        .bind(name)
+        .bind(remove)
+        .fetch_optional(&mut *tx)
+        .await?;
     let id = id.ok_or(if remove {
         Refusal::Missing
     } else {
@@ -143,19 +185,21 @@ pub async fn token_settings(pool: &PgPool, repo: i64) -> Result<TokenSettings> {
     };
     let mut properties = BTreeMap::new();
     if let Some(org) = org {
-        let selected: Vec<i64> = sqlx::query_scalar("SELECT o.definition_id FROM actions_oidc_properties o JOIN organization_repository_properties p ON p.id=o.definition_id WHERE p.org_id=$1").bind(org).fetch_all(&mut *tx).await?;
-        let definitions = super::organizations::properties::definitions_on(&mut tx, org)
-            .await?
-            .into_iter()
-            .filter(|d| selected.contains(&d.id))
-            .collect::<Vec<_>>();
+        let definitions =
+            sqlx::query_as::<_, DefinitionRow>(crate::backend::db::oidc::INCLUDED_DEFINITIONS_SQL)
+                .bind(org)
+                .fetch_all(&mut *tx)
+                .await?
+                .into_iter()
+                .map(DefinitionRow::decode)
+                .collect::<Result<Vec<_>>>()?;
         for property in
             super::organizations::properties::values_on(&mut tx, repo, &definitions).await?
         {
             if let Some(value) = property.value.filter(PropertyValue::present) {
                 let value = match value {
                     PropertyValue::String(s) => s,
-                    PropertyValue::Strings(v) => v.join(","),
+                    PropertyValue::Strings(v) => serde_json::to_string(&v)?,
                 };
                 properties.insert(format!("repo_property_{}", property.property_name), value);
             }

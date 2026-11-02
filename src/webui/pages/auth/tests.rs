@@ -87,7 +87,7 @@ fn login_has_compact_brand_heading_labeled_native_form_and_quiet_signup() {
     assert!(output.contains("for=\"password\""));
     assert!(output.contains("autocomplete=\"current-password\""));
     assert!(output.contains("maxlength=\"4096\""));
-    assert!(output.contains("role=\"status\""));
+    assert!(output.contains("role=\"alert\""));
     assert!(output.contains("identity-auth-notice-error"));
     assert!(output.contains("Invalid username or password."));
     assert!(
@@ -374,6 +374,7 @@ fn oauth_only_accounts_have_no_password_mutation_form() {
                 emails: vec![],
                 tokens: vec![],
                 sessions: vec![],
+                session_pagination: Default::default(),
                 new_token: None,
                 password_supported: false,
                 email_notifications: true,
@@ -468,6 +469,7 @@ fn the_code_step_takes_the_address_code_and_new_password_in_one_form() {
     let page = html(reset_code_page(
         "code-csrf",
         "kate@example.test",
+        "/",
         Some("Check your inbox."),
         false,
     ));
@@ -481,7 +483,8 @@ fn the_code_step_takes_the_address_code_and_new_password_in_one_form() {
     assert!(page.contains("name=\"new_password\""));
     assert!(page.contains("name=\"confirm_password\""));
     assert!(page.contains("Check your inbox."));
-    assert!(page.contains("href=\"/forgot-password\""));
+    // Asking for a new code keeps the page to return to.
+    assert!(page.contains("href=\"/forgot-password?redirect=%2F\""));
 }
 
 #[test]

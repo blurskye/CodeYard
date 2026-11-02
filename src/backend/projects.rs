@@ -7,9 +7,20 @@ use serde_json::Value;
 pub fn query_terms(query: &str) -> Result<Vec<String>> {
     let mut terms = Vec::new();
     let mut term = String::new();
+    anyhow::ensure!(query.len() <= 4096, Refusal::Invalid);
     let mut quoted = false;
+    let mut escaped = false;
     for c in query.chars() {
+        if escaped {
+            if !matches!(c, '"' | '\\') {
+                term.push('\\');
+            }
+            term.push(c);
+            escaped = false;
+            continue;
+        }
         match c {
+            '\\' => escaped = true,
             '"' => quoted = !quoted,
             c if c.is_whitespace() && !quoted => {
                 if !term.is_empty() {
@@ -19,7 +30,10 @@ pub fn query_terms(query: &str) -> Result<Vec<String>> {
             _ => term.push(c),
         }
     }
-    anyhow::ensure!(!quoted && query.len() <= 4096, Refusal::Invalid);
+    if escaped {
+        term.push('\\');
+    }
+    anyhow::ensure!(!quoted, Refusal::Invalid);
     if !term.is_empty() {
         terms.push(term);
     }
@@ -29,6 +43,9 @@ pub fn query_terms(query: &str) -> Result<Vec<String>> {
 /// Drop the terms that name `field`, so a saved view still matches items once that field is
 /// deleted. Terms with spaces are quoted again so they parse back the same way.
 pub fn without_field_terms(filter: &str, field: &str) -> Result<String> {
+    if field.eq_ignore_ascii_case("is") {
+        return Ok(filter.to_owned());
+    }
     let kept: Vec<String> = query_terms(filter)?
         .into_iter()
         .filter(|term| {
@@ -37,8 +54,11 @@ pub fn without_field_terms(filter: &str, field: &str) -> Result<String> {
                 .is_none_or(|(name, _)| !name.eq_ignore_ascii_case(field))
         })
         .map(|term| {
-            if term.chars().any(char::is_whitespace) {
-                format!("\"{term}\"")
+            if term
+                .chars()
+                .any(|character| character.is_whitespace() || matches!(character, '"' | '\\'))
+            {
+                format!("\"{}\"", term.replace('\\', "\\\\").replace('"', "\\\""))
             } else {
                 term
             }
@@ -105,7 +125,7 @@ pub fn filter_items(
                     .ok_or(Refusal::Invalid)?;
                 let value = item.value(field)?;
                 keys.push((
-                    value.as_f64(),
+                    value.as_number().cloned(),
                     display_value(field, &value)?,
                     direction == "desc",
                 ));
@@ -115,7 +135,7 @@ pub fn filter_items(
         keyed.sort_by(|(_, ak), (_, bk)| {
             for ((an, at, desc), (bn, bt, _)) in ak.iter().zip(bk) {
                 let order = match (an, bn) {
-                    (Some(a), Some(b)) => a.total_cmp(b),
+                    (Some(a), Some(b)) => compare_numbers(a, b),
                     _ => at.to_lowercase().cmp(&bt.to_lowercase()),
                 };
                 let order = if *desc { order.reverse() } else { order };
@@ -129,6 +149,33 @@ pub fn filter_items(
         result = keyed.into_iter().map(|(item, _)| item).collect();
     }
     Ok(result)
+}
+
+fn compare_numbers(a: &serde_json::Number, b: &serde_json::Number) -> std::cmp::Ordering {
+    use std::cmp::Ordering;
+    let integer = |number: &serde_json::Number| {
+        number
+            .as_i64()
+            .map(i128::from)
+            .or_else(|| number.as_u64().map(i128::from))
+    };
+    let integer_float = |integer: i128, float: f64| {
+        integer.cmp(&(float as i128)).then_with(|| {
+            if float.fract() > 0.0 {
+                Ordering::Less
+            } else if float.fract() < 0.0 {
+                Ordering::Greater
+            } else {
+                Ordering::Equal
+            }
+        })
+    };
+    match (integer(a), integer(b)) {
+        (Some(a), Some(b)) => a.cmp(&b),
+        (Some(a), None) => integer_float(a, b.as_f64().unwrap()),
+        (None, Some(b)) => integer_float(b, a.as_f64().unwrap()).reverse(),
+        (None, None) => a.as_f64().unwrap().total_cmp(&b.as_f64().unwrap()),
+    }
 }
 
 pub fn display_value(field: &Field, value: &Value) -> Result<String> {

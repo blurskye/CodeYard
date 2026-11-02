@@ -1,6 +1,6 @@
 use crate::backend::db::{
     models::Repository,
-    repositories::github::{list_sql, RepositoryListQuery},
+    repositories::github::{count_sql, list_sql, RepositoryListQuery},
 };
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -38,21 +38,38 @@ pub async fn repository_teams(
         return Ok(Some(vec![]));
     };
     let OrganizationOutcome::Applied(role) =
-        crate::backend::db::sqlite::organizations::authority::authority(&mut tx, actor, org)
+        crate::backend::db::sqlite::organizations::authority::read_authority(&mut tx, actor, org)
             .await?
     else {
         return Ok(None);
     };
     let privileged = matches!(role, OrgRole::Owner | OrgRole::Admin);
-    let teams = sqlx::query_as(REPOSITORY_TEAMS_SQL)
-        .bind(repo_id)
-        .bind(org)
-        .bind(privileged)
-        .bind(actor)
-        .bind(limit)
-        .bind(offset)
-        .fetch_all(&mut *tx)
-        .await?;
+    let mut teams: Vec<crate::backend::db::repositories::github::RepositoryTeam> =
+        sqlx::query_as(REPOSITORY_TEAMS_SQL)
+            .bind(repo_id)
+            .bind(org)
+            .bind(privileged)
+            .bind(actor)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(&mut *tx)
+            .await?;
+    let parents: Vec<_> = teams
+        .iter()
+        .filter(|row| row.team.privacy == "visible")
+        .filter_map(|row| row.team.parent_team_id)
+        .collect();
+    let parents: Vec<crate::backend::db::models::Team> = sqlx::query_as("SELECT * FROM teams WHERE id IN (SELECT value FROM json_each(?1)) AND org_id=?2 AND privacy='visible'").bind(serde_json::to_string(&parents)?).bind(org).fetch_all(&mut *tx).await?;
+    let parents: std::collections::HashMap<_, _> =
+        parents.into_iter().map(|team| (team.id, team)).collect();
+    for row in &mut teams {
+        if row.team.privacy == "visible" {
+            row.parent = row
+                .team
+                .parent_team_id
+                .and_then(|id| parents.get(&id).cloned());
+        }
+    }
     tx.commit().await?;
     Ok(Some(teams))
 }
@@ -88,21 +105,18 @@ pub async fn list_repositories(
 }
 
 pub async fn count_repositories(pool: &SqlitePool, query: RepositoryListQuery<'_>) -> Result<i64> {
-    let sql = list_sql(
+    let sql = count_sql(
         &query,
         super::access::USER_REPO_ACCESS_SQL,
         &super::access::readable_condition(),
     )
     .replace('$', "?");
-    let sql = format!("SELECT COUNT(*) FROM ({sql}) readable_repositories");
     Ok(sqlx::query_scalar(&sql)
         .bind(query.viewer)
         .bind(query.target_id())
         .bind(query.since)
         .bind(query.visibility)
         .bind(query.kind)
-        .bind(i64::MAX)
-        .bind(0_i64)
         .fetch_one(pool)
         .await?)
 }

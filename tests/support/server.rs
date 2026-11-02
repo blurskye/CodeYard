@@ -5,10 +5,13 @@ use std::{
     net::{SocketAddr, TcpListener},
     path::Path,
     process::{Child, Command, Stdio},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 const ATTEMPTS: usize = 5;
+/// How long a starting server may take before the test gives up on it. A loaded, shared runner
+/// can take far longer than the builder; the loop below returns as soon as the server is ready.
+const STARTUP_WATCHDOG: Duration = Duration::from_secs(180);
 
 /// Starts the server `command` builds for `ports` free local addresses, and waits until `ready`
 /// says it is serving. Its output goes to `log`.
@@ -37,28 +40,30 @@ pub async fn spawn_on_free_ports<Ready: Future<Output = bool>>(
             .stderr(output)
             .spawn()
             .unwrap();
-        let mut taken = false;
-        for _ in 0..100 {
+        let deadline = Instant::now() + STARTUP_WATCHDOG;
+        loop {
             if let Some(status) = child.try_wait().unwrap() {
                 let text = std::fs::read_to_string(log).unwrap();
                 if text.contains("in use") && attempt < ATTEMPTS {
-                    taken = true;
                     break;
                 }
                 panic!("server exited with {status}: {text}");
             }
-            if ready(addresses.clone()).await {
+            let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!(
+                    "server did not start within {STARTUP_WATCHDOG:?}: {}",
+                    std::fs::read_to_string(log).unwrap()
+                );
+            };
+            if matches!(
+                tokio::time::timeout(left, ready(addresses.clone())).await,
+                Ok(true)
+            ) {
                 return (child, addresses);
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        if !taken {
-            let _ = child.kill();
-            let _ = child.wait();
-            panic!(
-                "server did not start: {}",
-                std::fs::read_to_string(log).unwrap()
-            );
         }
     }
     unreachable!("the last attempt returns or panics")

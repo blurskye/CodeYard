@@ -87,6 +87,9 @@ async fn contract(pg: bool) {
         f.pool(),
         db::webhooks::HookOwner::Repository(repo.id),
         alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,
@@ -294,7 +297,8 @@ async fn contract(pg: bool) {
     )
     .await;
     let mut delivered = false;
-    for _ in 0..100 {
+    // The hook's host never resolves, so the delivery is recorded after its retries (7 s).
+    for _ in 0..1500 {
         let deliveries = db::webhooks::list_deliveries(f.pool(), hook).await.unwrap();
         if let Some(delivery) = deliveries.iter().find(|d| {
             d.event == "code_scanning_alert"
@@ -550,7 +554,8 @@ async fn contract(pg: bool) {
         422,
     )
     .await;
-    call(
+    // The receipt names the upload; reading it from the queue would claim it.
+    let receipt = call(
         &router,
         "POST",
         &format!("{base}/sarifs"),
@@ -560,12 +565,11 @@ async fn contract(pg: bool) {
         202,
     )
     .await;
-    let upload = db::code_scanning::pending(f.pool()).await.unwrap().unwrap();
     assert!(code_scanning::process_next(f.pool()).await.unwrap());
     let status = call(
         &router,
         "GET",
-        &format!("{base}/sarifs/{}", upload.id),
+        &format!("{base}/sarifs/{}", receipt["id"].as_str().unwrap()),
         reader,
         Value::Null,
         "code-scanning/get-sarif",
@@ -695,11 +699,17 @@ async fn workflow_tokens(
     )
     .await
     .unwrap();
-    let mut run = db::ci::claim_ci_run(pool, "scanner-worker", "local", &[actor])
-        .await
-        .unwrap()
-        .filter(|r| r.id == run.id)
-        .unwrap();
+    let mut run = db::ci::claim_ci_run(
+        pool,
+        "scanner-worker",
+        "local",
+        &[actor],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .filter(|r| r.id == run.id)
+    .unwrap();
     for engine in ["codeyard-actions", "act"] {
         run.engine = Some(engine.into());
         let definitions = BTreeMap::from([(

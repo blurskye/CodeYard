@@ -64,6 +64,19 @@ pub struct Dependency {
 
 impl Snapshot {
     pub fn validate(&self) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
+        self.validate_with_limit(1024 * 1024)
+    }
+
+    pub(crate) fn validate_native(
+        &self,
+    ) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
+        self.validate_with_limit(128 * 1024 * 1024)
+    }
+
+    fn validate_with_limit(
+        &self,
+        max_bytes: usize,
+    ) -> Result<(), crate::backend::db::dependency_graph::GraphError> {
         let valid_metadata = |metadata: &Option<BTreeMap<String, Value>>| {
             metadata.as_ref().is_none_or(|values| {
                 values
@@ -83,8 +96,14 @@ impl Snapshot {
             && (1..=255).contains(&self.job.correlator.len())
             && (1..=255).contains(&self.detector.name.len())
             && valid_metadata(&self.metadata)
-            && self.manifests.values().all(|manifest| {
-                valid_metadata(&manifest.metadata)
+            && self.manifests.iter().all(|(name, manifest)| {
+                !name.chars().any(char::is_control)
+                    && !manifest.name.is_empty()
+                    && manifest.name.len() <= 2048
+                    && !manifest.name.chars().any(char::is_control)
+                    && manifest.file.as_ref().and_then(|file| file.source_location.as_deref())
+                        .is_none_or(|path| !path.is_empty() && path.len() <= 2048 && !path.chars().any(char::is_control))
+                    && valid_metadata(&manifest.metadata)
                     && manifest.resolved.values().all(|dependency| {
                         dependency.package_url.as_deref().is_none_or(|p| {
                             crate::backend::db::dependency_inventory::package_parts(p).is_some()
@@ -103,7 +122,7 @@ impl Snapshot {
                             && valid_metadata(&dependency.metadata)
                     })
             });
-        if !valid || serde_json::to_vec(self).map_or(true, |bytes| bytes.len() > 1024 * 1024) {
+        if !valid || serde_json::to_vec(self).map_or(true, |bytes| bytes.len() > max_bytes) {
             return Err(crate::backend::db::dependency_graph::GraphError::Invalid);
         }
         Ok(())
@@ -121,10 +140,7 @@ pub struct Package {
 }
 
 fn decode(value: &str) -> Option<String> {
-    // Form decoding treats '+' as a space, unlike a package URL.
-    url::form_urlencoded::parse(format!("v={}", value.replace('+', "%2B")).as_bytes())
-        .next()
-        .map(|(_, value)| value.into_owned())
+    Some(crate::webui::decode_component(value))
 }
 
 fn package(purl: &str) -> Option<(String, String, String)> {
@@ -151,6 +167,9 @@ pub fn packages(snapshots: &[Snapshot]) -> BTreeSet<Package> {
                 .as_ref()
                 .and_then(|f| f.source_location.as_ref())
                 .unwrap_or(&manifest.name);
+            if path.is_empty() || path.len() > 2048 {
+                continue;
+            }
             for (key, dependency) in &manifest.resolved {
                 let (ecosystem, name, version) = dependency
                     .package_url
@@ -212,6 +231,7 @@ pub fn sbom(name: &str, snapshots: &[Snapshot]) -> Value {
             row.package_url.clone(),
             row.name.clone(),
             row.version.clone(),
+            row.package_url.is_none().then(|| row.manifest.clone()),
         );
         if ids.contains_key(&key) {
             continue;
@@ -238,8 +258,21 @@ pub fn sbom(name: &str, snapshots: &[Snapshot]) -> Value {
                     .as_deref()
                     .and_then(package)
                     .unwrap_or_else(|| (String::new(), key.to_owned(), String::new()));
-                ids.get(&(dependency.package_url.clone(), name, version))
-                    .cloned()
+                let local_manifest = dependency.package_url.is_none().then(|| {
+                    manifest
+                        .file
+                        .as_ref()
+                        .and_then(|file| file.source_location.as_ref())
+                        .unwrap_or(&manifest.name)
+                        .clone()
+                });
+                ids.get(&(
+                    dependency.package_url.clone(),
+                    name,
+                    version,
+                    local_manifest,
+                ))
+                .cloned()
             };
             for (key, dependency) in &manifest.resolved {
                 let Some(id) = id_for(key, dependency) else {

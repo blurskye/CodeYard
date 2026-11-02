@@ -37,6 +37,12 @@ pub struct RepositoryExport {
 }
 
 impl RepositoryExport {
+    pub fn archive_available(&self) -> bool {
+        self.state == "exported"
+            && !self.archive_deleted
+            && self.updated_at.saturating_add(7 * 24 * 60 * 60) > chrono::Utc::now().timestamp()
+    }
+
     pub fn object_key(&self) -> String {
         format!("migrations/{}", self.guid)
     }
@@ -61,6 +67,10 @@ pub enum ExportRefusal {
     #[error("Migration archive is not available")]
     Archive,
 }
+
+native_operation!(crate::backend::db::postgres::repository_exports::discussion_ids,
+    crate::backend::db::sqlite::repository_exports::discussion_ids,
+    fn discussion_ids(pool: &DbPool, repo: i64, pulls: bool, before: i64, limit: i64) -> Result<Vec<i64>>);
 
 native_operation!(crate::backend::db::postgres::repository_exports::create,
     crate::backend::db::sqlite::repository_exports::create,

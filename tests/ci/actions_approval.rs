@@ -66,12 +66,16 @@ async fn contract(pg: bool) {
     let pending = &runs[0];
     assert_eq!(pending.head_sha.as_deref(), Some(head.as_str()));
     assert!(pending.is_fork && pending.approval_required);
-    assert!(
-        db::ci::claim_ci_run(f.pool(), "blocked", "local", &[alice, bob])
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(db::ci::claim_ci_run(
+        f.pool(),
+        "blocked",
+        "local",
+        &[alice, bob],
+        &codeyard::backend::ci::CiConfig::default().platform_labels()
+    )
+    .await
+    .unwrap()
+    .is_none());
     let url = format!("/api/v3/repos/alice/project/actions/runs/{}", pending.id);
     let (_, shown) = checked(
         &api,
@@ -116,10 +120,16 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(approved, serde_json::json!({}));
-    let released = db::ci::claim_ci_run(f.pool(), "approved", "local", &[alice])
-        .await
-        .unwrap()
-        .unwrap();
+    let released = db::ci::claim_ci_run(
+        f.pool(),
+        "approved",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(released.id, pending.id);
     assert_eq!(released.triggered_by_id, Some(alice));
     assert!(released.is_fork && !released.approval_required);

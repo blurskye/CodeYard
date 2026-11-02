@@ -1,6 +1,10 @@
 # https://github.com/docker/bake-action/tree/5be5f02ff8819ecd3092ea6b2e6261c31774f2b4
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

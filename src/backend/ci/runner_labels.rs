@@ -44,7 +44,10 @@ pub(super) fn scheduling_from_value(
         }
         if local {
             ensure!(
-                job.get("container").is_none() && job.get("services").is_none(),
+                job.get("container").is_none()
+                    && job.get("services").is_none_or(|services| services
+                        .as_mapping()
+                        .is_some_and(|services| services.is_empty())),
                 "container jobs and services need CI_EXECUTION_MODE=podman"
             );
             let steps = job.get("steps").and_then(Value::as_sequence);
@@ -63,10 +66,8 @@ pub(super) fn scheduling_from_value(
             .transpose()?;
         if let Some(selected) = selected {
             ensure!(
-                !selected.is_empty()
-                    && selected.len() <= 100
-                    && !selected.contains("${{")
-                    && !selected.chars().any(char::is_control),
+                crate::backend::db::runners::valid_group_name(selected)
+                    && !selected.contains("${{"),
                 "runner group must be a literal string"
             );
             ensure!(
@@ -97,11 +98,7 @@ pub(super) fn scheduling_from_value(
                 .as_str()
                 .context("`runs-on` must be a literal label")?;
             ensure!(
-                !label.is_empty()
-                    && label.len() <= 128
-                    && label
-                        .bytes()
-                        .all(|byte| byte.is_ascii_alphanumeric() || b"-_.".contains(&byte)),
+                crate::backend::db::runners::valid_label(label),
                 "`runs-on` must be a literal label, not an expression"
             );
             labels.insert(label.to_ascii_lowercase());
@@ -111,6 +108,7 @@ pub(super) fn scheduling_from_value(
         labels: labels.into_iter().collect(),
         group,
         concurrency: None,
+        concurrency_expression: None,
     })
 }
 

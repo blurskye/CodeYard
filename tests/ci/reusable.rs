@@ -71,7 +71,7 @@ const CALLED: &str = r#"on:
     outputs:
       message:
         value: ${{ jobs.nested.outputs.message }}
-permissions: {contents: write, issues: write, id-token: write}
+permissions: {contents: read}
 jobs:
   nested:
     uses: ./.github/workflows/leaf.yml
@@ -90,8 +90,8 @@ const LEAF: &str = r#"on:
         value: ${{ jobs.test.outputs.message }}
 jobs:
   test:
-    runs-on: linux
-    permissions: {contents: write, issues: write, id-token: write}
+    runs-on: ubuntu-latest
+    permissions: {contents: read}
     outputs:
       message: ${{ steps.output.outputs.message }}
     steps:
@@ -168,6 +168,9 @@ async fn contract(pg: bool) {
         "CALL_PASSWORD",
         "reusable-server-password",
         Some(actor),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), actor).await,
+        ),
     )
     .await
     .unwrap();
@@ -187,7 +190,7 @@ jobs:
       password: ${{ secrets.CALL_PASSWORD }}
   verify:
     needs: call
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - run: |
           test '${{ needs.call.outputs.message }}' = two
@@ -222,7 +225,11 @@ jobs:
         }
         // Engine selection is made at claim time.
         let claim = queue
-            .claim(&format!("reusable-{engine}"), CiExecutionMode::Local)
+            .claim(
+                &format!("reusable-{engine}"),
+                CiExecutionMode::Local,
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -312,7 +319,11 @@ jobs:
         assert_eq!(value["sha"], pinned);
     }
     queue
-        .claim("reusable-tag", CiExecutionMode::Local)
+        .claim(
+            "reusable-tag",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -347,7 +358,11 @@ jobs:
     )
     .await;
     assert!(queue
-        .claim("reusable-denied", CiExecutionMode::Local)
+        .claim(
+            "reusable-denied",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels()
+        )
         .await
         .is_err());
     let failed = db::ci::get_ci_run_by_run_id(f.pool(), revoked.run_id)
@@ -360,6 +375,58 @@ jobs:
         &[remote.id],
     )
     .await;
+    // A called workflow or job may only lower the caller's token permissions. Asking for more
+    // fails the run, as GitHub reports "The nested job is requesting ... but is only allowed".
+    let escalated = "permissions: {contents: write, issues: write, id-token: write}";
+    for (called, leaf) in [
+        (
+            CALLED.replace("permissions: {contents: read}", escalated),
+            LEAF.to_owned(),
+        ),
+        (
+            CALLED.to_owned(),
+            LEAF.replace("permissions: {contents: read}", escalated),
+        ),
+    ] {
+        commit(
+            &remote.disk_path,
+            &[("called.yml", &called), ("leaf.yml", &leaf)],
+        );
+        let run = state
+            .ci_runs
+            .trigger_run(request(caller.id, actor))
+            .await
+            .unwrap();
+        let error = queue
+            .claim(
+                "reusable-escalated",
+                CiExecutionMode::Local,
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            )
+            .await
+            .err()
+            .expect("raised permissions must fail the claim");
+        assert!(
+            format!("{error:#}").contains("exceed caller permissions"),
+            "{error:#}"
+        );
+        let failed = db::ci::get_ci_run_by_run_id(f.pool(), run.run_id)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(failed.status, "failed");
+        let tokens = f
+            .scalar(
+                "SELECT COUNT(*) FROM actions_github_tokens WHERE run_id=$1",
+                &[run.id],
+            )
+            .await;
+        assert_eq!(tokens, 0);
+    }
+    commit(
+        &remote.disk_path,
+        &[("called.yml", CALLED), ("leaf.yml", LEAF)],
+    );
     drop(admitted);
     for (engine, nested) in [("codeyard-actions", true), ("act", false), ("act", true)] {
         let source = if !nested {
@@ -388,7 +455,7 @@ jobs:
             &remote.disk_path,
             &[(
                 "called.yml",
-                "on: workflow_call\njobs: {broken: {runs-on: linux, steps: [{run: exit 42}]}}",
+                "on: workflow_call\njobs: {broken: {runs-on: ubuntu-latest, steps: [{run: exit 42}]}}",
             )],
         );
         let workers = CiWorkers::new(queue.clone(), config.clone(), true, root.path());
@@ -439,10 +506,12 @@ jobs:
 }
 
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn sqlite_reusable_workflows() {
     contract(false).await;
 }
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn postgres_reusable_workflows() {
     contract(true).await;
 }

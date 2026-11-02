@@ -31,25 +31,17 @@ pub(super) async fn discover(
     if store.refs().await.map_err(store_error)?.is_empty() {
         return Ok(Vec::new());
     }
-    let definitions = ci::list_workflows_for_ref(&store, &repo.default_branch)
-        .await
-        .map_err(Error::unavailable)?;
-    let mut values = Vec::new();
-    for definition in definitions {
-        values.push(
-            workflows::register_workflow(
-                &state.pool,
-                repo.id,
-                &definition.path,
-                &definition.name,
-                true,
-            )
+    let definitions =
+        ci::list_workflows_for_ref(&store, &format!("refs/heads/{}", repo.default_branch))
             .await
-            .map_err(Error::unavailable)?,
-        );
-    }
-    values.sort_by_key(|workflow| workflow.id);
-    Ok(values)
+            .map_err(Error::unavailable)?;
+    let definitions: Vec<_> = definitions
+        .into_iter()
+        .map(|definition| (definition.path, definition.name))
+        .collect();
+    workflows::register_workflows(&state.pool, repo.id, &definitions, true)
+        .await
+        .map_err(Error::unavailable)
 }
 
 pub(super) async fn lookup(
@@ -70,9 +62,7 @@ pub(super) async fn lookup(
 
 pub(in crate::backend::api::github) fn admission_error(error: AdmissionError) -> Error {
     match error {
-        AdmissionError::WorkflowDisabled => {
-            Error::new(StatusCode::CONFLICT, "Workflow is disabled")
-        }
+        AdmissionError::WorkflowDisabled(message) => Error::new(StatusCode::CONFLICT, message),
         AdmissionError::Missing(_) => Error::missing(),
         AdmissionError::Denied(message) => Error::new(StatusCode::FORBIDDEN, message),
         AdmissionError::Conflict("CI ref unavailable") => {
@@ -152,21 +142,27 @@ async fn enabled(
     enable: bool,
 ) -> Result<StatusCode> {
     let (repo, authentication) = repository(state, headers, owner, name, true).await?;
-    let actor = authentication.ok_or_else(auth::required)?.user.id;
+    let authentication = authentication.ok_or_else(auth::required)?;
     let workflow = lookup(state, &repo, key).await?;
-    workflows::set_workflow_enabled(&state.pool, actor, repo.id, workflow.id, enable)
-        .await
-        .map_err(|error| {
-            if error
-                .downcast_ref::<db::repositories::records::RepositorySettingsRefusal>()
-                .is_some()
-            {
-                Error::new(StatusCode::FORBIDDEN, "Workflow update denied")
-            } else {
-                Error::unavailable(error)
-            }
-        })?
-        .ok_or_else(Error::missing)?;
+    workflows::set_workflow_enabled(
+        &state.pool,
+        authentication.database_actor(),
+        repo.id,
+        workflow.id,
+        enable,
+    )
+    .await
+    .map_err(|error| {
+        if error
+            .downcast_ref::<db::repositories::records::RepositorySettingsRefusal>()
+            .is_some()
+        {
+            Error::new(StatusCode::FORBIDDEN, "Workflow update denied")
+        } else {
+            Error::unavailable(error)
+        }
+    })?
+    .ok_or_else(Error::missing)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -201,10 +197,9 @@ async fn dispatch(
     input: std::result::Result<Json<Dispatch>, JsonRejection>,
 ) -> Result<Response> {
     let (repo, authentication) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = authentication
-        .ok_or_else(auth::required)?
-        .workflow_actor(&state, repo.id)
-        .await?;
+    let authentication = authentication.ok_or_else(auth::required)?;
+    let credential = authentication.ci_credential(&headers, "actions")?;
+    let actor = authentication.workflow_actor(&state, repo.id).await?;
     let Json(input) = input.map_err(|_| Error::invalid("Invalid workflow dispatch"))?;
     let workflow = lookup(&state, &repo, &key).await?;
     let run = state
@@ -223,6 +218,7 @@ async fn dispatch(
                 inputs: input.inputs,
                 repo_id: Some(repo.id),
             },
+            Some(credential),
         )
         .await
         .map_err(admission_error)?;
@@ -268,13 +264,7 @@ async fn badge(
             _ => ("no status", "#9f9f9f"),
         }
     };
-    let escape = |text: &str| {
-        text.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-            .replace('\'', "&apos;")
-    };
+    let escape = crate::webui::components::escape_html;
     let label = escape(&workflow.name.chars().take(22).collect::<String>());
     let title = escape(&workflow.name);
     let svg = format!(

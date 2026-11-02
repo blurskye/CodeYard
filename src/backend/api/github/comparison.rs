@@ -31,19 +31,21 @@ pub(super) async fn side(
     if source_owner.is_empty() || revision.is_empty() {
         return Err(Error::missing());
     }
-    let source = if source_owner.eq_ignore_ascii_case(owner) {
+    let source = if source_owner == owner {
         base.clone()
     } else {
-        let (source, source_auth) =
-            repository(state, headers, source_owner, &base.name, false).await?;
-        // Job tokens and App credentials are bound to their repositories, so a readable fork
-        // still needs a grant.
-        if let Some(source_auth) = source_auth {
-            source_auth
-                .repository_scope(&state.pool, source.id, "contents", false)
-                .await
-                .map_err(auth::scope_error)?;
+        let mut candidates = crate::backend::db::repositories::discovery::comparison_forks(
+            &state.pool,
+            base.id,
+            source_owner,
+        )
+        .await
+        .map_err(Error::unavailable)?;
+        if candidates.is_empty() || (candidates.len() > 1 && candidates[0].name != base.name) {
+            return Err(Error::missing());
         }
+        let source = candidates.remove(0);
+        auth::recheck_repository_read(state, headers, source.id, "contents").await?;
         source
     };
     if !same_fork_network(&state.pool, base, &source)
@@ -71,12 +73,18 @@ async fn compare(
     let base_store = repo_store(&base_repo, state.cluster.as_ref());
     let head_store = repo_store(&head_repo, state.cluster.as_ref());
     let mut comparison = base_store
-        .comparison_from(&head_store, &base, &head, offset, limit)
+        .comparison_from(
+            &head_store,
+            &base,
+            &head,
+            offset,
+            if paginated { limit } else { 0 },
+        )
         .await
         .map_err(store_error)?;
-    if !paginated && comparison.ahead_by > limit {
-        // An unpaginated list ends with the newest commit, so it takes the last window instead.
-        // The first answer's commits are reused, so a branch that moves meanwhile changes nothing.
+    if !paginated {
+        // Resolve and count first; only the final window spends the commit metadata budget.
+        // Pin the resolved identities across the second read.
         let (base_sha, head_sha) = (
             comparison.base_commit.sha.clone(),
             comparison.head_sha.clone(),
@@ -86,7 +94,7 @@ async fn compare(
                 &head_store,
                 &base_sha,
                 &head_sha,
-                comparison.ahead_by - limit,
+                comparison.ahead_by.saturating_sub(limit),
                 limit,
             )
             .await
@@ -123,7 +131,7 @@ async fn compare(
         (true, true) => "diverged",
     };
     let qualify = |source: &str, reference: &str| {
-        if source.eq_ignore_ascii_case(&owner) {
+        if source == owner.as_str() {
             reference.to_owned()
         } else {
             format!("{source}:{reference}")
@@ -143,10 +151,10 @@ async fn compare(
         "url": format!("{}/compare/{}", repo_url(&owner, &name), crate::webui::encode_component(&spec)),
         "html_url": html_url, "permalink_url": format!("{site}/{}", path_url(&permalink)),
         "diff_url": format!("{html_url}.diff"), "patch_url": format!("{html_url}.patch"),
-        "base_commit": read_document(&state, base_repo.id, &comparison.base_commit, &base_owner, &name).await?,
-        "merge_base_commit": read_document(&state, base_repo.id, &comparison.merge_base_commit, &base_owner, &name).await?,
+        "base_commit": read_document(&state, base_repo.id, &comparison.base_commit, &base_owner, &base_repo.name).await?,
+        "merge_base_commit": read_document(&state, base_repo.id, &comparison.merge_base_commit, &base_owner, &base_repo.name).await?,
         "ahead_by": comparison.ahead_by, "behind_by": comparison.behind_by, "total_commits": comparison.ahead_by, "status": status,
-        "commits": documents(&state, head_repo.id, &comparison.commits, &head_owner, &name).await?
+        "commits": documents(&state, head_repo.id, &comparison.commits, &head_owner, &head_repo.name).await?
     });
     if page.page.unwrap_or(1) == 1 {
         let mut diff = base_store
@@ -161,8 +169,13 @@ async fn compare(
         value["files"] = json!(diff_files(
             diff.files,
             &head_owner,
-            &name,
-            &comparison.head_sha
+            &head_repo.name,
+            &comparison.head_sha,
+            Some((
+                &base_owner,
+                &base_repo.name,
+                &comparison.merge_base_commit.sha
+            ))
         ));
     }
     let response_headers = if paginated {

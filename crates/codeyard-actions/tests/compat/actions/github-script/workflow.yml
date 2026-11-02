@@ -1,6 +1,10 @@
 # https://github.com/actions/github-script/tree/f28e40c7f34bde8b3046d885e986cb6290c5673b
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

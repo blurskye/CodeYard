@@ -14,6 +14,7 @@ fn upload(sarif: Value) -> Upload {
         sarif: STANDARD.encode(gzip.finish().unwrap()),
         checkout_uri: Some("file:///workspace/".into()),
         processing_status: "pending".into(),
+        claim_id: None,
         error: None,
         created_at: chrono::Utc::now(),
     }

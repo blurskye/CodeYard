@@ -340,6 +340,16 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::CREATED, "{org_repo}");
     let org_repo_id = org_repo["id"].as_i64().unwrap();
+    // A private repository's graph is on once Dependabot alerts are, as on GitHub.
+    let (status, _, body) = request(
+        &router,
+        "PUT",
+        "/api/v3/repos/alert-org/project/vulnerability-alerts",
+        Some(&writer),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     let org_branch = format!(
         "refs/heads/{}",
         org_repo["default_branch"].as_str().unwrap()

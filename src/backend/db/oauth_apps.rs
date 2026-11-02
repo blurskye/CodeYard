@@ -15,6 +15,16 @@ pub struct Application {
     pub created_at: DateTime<Utc>,
 }
 
+pub const APPLICATION_PAGE_SIZE: i64 = 25;
+pub(crate) const APPLICATIONS_SQL: &str = "SELECT name,client_id,redirect_uri FROM oauth_applications WHERE owner_id=$1 ORDER BY id LIMIT $2 OFFSET $3";
+
+#[derive(sqlx::FromRow)]
+pub struct ApplicationSummary {
+    pub name: String,
+    pub client_id: String,
+    pub redirect_uri: String,
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Grant {
     pub hash: String,
@@ -40,6 +50,24 @@ pub struct Token {
     pub scopes: String,
 }
 
+/// Native SQL fragments only: client authentication and token use share issuer liveness.
+pub(crate) fn client_condition(client_sql: &str) -> String {
+    format!("EXISTS(SELECT 1 FROM oauth_applications client JOIN users owner ON owner.id=client.owner_id
+        WHERE client.client_id={client_sql} AND NOT owner.is_banned AND NOT owner.must_change_password
+        AND (NOT client.is_github_app OR EXISTS(
+            SELECT 1 FROM github_apps app JOIN users bot ON bot.id=app.bot_id JOIN users app_owner ON app_owner.id=app.owner_id
+            WHERE app.client_id=client.client_id AND NOT bot.is_banned AND NOT bot.must_change_password
+            AND NOT app_owner.is_banned AND NOT app_owner.must_change_password)))")
+}
+
+pub(crate) fn token_issuer_condition(token_sql: &str, cli_sql: &str) -> String {
+    format!(
+        "NOT EXISTS(SELECT 1 FROM oauth_app_tokens issued WHERE issued.token_id={token_sql}.id
+        AND issued.client_id<>{cli_sql} AND NOT ({}))",
+        client_condition("issued.client_id")
+    )
+}
+
 pub enum Exchange {
     Token(String),
     Pending,
@@ -51,14 +79,13 @@ pub enum Exchange {
 
 native_operation!(crate::backend::db::postgres::oauth_apps::register,
     crate::backend::db::sqlite::oauth_apps::register,
-    #[expect(clippy::too_many_arguments, reason = "Registration stores the explicit validated application fields.")]
     fn register(pool: &DbPool, actor: i64, session: &str, client_id: &str, secret_hash: &str, name: &str, homepage: &str, redirect_uri: &str) -> Result<Option<Application>>);
 native_operation!(crate::backend::db::postgres::oauth_apps::application,
     crate::backend::db::sqlite::oauth_apps::application,
     fn application(pool: &DbPool, client_id: &str) -> Result<Option<Application>>);
 native_operation!(crate::backend::db::postgres::oauth_apps::applications,
     crate::backend::db::sqlite::oauth_apps::applications,
-    fn applications(pool: &DbPool, actor: i64) -> Result<Vec<Application>>);
+    fn applications(pool: &DbPool, actor: impl Into<super::credentials::Actor>, offset: i64, limit: i64) -> Result<Option<Vec<ApplicationSummary>>>);
 native_operation!(crate::backend::db::postgres::oauth_apps::save_grant,
     crate::backend::db::sqlite::oauth_apps::save_grant,
     fn save_grant(pool: &DbPool, grant: &Grant) -> Result<()>);
@@ -70,7 +97,6 @@ native_operation!(crate::backend::db::postgres::oauth_apps::approve,
     fn approve(pool: &DbPool, code: &str, actor: i64, session: &str, denied: bool) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::oauth_apps::exchange,
     crate::backend::db::sqlite::oauth_apps::exchange,
-    #[expect(clippy::too_many_arguments, reason = "OAuth exchange binds each credential to the original authorization request.")]
     fn exchange(pool: &DbPool, hash: &str, client_id: &str, kind: &str, redirect_uri: Option<&str>, verifier: &str, state: Option<&str>, value: &str) -> Result<Exchange>);
 native_operation!(crate::backend::db::postgres::oauth_apps::token,
     crate::backend::db::sqlite::oauth_apps::token,

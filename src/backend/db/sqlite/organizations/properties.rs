@@ -6,7 +6,7 @@ use crate::backend::db::{
 use anyhow::{ensure, Result};
 use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashSet;
-use OrganizationOutcome::{Applied, Denied, Missing};
+use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
 
 pub(crate) async fn definitions_on(c: &mut SqliteConnection, org: i64) -> Result<Vec<Definition>> {
     sqlx::query_as::<_,DefinitionRow>("SELECT * FROM organization_repository_properties WHERE org_id=?1 ORDER BY LOWER(property_name),id").bind(org).fetch_all(c).await?.into_iter().map(DefinitionRow::decode).collect()
@@ -22,13 +22,46 @@ pub async fn catalog(
     tx.commit().await?;
     Ok(Applied(result))
 }
+pub async fn summaries(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+) -> Result<OrganizationOutcome<Vec<DefinitionSummary>>> {
+    let mut tx = begin_read(pool).await?;
+    require_read_org!(tx, actor, org);
+    let result = sqlx::query_as::<_, DefinitionSummary>("SELECT id,property_name,value_type,description,required,require_explicit_values FROM organization_repository_properties WHERE org_id=?1 ORDER BY LOWER(property_name),id LIMIT ?2")
+        .bind(org)
+        .bind(MAX_DEFINITIONS as i64)
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Applied(result))
+}
+pub async fn definition(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    name: &str,
+) -> Result<OrganizationOutcome<Option<Definition>>> {
+    let mut tx = begin_read(pool).await?;
+    require_read_org!(tx, actor, org);
+    let result = sqlx::query_as::<_, DefinitionRow>("SELECT * FROM organization_repository_properties WHERE org_id=?1 AND LOWER(property_name)=LOWER(?2)")
+        .bind(org)
+        .bind(name)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(DefinitionRow::decode)
+        .transpose()?;
+    tx.commit().await?;
+    Ok(Applied(result))
+}
 async fn compatible_on(
     c: &mut SqliteConnection,
     org: i64,
     old: Option<&Definition>,
     input: &DefinitionInput,
 ) -> Result<()> {
-    if let Some(old) = old {
+    if let Some(old) = old.filter(|old| !input.same_value_rules(&old.fields)) {
         let mut after = 0;
         loop {
             let rows:Vec<(i64,String)>=sqlx::query_as("SELECT repo_id,value FROM repository_property_values WHERE org_id=?1 AND definition_id=?2 AND repo_id>?3 ORDER BY repo_id LIMIT 500").bind(org).bind(old.id).bind(after).fetch_all(&mut *c).await?;
@@ -41,7 +74,7 @@ async fn compatible_on(
             }
         }
     }
-    if input.needs_explicit_value() {
+    if input.needs_explicit_value() && old.is_none_or(|old| !old.fields.needs_explicit_value()) {
         let missing:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=?1 AND r.owner_user_id IS NULL AND NOT EXISTS(SELECT 1 FROM repository_property_values v WHERE v.repo_id=r.id AND v.org_id=?1 AND v.definition_id=?2))").bind(org).bind(old.map(|old|old.id)).fetch_one(c).await?;
         ensure!(
             !missing,
@@ -55,12 +88,17 @@ async fn compatible_on(
 }
 pub async fn define(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     inputs: &[DefinitionInput],
 ) -> Result<OrganizationOutcome<Vec<Definition>>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
+        return Ok(Denied);
+    }
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
         return Ok(Denied);
     }
     let existing = definitions_on(&mut tx, org).await?;
@@ -84,15 +122,24 @@ pub async fn define(
 }
 pub async fn remove(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     name: &str,
+    definition: Option<i64>,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
-    if sqlx::query("DELETE FROM organization_repository_properties WHERE org_id=?1 AND LOWER(property_name)=LOWER(?2)").bind(org).bind(name).execute(&mut *tx).await?.rows_affected()==0 {return Ok(Missing);}
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
+        return Ok(Denied);
+    }
+    // A native form names the definition it showed, so a replacement with the same name survives.
+    if sqlx::query("DELETE FROM organization_repository_properties WHERE org_id=?1 AND LOWER(property_name)=LOWER(?2) AND (?3 IS NULL OR id=?3)").bind(org).bind(name).bind(definition).execute(&mut *tx).await?.rows_affected()==0 {
+        return Ok(if definition.is_some() { Conflict } else { Missing });
+    }
     tx.commit().await?;
     Ok(Applied(()))
 }
@@ -155,13 +202,18 @@ pub(crate) async fn creation_values_on(
 }
 pub async fn set_values(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     repositories: &[String],
     values: &[ValueInput],
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
+        return Ok(Denied);
+    }
+    if !credential(&mut tx, &grant, org, "organization_custom_properties").await? {
         return Ok(Denied);
     }
     ensure!(
@@ -201,38 +253,20 @@ pub(crate) async fn values_on(
     repo: i64,
     definitions: &[Definition],
 ) -> Result<Vec<ValueInput>> {
+    if definitions.is_empty() {
+        return Ok(Vec::new());
+    }
+    let ids: Vec<i64> = definitions.iter().map(|definition| definition.id).collect();
     let rows: std::collections::HashMap<i64, String> = sqlx::query_as::<_, (i64, String)>(
-        "SELECT definition_id,value FROM repository_property_values WHERE repo_id=?1",
+        "SELECT definition_id,value FROM repository_property_values WHERE repo_id=?1 AND definition_id IN (SELECT value FROM json_each(?2))",
     )
     .bind(repo)
+    .bind(serde_json::to_string(&ids)?)
     .fetch_all(c)
     .await?
     .into_iter()
     .collect();
-    let mut result = Vec::new();
-    let mut bytes = 0;
-    for definition in definitions {
-        let value = match rows.get(&definition.id) {
-            Some(value) => Some(serde_json::from_str::<PropertyValue>(value)?),
-            None => {
-                if definition.fields.require_explicit_values {
-                    None
-                } else {
-                    definition.fields.default_value.clone()
-                }
-            }
-        };
-        if let Some(value) = &value {
-            definition.fields.validate_value(value)?;
-        }
-        bytes += serde_json::to_string(&value)?.len() + definition.fields.property_name.len() + 64;
-        ensure!(bytes <= 64 * 1024 * 1024, Refusal::TooLarge);
-        result.push(ValueInput {
-            property_name: definition.fields.property_name.clone(),
-            value,
-        });
-    }
-    Ok(result)
+    crate::backend::db::organizations::properties::effective_values(definitions, &rows)
 }
 pub async fn repository(
     pool: &SqlitePool,
@@ -277,7 +311,7 @@ pub async fn repository(
 }
 pub async fn set_repository_values(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     values: &[ValueInput],
 ) -> Result<()> {
@@ -286,7 +320,7 @@ pub async fn set_repository_values(
 /// Native forms bind the definition's immutable identity as well as the repository.
 pub async fn set_repository_value(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     definition: i64,
     value: &ValueInput,
@@ -302,21 +336,39 @@ pub async fn set_repository_value(
 }
 async fn change_repository_values(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     values: &[ValueInput],
     expected: Option<i64>,
 ) -> Result<()> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     ensure!(
         super::super::discussions::lock_archive_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
     let org:i64=sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=?1 AND owner_kind='org' AND owner_org_id IS NOT NULL AND owner_user_id IS NULL").bind(repo).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
-    let owner = matches!(
+    let mut owner = matches!(
         read_authority(&mut tx, actor, org).await?,
         Applied(OrgRole::Owner)
     );
+    ensure!(
+        super::super::credentials::writes(&mut tx, &grant, Some(repo), None, "administration")
+            .await?,
+        Refusal::Denied
+    );
+    // Account ownership cannot lend an organization-only capability to a repository token.
+    if owner && grant.token_id().is_some() {
+        owner = super::super::credentials::writes(
+            &mut tx,
+            &grant,
+            None,
+            Some(org),
+            "organization_custom_properties",
+        )
+        .await?;
+    }
     let definitions = definitions_on(&mut tx, org).await?;
     if let Some(id) = expected {
         ensure!(
@@ -371,21 +423,19 @@ fn query_predicates(
             builder.push(if criterion.negative { "NOT(" } else { "(" });
             match &criterion.kind {
                 Kind::Text(value) => {
-                    let needle = crate::backend::db::discussions::contains_pattern(value);
+                    let needle = super::super::search::contains(value);
                     builder
-                        .push("r.name LIKE ")
+                        .push("r.name REGEXP ")
                         .push_bind(needle.clone())
-                        .push(" ESCAPE '\\' OR COALESCE(r.description,'') LIKE ")
+                        .push(" OR COALESCE(r.description,'') REGEXP ")
                         .push_bind(needle.clone())
-                        .push(" ESCAPE '\\' OR o.name LIKE ")
-                        .push_bind(needle)
-                        .push(" ESCAPE '\\'");
+                        .push(" OR o.name REGEXP ")
+                        .push_bind(needle);
                 }
                 Kind::Name(value) => {
                     builder
-                        .push("r.name LIKE ")
-                        .push_bind(crate::backend::db::discussions::contains_pattern(value))
-                        .push(" ESCAPE '\\'");
+                        .push("r.name REGEXP ")
+                        .push_bind(super::super::search::contains(value));
                 }
                 Kind::Owner(value) => {
                     builder
@@ -478,10 +528,24 @@ pub async fn list_values(
         .build_query_as::<Repository>()
         .fetch_all(&mut *tx)
         .await?;
+    let ids: Vec<i64> = repositories
+        .iter()
+        .map(|repository| repository.id)
+        .collect();
+    let rows: Vec<(i64, i64, String)> = sqlx::query_as("SELECT repo_id,definition_id,value FROM repository_property_values WHERE repo_id IN (SELECT value FROM json_each(?1))")
+        .bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
+    let mut values: std::collections::HashMap<i64, std::collections::HashMap<i64, String>> =
+        std::collections::HashMap::new();
+    for (repo, definition, value) in rows {
+        values.entry(repo).or_default().insert(definition, value);
+    }
     let mut result = Vec::new();
     let mut bytes = 0;
     for repository in repositories {
-        let properties = values_on(&mut tx, repository.id, &definitions).await?;
+        let properties = crate::backend::db::organizations::properties::effective_values(
+            &definitions,
+            &values.remove(&repository.id).unwrap_or_default(),
+        )?;
         for property in &properties {
             bytes +=
                 property.property_name.len() + serde_json::to_string(&property.value)?.len() + 64;

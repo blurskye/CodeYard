@@ -264,6 +264,10 @@ fn rejects_invalid_job_fields_and_contexts() {
         "runs-on: ubuntu-latest\nsteps: [{run: hi}]\ncontainer: {image: alpine, wat: x}",
         "runs-on: ubuntu-latest\nsteps: [{run: hi}]\nenvironment: {url: x}",
         "runs-on: ubuntu-latest\nsteps: [{run: hi}]\nwat: x",
+        "runs-on: ubuntu-latest\nsteps: [{run: hi}]\nsnapshot: ''",
+        "runs-on: ubuntu-latest\nsteps: [{run: hi}]\nsnapshot: {version: 1.*}",
+        "runs-on: ubuntu-latest\nsteps: [{run: hi}]\nsnapshot: {image-name: x, wat: y}",
+        "runs-on: ubuntu-latest\nsteps: [{run: hi}]\nsnapshot: '${{ secrets.IMAGE }}'",
         "runs-on: ubuntu-latest\nsteps: []",
         "steps: [{run: hi}]",
     ] {
@@ -331,6 +335,21 @@ fn plain_job_defaults() {
     assert!(!job.continue_on_error);
     assert_eq!(job.max_parallel, None);
     assert_eq!(job.concurrency, None);
+    assert!(!job.snapshot);
+}
+
+#[test]
+fn snapshot_forms() {
+    for snapshot in [
+        "my-image",
+        "{image-name: my-image}",
+        "{image-name: 'image-${{ matrix.os }}', version: 2.*, if: success()}",
+    ] {
+        let jobs = plan(&format!(
+            "runs-on: ubuntu-latest\nstrategy: {{matrix: {{os: [linux]}}}}\nsteps: [{{run: hi}}]\nsnapshot: {snapshot}"
+        ));
+        assert!(jobs[0].snapshot, "{snapshot}");
+    }
 }
 
 #[test]
@@ -687,7 +706,9 @@ outputs:
     assert!(!jobs[1].continue_on_error);
     assert_eq!(jobs[0].runs_on, ["self-hosted", "linux"]);
     assert_eq!(jobs[0].runs_on_group.as_deref(), Some("larger-runners"));
-    assert_eq!(jobs[0].env["OS"], "${{ matrix.os }}");
+    assert!(
+        matches!(&jobs[0].env[1], super::EnvironmentTemplate::Entries(env) if env["OS"] == "${{ matrix.os }}")
+    );
     assert_eq!(
         jobs[0].default_shell.as_deref(),
         Some("${{ matrix.os == 'linux' && 'bash' || 'pwsh' }}")
@@ -723,8 +744,17 @@ jobs:
         .unwrap()
         .unwrap()
         .remove(0);
+    // The runner resolves the workflow scope, then the job scope over it.
+    let mut env = BTreeMap::new();
+    for scope in &job.env {
+        env.extend(
+            scope
+                .resolve(&Contexts::default(), Status::default())
+                .unwrap(),
+        );
+    }
     assert_eq!(
-        job.env,
+        env,
         BTreeMap::from([
             ("A".into(), "workflow".into()),
             ("B".into(), "job".into()),

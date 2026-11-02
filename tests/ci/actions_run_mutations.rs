@@ -79,11 +79,15 @@ async fn contract(pg: bool) {
         StatusCode::FORBIDDEN,
     )
     .await;
-    let refusal = db::ci::request_ci_cancellation_with_token(
+    let refusal = db::ci::request_ci_cancellation_with_credential(
         f.pool(),
         queued.run_id,
-        read_pat.user_id,
-        read_pat.id,
+        alice,
+        &db::ci::CiCredential::Token {
+            id: read_pat.id,
+            hash: ci::runtime::token_hash(read_token),
+            permission: "actions",
+        },
     )
     .await
     .unwrap_err();
@@ -130,11 +134,15 @@ async fn contract(pg: bool) {
         StatusCode::NOT_FOUND,
     )
     .await;
-    let refusal = db::ci::request_ci_cancellation_with_token(
+    let refusal = db::ci::request_ci_cancellation_with_credential(
         f.pool(),
         foreign.run_id,
-        write_pat.user_id,
-        write_pat.id,
+        alice,
+        &db::ci::CiCredential::Token {
+            id: write_pat.id,
+            hash: ci::runtime::token_hash(write_token),
+            permission: "actions",
+        },
     )
     .await
     .unwrap_err();

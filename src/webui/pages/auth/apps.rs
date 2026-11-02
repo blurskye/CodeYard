@@ -10,6 +10,7 @@ pub struct Model {
     pub permissions: String,
     pub redirect: String,
     pub applications: Vec<(String, String)>,
+    pub registered: Vec<(i64, String, String)>,
     pub credentials: Option<(String, String, String)>,
 }
 pub fn page(token: &str, model: Model) -> Element {
@@ -73,8 +74,20 @@ pub fn page(token: &str, model: Model) -> Element {
         } else {
             a { href: "/settings/apps/new", "Register GitHub App" }
             a { href: "/settings/apps/installations", "Installed GitHub Apps" }
-            for (name,slug) in model.applications {
-                article { h2 { "{name}" } a { href: format!("/apps/{slug}/installations/new"), "Install" } }
+            p { "Lost credentials can be regenerated. This replaces the app's private key and OAuth client secret." }
+            for (id,name,slug) in model.registered {
+                article { h2 { "{name}" } a { href: format!("/apps/{slug}/installations/new"), "Install" }
+                    form { method: "post", action: format!("/settings/apps/{slug}/regenerate"),
+                        {csrf(token)}
+                        button { r#type: "submit", class: SUBMIT, "Regenerate credentials" }
+                    }
+                    form { method: "post", action: format!("/settings/apps/{id}/delete"),
+                        {csrf(token)}
+                        p { "Deleting the app revokes its signing key, installations and derived credentials." }
+                        label { input { r#type: "checkbox", name: "confirm", value: "yes", required: true } "Permanently delete this GitHub App" }
+                        button { r#type: "submit", class: SUBMIT, "Delete GitHub App" }
+                    }
+                }
             }
         }
     } }

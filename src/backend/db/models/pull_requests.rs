@@ -38,6 +38,8 @@ pub struct PullRequest {
     pub mergeable: Option<bool>,
     pub merged: bool,
     pub merged_by_id: Option<i64>,
+    /// Who closed or merged it; cleared when it is reopened.
+    pub closed_by_id: Option<i64>,
     pub merge_commit_sha: Option<String>,
     pub additions: i32,
     pub deletions: i32,
@@ -50,12 +52,12 @@ pub struct PullRequest {
 
 impl PullRequest {
     /// The commit that a diff or commit list starts from. A stacked layer keeps the base it was
-    /// built on. An ordinary open pull request compares with its current base, so upstream
+    /// built on. An ordinary pull request compares with its current base, so upstream
     /// commits that reached the base later are not shown as its own changes.
     pub fn diff_base(&self) -> &str {
-        match (self.stack_id, self.state.as_str(), self.fork_sha.as_deref()) {
-            (None, "open", _) => &self.base_sha,
-            (_, _, Some(fork)) => fork,
+        match (self.stack_id, self.fork_sha.as_deref()) {
+            (None, _) => &self.base_sha,
+            (_, Some(fork)) => fork,
             _ => &self.base_sha,
         }
     }
@@ -79,6 +81,10 @@ pub struct PullRequestComment {
     pub start_line: Option<i32>,
     pub start_side: Option<String>,
     pub commit_sha: Option<String>,
+    /// The immutable comparison base captured when this inline thread was created.
+    #[serde(default)]
+    #[sqlx(default)]
+    pub diff_base_sha: Option<String>,
     pub in_reply_to_comment_id: Option<i64>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

@@ -509,34 +509,37 @@ fn profile_stars_tab_counts_on_the_tab_and_lists_its_page_only_when_open() {
 
 #[test]
 fn profile_stars_tab_has_the_stars_filter_bar_and_keeps_its_filters_in_pages() {
-    let stars = ProfileStars {
-        count: 60,
-        open: true,
-        page: 2,
-        has_older: true,
-        repositories: Vec::new(),
-        sort: "name".into(),
-        query: "tool".into(),
+    let render = |page: usize| {
+        let stars = ProfileStars {
+            count: 60,
+            open: true,
+            page,
+            has_older: page > 1,
+            repositories: Vec::new(),
+            sort: "name".into(),
+            query: "tool".into(),
+        };
+        html(profile_page(
+            Profile {
+                username: "alice".into(),
+                ..Profile::default()
+            },
+            vec![],
+            0,
+            ProfileActivity::default(),
+            stars,
+            "token",
+            false,
+            false,
+            false,
+            0,
+            0,
+            None,
+            None,
+            None,
+        ))
     };
-    let page = html(profile_page(
-        Profile {
-            username: "alice".into(),
-            ..Profile::default()
-        },
-        vec![],
-        0,
-        ProfileActivity::default(),
-        stars,
-        "token",
-        false,
-        false,
-        false,
-        0,
-        0,
-        None,
-        None,
-        None,
-    ));
+    let page = render(2);
     // The bar is the one /stars uses, submitted back to the profile's Stars tab.
     assert!(page.contains("id=\"profile-stars-filters\""), "{page}");
     assert!(page.contains("action=\"/alice\""), "{page}");
@@ -556,9 +559,16 @@ fn profile_stars_tab_has_the_stars_filter_bar_and_keeps_its_filters_in_pages() {
         older.contains("sort=name") && older.contains("q=tool"),
         "{older}"
     );
+    // A later page of the search may be past its end, so it points back to the first page.
     assert!(
-        page.contains("No starred repositories match “tool”."),
+        page.contains("No starred repositories on this page."),
         "{page}"
+    );
+    // The search's first page is empty only when nothing matches, though the user has stars.
+    let first = render(1);
+    assert!(
+        first.contains("No starred repositories match “tool”."),
+        "{first}"
     );
 }
 

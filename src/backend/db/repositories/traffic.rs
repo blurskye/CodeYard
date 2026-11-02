@@ -2,8 +2,6 @@
 use crate::backend::db::DbPool;
 use anyhow::{ensure, Result};
 use chrono::{NaiveDate, Utc};
-use hmac::{Hmac, Mac};
-use rand::RngCore;
 use sha2::{Digest, Sha256};
 use std::net::IpAddr;
 #[cfg(test)]
@@ -39,9 +37,10 @@ impl Identity {
     pub fn fingerprint(&self, salt: &str) -> Result<String> {
         let key = hex::decode(salt)?;
         ensure!(key.len() == 32, "Invalid traffic privacy key");
-        let mut mac = Hmac::<Sha256>::new_from_slice(&key)?;
-        mac.update(self.0.as_bytes());
-        Ok(hex::encode(mac.finalize().into_bytes()))
+        Ok(hex::encode(crate::backend::crypto::hmac_sha256(
+            &key,
+            self.0.as_bytes(),
+        )))
     }
 }
 #[derive(Clone)]
@@ -109,7 +108,7 @@ impl Window {
         Self {
             today: date.to_string(),
             yesterday: (date - chrono::Duration::days(1)).to_string(),
-            first: (date - chrono::Duration::days(14)).to_string(),
+            first: (date - chrono::Duration::days(13)).to_string(),
         }
     }
 }
@@ -135,9 +134,7 @@ pub(crate) fn fingerprints(keys: &[DayKey], identity: &Identity) -> Result<Vec<F
 }
 
 pub(crate) fn new_salt() -> String {
-    let mut salt = [0_u8; 32];
-    rand::rngs::OsRng.fill_bytes(&mut salt);
-    hex::encode(salt)
+    crate::backend::crypto::random_hex()
 }
 #[derive(Clone, Debug)]
 pub struct Summary {

@@ -1,6 +1,10 @@
 # https://github.com/opentofu/setup-opentofu/tree/9d84900f3238fab8cd84ce47d658d25dd008be2f
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

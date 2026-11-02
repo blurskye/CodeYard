@@ -8,6 +8,11 @@ use anyhow::{ensure, Result};
 use codeyard_actions::progress::{Replay, State};
 use std::collections::{BTreeMap, BTreeSet};
 
+/// A claim carries its replay across a cluster RPC frame together with the run, workflow and
+/// event payload, so the replay may use at most half of one frame. Admitting more would fail
+/// the claim after the attempt was queued.
+const MAX_REPLAY_BYTES: usize = crate::backend::cluster::rpc::MAX_JSON / 2;
+
 pub(crate) fn compose(previous: Option<Replay>, fresh: State) -> State {
     let mut state = if let Some(previous) = previous {
         let mut state = previous.state;
@@ -183,16 +188,27 @@ pub(crate) fn build(
                     }
                 }
             }
-            let mut values = BTreeMap::new();
-            for variant in variants {
-                let matrix = latest
-                    .get(&(job.clone(), *variant))
-                    .and_then(|job| job.matrix.as_ref())
-                    .ok_or_else(unavailable)?;
-                values.insert(*variant, matrix.0.clone());
-            }
-            matrices.insert(job.clone(), values);
         }
+    }
+    // Every borrowed matrix result needs its observed identity, not only selected variants.
+    // Fresh variables can change an unselected variant without changing its index.
+    for (job, variants) in &state.variants {
+        if selected.get(job).is_some_and(Option::is_none)
+            || raw["jobs"][job.as_str()]["strategy"]
+                .get("matrix")
+                .is_none()
+        {
+            continue;
+        }
+        let mut values = BTreeMap::new();
+        for variant in variants.keys() {
+            let matrix = latest
+                .get(&(job.clone(), *variant))
+                .and_then(|job| job.matrix.as_ref())
+                .ok_or_else(unavailable)?;
+            values.insert(*variant, matrix.0.clone());
+        }
+        matrices.insert(job.clone(), values);
     }
     let replay = Replay {
         version: 1,
@@ -201,7 +217,7 @@ pub(crate) fn build(
         matrices,
     };
     ensure!(
-        serde_json::to_vec(&replay)?.len() <= 16 * 1024 * 1024,
+        serde_json::to_vec(&replay)?.len() <= MAX_REPLAY_BYTES,
         Refusal::Conflict("Native replay state exceeds its limit; re-run the whole workflow")
     );
     Ok(Some(replay))

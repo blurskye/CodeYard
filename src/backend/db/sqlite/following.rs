@@ -9,13 +9,24 @@ pub async fn list_connections(
     limit: i64,
     offset: i64,
 ) -> Result<Vec<crate::backend::db::models::User>> {
-    Ok(sqlx::query_as("SELECT u.* FROM users u JOIN follows f ON u.id=CASE WHEN ?2 THEN f.follower_id ELSE f.following_id END WHERE CASE WHEN ?2 THEN f.following_id ELSE f.follower_id END=?1 ORDER BY u.id LIMIT ?3 OFFSET ?4")
-        .bind(user_id).bind(followers).bind(limit).bind(offset).fetch_all(pool).await?)
+    Ok(
+        sqlx::query_as(crate::backend::db::following::connections_sql(followers))
+            .bind(user_id)
+            .bind(limit)
+            .bind(offset)
+            .fetch_all(pool)
+            .await?,
+    )
 }
 
-pub async fn follow_user(pool: &SqlitePool, follower_id: i64, following_id: i64) -> Result<bool> {
+pub async fn follow_user(
+    pool: &SqlitePool,
+    follower_id: i64,
+    following_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_active(&mut tx, follower_id).await?;
+    super::users::transitions::require_account(&mut tx, follower_id, credential).await?;
     anyhow::ensure!(
         !super::users::blocks::interaction_blocked(&mut tx, follower_id, following_id).await?,
         crate::backend::db::following::FollowRestricted
@@ -31,9 +42,14 @@ pub async fn follow_user(pool: &SqlitePool, follower_id: i64, following_id: i64)
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn unfollow_user(pool: &SqlitePool, follower_id: i64, following_id: i64) -> Result<bool> {
+pub async fn unfollow_user(
+    pool: &SqlitePool,
+    follower_id: i64,
+    following_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
+) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_active(&mut tx, follower_id).await?;
+    super::users::transitions::require_account(&mut tx, follower_id, credential).await?;
     let result = sqlx::query("DELETE FROM follows WHERE follower_id = ?1 AND following_id = ?2")
         .bind(follower_id)
         .bind(following_id)
@@ -41,13 +57,6 @@ pub async fn unfollow_user(pool: &SqlitePool, follower_id: i64, following_id: i6
         .await?;
     tx.commit().await?;
     Ok(result.rows_affected() > 0)
-}
-
-async fn require_active(tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>, actor: i64) -> Result<()> {
-    let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
-        .bind(actor).fetch_one(&mut **tx).await?;
-    anyhow::ensure!(active, crate::backend::db::following::FollowRestricted);
-    Ok(())
 }
 
 pub async fn is_user_following(

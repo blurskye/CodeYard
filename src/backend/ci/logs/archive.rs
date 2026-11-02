@@ -31,16 +31,38 @@ fn filename(name: &str) -> String {
 }
 fn job_filename(name: &str) -> String {
     let utf16: Vec<_> = filename(name).encode_utf16().take(90).collect();
-    String::from_utf16_lossy(&utf16).trim().to_owned()
+    String::from_utf16_lossy(&utf16)
+        .trim()
+        .trim_end_matches(['.', ' '])
+        .to_owned()
+}
+fn archive_key(name: &str) -> String {
+    name.to_uppercase()
 }
 fn usable(name: &str) -> bool {
+    let stem = name
+        .split('.')
+        .next()
+        .unwrap_or("")
+        .trim_end_matches(' ')
+        .to_ascii_uppercase();
+    let numbered_device = stem
+        .strip_prefix("COM")
+        .or_else(|| stem.strip_prefix("LPT"))
+        .is_some_and(|suffix| {
+            matches!(
+                suffix,
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" | "¹" | "²" | "³"
+            )
+        });
     !name.is_empty()
         && name != "."
         && name != ".."
         && name.len() <= 240
+        && !numbered_device
         && !matches!(
-            name.to_ascii_uppercase().as_str(),
-            "CON" | "PRN" | "AUX" | "NUL" | "COM1" | "LPT1"
+            stem.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL" | "CONIN$" | "CONOUT$"
         )
 }
 fn member(
@@ -84,7 +106,9 @@ pub fn encode(snapshot: Snapshot) -> Result<(Vec<u8>, &'static str, String)> {
         .unix_permissions(0o600);
     let mut counts = BTreeMap::<String, usize>::new();
     for job in &snapshot.grant.manifest.0.jobs {
-        *counts.entry(job_filename(&job.name)).or_default() += 1;
+        *counts
+            .entry(archive_key(&job_filename(&job.name)))
+            .or_default() += 1;
     }
     let mut reserved: std::collections::BTreeSet<String> = counts.keys().cloned().collect();
     // A job directory may not share a name with a file at the archive root.
@@ -95,9 +119,9 @@ pub fn encode(snapshot: Snapshot) -> Result<(Vec<u8>, &'static str, String)> {
         .jobs
         .iter()
         .enumerate()
-        .map(|(index, job)| format!("{index}_{}.txt", job_filename(&job.name)))
+        .map(|(index, job)| archive_key(&format!("{index}_{}.txt", job_filename(&job.name))))
         .collect();
-    roots.insert("native.log".to_owned());
+    roots.insert(archive_key("native.log"));
     // One pass over the lines, so each job and step member reads only its own lines.
     let mut by_job: BTreeMap<_, Vec<&Line>> = BTreeMap::new();
     let mut by_step: BTreeMap<_, Vec<&Line>> = BTreeMap::new();
@@ -110,17 +134,19 @@ pub fn encode(snapshot: Snapshot) -> Result<(Vec<u8>, &'static str, String)> {
     }
     for (index, job) in snapshot.grant.manifest.0.jobs.iter().enumerate() {
         let base = job_filename(&job.name);
-        let compatible = usable(&base) && counts.get(&base) == Some(&1) && !roots.contains(&base);
+        let compatible = usable(&base)
+            && counts.get(&archive_key(&base)) == Some(&1)
+            && !roots.contains(&archive_key(&base));
         let directory = if compatible {
             base.clone()
         } else {
             // Do not let gh match the wrong member for two identically named jobs. Its
             // normal job-ID download fallback can retrieve each exact stream instead.
             let mut name = format!("__codeyard_job_{}__", job.id);
-            while reserved.contains(&name) || roots.contains(&name) {
+            while reserved.contains(&archive_key(&name)) || roots.contains(&archive_key(&name)) {
                 name.push('_');
             }
-            reserved.insert(name.clone());
+            reserved.insert(archive_key(&name));
             name
         };
         let all = text(by_job.get(&Some(job.id)).into_iter().flatten().copied());

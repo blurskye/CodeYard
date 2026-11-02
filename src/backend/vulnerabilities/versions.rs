@@ -36,10 +36,40 @@ struct Python {
     pre: (i8, u64),
     post: (i8, u64),
     dev: (i8, u64),
+    local: Option<Vec<Local>>,
+}
+#[derive(Debug, Eq, PartialEq, Ord, PartialOrd)]
+enum Local {
+    Word(String),
+    Number(u64),
 }
 fn python(raw: &str) -> Option<(Vec<u64>, Python)> {
     let raw = raw.trim_start_matches(['v', 'V']).to_ascii_lowercase();
-    let public = raw.split('+').next()?;
+    let (public, local) = raw
+        .split_once('+')
+        .map_or((raw.as_str(), None), |(public, local)| {
+            (public, Some(local))
+        });
+    let local = match local {
+        Some(local) => Some(
+            local
+                .split(['.', '-', '_'])
+                .map(|part| {
+                    if part.is_empty() {
+                        return None;
+                    }
+                    if part.bytes().all(|byte| byte.is_ascii_digit()) {
+                        Some(Local::Number(part.parse().ok()?))
+                    } else if part.bytes().all(|byte| byte.is_ascii_alphanumeric()) {
+                        Some(Local::Word(part.to_owned()))
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Option<Vec<_>>>()?,
+        ),
+        None => None,
+    };
     let (epoch, public) = match public.split_once('!') {
         Some((e, v)) => (e.parse().ok()?, v),
         None => (0, public),
@@ -89,6 +119,7 @@ fn python(raw: &str) -> Option<(Vec<u64>, Python)> {
             }),
             post: post.unwrap_or((-1, 0)),
             dev: dev.unwrap_or((1, 0)),
+            local,
         },
     ))
 }
@@ -111,7 +142,7 @@ fn tokens(raw: &str) -> Option<Vec<Token>> {
                 out.push(if bytes[start].is_ascii_digit() {
                     Token::Number(s.parse().ok()?)
                 } else {
-                    Token::Word(s.to_ascii_lowercase())
+                    Token::Word(s.to_owned())
                 });
             }
             start = if i < bytes.len() && bytes[i].is_ascii_alphanumeric() {
@@ -125,10 +156,9 @@ fn tokens(raw: &str) -> Option<Vec<Token>> {
 }
 fn qualifier(s: &str) -> (i8, &str) {
     match s {
-        "dev" => (-1, ""),
-        "alpha" | "a" => (0, ""),
-        "beta" | "b" => (1, ""),
-        "milestone" | "m" => (2, ""),
+        "alpha" => (0, ""),
+        "beta" => (1, ""),
+        "milestone" => (2, ""),
         "rc" | "cr" => (3, ""),
         "snapshot" => (4, ""),
         "" | "final" | "ga" | "release" => (5, ""),
@@ -141,26 +171,35 @@ fn qualifier(s: &str) -> (i8, &str) {
 /// sorts below `1.0.1`.
 #[derive(Debug)]
 enum MavenItem {
-    Number(u64),
+    Number(String),
     Word(String),
     List(Vec<MavenItem>),
 }
 fn maven_items(raw: &str) -> Option<Vec<MavenItem>> {
     fn part(digits: bool, s: &str) -> Option<MavenItem> {
         Some(if digits {
-            MavenItem::Number(s.parse().ok()?)
+            MavenItem::Number(s.trim_start_matches('0').to_owned())
         } else {
             MavenItem::Word(s.to_owned())
         })
+    }
+    if raw.len() > crate::backend::db::dependency_inventory::MAX_VERSION_BYTES {
+        return None;
     }
     let raw = raw.to_ascii_lowercase();
     let mut stack = vec![Vec::new()];
     let mut digits = false;
     let mut start = 0;
     for (i, c) in raw.char_indices() {
+        if stack.len() > 32 {
+            return None;
+        }
         if c == '.' || c == '-' {
+            if i > start && !digits && !stack.last()?.is_empty() {
+                stack.push(Vec::new());
+            }
             let item = if i == start {
-                MavenItem::Number(0)
+                MavenItem::Number(String::new())
             } else {
                 part(digits, &raw[start..i])?
             };
@@ -171,7 +210,16 @@ fn maven_items(raw: &str) -> Option<Vec<MavenItem>> {
             }
         } else {
             if c.is_ascii_digit() != digits && i > start {
-                stack.last_mut()?.push(part(digits, &raw[start..i])?);
+                if !digits && !stack.last()?.is_empty() {
+                    stack.push(Vec::new());
+                }
+                let word = match &raw[start..i] {
+                    "a" if !digits => "alpha",
+                    "b" if !digits => "beta",
+                    "m" if !digits => "milestone",
+                    other => other,
+                };
+                stack.last_mut()?.push(part(digits, word)?);
                 start = i;
                 stack.push(Vec::new());
             }
@@ -203,7 +251,7 @@ fn maven_items(raw: &str) -> Option<Vec<MavenItem>> {
 }
 fn maven_null(item: &MavenItem) -> bool {
     match item {
-        MavenItem::Number(n) => *n == 0,
+        MavenItem::Number(n) => n.is_empty(),
         MavenItem::Word(w) => qualifier(w) == qualifier(""),
         MavenItem::List(l) => l.is_empty(),
     }
@@ -213,14 +261,14 @@ fn maven_item(a: Option<&MavenItem>, b: Option<&MavenItem>) -> Ordering {
     match (a, b) {
         (None, None) => Ordering::Equal,
         (None, Some(_)) => maven_item(b, a).reverse(),
-        (Some(Number(x)), None) => x.cmp(&0),
+        (Some(Number(x)), None) => x.len().cmp(&0),
         (Some(Word(x)), None) => qualifier(x).cmp(&qualifier("")),
         (Some(List(x)), None) => x
             .iter()
             .map(|item| maven_item(Some(item), None))
             .find(|order| order.is_ne())
             .unwrap_or(Ordering::Equal),
-        (Some(Number(x)), Some(Number(y))) => x.cmp(y),
+        (Some(Number(x)), Some(Number(y))) => x.len().cmp(&y.len()).then_with(|| x.cmp(y)),
         (Some(Word(x)), Some(Word(y))) => qualifier(x).cmp(&qualifier(y)),
         (Some(List(x)), Some(List(y))) => maven_list(x, y),
         (Some(Number(_)), _) => Ordering::Greater,
@@ -239,8 +287,21 @@ fn maven(a: &str, b: &str) -> Option<Ordering> {
     Some(maven_list(&maven_items(a)?, &maven_items(b)?))
 }
 fn gem(a: &str, b: &str) -> Option<Ordering> {
-    let a = tokens(&a.replace('-', ".pre."))?;
-    let b = tokens(&b.replace('-', ".pre."))?;
+    let normalize = |raw: &str| -> Option<Vec<Token>> {
+        let mut parts = tokens(&raw.replace('-', ".pre."))?;
+        let release_end = parts
+            .iter()
+            .position(|part| matches!(part, Token::Word(_)))
+            .unwrap_or(parts.len());
+        let mut end = release_end;
+        while end > 0 && parts[end - 1] == Token::Number(0) {
+            parts.remove(end - 1);
+            end -= 1;
+        }
+        Some(parts)
+    };
+    let a = normalize(a)?;
+    let b = normalize(b)?;
     for i in 0..a.len().max(b.len()) {
         let zero = Token::Number(0);
         let order = match (a.get(i).unwrap_or(&zero), b.get(i).unwrap_or(&zero)) {
@@ -272,6 +333,11 @@ fn prerelease(a: &str, b: &str) -> Ordering {
     a.len().cmp(&b.len())
 }
 pub fn compare(ecosystem: &str, a: &str, b: &str) -> Option<Ordering> {
+    if a.len() > crate::backend::db::dependency_inventory::MAX_VERSION_BYTES
+        || b.len() > crate::backend::db::dependency_inventory::MAX_VERSION_BYTES
+    {
+        return None;
+    }
     match ecosystem {
         "PyPI" => {
             let (ar, av) = python(a)?;
@@ -282,7 +348,8 @@ pub fn compare(ecosystem: &str, a: &str, b: &str) -> Option<Ordering> {
                     .then_with(|| numbers(&ar, &br))
                     .then_with(|| av.pre.cmp(&bv.pre))
                     .then_with(|| av.post.cmp(&bv.post))
-                    .then_with(|| av.dev.cmp(&bv.dev)),
+                    .then_with(|| av.dev.cmp(&bv.dev))
+                    .then_with(|| av.local.cmp(&bv.local)),
             )
         }
         "Maven" => maven(a, b),
@@ -305,11 +372,59 @@ pub fn compare(ecosystem: &str, a: &str, b: &str) -> Option<Ordering> {
                 (Some(a), Some(b)) => prerelease(&a, &b),
             }))
         }
-        "Packagist" => maven(a.trim_start_matches('v'), b.trim_start_matches('v')),
-        "npm" | "crates.io" | "Go" | "Pub" | "Hex" => Some(semver(a)?.cmp(&semver(b)?)),
+        "Packagist" => composer(a, b),
+        "Pub" => Some(semver(a)?.cmp(&semver(b)?).then_with(|| {
+            match (a.split_once('+'), b.split_once('+')) {
+                (Some((_, a)), Some((_, b))) => prerelease(a, b),
+                (Some(_), None) => Ordering::Greater,
+                (None, Some(_)) => Ordering::Less,
+                _ => Ordering::Equal,
+            }
+        })),
+        "npm" | "crates.io" | "Go" | "Hex" | "SEMVER" => Some(semver(a)?.cmp(&semver(b)?)),
         _ => None,
     }
 }
+fn composer(a: &str, b: &str) -> Option<Ordering> {
+    fn parts(raw: &str) -> Option<(Vec<u64>, i8, u64)> {
+        let raw = raw
+            .trim_start_matches('v')
+            .split('+')
+            .next()?
+            .to_ascii_lowercase();
+        let end = raw
+            .find(|c: char| !c.is_ascii_digit() && c != '.')
+            .unwrap_or(raw.len());
+        let release = release(raw[..end].trim_end_matches('.'))?;
+        let tail = raw[end..].trim_start_matches(['-', '.']);
+        let end = tail
+            .find(|c: char| c.is_ascii_digit())
+            .unwrap_or(tail.len());
+        let rank = match &tail[..end] {
+            "dev" => 0,
+            "alpha" | "a" => 1,
+            "beta" | "b" => 2,
+            "rc" => 3,
+            "" | "stable" => 4,
+            "pl" | "patch" | "p" => 5,
+            _ => return None,
+        };
+        let number = if end == tail.len() {
+            0
+        } else {
+            tail[end..].parse().ok()?
+        };
+        Some((release, rank, number))
+    }
+    let (ar, aq, an) = parts(a)?;
+    let (br, bq, bn) = parts(b)?;
+    Some(
+        numbers(&ar, &br)
+            .then_with(|| aq.cmp(&bq))
+            .then_with(|| an.cmp(&bn)),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

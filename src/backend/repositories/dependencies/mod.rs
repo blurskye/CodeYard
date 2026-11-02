@@ -71,6 +71,16 @@ pub async fn status(
         || !current.same_owner(&repository)
         || (repository.is_private && !current.private_consent)
         || current.last_status == "unsupported";
+    if let Some(settings) = db::code_security::repository_settings(pool, repo)
+        .await
+        .map_err(|error| DependencyError::Store(store_error(error)))?
+    {
+        let settings: serde_json::Value = serde_json::from_str(&settings.security_and_analysis)
+            .map_err(|error| DependencyError::Store(store_error(error.into())))?;
+        paused |= settings["dependabot_alerts"]["status"] == "disabled"
+            || (matches!(feature, Feature::Updates)
+                && settings["dependabot_security_updates"]["status"] == "disabled");
+    }
     if !paused {
         paused = !delegated_admin(pool, repo, current.alerts_actor_id).await?;
     }
@@ -79,10 +89,15 @@ pub async fn status(
     }
     Ok(Status { enabled, paused })
 }
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn set_enabled(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     actor: i64,
+    credential: db::users::accounts::OwnedAccountCredential,
     repo: i64,
     feature: Feature,
     enabled: bool,
@@ -98,7 +113,15 @@ pub async fn set_enabled(
         )));
     }
     repo_store(&repository, cluster)
-        .configure_dependency_security_as(pool, repo, actor, feature, enabled, private_consent)
+        .configure_dependency_security_as(
+            pool,
+            repo,
+            actor,
+            credential,
+            feature,
+            enabled,
+            private_consent,
+        )
         .await
         .map_err(DependencyError::Store)
 }
@@ -158,6 +181,9 @@ pub(crate) fn check_publication(
 pub(crate) fn store_error(error: anyhow::Error) -> super::store::RepoError {
     use super::store::{ErrorKind, RepoError};
     use crate::backend::db::repositories::dependencies::Refusal;
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return RepoError::write_denied();
+    }
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => RepoError::write_denied(),
         Some(Refusal::Missing) => RepoError::new(ErrorKind::NotFound, "Dependency alert not found"),

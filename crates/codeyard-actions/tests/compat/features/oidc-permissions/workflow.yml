@@ -1,5 +1,9 @@
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 permissions:
   id-token: write
 jobs:

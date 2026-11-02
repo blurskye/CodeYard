@@ -16,13 +16,33 @@ async fn role_exists(c: &mut SqliteConnection, id: i64) -> Result<bool> {
 pub async fn can_manage_security(pool: &SqlitePool, actor: i64, org: i64) -> Result<bool> {
     manages_security(&mut *pool.acquire().await?, actor, org).await
 }
+/// Role membership remains meaningful for reads when organization writes are suspended.
+pub(crate) async fn holds_security_role(
+    c: &mut SqliteConnection,
+    actor: i64,
+    org: i64,
+) -> Result<bool> {
+    let condition = crate::backend::db::organizations::roles::security_role_condition("?1", "?2");
+    Ok(sqlx::query_scalar(&format!("SELECT {condition}"))
+        .bind(actor)
+        .bind(org)
+        .fetch_one(c)
+        .await?)
+}
+
 /// Whether `actor` holds the organization's security-manager role, directly or through a team.
 pub(crate) async fn manages_security(
     c: &mut SqliteConnection,
     actor: i64,
     org: i64,
 ) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organizations o JOIN org_memberships m ON m.org_id=o.id JOIN users u ON u.id=m.user_id WHERE o.id=?2 AND u.id=?1 AND m.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password AND NOT EXISTS(SELECT 1 FROM organization_blocks b WHERE b.org_id=o.id AND b.user_id=u.id) AND EXISTS(SELECT 1 FROM org_memberships owner JOIN users active ON active.id=owner.user_id WHERE owner.org_id=o.id AND owner.role='owner' AND NOT active.is_banned AND NOT active.must_change_password) AND (m.role='owner' OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level=1 WHERE a.org_id=o.id AND a.role_id=?3 AND ((a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret') AND tm.user_id=u.id AND tm.role IN ('member','maintainer')))))))").bind(actor).bind(org).bind(crate::backend::db::organizations::roles::SECURITY_MANAGER_ROLE_ID).fetch_one(c).await?)
+    let condition =
+        crate::backend::db::organizations::roles::security_manager_condition("?1", "?2");
+    Ok(sqlx::query_scalar(&format!("SELECT {condition}"))
+        .bind(actor)
+        .bind(org)
+        .fetch_one(c)
+        .await?)
 }
 pub async fn catalog(
     pool: &SqlitePool,
@@ -57,8 +77,15 @@ pub async fn users(
         return Ok(Missing);
     }
     let mut users:Vec<UserAssignment>=sqlx::query_as("SELECT u.*,EXISTS(SELECT 1 FROM organization_role_assignments a WHERE a.org_id=?1 AND a.role_id=?2 AND a.user_id=u.id) AS direct FROM users u JOIN org_memberships m ON m.user_id=u.id AND m.org_id=?1 AND m.role IN ('owner','admin','member') WHERE u.id>?3 AND (EXISTS(SELECT 1 FROM organization_role_assignments a WHERE a.org_id=?1 AND a.role_id=?2 AND a.user_id=u.id) OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN teams t ON t.id=a.team_id AND t.org_id=a.org_id JOIN effective_team_memberships tm ON tm.team_id=t.id AND tm.user_id=u.id AND tm.role IN ('member','maintainer') WHERE a.org_id=?1 AND a.role_id=?2 AND t.privacy IN ('visible','secret'))) ORDER BY u.id LIMIT ?4 OFFSET ?5").bind(org).bind(role).bind(after).bind(window.1).bind(window.0).fetch_all(&mut *tx).await?;
+    let ids: Vec<i64> = users.iter().map(|user| user.user.id).collect();
+    let inherited: Vec<crate::backend::db::organizations::roles::InheritedTeam> = sqlx::query_as("SELECT m.user_id,t.* FROM teams t JOIN organization_role_assignments a ON a.team_id=t.id AND a.org_id=t.org_id AND a.role_id=?2 JOIN effective_team_memberships m ON m.team_id=t.id AND m.user_id IN (SELECT value FROM json_each(?3)) AND m.role IN ('member','maintainer') WHERE t.org_id=?1 AND t.privacy IN ('visible','secret') ORDER BY m.user_id,t.id")
+        .bind(org).bind(role).bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
+    let mut teams: std::collections::HashMap<i64, Vec<Team>> = std::collections::HashMap::new();
+    for row in inherited {
+        teams.entry(row.user_id).or_default().push(row.team);
+    }
     for user in &mut users {
-        user.inherited_from=sqlx::query_as("SELECT t.* FROM teams t JOIN organization_role_assignments a ON a.team_id=t.id AND a.org_id=t.org_id AND a.role_id=?2 JOIN effective_team_memberships m ON m.team_id=t.id AND m.user_id=?3 AND m.role IN ('member','maintainer') WHERE t.org_id=?1 AND t.privacy IN ('visible','secret') ORDER BY t.id").bind(org).bind(role).bind(user.user.id).fetch_all(&mut *tx).await?;
+        user.inherited_from = teams.remove(&user.user.id).unwrap_or_default();
     }
     tx.commit().await?;
     Ok(Applied(users))
@@ -84,14 +111,19 @@ pub async fn teams(
 }
 pub async fn change(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: &RoleTarget,
     role: Option<i64>,
     assigned: bool,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = begin(pool).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
+        return Ok(Denied);
+    }
+    if !credential(&mut tx, &grant, org, "members").await? {
         return Ok(Denied);
     }
     let (user, team) = match target {
@@ -114,13 +146,20 @@ pub async fn change(
             }
             (id, None)
         }
-        RoleTarget::Team(slug) => {
-            let team: Option<(i64, String)> =
-                sqlx::query_as("SELECT id,privacy FROM teams WHERE org_id=?1 AND slug=?2")
-                    .bind(org)
-                    .bind(slug)
-                    .fetch_optional(&mut *tx)
-                    .await?;
+        RoleTarget::Team(_) | RoleTarget::TeamId(_) => {
+            let (slug, id) = match target {
+                RoleTarget::Team(slug) => (Some(slug.as_str()), None),
+                RoleTarget::TeamId(id) => (None, Some(*id)),
+                RoleTarget::User(_) => (None, None),
+            };
+            let team: Option<(i64, String)> = sqlx::query_as(
+                "SELECT id,privacy FROM teams WHERE org_id=?1 AND (slug=?2 OR id=?3)",
+            )
+            .bind(org)
+            .bind(slug)
+            .bind(id)
+            .fetch_optional(&mut *tx)
+            .await?;
             if assigned
                 && team
                     .as_ref()
@@ -134,6 +173,10 @@ pub async fn change(
     if user.is_none() && team.is_none() {
         if assigned {
             return Ok(Missing);
+        }
+        // The team the revoke form showed is gone: report the stale form instead of success.
+        if matches!(target, RoleTarget::TeamId(_)) {
+            return Ok(Conflict);
         }
         tx.commit().await?;
         return Ok(Applied(()));

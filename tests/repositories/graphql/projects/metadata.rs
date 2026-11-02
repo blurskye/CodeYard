@@ -16,6 +16,10 @@ async fn metadata_contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("project-metadata-alice").await;
     let bob = f.actor("project-metadata-bob").await;
+    let alice_session = crate::support::live_session(f.pool(), alice).await;
+    let bob_session = crate::support::live_session(f.pool(), bob).await;
+    let alice_credential = db::users::accounts::AccountCredential::Session(&alice_session);
+    let bob_credential = db::users::accounts::AccountCredential::Session(&bob_session);
     let org = applied(
         db::organizations::profiles::create_organization(
             f.pool(),
@@ -104,13 +108,22 @@ async fn metadata_contract(pg: bool) {
             ("Closed", true, true),
             ("Private", false, false),
         ] {
-            let p = store::create(f.pool(), alice, owner, title, None, public)
-                .await
-                .unwrap();
+            let p = store::create(
+                f.pool(),
+                alice,
+                &alice_credential,
+                owner,
+                title,
+                None,
+                public,
+            )
+            .await
+            .unwrap();
             if closed {
                 store::save(
                     f.pool(),
                     alice,
+                    &alice_credential,
                     p.id,
                     &store::Settings {
                         title: Some(title.into()),
@@ -123,7 +136,7 @@ async fn metadata_contract(pg: bool) {
                 .unwrap();
             }
             if public {
-                store::link_repository(f.pool(), alice, p.id, repo.id, true)
+                store::link_repository(f.pool(), alice, &alice_credential, p.id, repo.id, true)
                     .await
                     .unwrap();
             }
@@ -138,6 +151,7 @@ async fn metadata_contract(pg: bool) {
     let hidden = store::create(
         f.pool(),
         bob,
+        &bob_credential,
         store::Owner::User(bob),
         "Hidden",
         None,
@@ -145,15 +159,22 @@ async fn metadata_contract(pg: bool) {
     )
     .await
     .unwrap();
-    store::link_repository(f.pool(), bob, hidden.id, repo.id, true)
-        .await
-        .unwrap();
-    store::add_item(f.pool(), bob, hidden.id, &store::Content::Issue(issue.id))
+    store::link_repository(f.pool(), bob, &bob_credential, hidden.id, repo.id, true)
         .await
         .unwrap();
     store::add_item(
         f.pool(),
         bob,
+        &bob_credential,
+        hidden.id,
+        &store::Content::Issue(issue.id),
+    )
+    .await
+    .unwrap();
+    store::add_item(
+        f.pool(),
+        bob,
+        &bob_credential,
         hidden.id,
         &store::Content::PullRequest(pull.id),
     )
@@ -162,6 +183,7 @@ async fn metadata_contract(pg: bool) {
     let unlinked = store::create(
         f.pool(),
         alice,
+        &alice_credential,
         store::Owner::User(alice),
         "Unlinked",
         None,
@@ -287,6 +309,7 @@ async fn metadata_contract(pg: bool) {
     let old_issue = store::add_item(
         f.pool(),
         alice,
+        &alice_credential,
         projects[1].id,
         &store::Content::Issue(issue.id),
     )
@@ -295,6 +318,7 @@ async fn metadata_contract(pg: bool) {
     let old_pull = store::add_item(
         f.pool(),
         alice,
+        &alice_credential,
         projects[5].id,
         &store::Content::PullRequest(pull.id),
     )
@@ -353,6 +377,7 @@ async fn metadata_contract(pg: bool) {
         store::update_item(
             f.pool(),
             alice,
+            &alice_credential,
             project.id,
             item.id,
             &[store::FieldUpdate {
@@ -362,9 +387,16 @@ async fn metadata_contract(pg: bool) {
         )
         .await
         .unwrap();
-        store::archive_item(f.pool(), alice, project.id, item.id, true)
-            .await
-            .unwrap();
+        store::archive_item(
+            f.pool(),
+            alice,
+            &alice_credential,
+            project.id,
+            item.id,
+            true,
+        )
+        .await
+        .unwrap();
         new_items.push((item.id, option.clone()));
     }
     for (text, key, number, index) in [
@@ -398,6 +430,7 @@ async fn metadata_contract(pg: bool) {
         let unset = store::add_item(
             f.pool(),
             alice,
+            &alice_credential,
             projects[1 + index * 4].id,
             &if index == 0 {
                 store::Content::Issue(issue.id)
@@ -434,7 +467,8 @@ async fn metadata_contract(pg: bool) {
         .await;
         assert_eq!(body["errors"].as_array().unwrap().len(), 4, "{body}");
     }
-    // Revoking content visibility must refuse both add and delete, even on Alice's projects.
+    // Revoking content visibility refuses adding it, even to Alice's projects. Her projects'
+    // existing items stay hers to remove, as ad1516496 lets a project writer do.
     f.execute(
         "UPDATE repositories SET is_private=true WHERE id=$1",
         &[repo.id],
@@ -444,10 +478,24 @@ async fn metadata_contract(pg: bool) {
         &router,
         Some(token),
         document!("UpdateProjectV2Items"),
-        denied_inputs,
+        denied_inputs.clone(),
     )
     .await;
-    assert_eq!(body["errors"].as_array().unwrap().len(), 4, "{body}");
+    let errors = body["errors"].as_array().unwrap();
+    assert_eq!(errors.len(), 2, "{body}");
+    assert!(
+        errors
+            .iter()
+            .all(|error| error["path"][0] == "add_000" || error["path"][0] == "add_001"),
+        "{body}"
+    );
+    for alias in ["002", "003"] {
+        assert_eq!(
+            body["data"][format!("delete_{alias}")]["deletedItemId"],
+            denied_inputs[format!("input_{alias}")]["itemId"],
+            "{body}"
+        );
+    }
     for text in [
         document!("RepositoryProjectV2List"),
         document!("RepositoryProjectList"),
@@ -469,10 +517,11 @@ async fn metadata_contract(pg: bool) {
     )
     .await;
     for (project, (item, _)) in [projects[0].id, projects[4].id].into_iter().zip(new_items) {
-        assert_eq!(
-            store::items(f.pool(), Some(alice), project).await.unwrap()[0].id,
-            item
-        );
+        assert!(store::items(f.pool(), Some(alice), project)
+            .await
+            .unwrap()
+            .iter()
+            .all(|row| row.id != item));
     }
 }
 

@@ -118,7 +118,36 @@ fn load(
     }
 }
 
+/// Backed-up standalone release identity. Preserve the old repository-root signer without
+/// replacing a different node identity, and never remove the legacy file during migration.
+pub(crate) fn release_key(state_dir: &Path, repository_root: &Path) -> Result<NodeKey> {
+    let lookup = |name: &str| std::env::var(name).ok();
+    if !matches!(source(&lookup)?, Source::Saved) {
+        return load_or_create(state_dir);
+    }
+    let destination = state_dir.join("release.key");
+    if let Some(key) = saved_key(&destination, false)? {
+        return Ok(key);
+    }
+    let legacy = saved_key(&repository_root.join(KEY_FILE), false)?;
+    let key = match legacy {
+        Some(key) => key,
+        None => load_or_create(state_dir)?,
+    };
+    let saved =
+        saved_key_with(&destination, true, Some(&key))?.context("Release identity missing")?;
+    ensure!(
+        saved.public_hex() == key.public_hex(),
+        "Conflicting release identity migration"
+    );
+    Ok(saved)
+}
+
 fn saved_key(path: &Path, create: bool) -> Result<Option<NodeKey>> {
+    saved_key_with(path, create, None)
+}
+
+fn saved_key_with(path: &Path, create: bool, initial: Option<&NodeKey>) -> Result<Option<NodeKey>> {
     match fs::read_to_string(path) {
         Ok(text) => {
             return NodeKey::parse(&text)
@@ -133,7 +162,7 @@ fn saved_key(path: &Path, create: bool) -> Result<Option<NodeKey>> {
     if !create {
         return Ok(None);
     }
-    let key = NodeKey::generate();
+    let key = initial.cloned().unwrap_or_else(NodeKey::generate);
     // The key is written to a private temporary file and then linked into place, so
     // it appears complete and never replaces a key another process saved first. The
     // temporary name is random, so a file left by an interrupted start cannot block this one.
@@ -141,28 +170,7 @@ fn saved_key(path: &Path, create: bool) -> Result<Option<NodeKey>> {
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
         .unwrap_or(Path::new("."));
-    let mut created = Vec::new();
-    let mut missing = directory;
-    while !missing.exists() {
-        created.push(missing);
-        match missing.parent() {
-            Some(parent) if !parent.as_os_str().is_empty() => missing = parent,
-            _ => break,
-        }
-    }
-    fs::create_dir_all(directory)
-        .with_context(|| format!("cannot create {}", directory.display()))?;
-    // A directory made here must survive a power loss with the key, so its entry is synced in
-    // its parent.
-    for made in created {
-        let parent = made
-            .parent()
-            .filter(|parent| !parent.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        fs::File::open(parent)
-            .and_then(|parent| parent.sync_all())
-            .with_context(|| format!("cannot sync {}", parent.display()))?;
-    }
+    crate::backend::fs::durable_dir(directory)?;
     let temporary = write_private(
         directory.join(format!("{KEY_FILE}.{}.tmp", Uuid::new_v4().simple())),
         &format!("{}\n", key.secret_hex()),

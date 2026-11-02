@@ -83,6 +83,25 @@ async fn contract(pg: bool) {
         credentials.push(format!("Bearer {}", token.value));
     }
     let (writer, reader, outsider) = (&credentials[0], &credentials[1], &credentials[2]);
+    // As on GitHub, a private repository's graph is off until Dependabot alerts are enabled.
+    let (status, _, body) = request(
+        &router,
+        "GET",
+        &format!("{BASE}/sbom"),
+        Some(writer),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+    let (status, _, body) = request(
+        &router,
+        "PUT",
+        "/api/v3/repos/alice/proj/vulnerability-alerts",
+        Some(writer),
+        Value::Null,
+    )
+    .await;
+    assert_eq!(status, StatusCode::NO_CONTENT, "{body}");
     let (status, _, created) = request(
         &router,
         "PUT",
@@ -411,7 +430,7 @@ async fn contract(pg: bool) {
     assert_eq!(exported["sbom"]["packages"].as_array().unwrap().len(), 3);
     let html = session.page_ok("/alice/proj/insights/dependencies").await;
     assert!(html.contains("example"), "{html}");
-    assert!(html.contains("Export SPDX SBOM"), "{html}");
+    assert!(html.contains("Export current branch SPDX SBOM"), "{html}");
     assert!(!html.contains("pkg:cargo/hidden"), "{html}");
     let (status, _) = Client::anonymous(&router)
         .send(
@@ -585,17 +604,25 @@ async fn vulnerability_contract(pg: bool) {
     let initial_commit = created["commit"]["sha"].as_str().unwrap().to_owned();
     let blob = created["content"]["sha"].as_str().unwrap().to_owned();
     // Run the same durable job the scheduler claims, with no external network.
-    let (claimed, generation) = db::vulnerabilities::claim(f.pool())
-        .await
-        .unwrap()
-        .expect("a Git publication must queue a scan");
-    assert_eq!(claimed, repo_id);
+    // Every new repository queues its first scan, so the PostgreSQL fixture's repository may
+    // come first; it is claimed and left alone.
+    let generation = loop {
+        let (claimed, generation) = db::vulnerabilities::claim(f.pool())
+            .await
+            .unwrap()
+            .expect("a Git publication must queue a scan");
+        if claimed == repo_id {
+            break generation;
+        }
+    };
     vulnerabilities::scan(&state, &f.repository(repo_id).await, generation)
         .await
         .unwrap();
-    let saved = db::dependency_graph::snapshots(f.pool(), repo_id, None, Some(&initial_commit))
-        .await
-        .unwrap();
+    let viewer = db::dependency_graph::Reader::Viewer(Some(owner.into()));
+    let saved =
+        db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
+            .await
+            .unwrap();
     assert_eq!(saved.len(), 1);
     assert_eq!(saved[0].detector.name, "Codeyard");
     assert_eq!(saved[0].manifests["Cargo.lock"].resolved.len(), 1);
@@ -608,9 +635,10 @@ async fn vulnerability_contract(pg: bool) {
     db::vulnerabilities::save_snapshot(f.pool(), repo_id, generation, &stale)
         .await
         .unwrap();
-    let latest = db::dependency_graph::snapshots(f.pool(), repo_id, None, Some(&initial_commit))
-        .await
-        .unwrap();
+    let latest =
+        db::dependency_graph::snapshots(f.pool(), &viewer, repo_id, None, Some(&initial_commit))
+            .await
+            .unwrap();
     assert_eq!(latest[0].manifests["Cargo.lock"].resolved.len(), 1);
     let (status, _, catalogue) = request(
         &router,

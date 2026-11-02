@@ -1,6 +1,10 @@
 # https://github.com/actions/setup-go/tree/40f1582b2485089dde7abd97c1529aa768e1baff
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

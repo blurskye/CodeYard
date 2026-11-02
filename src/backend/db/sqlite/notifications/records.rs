@@ -19,6 +19,10 @@ pub async fn create_notification(
 ) -> Result<Notification> {
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(
+        fork_readable(&mut tx, input.user_id, input.kind, input.metadata).await?,
+        NotificationSuppressed
+    );
     if let Some(actor) = input.actor_id {
         anyhow::ensure!(
             !super::super::users::blocks::interaction_blocked(&mut tx, input.user_id, actor)
@@ -34,21 +38,55 @@ pub async fn create_notification(
                 NotificationSuppressed
             );
         }
-        // A recipient who lost Read after the event must not get its text or email.
-        let readable: bool = sqlx::query_scalar(&format!(
-            "SELECT EXISTS(
-                SELECT 1 FROM repositories r
-                JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password
-                WHERE r.id=?2 AND {})",
-            scope_readable_condition()
-        ))
+        // A recipient who lost Read after the event must not get its text or email. A fork
+        // notice also names the fork, so the recipient must be able to read that too.
+        let fork = match input.kind {
+            "repository_forked" => Some(
+                input
+                    .metadata
+                    .get("fork_repository_id")
+                    .and_then(serde_json::Value::as_i64)
+                    .ok_or(NotificationSuppressed)?,
+            ),
+            _ => None,
+        };
+        for scope in [Some(repo), fork].into_iter().flatten() {
+            let readable: bool = sqlx::query_scalar(&format!(
+                "SELECT EXISTS(
+                    SELECT 1 FROM repositories r
+                    JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password
+                    WHERE r.id=?2 AND {})",
+                scope_readable_condition()
+            ))
+            .bind(input.user_id)
+            .bind(scope)
+            .fetch_one(&mut *tx)
+            .await?;
+            anyhow::ensure!(readable, NotificationSuppressed);
+        }
+        // An ignore saved after the caller looked is honoured here, under the write lock.
+        let ignoring: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM watches WHERE user_id=?1 AND repo_id=?2 AND level='ignoring')",
+        )
         .bind(input.user_id)
         .bind(repo)
         .fetch_one(&mut *tx)
         .await?;
+        anyhow::ensure!(!ignoring, NotificationSuppressed);
+    }
+    if input.kind == "repository_forked" {
+        let fork = input.metadata["fork_repository_id"]
+            .as_i64()
+            .ok_or(NotificationSuppressed)?;
+        let readable: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password WHERE r.id=?2 AND {})", scope_readable_condition()
+        )).bind(input.user_id).bind(fork).fetch_one(&mut *tx).await?;
         anyhow::ensure!(readable, NotificationSuppressed);
     }
-    if matches!(input.kind, "user_followed" | "repository_starred") {
+    if matches!(
+        input.kind,
+        "user_followed" | "repository_starred" | "repository_watched"
+    ) {
         let recent: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM notifications WHERE user_id=?1 AND actor_id=?2 AND kind=?3 AND (?3='user_followed' OR repo_id=?4) AND created_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day'))")
             .bind(input.user_id).bind(input.actor_id).bind(input.kind).bind(input.repo_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(!recent, NotificationSuppressed);
@@ -185,6 +223,7 @@ async fn decide_scopes(
     .fetch_all(&mut *connection)
     .await?;
     Ok(NotificationScopes {
+        classic_token: false,
         high_water: notification_high_water(connection, user_id).await?,
         readable: decided.into_iter().collect(),
     })
@@ -495,14 +534,49 @@ pub async fn count_header_unread(pool: &SqlitePool, user_id: i64) -> Result<i64>
     )).bind(user_id).fetch_one(pool).await?)
 }
 
-async fn refresh_links(
+async fn fork_readable(
+    connection: &mut sqlx::SqliteConnection,
+    user: i64,
+    kind: &str,
+    metadata: &serde_json::Value,
+) -> Result<bool> {
+    if kind != "repository_forked" {
+        return Ok(true);
+    }
+    let Some(fork) = metadata
+        .get("fork_repository_id")
+        .and_then(serde_json::Value::as_i64)
+    else {
+        return Ok(false);
+    };
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND {})",
+        scope_readable_condition()
+    ))
+    .bind(user)
+    .bind(fork)
+    .fetch_one(connection)
+    .await?)
+}
+
+pub(super) async fn refresh_links(
     connection: &mut sqlx::SqliteConnection,
     notifications: &mut [Notification],
 ) -> Result<()> {
     let ids: Vec<_> = notifications.iter().filter_map(|n| n.repo_id).collect();
     let names: Vec<(i64,String,String)> = sqlx::query_as("SELECT r.id,COALESCE(u.username,o.name),r.name FROM repositories r LEFT JOIN users u ON r.owner_kind='user' AND u.id=r.owner_user_id LEFT JOIN organizations o ON r.owner_kind='org' AND o.id=r.owner_org_id WHERE r.id IN (SELECT value FROM json_each(?1))")
-        .bind(serde_json::to_string(&ids)?).fetch_all(connection).await?;
+        .bind(serde_json::to_string(&ids)?).fetch_all(&mut *connection).await?;
     for notification in notifications {
+        if !fork_readable(
+            connection,
+            notification.user_id,
+            &notification.kind,
+            &notification.metadata,
+        )
+        .await?
+        {
+            crate::backend::db::notifications::records::redact_fork(notification);
+        }
         if let Some((_, owner, name)) = names
             .iter()
             .find(|(id, _, _)| Some(*id) == notification.repo_id)
@@ -513,17 +587,34 @@ async fn refresh_links(
     Ok(())
 }
 
-pub async fn notification_email_allowed(pool: &SqlitePool, notification_id: i64) -> Result<bool> {
-    let mut connection = pool.acquire().await?;
-    let row: Option<(i64, i64)> =
-        sqlx::query_as("SELECT user_id, scope_repository_id FROM notifications WHERE id=?1")
+pub async fn get_notification(
+    pool: &SqlitePool,
+    user_id: i64,
+    notification_id: i64,
+) -> Result<Option<Notification>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM notifications WHERE id=?1 AND user_id=?2")
             .bind(notification_id)
-            .fetch_optional(&mut *connection)
-            .await?;
-    let Some((user_id, scope)) = row else {
+            .bind(user_id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
+
+pub async fn notification_email_allowed(pool: &SqlitePool, notification_id: i64) -> Result<bool> {
+    let mut connection = pool.begin().await?;
+    let row: Option<(i64, i64, String, serde_json::Value)> = sqlx::query_as(
+        "SELECT user_id, scope_repository_id, kind, metadata FROM notifications WHERE id=?1",
+    )
+    .bind(notification_id)
+    .fetch_optional(&mut *connection)
+    .await?;
+    let Some((user_id, scope, kind, metadata)) = row else {
         return Ok(false);
     };
-    if !notification_recipient(&mut connection, user_id).await? {
+    if !notification_recipient(&mut connection, user_id).await?
+        || !fork_readable(&mut connection, user_id, &kind, &metadata).await?
+    {
         return Ok(false);
     }
     if scope == 0 {
@@ -755,8 +846,12 @@ pub async fn notification_inbox_with_credential(
     user_id: i64,
     action: NotificationInboxAction,
 ) -> Result<Option<NotificationInbox>> {
-    // Reserved writer ownership precedes every authority read, including waiters.
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // Mutations reserve the writer before admission; polling uses one read snapshot.
+    let mut tx = if action.requires_write() {
+        pool.begin_with("BEGIN IMMEDIATE").await?
+    } else {
+        pool.begin().await?
+    };
     if !notification_recipient(&mut tx, user_id).await? {
         tx.rollback().await?;
         return Ok(None);
@@ -769,7 +864,19 @@ pub async fn notification_inbox_with_credential(
         tx.rollback().await?;
         return Ok(None);
     };
-    let scopes = notification_scopes(&mut tx, user_id).await?;
+    let mut scopes = notification_scopes(&mut tx, user_id).await?;
+    if let NotificationCredential::Token(token) = credential {
+        scopes.classic_token = sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM fine_grained_tokens WHERE token_id=?1) AND NOT EXISTS(SELECT 1 FROM oauth_app_tokens WHERE token_id=?1) AND NOT EXISTS(SELECT 1 FROM github_app_tokens WHERE token_id=?1) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens WHERE token_id=?1)")
+            .bind(token).fetch_one(&mut *tx).await?;
+        if scopes.classic_token {
+            let ids: Vec<_> = scopes.readable.keys().copied().collect();
+            let blocked: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r JOIN organization_token_policies p ON p.org_id=r.owner_org_id WHERE NOT p.classic_allowed AND r.id IN(SELECT value FROM json_each(?1))")
+                .bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
+            for id in blocked {
+                scopes.readable.insert(id, false);
+            }
+        }
+    }
     let mut next_cursor = None;
     let wants_counts = matches!(action, NotificationInboxAction::List { .. });
     // Thread lookups and subscription changes do not report the unread badge, so they skip

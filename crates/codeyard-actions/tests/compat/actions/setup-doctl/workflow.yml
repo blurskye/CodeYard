@@ -1,6 +1,10 @@
 # https://github.com/digitalocean/action-doctl/tree/3cb3953159719656269e044e0e24ca16dd2a690f
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

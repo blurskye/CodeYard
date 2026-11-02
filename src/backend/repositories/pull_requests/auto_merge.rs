@@ -4,7 +4,11 @@
 use super::{actor, merge, require_write, OperationError};
 use crate::backend::{
     app::AppState,
-    db::{self, models::PullRequest, pull_requests::auto_merge::AutoMerge},
+    db::{
+        self,
+        models::PullRequest,
+        pull_requests::auto_merge::{AutoMerge, AutoMergeRequest},
+    },
     repositories::store::MergeMethod,
 };
 use std::{sync::Arc, time::Duration};
@@ -23,6 +27,8 @@ fn storage_error<E>(_: E) -> OperationError {
 }
 
 pub struct EnableRequest {
+    pub expected_head: Option<String>,
+    pub token: Option<i64>,
     pub merge_method: MergeMethod,
     pub commit_title: Option<String>,
     pub commit_message: Option<String>,
@@ -60,20 +66,29 @@ pub async fn enable(
     request: EnableRequest,
 ) -> Result<(), OperationError> {
     writable(pool, actor_id, pull).await?;
-    db::pull_requests::auto_merge::enable_auto_merge(
+    merge::merge_message(
+        pull,
+        request.merge_method,
+        request.commit_title.as_deref(),
+        request.commit_message.as_deref(),
+        request.author_email.as_deref(),
+    )?;
+    db::pull_requests::auto_merge::enable_auto_merge_at_head(
         pool,
-        &AutoMerge {
+        &AutoMergeRequest {
             pull_request_id: pull.id,
             enabled_by: actor_id,
+            token_id: request.token,
             merge_method: request.merge_method.as_str().into(),
             commit_title: request.commit_title,
             commit_message: request.commit_message,
             author_email: request.author_email,
             enabled_at: chrono::Utc::now(),
         },
+        request.expected_head.as_deref(),
     )
     .await
-    .map_err(storage_error)
+    .map_err(super::write_error)
 }
 
 /// Turns auto-merge off for `pull`. Turning it off twice is not an error.
@@ -92,18 +107,32 @@ pub async fn disable(
 /// Tries every waiting pull request once. A merge that its requirements still refuse waits
 /// for the next check; a pull request that closed or merged some other way drops its request.
 pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
+    run_due_until_stop(state, None).await
+}
+
+async fn run_due_until_stop(
+    state: &AppState,
+    stop: Option<&tokio::sync::watch::Receiver<bool>>,
+) -> anyhow::Result<()> {
     let pool = &state.pool;
     let mut after = 0;
     loop {
         let page =
             db::pull_requests::auto_merge::pending_auto_merges(pool, after, CHECK_BATCH).await?;
         let (Some(last), short) = (
-            page.last().map(|entry| entry.pull_request_id),
+            page.last().map(|entry| entry.request.pull_request_id),
             (page.len() as i64) < CHECK_BATCH,
         ) else {
             return Ok(());
         };
         for entry in page {
+            if stop.is_some_and(|stop| *stop.borrow()) {
+                return Ok(());
+            }
+            let AutoMerge {
+                request: entry,
+                generation,
+            } = entry;
             let pull =
                 db::pull_requests::records::get_pull_request_by_id(pool, entry.pull_request_id)
                     .await?;
@@ -120,22 +149,38 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
                 None => None,
             };
             let (Some(pull), Some(repository), Some(owner)) = (pull, repository, owner) else {
-                db::pull_requests::auto_merge::disable_auto_merge(pool, entry.pull_request_id)
-                    .await?;
+                db::pull_requests::auto_merge::retire_auto_merge(
+                    pool,
+                    entry.pull_request_id,
+                    &generation,
+                )
+                .await?;
                 continue;
             };
             // The page was read before earlier merges ran, so this request may have been
             // disabled or replaced since. Only the request as it stands now may merge.
             let current =
                 db::pull_requests::auto_merge::get_auto_merge(pool, entry.pull_request_id).await?;
-            if current.is_none_or(|current| current.enabled_at != entry.enabled_at) {
+            if current.is_none_or(|current| current.generation != generation) {
                 continue;
             }
-            let merged = merge::merge_pull_request(
+            // A request made with a token merges under that token's live grants, as its merge button would.
+            let authority = match entry.token_id {
+                None => db::credentials::Actor::from(entry.enabled_by),
+                Some(token) => {
+                    match db::users::tokens::token_hash(pool, token, entry.enabled_by).await? {
+                        Some(hash) => db::credentials::Actor::from((
+                            entry.enabled_by,
+                            db::users::accounts::OwnedAccountCredential::Token(token, hash),
+                        )),
+                        None => continue,
+                    }
+                }
+            };
+            let prepared = merge::prepare_pull_request_merge(
                 pool,
                 &state.ci_runs,
-                &state.notification_broadcaster,
-                entry.enabled_by,
+                authority,
                 (owner, repository.name, pull.number),
                 merge::MergeRequest {
                     expected_head: pull.head_sha,
@@ -149,9 +194,23 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
                 },
             )
             .await;
+            let merged = match prepared {
+                Ok(mut prepared) => {
+                    prepared.bind_auto_merge(entry.pull_request_id, &generation);
+                    merge::publish_prepared_merge(
+                        pool,
+                        &state.ci_runs,
+                        &state.notification_broadcaster,
+                        prepared,
+                    )
+                    .await
+                }
+                Err(error) => Err(error),
+            };
             match merged {
                 Ok(_) | Err(OperationError::BranchMerged { .. }) => {
-                    db::pull_requests::auto_merge::disable_auto_merge(pool, pull.id).await?;
+                    db::pull_requests::auto_merge::retire_auto_merge(pool, pull.id, &generation)
+                        .await?;
                 }
                 Err(error) => {
                     tracing::debug!(pull_request = pull.id, %error, "auto-merge is still waiting");
@@ -168,7 +227,7 @@ pub async fn run_due(state: &AppState) -> anyhow::Result<()> {
 /// A check is never cut short: a merge in progress finishes before the loop stops.
 pub async fn run(state: Arc<AppState>, mut stop: tokio::sync::watch::Receiver<bool>) {
     while !*stop.borrow() {
-        if let Err(error) = run_due(&state).await {
+        if let Err(error) = run_due_until_stop(&state, Some(&stop)).await {
             tracing::warn!(%error, "auto-merge check failed");
         }
         tokio::select! {

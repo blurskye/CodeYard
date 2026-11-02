@@ -2,25 +2,58 @@ use crate::backend::db::action_objects::{ActionObject, BlobPart, NewObject, Runt
 use anyhow::Result;
 use sqlx::PgPool;
 
-pub async fn issue_token(pool: &PgPool, run_id: i64, hash: &str, backend_id: &str) -> Result<()> {
-    let changed = sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) SELECT id,$2,$3 FROM ci_runs WHERE id=$1 AND status='running' ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
-        .bind(run_id).bind(hash).bind(backend_id).execute(pool).await?;
-    anyhow::ensure!(changed.rows_affected() == 1, "run is not active");
+pub async fn issue_token(
+    pool: &PgPool,
+    run_id: i64,
+    worker: &str,
+    hash: &str,
+    backend_id: &str,
+) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let live: Option<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested FOR UPDATE")
+        .bind(run_id).bind(worker).fetch_optional(&mut *tx).await?;
+    anyhow::ensure!(live.is_some(), "run is not active");
+    sqlx::query("INSERT INTO actions_runtime_tokens(run_id,token_hash,backend_id) VALUES($1,$2,$3) ON CONFLICT(run_id) DO UPDATE SET token_hash=excluded.token_hash,backend_id=excluded.backend_id")
+        .bind(run_id).bind(hash).bind(backend_id).execute(&mut *tx).await?;
+    tx.commit().await?;
     Ok(())
 }
 
+// Default and base branches use the scope that a push of that branch stores (ci::push::branch_name).
 pub async fn authenticate(pool: &PgPool, hash: &str) -> Result<Option<RuntimeRun>> {
-    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN pr.base_branch END AS base_branch,p.default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND (r.status='running' OR r.completed_at > NOW() - INTERVAL '5 minutes')")
+    Ok(sqlx::query_as("SELECT r.id,r.repo_id,t.backend_id,CASE WHEN r.event='pull_request' THEN 'refs/pull/' || COALESCE(CAST(pr.number AS TEXT),CAST(r.id AS TEXT)) || '/merge' ELSE r.branch END AS branch,CASE WHEN r.event='pull_request' THEN (SELECT CASE WHEN substr(b.name,1,5)='refs/' THEN 'refs/heads/' || b.name ELSE b.name END FROM (SELECT COALESCE(r.pull_request_event->>'base_ref',pr.base_branch) AS name) b) END AS base_branch,CASE WHEN substr(p.default_branch,1,5)='refs/' THEN 'refs/heads/' || p.default_branch ELSE p.default_branch END AS default_branch,r.is_fork FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id JOIN repositories p ON p.id=r.repo_id LEFT JOIN pull_requests pr ON pr.id=r.pull_request_id WHERE t.token_hash=$1 AND NOT r.cancel_requested AND (r.status='running' OR r.completed_at > NOW() - INTERVAL '5 minutes')")
         .bind(hash).fetch_optional(pool).await?)
 }
 
+/// Site policy changes fence cache writes before either side retains repository rows.
+pub(crate) async fn lock_site_cache_policy(
+    connection: &mut sqlx::PgConnection,
+    exclusive: bool,
+) -> Result<()> {
+    sqlx::query(if exclusive {
+        "SELECT pg_advisory_xact_lock(723947125)"
+    } else {
+        "SELECT pg_advisory_xact_lock_shared(723947125)"
+    })
+    .execute(connection)
+    .await?;
+    Ok(())
+}
+
 pub async fn create_object(pool: &PgPool, new: NewObject<'_>) -> Result<Option<ActionObject>> {
-    // A fork may restore the base repository's caches but cannot publish into its branch scope.
-    if new.kind == "cache" && new.run.is_fork {
+    // Fork writes belong only to their derived pull-request merge-ref scope.
+    if new.kind == "cache"
+        && new.run.is_fork
+        && !(new.run.branch.starts_with("refs/pull/") && new.run.branch.ends_with("/merge"))
+    {
         return Ok(None);
     }
     let now = chrono::Utc::now().timestamp();
     let mut tx = pool.begin().await?;
+    if new.kind == "cache" {
+        lock_site_cache_policy(&mut tx, false).await?;
+    }
     sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
         .bind(new.run.repo_id)
         .execute(&mut *tx)
@@ -32,7 +65,7 @@ pub async fn create_object(pool: &PgPool, new: NewObject<'_>) -> Result<Option<A
         new.expires_at
     };
     // An expired key can be reserved again without waiting for the background sweep.
-    sqlx::query("DELETE FROM actions_objects WHERE repo_id=$1 AND kind=$2 AND name=$3 AND version=$4 AND (run_id=$5 OR (kind='cache' AND scope=$6)) AND expires_at<=$7")
+    sqlx::query("DELETE FROM actions_objects WHERE repo_id=$1 AND kind=$2 AND name=$3 AND version=$4 AND (run_id=$5 OR (kind='cache' AND scope=$6)) AND (expires_at<=$7 OR (NOT finalized AND EXISTS(SELECT 1 FROM ci_runs c WHERE c.id=actions_objects.run_id AND c.status NOT IN ('queued','running') AND c.completed_at<clock_timestamp()-INTERVAL '5 minutes')))")
         .bind(new.run.repo_id).bind(new.kind).bind(new.name).bind(new.version).bind(new.run.id).bind(&new.run.branch).bind(now).execute(&mut *tx).await?;
     let object = sqlx::query_as("INSERT INTO actions_objects(repo_id,run_id,kind,scope,name,version,created_at,accessed_at,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$7,$8) ON CONFLICT DO NOTHING RETURNING *")
         .bind(new.run.repo_id).bind(new.run.id).bind(new.kind).bind(&new.run.branch)
@@ -95,13 +128,32 @@ pub async fn blob_grant(
         .bind(object_id).bind(hash).bind(write).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
 }
 
+async fn lock_blob_grant(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    object: i64,
+    hash: &str,
+) -> Result<bool> {
+    let run: Option<i64> = sqlx::query_scalar("SELECT run_id FROM actions_blob_grants WHERE object_id=$1 AND token_hash=$2 AND write AND expires_at>$3")
+        .bind(object).bind(hash).bind(chrono::Utc::now().timestamp()).fetch_optional(&mut **tx).await?;
+    let Some(run) = run else { return Ok(false) };
+    let live: Option<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE id=$1 AND NOT cancel_requested AND (status='running' OR completed_at>clock_timestamp()-INTERVAL '5 minutes') FOR UPDATE")
+        .bind(run).fetch_optional(&mut **tx).await?;
+    if live.is_none() {
+        return Ok(false);
+    }
+    Ok(sqlx::query_scalar::<_, i32>("SELECT 1 FROM actions_blob_grants WHERE object_id=$1 AND token_hash=$2 AND write AND expires_at>$3 FOR SHARE")
+        .bind(object).bind(hash).bind(chrono::Utc::now().timestamp()).fetch_optional(&mut **tx).await?.is_some())
+}
+
 pub async fn stage_block(
     pool: &PgPool,
     object_id: i64,
+    grant_hash: &str,
     part: &BlobPart,
     limit: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    lock_site_cache_policy(&mut tx, false).await?;
     let repo: Option<i64> = sqlx::query_scalar("SELECT repo_id FROM actions_objects WHERE id=$1")
         .bind(object_id)
         .fetch_optional(&mut *tx)
@@ -112,6 +164,9 @@ pub async fn stage_block(
         .bind(repo)
         .execute(&mut *tx)
         .await?;
+    if !lock_blob_grant(&mut tx, object_id, grant_hash).await? {
+        return Ok(false);
+    }
     let object: Option<ActionObject> =
         sqlx::query_as("SELECT * FROM actions_objects WHERE id=$1 FOR UPDATE")
             .bind(object_id)
@@ -119,6 +174,11 @@ pub async fn stage_block(
             .await?;
     let Some(object) = object.filter(|o| o.manifest.is_none() && !o.finalized) else {
         return Ok(false);
+    };
+    let limit = if object.kind == "cache" {
+        limit.min(cache_policy(&mut tx, repo).await?.0)
+    } else {
+        limit
     };
     let total: i64 = sqlx::query_scalar(
         "SELECT CAST(COALESCE(SUM(size),0) AS BIGINT) FROM actions_blob_parts WHERE object_id=$1 AND block_id<>$2",
@@ -172,31 +232,54 @@ pub async fn stage_block(
     Ok(true)
 }
 
-pub async fn ready_block(pool: &PgPool, object_id: i64, key: &str) -> Result<bool> {
-    Ok(
-        sqlx::query(
-            "UPDATE actions_blob_parts SET ready=TRUE WHERE object_id=$1 AND object_key=$2",
-        )
-        .bind(object_id)
-        .bind(key)
-        .execute(pool)
-        .await?
-        .rows_affected()
-            == 1,
+pub async fn ready_block(
+    pool: &PgPool,
+    object_id: i64,
+    grant_hash: &str,
+    key: &str,
+) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    if !lock_blob_grant(&mut tx, object_id, grant_hash).await? {
+        return Ok(false);
+    }
+    let changed = sqlx::query(
+        "UPDATE actions_blob_parts SET ready=TRUE WHERE object_id=$1 AND object_key=$2",
     )
+    .bind(object_id)
+    .bind(key)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected()
+        == 1;
+    tx.commit().await?;
+    Ok(changed)
 }
 
 /// Clear the block list of an upload that is not finalized, so a whole-blob PUT can stage it again.
-pub async fn reopen_blob(pool: &PgPool, object_id: i64) -> Result<()> {
+pub async fn reopen_blob(pool: &PgPool, object_id: i64, grant_hash: &str) -> Result<()> {
+    let mut tx = pool.begin().await?;
+    anyhow::ensure!(
+        lock_blob_grant(&mut tx, object_id, grant_hash).await?,
+        "Blob capability refused"
+    );
     sqlx::query("UPDATE actions_objects SET manifest=NULL WHERE id=$1 AND NOT finalized")
         .bind(object_id)
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(())
 }
 
-pub async fn seal_blob(pool: &PgPool, object_id: i64, blocks: &[String]) -> Result<bool> {
+pub async fn seal_blob(
+    pool: &PgPool,
+    object_id: i64,
+    grant_hash: &str,
+    blocks: &[String],
+) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    if !lock_blob_grant(&mut tx, object_id, grant_hash).await? {
+        return Ok(false);
+    }
     let object: Option<ActionObject> =
         sqlx::query_as("SELECT * FROM actions_objects WHERE id=$1 FOR UPDATE")
             .bind(object_id)
@@ -258,11 +341,13 @@ pub async fn seal_blob(pool: &PgPool, object_id: i64, blocks: &[String]) -> Resu
 pub async fn finalize_object(
     pool: &PgPool,
     run_id: i64,
+    hash: &str,
     object_id: i64,
     size: i64,
     cache_limit: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
+    lock_site_cache_policy(&mut tx, false).await?;
     // Serialize the repository's finalizations so concurrent uploads cannot exceed its cache quota.
     let repo: Option<i64> =
         sqlx::query_scalar("SELECT repo_id FROM actions_objects WHERE id=$1 AND run_id=$2")
@@ -275,6 +360,11 @@ pub async fn finalize_object(
         .bind(repo)
         .execute(&mut *tx)
         .await?;
+    let live: Option<i64> = sqlx::query_scalar("SELECT t.run_id FROM actions_runtime_tokens t JOIN ci_runs r ON r.id=t.run_id WHERE t.run_id=$1 AND t.token_hash=$2 AND NOT r.cancel_requested AND (r.status='running' OR r.completed_at>clock_timestamp()-INTERVAL '5 minutes') FOR SHARE OF t")
+        .bind(run_id).bind(hash).fetch_optional(&mut *tx).await?;
+    if live.is_none() {
+        return Ok(false);
+    }
     let object: ActionObject =
         sqlx::query_as("SELECT * FROM actions_objects WHERE id=$1 FOR UPDATE")
             .bind(object_id)
@@ -300,8 +390,15 @@ pub(crate) async fn cache_policy(
     connection: &mut sqlx::PgConnection,
     repo: i64,
 ) -> Result<(i64, i32)> {
-    let (gib,days):(i32,i32)=sqlx::query_as("SELECT LEAST(COALESCE((SELECT cache_size_gib FROM actions_settings WHERE id=1),10),COALESCE((SELECT cache_size_gib FROM repo_actions_settings WHERE repo_id=$1),100000),COALESCE((SELECT s.cache_size_gib FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1),100000)),LEAST(COALESCE((SELECT cache_retention_days FROM actions_settings WHERE id=1),7),COALESCE((SELECT cache_retention_days FROM repo_actions_settings WHERE repo_id=$1),365),COALESCE((SELECT s.cache_retention_days FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1),365))").bind(repo).fetch_one(connection).await?;
-    Ok((i64::from(gib) * 1024 * 1024 * 1024, days))
+    let (site_size,site_days,repo_size,repo_days,org_size,org_days): crate::backend::db::action_objects::CacheSettings = sqlx::query_as("SELECT (SELECT cache_size_gib FROM actions_settings WHERE id=1),(SELECT cache_retention_days FROM actions_settings WHERE id=1),(SELECT cache_size_gib FROM repo_actions_settings WHERE repo_id=$1),(SELECT cache_retention_days FROM repo_actions_settings WHERE repo_id=$1),(SELECT s.cache_size_gib FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1),(SELECT s.cache_retention_days FROM org_actions_settings s JOIN repositories r ON r.owner_org_id=s.org_id AND r.owner_kind='org' WHERE r.id=$1)").bind(repo).fetch_one(connection).await?;
+    use crate::backend::db::actions::CacheLimit;
+    Ok((
+        i64::from(CacheLimit::Storage.effective(site_size, org_size, repo_size))
+            * 1024
+            * 1024
+            * 1024,
+        CacheLimit::Retention.effective(site_days, org_days, repo_days),
+    ))
 }
 
 /// Apply the repository's current cache size and retention limits to its existing caches.
@@ -324,18 +421,22 @@ pub(crate) async fn enforce_cache_limit(
     repo: i64,
     cache_limit: i64,
 ) -> Result<()> {
-    let entries: Vec<ActionObject> = sqlx::query_as("SELECT * FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized ORDER BY accessed_at,id")
-        .bind(repo).fetch_all(&mut *connection).await?;
-    let mut total: i64 = entries.iter().map(|entry| entry.size).sum();
-    for entry in entries {
-        if total <= cache_limit {
+    let (mut total, mut count): (i64, i64) = sqlx::query_as("SELECT CAST(COALESCE(SUM(size),0) AS BIGINT),COUNT(*) FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized")
+        .bind(repo).fetch_one(&mut *connection).await?;
+    while total > cache_limit
+        || count > crate::backend::db::action_objects::MAX_CACHE_ENTRIES as i64
+    {
+        let entry: Option<(i64, i64)> = sqlx::query_as("SELECT id,size FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND finalized ORDER BY accessed_at,id LIMIT 1")
+            .bind(repo).fetch_optional(&mut *connection).await?;
+        let Some((id, size)) = entry else {
             break;
-        }
+        };
         sqlx::query("DELETE FROM actions_objects WHERE id=$1")
-            .bind(entry.id)
+            .bind(id)
             .execute(&mut *connection)
             .await?;
-        total -= entry.size;
+        total -= size;
+        count -= 1;
     }
     Ok(())
 }
@@ -347,23 +448,57 @@ pub async fn find_cache(
     version: &str,
 ) -> Result<Option<ActionObject>> {
     let mut tx = pool.begin().await?;
-    let entries: Vec<ActionObject> = sqlx::query_as("SELECT * FROM actions_objects WHERE repo_id=$1 AND kind='cache' AND version=$2 AND finalized AND expires_at>$3 AND (scope=$4 OR scope=$5 OR scope=$6) ORDER BY created_at DESC,id DESC")
-        .bind(run.repo_id).bind(version).bind(chrono::Utc::now().timestamp()).bind(&run.branch).bind(&run.default_branch).bind(&run.base_branch).fetch_all(&mut *tx).await?;
-    let found = crate::backend::db::action_objects::matching_cache(&entries, run, keys);
-    if let Some(entry) = found {
-        sqlx::query("UPDATE actions_objects SET expires_at=$2+(expires_at-accessed_at),accessed_at=$2 WHERE id=$1")
-            .bind(entry.id)
-            .bind(chrono::Utc::now().timestamp())
-            .execute(&mut *tx)
-            .await?;
-    }
+    let sql = crate::backend::db::action_objects::cache_lookup_sql(true);
+    let id: Option<i64> = sqlx::query_scalar(&sql)
+        .bind(run.repo_id)
+        .bind(version)
+        .bind(chrono::Utc::now().timestamp())
+        .bind(&run.branch)
+        .bind(&run.default_branch)
+        .bind(&run.base_branch)
+        .bind(serde_json::to_string(keys)?)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let found = if let Some(id) = id {
+        sqlx::query_as("UPDATE actions_objects SET expires_at=$2+(expires_at-accessed_at),accessed_at=$2 WHERE id=$1 RETURNING *")
+            .bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(&mut *tx).await?
+    } else {
+        None
+    };
     tx.commit().await?;
-    Ok(found.cloned())
+    Ok(found)
 }
 
-pub async fn list_artifacts(pool: &PgPool, run_id: i64) -> Result<Vec<ActionObject>> {
-    Ok(sqlx::query_as("SELECT * FROM actions_objects WHERE run_id=$1 AND kind='artifact' AND finalized AND expires_at>$2 ORDER BY id")
-        .bind(run_id).bind(chrono::Utc::now().timestamp()).fetch_all(pool).await?)
+pub async fn list_artifacts(
+    pool: &PgPool,
+    run_id: i64,
+    name: Option<&str>,
+    id: Option<i64>,
+) -> Result<Vec<crate::backend::db::action_objects::ArtifactSummary>> {
+    Ok(sqlx::query_as("SELECT o.id,o.name,o.size,o.created_at FROM actions_objects o JOIN ci_runs a ON a.id=o.run_id JOIN ci_runs r ON r.id=$1 AND r.repo_id=o.repo_id AND COALESCE(a.workflow_run_id,a.id)=COALESCE(r.workflow_run_id,r.id) WHERE o.kind='artifact' AND o.finalized AND o.expires_at>$2 AND ($3::text IS NULL OR o.name=$3) AND ($4::bigint IS NULL OR o.id=$4) ORDER BY o.id")
+        .bind(run_id).bind(chrono::Utc::now().timestamp()).bind(name).bind(id).fetch_all(pool).await?)
+}
+
+pub async fn artifact_for_run(
+    pool: &PgPool,
+    run_id: i64,
+    name: &str,
+) -> Result<Option<ActionObject>> {
+    Ok(sqlx::query_as("SELECT o.* FROM actions_objects o JOIN ci_runs a ON a.id=o.run_id JOIN ci_runs r ON r.id=$1 AND r.repo_id=o.repo_id AND COALESCE(a.workflow_run_id,a.id)=COALESCE(r.workflow_run_id,r.id) WHERE o.kind='artifact' AND o.finalized AND o.expires_at>$2 AND o.name=$3 ORDER BY o.id DESC LIMIT 1")
+        .bind(run_id).bind(chrono::Utc::now().timestamp()).bind(name).fetch_optional(pool).await?)
+}
+
+pub async fn artifact_for_reader(
+    pool: &PgPool,
+    actor: i64,
+    session: &str,
+    repo: i64,
+    run: i64,
+    id: i64,
+) -> Result<Option<ActionObject>> {
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    Ok(sqlx::query_as(&format!("SELECT o.* FROM actions_objects o JOIN repositories r ON r.id=o.repo_id JOIN ci_runs c ON c.id=o.run_id AND c.repo_id=r.id JOIN users u ON u.id=$1 JOIN sessions s ON s.user_id=u.id AND s.id=$2 WHERE r.id=$3 AND c.id=$4 AND o.id=$5 AND o.kind='artifact' AND o.finalized AND o.expires_at>$6 AND s.expires_at>clock_timestamp() AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>0)"))
+        .bind(actor).bind(session).bind(repo).bind(run).bind(id).bind(chrono::Utc::now().timestamp()).fetch_optional(pool).await?)
 }
 
 pub async fn artifact_by_id(pool: &PgPool, id: i64) -> Result<Option<ActionObject>> {
@@ -376,6 +511,7 @@ pub async fn delete_artifact(
     id: i64,
     run_id: i64,
     actor: Option<i64>,
+    credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
     if let Some(actor) = actor {
@@ -384,8 +520,13 @@ pub async fn delete_artifact(
             .fetch_optional(&mut *tx)
             .await?;
         let Some(repo) = repo else { return Ok(false) };
-        if !super::discussions::lock_write_authority(&mut tx, actor, repo).await? {
+        if !super::discussions::lock_exclusive_write_authority(&mut tx, actor, repo).await? {
             return Ok(false);
+        }
+        if let Some(proof) = credential {
+            if !super::credentials::ci(&mut tx, actor, repo, proof).await? {
+                return Ok(false);
+            }
         }
     }
     let changed =
@@ -454,7 +595,7 @@ pub async fn query_objects(
         .build_query_scalar()
         .fetch_one(&mut *tx)
         .await?;
-    let mut query = object_query(filter, "*");
+    let mut query = object_query(filter, "id,repo_id,run_id,kind,scope,name,version,size,finalized,NULL AS manifest,created_at,accessed_at,expires_at");
     let order = match filter.order {
         ObjectOrder::Created => "created_at",
         ObjectOrder::Accessed => "accessed_at",
@@ -521,17 +662,26 @@ pub async fn cache_usage(pool: &PgPool, repo: i64) -> Result<(i64, i64)> {
 
 pub async fn grant_artifact_download(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     hash: &str,
 ) -> Result<bool> {
     use super::repositories::access::{lock_user_repo_access_in_transaction, RepositoryRowLock};
+    let actor = actor.into();
     let mut tx = pool.begin().await?;
-    let authority =
-        lock_user_repo_access_in_transaction(&mut tx, actor, repo, RepositoryRowLock::Shared, true)
-            .await?;
+    let authority = lock_user_repo_access_in_transaction(
+        &mut tx,
+        actor.user_id,
+        repo,
+        RepositoryRowLock::Shared,
+        true,
+    )
+    .await?;
     if !authority.is_some_and(|a| a.access.can_read() || (!a.organization && a.is_admin)) {
+        return Ok(false);
+    }
+    if !super::credentials::repository(&mut tx, &actor, repo, "actions", false).await? {
         return Ok(false);
     }
     let changed = sqlx::query("INSERT INTO actions_blob_grants(token_hash,object_id,run_id,write,expires_at) SELECT $1,id,run_id,FALSE,FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint+60 FROM actions_objects WHERE id=$2 AND repo_id=$3 AND kind='artifact' AND finalized AND expires_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint")
@@ -544,9 +694,8 @@ pub async fn expire_objects(pool: &PgPool) -> Result<()> {
     let now = chrono::Utc::now().timestamp();
     sqlx::query("DELETE FROM actions_objects WHERE id IN (SELECT id FROM actions_objects WHERE expires_at<=$1 OR (NOT finalized AND created_at<$2) ORDER BY id LIMIT 100)")
         .bind(now).bind(now-86400).execute(pool).await?;
-    sqlx::query("DELETE FROM actions_blob_grants WHERE expires_at<=$1")
-        .bind(now)
-        .execute(pool)
-        .await?;
+    sqlx::query("DELETE FROM actions_blob_grants WHERE token_hash IN (SELECT token_hash FROM actions_blob_grants WHERE expires_at<=$1 ORDER BY expires_at,token_hash LIMIT 1000)")
+        .bind(now).execute(pool).await?;
+    super::action_logs::expire(pool).await?;
     Ok(())
 }

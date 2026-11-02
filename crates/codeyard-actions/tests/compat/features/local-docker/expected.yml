@@ -4,6 +4,12 @@
     "test": "success"
   },
   "contains": [
-    "compat:ok"
+    "compat:ok",
+    "`pre` execution is not supported for local action from './.github/actions/stages'",
+    "compat:main-one-two-one two",
+    "compat:post-one-main-one"
+  ],
+  "absent": [
+    "compat:pre-one"
   ]
 }

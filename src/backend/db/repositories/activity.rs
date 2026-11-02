@@ -44,7 +44,7 @@ impl<'a> RefActivity<'a> {
         anyhow::ensure!(
             [before, after]
                 .iter()
-                .all(|sha| sha.len() == 40 && sha.bytes().all(|ch| ch.is_ascii_hexdigit())),
+                .all(crate::git_ids::is_full_commit_id),
             "Invalid activity commit ID"
         );
         Ok(Self {
@@ -76,7 +76,38 @@ pub struct Filter<'a> {
     pub kind: Option<Kind>,
     pub since: Option<DateTime<Utc>>,
 }
+/// `readable` is the engine's repository read condition for the viewer `u` (bound as $8).
+pub(crate) fn list_sql(pg: bool, filter: &Filter<'_>, readable: &str) -> String {
+    let direction = if filter.descending { "DESC" } else { "ASC" };
+    let boundary = match (filter.boundary, filter.descending) {
+        (Some(_), true) => "a.id<$2",
+        (Some(_), false) => "a.id>$2",
+        (None, _) => "CAST($2 AS BIGINT) IS NULL",
+    };
+    let reference = if filter.reference.is_some() {
+        "a.reference=$3"
+    } else {
+        "CAST($3 AS TEXT) IS NULL"
+    };
+    let actor = if filter.actor.is_some() {
+        "lower(actor.username)=lower($4)"
+    } else {
+        "CAST($4 AS TEXT) IS NULL"
+    };
+    let kind = if filter.kind.is_some() {
+        "a.activity_type=$5"
+    } else {
+        "CAST($5 AS TEXT) IS NULL"
+    };
+    let since = match (filter.since.is_some(), pg) {
+        (true, _) => "a.created_at>=$6",
+        (false, true) => "CAST($6 AS TIMESTAMPTZ) IS NULL",
+        (false, false) => "CAST($6 AS TEXT) IS NULL",
+    };
+    format!("SELECT a.*,actor.username AS actor FROM repository_ref_activities a JOIN repositories r ON r.id=a.repo_id LEFT JOIN users actor ON actor.id=a.actor_id LEFT JOIN users u ON u.id=$8 WHERE a.repo_id=$1 AND ({readable}) AND {boundary} AND {reference} AND {actor} AND {kind} AND {since} ORDER BY a.id {direction} LIMIT $7")
+}
+
 native_operation!(crate::backend::db::postgres::repositories::activity::record,crate::backend::db::sqlite::repositories::activity::record,
     fn record(pool:&DbPool,repo_id:i64,actor:i64,operation:&Uuid,changes:&[RefActivity<'_>])->Result<()>);
 native_operation!(crate::backend::db::postgres::repositories::activity::list,crate::backend::db::sqlite::repositories::activity::list,
-    fn list(pool:&DbPool,repo_id:i64,filter:&Filter<'_>,limit:i64)->Result<Vec<Activity>>);
+    fn list(pool:&DbPool,repo_id:i64,filter:&Filter<'_>,limit:i64,viewer:Option<i64>)->Result<Vec<Activity>>);

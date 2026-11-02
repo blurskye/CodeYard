@@ -104,11 +104,14 @@ async fn authors(
             .map(|contributor| contributor.email.to_ascii_lowercase())
             .collect();
         for author in &mut authors {
-            let email = author
-                .email
-                .clone()
-                .unwrap_or_else(|| format!("{}@users.noreply", author.username));
-            if author.association == "NONE" && emails.contains(&email.to_ascii_lowercase()) {
+            // Commits made for the account carry its no-reply address or its own email.
+            let noreply = format!("{}@users.noreply", author.username).to_ascii_lowercase();
+            let committed = emails.contains(&noreply)
+                || author
+                    .email
+                    .as_ref()
+                    .is_some_and(|email| emails.contains(&email.to_ascii_lowercase()));
+            if author.association == "NONE" && committed {
                 author.association = "CONTRIBUTOR".into();
             }
         }
@@ -263,7 +266,13 @@ async fn notify(
     previous: Option<&str>,
 ) {
     let link = comment_link(owner, &repo.name, comment);
+    let title = format!(
+        "{} commented on commit {}",
+        user.username,
+        crate::webui::components::short_sha(&comment.sha)
+    );
     let mut notified = Vec::new();
+    let mut subscriber_notice = None;
     // Creation notifies a known commit author who can still read the repository.
     if previous.is_none() {
         let recipient = async {
@@ -285,22 +294,34 @@ async fn notify(
             Some(author.id)
         }
         .await;
+        let notice = NotificationRequest {
+            user_id: user.id,
+            actor_id: Some(user.id),
+            repo_id: Some(repo.id),
+            kind: "commit_comment",
+            title: &title,
+            body: Some(&comment.body),
+            link: Some(&link),
+            metadata: json!({"repo_owner":owner,"repo_name":repo.name,"commit_sha":comment.sha,"commit_comment_id":comment.id,"subject":comment.sha}),
+        };
         if let Some(recipient) = recipient {
-            let title = format!(
-                "{} commented on commit {}",
-                user.username,
-                &comment.sha[..7]
-            );
-            let sent = create_and_broadcast_notification(pool, broadcaster, NotificationRequest {
-                user_id: recipient, actor_id: Some(user.id), repo_id: Some(repo.id), kind: "commit_comment", title: &title, body: Some(&comment.body), link: Some(&link),
-                metadata: json!({"repo_owner":owner,"repo_name":repo.name,"commit_sha":comment.sha,"commit_comment_id":comment.id,"subject":comment.sha}),
-            }).await;
+            let sent = create_and_broadcast_notification(
+                pool,
+                broadcaster,
+                NotificationRequest {
+                    user_id: recipient,
+                    ..notice.clone()
+                },
+            )
+            .await;
             if sent.is_ok() {
                 notified.push(recipient);
             }
         }
+        subscriber_notice = Some(notice);
     }
-    notify_mentions(
+    // A mention comes before the subscriber notice, so a mentioned subscriber hears it as one.
+    let mentioned = notify_mentions(
         pool,
         broadcaster,
         MentionSource {
@@ -318,17 +339,30 @@ async fn notify(
         },
     )
     .await;
+    // Thread subscribers hear about every new comment on the commit.
+    if let Some(notice) = subscriber_notice {
+        notified.extend(mentioned);
+        crate::backend::notifications::create::notify_subscribers(
+            pool,
+            broadcaster,
+            notice,
+            &notified,
+        )
+        .await;
+    }
 }
 
 pub async fn create(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
     broadcaster: &NotificationBroadcaster,
-    actor: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo: i64,
     reference: &str,
     mut input: CreateComment,
 ) -> Result<CommentDetails> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let (user, repository, owner) = writable(pool, actor, repo).await?;
     if input.repository_id.is_some_and(|id| id != repo) {
         return Err(CommentError::Conflict);
@@ -402,7 +436,7 @@ pub async fn create(
     let comment = records::create_comment(
         pool,
         CommentCreate {
-            actor_id: actor,
+            actor: credential,
             repo_id: repo,
             sha: &commit.sha,
             body: &input.body,
@@ -435,7 +469,7 @@ pub async fn edit(
     broadcaster: &NotificationBroadcaster,
     input: CommentEdit<'_>,
 ) -> Result<CommentDetails> {
-    let (user, repository, owner) = writable(pool, input.actor_id, input.repo_id).await?;
+    let (user, repository, owner) = writable(pool, input.actor.user_id, input.repo_id).await?;
     let previous = records::get_comment(pool, input.repo_id, input.id)
         .await
         .map_err(|_| CommentError::Unavailable)?
@@ -468,12 +502,13 @@ pub async fn edit(
 
 pub async fn delete(
     pool: &db::DbPool,
-    actor: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo: i64,
     id: i64,
     revision: Option<&str>,
 ) -> Result<CommitComment> {
-    writable(pool, actor, repo).await?;
+    let actor = actor.into();
+    writable(pool, actor.user_id, repo).await?;
     // GitHub sends commit_comment only for creation. Deletion needs no Git metadata lookup.
     records::delete_comment(pool, actor, repo, id, revision)
         .await

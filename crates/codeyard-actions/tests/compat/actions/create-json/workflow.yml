@@ -1,6 +1,10 @@
 # https://github.com/jsdaniell/create-json/tree/b8e77fa01397ca39cc4a6198cc29a3be5481afef
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

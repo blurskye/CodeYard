@@ -22,10 +22,16 @@ pub(super) fn files(root: &Yaml, directory: &Path) -> Result<BTreeMap<String, Ya
             let Some(reference) = job.get("uses").and_then(Yaml::as_str) else {
                 continue;
             };
-            ensure!(depth < 3, "Reusable workflows exceed four levels");
+            ensure!(
+                depth + 1 < crate::workflow::MAX_REUSABLE_LEVELS,
+                "Reusable workflows exceed four levels"
+            );
             ensure!(active.insert(reference.into()), "Reusable workflow cycle");
             if !result.contains_key(reference) {
-                ensure!(result.len() < 20, "More than twenty called workflows");
+                ensure!(
+                    result.len() < crate::workflow::MAX_CALLED_WORKFLOWS,
+                    "More than twenty called workflows"
+                );
                 let path = reference
                     .strip_prefix("./.github/workflows/")
                     .context("Remote reusable workflows must be resolved by the Codeyard server")?;
@@ -50,7 +56,9 @@ pub(super) fn files(root: &Yaml, directory: &Path) -> Result<BTreeMap<String, Ya
                     workflow::listens_to(&parsed, "workflow_call"),
                     "Called workflow does not declare workflow_call"
                 );
-                result.insert(reference.into(), serde_yaml::from_str(&source)?);
+                let called = Yaml::Mapping(parsed.fields);
+                workflow::validate_called_concurrency(&called)?;
+                result.insert(reference.into(), called);
             }
             let child_height = if let Some(height) = heights.get(reference) {
                 *height
@@ -61,7 +69,7 @@ pub(super) fn files(root: &Yaml, directory: &Path) -> Result<BTreeMap<String, Ya
                 height
             };
             ensure!(
-                depth + 1 + child_height <= 3,
+                depth + 1 + child_height < crate::workflow::MAX_REUSABLE_LEVELS,
                 "Reusable workflows exceed four levels"
             );
             height = height.max(child_height + 1);
@@ -110,6 +118,7 @@ pub(super) fn contexts(
             "Unknown workflow_call input"
         );
     }
+    let mut defaults = Vec::new();
     for (key, spec) in declared.into_iter().flatten() {
         let name = key.as_str().context("Invalid input name")?;
         let kind = spec
@@ -117,30 +126,70 @@ pub(super) fn contexts(
             .and_then(Yaml::as_str)
             .context("Missing input type")?;
         let value = if let Some(value) = supplied.and_then(|values| values.get(key)) {
-            evaluate(value, caller)?
-        } else if let Some(value) = spec.get("default") {
+            // Arguments belong to the caller; defaults belong to the callee.
             evaluate(value, caller)?
         } else {
-            ensure!(
-                spec.get("required").and_then(Yaml::as_bool) != Some(true),
-                "Missing required workflow_call input: {name}"
-            );
+            if let Some(value) = spec.get("default") {
+                defaults.push((name.to_owned(), value));
+            } else {
+                ensure!(
+                    spec.get("required").and_then(Yaml::as_bool) != Some(true),
+                    "Missing required workflow_call input: {name}"
+                );
+            }
             match kind {
                 "boolean" => Value::Bool(false),
                 "number" => Value::Number(0.0),
                 _ => Value::String(String::new()),
             }
         };
+        inputs.insert(name.into(), value);
+    }
+    // Re-evaluate defaults against a complete callee scope until dependencies stabilize.
+    // Acyclic dependencies need at most one pass per default plus a stability check.
+    let mut settled = defaults.is_empty();
+    for _ in 0..=defaults.len() {
+        let mut context = caller.clone();
+        context
+            .values
+            .insert("inputs".into(), Value::Object(inputs.clone()));
+        let mut next = inputs.clone();
+        let mut error = None;
+        for (name, value) in &defaults {
+            match evaluate(value, &context) {
+                Ok(value) => {
+                    next.insert(name.clone(), value);
+                }
+                Err(cause) => {
+                    error = Some(cause);
+                }
+            }
+        }
+        if next == inputs {
+            if let Some(error) = error {
+                return Err(error);
+            }
+            settled = true;
+            break;
+        }
+        inputs = next;
+    }
+    ensure!(settled, "Workflow_call input defaults do not converge");
+    for (key, spec) in declared.into_iter().flatten() {
+        let name = key.as_str().context("Invalid input name")?;
+        let kind = spec
+            .get("type")
+            .and_then(Yaml::as_str)
+            .context("Missing input type")?;
         ensure!(
             matches!(
-                (kind, &value),
+                (kind, &inputs[name]),
                 ("string", Value::String(_))
                     | ("boolean", Value::Bool(_))
                     | ("number", Value::Number(_))
             ),
             "Wrong workflow_call input type: {name}"
         );
-        inputs.insert(name.into(), value);
     }
     let inherited = call.get("secrets").and_then(Yaml::as_str) == Some("inherit");
     let mut secrets = if inherited {
@@ -157,13 +206,18 @@ pub(super) fn contexts(
     if let Some(supplied) = call.get("secrets").and_then(Yaml::as_mapping) {
         for (key, value) in supplied {
             ensure!(
-                declared.is_some_and(|values| values.contains_key(key)),
+                declared.is_some_and(|values| values.keys().any(|name| name
+                    .as_str()
+                    .zip(key.as_str())
+                    .is_some_and(|(a, b)| a.eq_ignore_ascii_case(b)))),
                 "Unknown workflow_call secret"
             );
-            secrets.insert(
-                key.as_str().context("Invalid secret name")?.into(),
-                evaluate(value, caller)?,
-            );
+            let value = evaluate(value, caller)?;
+            if !masker.add_requested(&value.to_text()) {
+                masker.hide_all();
+                anyhow::bail!("Called workflow secrets exceed the masking budget");
+            }
+            secrets.insert(key.as_str().context("Invalid secret name")?.into(), value);
         }
     }
     for (key, spec) in declared.into_iter().flatten() {
@@ -171,8 +225,9 @@ pub(super) fn contexts(
         ensure!(
             spec.get("required").and_then(Yaml::as_bool) != Some(true)
                 || secrets
-                    .get(name)
-                    .is_some_and(|value| !value.to_text().is_empty()),
+                    .iter()
+                    .any(|(key, value)| key.eq_ignore_ascii_case(name)
+                        && !value.to_text().is_empty()),
             "Missing required workflow_call secret: {name}"
         );
     }
@@ -180,11 +235,6 @@ pub(super) fn contexts(
         if let Some(token) = values.get("GITHUB_TOKEN") {
             secrets.insert("GITHUB_TOKEN".into(), token.clone());
         }
-    }
-    // An evaluated secret can be part of a larger secret, such as a token inside JSON. Register
-    // each value so the called workflow's output masks it.
-    for value in secrets.values() {
-        masker.add(&value.to_text());
     }
     let mut contexts = caller.clone();
     contexts
@@ -215,11 +265,11 @@ pub(super) fn outputs(
         .and_then(|call| call.get("outputs"))
         .and_then(Yaml::as_mapping);
     for (key, spec) in outputs.into_iter().flatten() {
-        let value = spec
-            .get("value")
-            .and_then(Yaml::as_str)
-            .context("Missing workflow output value")?;
-        let value = text(value, contexts, Status::default())?;
+        let value = crate::workflow::scalar_text(
+            spec.get("value").context("Missing workflow output value")?,
+            "workflow output",
+        )?;
+        let value = text(&value, contexts, Status::default())?;
         if !masker.contains(&value) {
             result.insert(key.as_str().context("Invalid output name")?.into(), value);
         }

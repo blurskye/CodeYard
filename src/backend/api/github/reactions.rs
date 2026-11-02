@@ -29,8 +29,7 @@ async fn target(
         let detail = crate::backend::repositories::releases::detail_by_id(
             pool,
             viewer,
-            &p["owner"],
-            &p["repo"],
+            repo_id,
             id.parse().map_err(|_| Error::missing())?,
         )
         .await
@@ -149,13 +148,25 @@ async fn create(
     Json(input): Json<Content>,
 ) -> Result<(StatusCode, Json<Value>)> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    let target = target(&state.pool, repo.id, &p, route.as_str(), Some(actor.id)).await?;
+    let actor = auth.ok_or_else(auth::required)?;
+    let target = target(
+        &state.pool,
+        repo.id,
+        &p,
+        route.as_str(),
+        Some(actor.user.id),
+    )
+    .await?;
     validate(target.subject, &input.content)?;
-    let (reaction, created) =
-        db::reactions::create_reaction(&state.pool, actor.id, target, &input.content)
-            .await
-            .map_err(write_error)?;
+    let (reaction, created) = db::reactions::create_reaction(
+        &state.pool,
+        actor.user.id,
+        &actor.credential(),
+        target,
+        &input.content,
+    )
+    .await
+    .map_err(write_error)?;
     Ok((
         if created {
             StatusCode::CREATED
@@ -193,7 +204,7 @@ async fn list(
         validate(target.subject, content)?;
     }
     let (offset, limit) = page.window()?;
-    let rows = db::reactions::list_reactions(
+    let mut rows = db::reactions::list_reactions(
         &state.pool,
         target,
         query.content.as_deref(),
@@ -203,10 +214,21 @@ async fn list(
     .await
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
-    let mut items = Vec::new();
-    for row in rows {
-        items.push(document(&state.pool, &row).await?);
-    }
+    rows.truncate(limit);
+    let mut ids: Vec<_> = rows.iter().map(|row| row.user_id).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let users: std::collections::HashMap<_, _> =
+        db::users::accounts::get_users_by_ids(&state.pool, &ids)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .map(|user| (user.id, user))
+            .collect();
+    let items = rows
+        .iter()
+        .map(|row| payloads::reaction(row, users.get(&row.user_id)))
+        .collect();
     page.response(&uri, items, next)
 }
 
@@ -217,10 +239,17 @@ async fn remove(
     route: MatchedPath,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
-    let target = target(&state.pool, repo.id, &p, route.as_str(), Some(actor.id)).await?;
+    let actor = auth.ok_or_else(auth::required)?;
+    let target = target(
+        &state.pool,
+        repo.id,
+        &p,
+        route.as_str(),
+        Some(actor.user.id),
+    )
+    .await?;
     let id = p["reaction_id"].parse().map_err(|_| Error::missing())?;
-    if !db::reactions::delete_reaction(&state.pool, actor.id, target, id)
+    if !db::reactions::delete_reaction(&state.pool, actor.user.id, &actor.credential(), target, id)
         .await
         .map_err(write_error)?
     {

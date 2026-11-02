@@ -54,7 +54,7 @@ pub async fn status(
 }
 
 fn mutation_error(error: anyhow::Error) -> FollowError {
-    if error.is::<following::FollowRestricted>() {
+    if error.is::<following::FollowRestricted>() || error.is::<accounts::AccountRestricted>() {
         FollowError::Restricted
     } else {
         FollowError::Unavailable
@@ -65,6 +65,7 @@ pub async fn change(
     pool: &DbPool,
     broadcaster: &NotificationBroadcaster,
     actor: i64,
+    credential: &accounts::AccountCredential<'_>,
     username: &str,
     follow: bool,
 ) -> Result<FollowStatus, FollowError> {
@@ -87,12 +88,12 @@ pub async fn change(
         });
     }
     if follow {
-        let created = following::follow_user(pool, actor, target.id)
+        let created = following::follow_user(pool, actor, target.id, credential)
             .await
             .map_err(mutation_error)?;
         if created {
             let title = format!("{} started following you", current.username);
-            let link = format!("/{}", current.username);
+            let link = crate::webui::profile_path(&current.username);
             if let Err(error) = create_and_broadcast_notification(
                 pool,
                 broadcaster,
@@ -125,7 +126,7 @@ pub async fn change(
             }
         }
     } else {
-        following::unfollow_user(pool, actor, target.id)
+        following::unfollow_user(pool, actor, target.id, credential)
             .await
             .map_err(mutation_error)?;
     }

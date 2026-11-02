@@ -1,6 +1,6 @@
 //! Migration records and bare repositories share one bounded tar.gz archive.
 use crate::backend::repositories::imports::archive::{
-    MAX_ENTRIES, MAX_METADATA_BYTES, MAX_RECORDS,
+    safe_path, MAX_ENTRIES, MAX_METADATA_BYTES, MAX_RECORDS, MAX_UNPACKED_BYTES,
 };
 use anyhow::{ensure, Result};
 use flate2::{write::GzEncoder, Compression};
@@ -8,10 +8,8 @@ use serde_json::Value;
 use std::{
     collections::BTreeMap,
     io::{self, Read, Write},
-    path::{Component, Path},
+    path::Path,
 };
-
-const MAX_UNPACKED_BYTES: u64 = 512 * 1024 * 1024;
 
 struct ArchiveBytes(Vec<u8>);
 impl Write for ArchiveBytes {
@@ -56,13 +54,7 @@ impl Default for MigrationArchive {
 
 impl MigrationArchive {
     fn check_path(path: &str) -> Result<()> {
-        ensure!(
-            !path.is_empty()
-                && Path::new(path)
-                    .components()
-                    .all(|part| matches!(part, Component::Normal(_))),
-            "Invalid migration entry"
-        );
+        ensure!(safe_path(Path::new(path)), "Invalid migration entry");
         Ok(())
     }
 

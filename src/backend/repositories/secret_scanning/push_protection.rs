@@ -5,6 +5,12 @@ use crate::backend::db;
 use crate::backend::repositories::store::{ErrorKind, RepoError};
 use std::path::Path;
 
+#[derive(Clone, Debug)]
+pub struct ApprovedBypass {
+    pub hash: String,
+    pub commit: String,
+}
+
 /// Scans the commits that `heads` add and refuses the publication when one holds a secret that
 /// push protection blocks. Returns the hashes of the secrets that the actor's bypass allows. The
 /// caller records their use once the publication has succeeded.
@@ -15,7 +21,7 @@ pub async fn refuse_blocked_secrets(
     path: &Path,
     quarantine: Option<&Path>,
     heads: &[String],
-) -> anyhow::Result<Vec<String>> {
+) -> anyhow::Result<Vec<ApprovedBypass>> {
     if !db::secret_scanning::settings(pool, repo.id)
         .await?
         .push_protection
@@ -61,7 +67,10 @@ pub async fn refuse_blocked_secrets(
                 .replace(&finding.detection.secret, "[REDACTED]");
             violations.push(format!("  —— {} ({}) ——\n    locations:\n      - commit: {}\n        path: {}:{}\n    To push, remove secret from commit(s) or follow this URL to allow the secret.\n    {}", finding.detection.secret_type_display_name, finding.detection.rule_id, finding.location.commit_sha, safe_path.escape_debug(), finding.location.start_line, link));
         } else {
-            bypasses.push(hash);
+            bypasses.push(ApprovedBypass {
+                hash,
+                commit: finding.location.commit_sha,
+            });
         }
     }
     if !violations.is_empty() {

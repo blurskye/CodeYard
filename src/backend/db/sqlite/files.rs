@@ -1,15 +1,113 @@
 //! Uploaded file records. A file is pending until its bytes are confirmed,
 //! then active; pending uploads expire.
 use crate::backend::db::files::{
-    AdmissionError, DeleteFileOutcome, DeleteUnreferencedOutcome, ReserveUpload,
+    AdmissionError, DeleteFileOutcome, DeleteUnreferencedOutcome, FileAuthority, ReserveUpload,
     DOWNLOAD_CHARGE_DAYS, IN_FLIGHT_PUT_GRACE_SECONDS, PUT_LIFETIME_SECONDS, SWEEP_BATCH,
     SWEEP_BATCHES, UPLOAD_CHARGE_DAYS,
 };
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 use std::net::IpAddr;
 use uuid::Uuid;
 
 use super::models::{File, FileReasonLimit};
+
+/// Locks the active uploader and reads the limits for `reason`. BEGIN IMMEDIATE serializes concurrent uploads, so they cannot overrun the quota.
+async fn admit(
+    tx: &mut SqliteConnection,
+    user: i64,
+    reason: &str,
+) -> Result<FileReasonLimit, AdmissionError> {
+    let active: Option<i64> = sqlx::query_scalar(
+        "SELECT id FROM users WHERE id = ?1 AND NOT is_banned AND NOT must_change_password",
+    )
+    .bind(user)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if active.is_none() {
+        return Err(AdmissionError::Invalid);
+    }
+    sqlx::query_as::<_, FileReasonLimit>("SELECT * FROM file_reason_limits WHERE reason = ?1")
+        .bind(reason)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(AdmissionError::PolicyUnavailable)
+}
+
+/// Charges `size` bytes against the user's hourly and daily limits for `reason`, after
+/// `admit`, or refuses the upload when a limit would be passed.
+async fn charge(
+    tx: &mut SqliteConnection,
+    user: i64,
+    reason: &str,
+    size: i64,
+    file: Option<Uuid>,
+    limits: &FileReasonLimit,
+) -> Result<Uuid, AdmissionError> {
+    let allowed: bool = sqlx::query_scalar(
+        r#"SELECT COUNT(*) FILTER (WHERE uploaded_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) < ?3
+           AND COALESCE(SUM(file_size) FILTER (WHERE uploaded_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')), 0) <= ?5 - ?4
+           AND COUNT(*) < ?6
+           AND COALESCE(SUM(file_size), 0) <= ?7 - ?4
+        FROM upload_rate_limit
+        WHERE user_id = ?1 AND reason = ?2 AND uploaded_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-24 hours')"#,
+    )
+    .bind(user)
+    .bind(reason)
+    .bind(i64::from(limits.max_uploads_per_hour))
+    .bind(size)
+    .bind(limits.max_bytes_per_hour)
+    .bind(i64::from(limits.max_uploads_per_day))
+    .bind(limits.max_bytes_per_day)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !allowed {
+        return Err(AdmissionError::Quota);
+    }
+    let id = sqlx::query_scalar(
+        "INSERT INTO upload_rate_limit (user_id, file_id, file_size, reason) VALUES (?1,?2,?3,?4) RETURNING id",
+    )
+    .bind(user)
+    .bind(file)
+    .bind(size)
+    .bind(reason)
+    .fetch_one(&mut *tx)
+    .await?;
+    Ok(id)
+}
+
+/// Adds `size` bytes to the earlier charge `id` of the same upload, checking only the byte
+/// limits, since the upload was already counted.
+async fn charge_part(
+    tx: &mut SqliteConnection,
+    id: Uuid,
+    user: i64,
+    reason: &str,
+    size: i64,
+    limits: &FileReasonLimit,
+) -> Result<(), AdmissionError> {
+    let allowed: bool = sqlx::query_scalar(
+        r#"SELECT COALESCE(SUM(file_size) FILTER (WHERE uploaded_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')), 0) <= ?4 - ?3
+           AND COALESCE(SUM(file_size), 0) <= ?5 - ?3
+        FROM upload_rate_limit
+        WHERE user_id = ?1 AND reason = ?2 AND uploaded_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-24 hours')"#,
+    )
+    .bind(user)
+    .bind(reason)
+    .bind(size)
+    .bind(limits.max_bytes_per_hour)
+    .bind(limits.max_bytes_per_day)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !allowed {
+        return Err(AdmissionError::Quota);
+    }
+    sqlx::query("UPDATE upload_rate_limit SET file_size = file_size + ?2, uploaded_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?1")
+        .bind(id)
+        .bind(size)
+        .execute(&mut *tx)
+        .await?;
+    Ok(())
+}
 
 /// Checks the declaration and the per-reason quotas, then records a pending
 /// file and charges the quota, in one transaction.
@@ -21,43 +119,9 @@ pub async fn reserve_upload(
         return Err(AdmissionError::Invalid);
     }
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let user: Option<i64> = sqlx::query_scalar(
-        "SELECT id FROM users WHERE id = ?1 AND NOT is_banned AND NOT must_change_password",
-    )
-    .bind(req.user_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-    if user.is_none() {
-        return Err(AdmissionError::Invalid);
-    }
-    let limits =
-        sqlx::query_as::<_, FileReasonLimit>("SELECT * FROM file_reason_limits WHERE reason = ?1")
-            .bind(req.reason.as_str())
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(AdmissionError::PolicyUnavailable)?;
+    let limits = admit(&mut tx, req.user_id, req.reason.as_str()).await?;
     if !req.allowed_by(&limits) {
         return Err(AdmissionError::Invalid);
-    }
-    let allowed: bool = sqlx::query_scalar(
-        r#"SELECT COUNT(*) FILTER (WHERE uploaded_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) < ?3
-           AND COALESCE(SUM(file_size) FILTER (WHERE uploaded_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')), 0) <= ?5 - ?4
-           AND COUNT(*) < ?6
-           AND COALESCE(SUM(file_size), 0) <= ?7 - ?4
-        FROM upload_rate_limit
-        WHERE user_id = ?1 AND reason = ?2 AND uploaded_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-24 hours')"#,
-    )
-    .bind(req.user_id)
-    .bind(req.reason.as_str())
-    .bind(i64::from(limits.max_uploads_per_hour))
-    .bind(req.file_size)
-    .bind(limits.max_bytes_per_hour)
-    .bind(i64::from(limits.max_uploads_per_day))
-    .bind(limits.max_bytes_per_day)
-    .fetch_one(&mut *tx)
-    .await?;
-    if !allowed {
-        return Err(AdmissionError::Quota);
     }
     let file_id = Uuid::new_v4();
     let file = sqlx::query_as::<_, File>(
@@ -77,33 +141,119 @@ pub async fn reserve_upload(
     .bind(PUT_LIFETIME_SECONDS)
     .fetch_one(&mut *tx)
     .await?;
-    sqlx::query(
-        "INSERT INTO upload_rate_limit (user_id, file_id, file_size, reason) VALUES (?1,?2,?3,?4)",
+    charge(
+        &mut tx,
+        req.user_id,
+        req.reason.as_str(),
+        req.file_size,
+        Some(file_id),
+        &limits,
     )
-    .bind(req.user_id)
-    .bind(file_id)
-    .bind(req.file_size)
-    .bind(req.reason.as_str())
-    .execute(&mut *tx)
     .await?;
     tx.commit().await?;
     Ok(file)
+}
+
+/// Charges an upload that is stored outside the file records, such as a CodeQL database,
+/// against the user's limits for `reason`, in its own transaction.
+pub async fn charge_upload(
+    pool: &SqlitePool,
+    user: i64,
+    reason: &str,
+    size: i64,
+) -> Result<Uuid, AdmissionError> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let id = charge_upload_in_transaction(&mut tx, user, reason, size, None).await?;
+    tx.commit().await?;
+    Ok(id)
+}
+
+/// Charges an upload of `size` bytes and returns the charge. An upload sent in parts passes the
+/// charge of its earlier parts as `earlier`, so it counts as one upload of all its bytes.
+pub(super) async fn charge_upload_in_transaction(
+    tx: &mut SqliteConnection,
+    user: i64,
+    reason: &str,
+    size: i64,
+    earlier: Option<Uuid>,
+) -> Result<Uuid, AdmissionError> {
+    let limits = admit(tx, user, reason).await?;
+    let earlier = match earlier {
+        Some(id) => sqlx::query_scalar::<_, i64>(
+            "SELECT file_size FROM upload_rate_limit WHERE id = ?1 AND user_id = ?2 AND reason = ?3",
+        )
+        .bind(id)
+        .bind(user)
+        .bind(reason)
+        .fetch_optional(&mut *tx)
+        .await?
+        .map(|charged| (id, charged)),
+        None => None,
+    };
+    let total = size.checked_add(earlier.map_or(0, |(_, charged)| charged));
+    if size < 1 || !total.is_some_and(|total| total <= limits.max_file_size_bytes) {
+        return Err(AdmissionError::Invalid);
+    }
+    match earlier {
+        Some((id, _)) => {
+            charge_part(tx, id, user, reason, size, &limits).await?;
+            Ok(id)
+        }
+        None => charge(tx, user, reason, size, None, &limits).await,
+    }
+}
+
+async fn require_file_actor(
+    tx: &mut Transaction<'_, Sqlite>,
+    actor: &FileAuthority,
+) -> Result<bool, sqlx::Error> {
+    let Some(user) = actor.user_id else {
+        return Ok(false);
+    };
+    if let Some(session) = &actor.session {
+        match super::users::transitions::require_account(
+            tx,
+            user,
+            &crate::backend::db::users::accounts::AccountCredential::Session(session),
+        )
+        .await
+        {
+            Ok(()) => return Ok(true),
+            Err(error) if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => {
+                return Ok(false)
+            }
+            Err(error) => {
+                return Err(error.downcast::<sqlx::Error>().unwrap_or_else(|_| {
+                    sqlx::Error::Protocol("File authority unavailable".into())
+                }))
+            }
+        }
+    }
+    Ok(sqlx::query_scalar::<_, bool>(
+        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=?1",
+    )
+    .bind(user)
+    .fetch_optional(&mut **tx)
+    .await?
+    .unwrap_or(false))
 }
 
 /// Files anyone may download: the owner's own, public ones, and avatars.
 pub async fn get_downloadable_file(
     pool: &SqlitePool,
     file_id: Uuid,
-    actor: Option<i64>,
+    actor: impl Into<FileAuthority>,
 ) -> Result<Option<File>, sqlx::Error> {
+    let actor = actor.into();
     sqlx::query_as(
         r#"SELECT f.* FROM files f WHERE f.id = ?1 AND f.is_active AND (
-            f.user_id = ?2 OR f.visibility = 'public'
+            (f.user_id = ?2 AND EXISTS(SELECT 1 FROM users a WHERE a.id=?2 AND NOT a.is_banned AND NOT a.must_change_password AND (?3 IS NULL OR EXISTS(SELECT 1 FROM sessions s WHERE s.id=?3 AND s.user_id=a.id AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))))) OR f.visibility = 'public'
             OR (f.reason = 'avatar' AND EXISTS (SELECT 1 FROM users u WHERE u.avatar_file_id = f.id))
             OR (f.reason = 'org_avatar' AND EXISTS (SELECT 1 FROM organizations o WHERE o.avatar_file_id = f.id)))"#,
     )
     .bind(file_id)
-    .bind(actor)
+    .bind(actor.user_id)
+    .bind(actor.session)
     .fetch_optional(pool)
     .await
 }
@@ -125,20 +275,41 @@ pub async fn verify_pending_upload(
     Ok(changed.rows_affected() == 1)
 }
 
+pub async fn can_publish_upload(
+    pool: &SqlitePool,
+    file_id: Uuid,
+    actor: FileAuthority,
+) -> Result<bool, sqlx::Error> {
+    let mut tx = pool.begin().await?;
+    if !require_file_actor(&mut tx, &actor).await? {
+        return Ok(false);
+    }
+    let allowed = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM files WHERE id=?1 AND user_id=?2 AND NOT is_active AND upload_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))").bind(file_id).bind(actor.user_id).fetch_one(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(allowed)
+}
+
 /// Marks the owner's pending, unexpired upload active.
 pub async fn activate_upload(
     pool: &SqlitePool,
     file_id: Uuid,
-    user_id: i64,
+    actor: impl Into<FileAuthority>,
 ) -> Result<bool, sqlx::Error> {
+    let actor = actor.into();
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !require_file_actor(&mut tx, &actor).await? {
+        return Ok(false);
+    }
+    let user_id = actor.user_id;
     let changed = sqlx::query(
         "UPDATE files SET is_active = 1, confirmed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), upload_expires_at = NULL, updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now')
          WHERE id = ?1 AND user_id = ?2 AND NOT is_active AND upload_expires_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now')",
     )
     .bind(file_id)
     .bind(user_id)
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+    tx.commit().await?;
     Ok(changed.rows_affected() == 1)
 }
 
@@ -233,9 +404,12 @@ pub async fn extend_direct_upload(
 pub async fn delete_file(
     pool: &SqlitePool,
     file_id: Uuid,
-    user_id: i64,
+    actor: impl Into<FileAuthority>,
 ) -> Result<DeleteFileOutcome, sqlx::Error> {
+    let actor = actor.into();
+    let user_id = actor.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let allowed = require_file_actor(&mut tx, &actor).await?;
     if sqlx::query_scalar::<_, i64>(
         "SELECT id FROM organizations WHERE avatar_file_id=?1 ORDER BY id LIMIT 1",
     )
@@ -246,13 +420,6 @@ pub async fn delete_file(
     {
         return Ok(DeleteFileOutcome::ReferencedOrganizationAvatar);
     }
-    let allowed = sqlx::query_scalar::<_, bool>(
-        "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=?1",
-    )
-    .bind(user_id)
-    .fetch_optional(&mut *tx)
-    .await?
-    .unwrap_or(false);
     let Some(file) = sqlx::query_as::<_, File>("SELECT * FROM files WHERE id=?1 AND user_id=?2")
         .bind(file_id)
         .bind(user_id)

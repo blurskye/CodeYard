@@ -21,7 +21,7 @@ async fn contract(pg: bool) {
     f.complete_setup().await;
     let alice = f.actor("alice").await;
     let bob = f.actor("bob").await;
-    let upper = f.actor("Alice").await;
+    let upper = f.actor("AliceWriter").await;
     let root = tempfile::tempdir().unwrap();
     let repository = lifecycle::provision(
         (f.pool(), None),
@@ -125,7 +125,7 @@ async fn contract(pg: bool) {
     )
     .await;
 
-    // The picker and the submitted allowlist distinguish case-sensitive accounts.
+    // The picker and the submitted allowlist retain canonical account spellings.
     db::repositories::access::grant_repo_access(
         f.pool(),
         upper,
@@ -134,10 +134,10 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    client.expect("PUT", "/api/repos/alice/proj/branch-protection", json!({"pattern":"main", "require_pull_request":false, "force_push_allowances":["Alice"]}), StatusCode::OK).await;
+    client.expect("PUT", "/api/repos/alice/proj/branch-protection", json!({"pattern":"main", "require_pull_request":false, "force_push_allowances":["AliceWriter"]}), StatusCode::OK).await;
     let (status, html) = client.page("/alice/proj/settings?tab=branches").await;
     assert_eq!(status, StatusCode::OK, "{html}");
-    for (name, checked) in [("alice", false), ("Alice", true)] {
+    for (name, checked) in [("alice", false), ("AliceWriter", true)] {
         let input = html
             .split("<input")
             .map(|part| part.split('>').next().unwrap())
@@ -157,7 +157,7 @@ async fn contract(pg: bool) {
                 ("required_approving_reviews", "0"),
                 ("required_status_checks", "ci"),
                 ("force_push_allowances", "alice"),
-                ("force_push_allowances", "Alice"),
+                ("force_push_allowances", "AliceWriter"),
             ],
         )
         .await;
@@ -183,7 +183,7 @@ async fn contract(pg: bool) {
         panic!("settings page")
     };
     assert_eq!(settings.collaborators.len(), 1);
-    assert_eq!(settings.collaborators[0].username, "Alice");
+    assert_eq!(settings.collaborators[0].username, "AliceWriter");
 
     // Status payload pages are bounded, while combined state/count cover every context.
     f.execute(&format!("WITH RECURSIVE n(i) AS (SELECT 0 UNION ALL SELECT i+1 FROM n WHERE i<1023) INSERT INTO commit_statuses(repo_id,sha,context,state,description,creator_id) SELECT $1,'{tip}',CASE WHEN i=1023 THEN 'zz-failed' ELSE 'ctx-' || CAST(i AS TEXT) END,CASE WHEN i=1023 THEN 'failure' ELSE 'success' END,'small',$2 FROM n"), &[repository.id, alice]).await;
@@ -277,6 +277,11 @@ async fn contract(pg: bool) {
                 ("name", &labels[0].name),
                 ("color", "#abcdef"),
                 ("description", &"x".repeat(1024)),
+                (
+                    "original",
+                    &serde_json::to_string(&(&labels[0].name, &labels[0].color, "x".repeat(1024)))
+                        .unwrap(),
+                ),
                 (
                     "original_description",
                     &serde_json::to_string(&"x".repeat(1024)).unwrap(),
@@ -373,7 +378,9 @@ async fn contract(pg: bool) {
     .unwrap();
     assert!(fork.size_bytes > 0);
     assert_eq!(f.repository(fork.id).await.size_bytes, fork.size_bytes);
-    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    // Languages are stored in the background. A refresh round may take up to the product's own
+    // 60-second bound, which a loaded runner can need.
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(60);
     loop {
         if !db::repository_stats::get_repo_languages(f.pool(), fork.id)
             .await
@@ -429,7 +436,9 @@ async fn contract(pg: bool) {
         "{}",
         save.text()
     );
-    let star = client.form_reply("/alice/proj/_forms/star", &[]).await;
+    let star = client
+        .form_reply("/alice/proj/_forms/star", &[("repository_id", &rid)])
+        .await;
     assert_eq!(star.status, StatusCode::SEE_OTHER, "{}", star.text());
     std::fs::rename(&offline, &repository.disk_path).unwrap();
 

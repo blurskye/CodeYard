@@ -28,10 +28,21 @@ impl Publication {
             signer_key: trusted_key.into(),
         })
     }
-    pub(crate) fn matches(&self, repo: i64, tag: &str, assets: &[Artifact]) -> Result<()> {
+    /// The signed statement still names this release: same repository, tag and assets, and the
+    /// repository URL is the live owner and name, so a rename since signing is refused.
+    pub(crate) fn matches(
+        &self,
+        repo: i64,
+        tag: &str,
+        assets: &[Artifact],
+        namespace: &str,
+    ) -> Result<()> {
         let predicate = &self.statement.predicate;
         ensure!(
-            predicate.repository_id == repo && predicate.tag == tag && predicate.assets == assets,
+            predicate.repository_id == repo
+                && predicate.tag == tag
+                && predicate.assets == assets
+                && predicate.repository == namespace,
             db::releases::ReleaseRefusal::Conflict
         );
         Ok(())
@@ -44,6 +55,15 @@ pub struct Reservation {
     pub tag_oid: String,
     pub release_id: Option<i64>,
 }
+pub async fn policy(pool: &DbPool, repo: i64) -> Result<(bool, bool)> {
+    match pool {
+        DbPool::Sqlite(p) => db::sqlite::repositories::immutable_releases::policy(p, repo).await,
+        DbPool::Postgres(p) => {
+            db::postgres::repositories::immutable_releases::policy(p, repo).await
+        }
+    }
+}
+
 pub async fn enabled(pool: &DbPool, repo: i64) -> Result<bool> {
     match pool {
         DbPool::Sqlite(p) => db::sqlite::repositories::immutable_releases::enabled(p, repo).await,
@@ -52,7 +72,14 @@ pub async fn enabled(pool: &DbPool, repo: i64) -> Result<bool> {
         }
     }
 }
-pub async fn set_enabled(pool: &DbPool, actor: i64, repo: i64, enabled: bool) -> Result<()> {
+
+pub async fn set_enabled(
+    pool: &DbPool,
+    actor: impl Into<super::super::credentials::Actor>,
+    repo: i64,
+    enabled: bool,
+) -> Result<()> {
+    let actor = actor.into();
     match pool {
         DbPool::Sqlite(p) => {
             db::sqlite::repositories::immutable_releases::set_enabled(p, actor, repo, enabled).await

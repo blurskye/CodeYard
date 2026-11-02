@@ -56,6 +56,44 @@ impl StoredGpgKey {
         })
     }
 }
+/// What the settings page shows of a primary key, read without its certificate.
+#[derive(Clone, Debug)]
+pub struct GpgKeySummary {
+    pub id: i64,
+    pub name: Option<String>,
+    pub fingerprint: String,
+    pub key_id: String,
+    pub created_at: DateTime<Utc>,
+    pub expires_at: Option<DateTime<Utc>>,
+    pub revoked: bool,
+}
+/// The summary columns as both engines return them: the stored JSON's timestamp text.
+#[derive(sqlx::FromRow)]
+pub(crate) struct StoredGpgKeySummary {
+    pub id: i64,
+    pub name: Option<String>,
+    pub fingerprint: String,
+    pub key_id: String,
+    pub created_at: String,
+    pub expires_at: Option<String>,
+    pub revoked: bool,
+}
+impl StoredGpgKeySummary {
+    pub(crate) fn decode(self) -> Result<GpgKeySummary> {
+        Ok(GpgKeySummary {
+            id: self.id,
+            name: self.name,
+            fingerprint: self.fingerprint,
+            key_id: self.key_id,
+            created_at: self.created_at.parse::<DateTime<Utc>>()?,
+            expires_at: self
+                .expires_at
+                .map(|value| value.parse::<DateTime<Utc>>())
+                .transpose()?,
+            revoked: self.revoked,
+        })
+    }
+}
 #[derive(Debug, thiserror::Error)]
 pub enum GpgKeyRefusal {
     #[error("This GPG key is already registered")]
@@ -67,6 +105,11 @@ pub enum GpgKeyRefusal {
 native_operation!(crate::backend::db::postgres::users::gpg_keys::list_gpg_keys,
     crate::backend::db::sqlite::users::gpg_keys::list_gpg_keys,
     fn list_gpg_keys(pool: &DbPool, user: i64, limit: i64, offset: i64) -> Result<Vec<GpgKey>>);
+native_operation!(crate::backend::db::postgres::users::gpg_keys::list_gpg_key_summaries,
+    crate::backend::db::sqlite::users::gpg_keys::list_gpg_key_summaries,
+    /// The account's own settings listing of its first 100 primary keys, read while
+    /// `credential` is still live.
+    fn list_gpg_key_summaries(pool: &DbPool, user: i64, credential: &AccountCredential<'_>) -> Result<Vec<GpgKeySummary>>);
 native_operation!(crate::backend::db::postgres::users::gpg_keys::get_gpg_key,
     crate::backend::db::sqlite::users::gpg_keys::get_gpg_key,
     fn get_gpg_key(pool: &DbPool, user: i64, id: i64) -> Result<Option<GpgKey>>);

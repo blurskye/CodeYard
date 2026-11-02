@@ -15,6 +15,8 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     let (subject_kind, subject_id, item) = match kind {
         "I" => (Subject::Issue, id, id),
         "PR" => (Subject::PullRequest, id, id),
+        "RE" => (Subject::Release, id, id),
+        "CC" => (Subject::CommitComment, id, id),
         "IC" if id % 2 == 0 => {
             let id = id / 2;
             let row = db::issues::get_issue_comment(pool, id)
@@ -43,10 +45,10 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     request
         .authorize(
             repo.id,
-            if matches!(subject_kind, Subject::Issue | Subject::IssueComment) {
-                "issues"
-            } else {
-                "pull-requests"
+            match subject_kind {
+                Subject::Issue | Subject::IssueComment => "issues",
+                Subject::Release | Subject::CommitComment => "contents",
+                _ => "pull-requests",
             },
             true,
         )
@@ -70,16 +72,22 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     };
     let actor = request.auth.user.id;
     let reaction = if field == "addReaction" {
-        let (row, _) = db::reactions::create_reaction(pool, actor, target, content)
-            .await
-            .map_err(|e| github::reactions::write_error(e).graphql())?;
+        let (row, _) = db::reactions::create_reaction(
+            pool,
+            actor,
+            &request.auth.credential(),
+            target,
+            content,
+        )
+        .await
+        .map_err(|e| github::reactions::write_error(e).graphql())?;
         super::node_objects::database("REA", row.id, request).await?
     } else if let Some(row) = db::reactions::find_reaction(pool, actor, target, content)
         .await
         .map_err(unavailable)?
     {
         let object = super::node_objects::database("REA", row.id, request).await?;
-        db::reactions::delete_reaction(pool, actor, target, row.id)
+        db::reactions::delete_reaction(pool, actor, &request.auth.credential(), target, row.id)
             .await
             .map_err(|e| github::reactions::write_error(e).graphql())?;
         object

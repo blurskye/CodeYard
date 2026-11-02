@@ -14,7 +14,6 @@ use axum::{
     routing::{get, post, MethodRouter},
     Json,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -23,10 +22,10 @@ pub(crate) const BLOB_ROUTE: &str = "/api/v3/repos/:owner/:repo/git/blobs";
 // JSON can escape each input byte as six ASCII characters.
 const BLOB_BODY_LIMIT: usize = MAX_BLOB_WRITE_BYTES * 6 + 64 * 1024;
 
-fn tree_document(tree: TreeObject, owner: &str, name: &str) -> Value {
+fn tree_document(tree: TreeObject, owner: &str, name: &str, repo: i64) -> Value {
     let url = repo_url(owner, name);
     json!({
-        "sha": tree.sha, "url": format!("{url}/git/trees/{}", tree.sha), "truncated": tree.truncated,
+        "sha": tree.sha, "node_id": super::node_id::git_object("T", repo, &tree.sha), "url": format!("{url}/git/trees/{}", tree.sha), "truncated": tree.truncated,
         "tree": tree.tree.into_iter().map(|entry| {
             let mut value = json!({"path": entry.path, "mode": entry.mode, "type": entry.kind, "sha": entry.sha,
                 "url": format!("{url}/git/{}s/{}", entry.kind, entry.sha)});
@@ -36,10 +35,17 @@ fn tree_document(tree: TreeObject, owner: &str, name: &str) -> Value {
     })
 }
 
-async fn tag_document(state: &AppState, tag: TagObject, owner: &str, name: &str) -> Result<Value> {
+async fn tag_document(
+    state: &AppState,
+    tag: TagObject,
+    owner: &str,
+    name: &str,
+    repo: i64,
+) -> Result<Value> {
     let url = repo_url(owner, name);
     let verification = crate::backend::identity::signatures::verification(
         &state.pool,
+        &mut Default::default(),
         crate::backend::identity::signatures::Signed {
             signature: tag.signature.as_deref(),
             payload: tag.signature_payload.as_deref(),
@@ -49,7 +55,7 @@ async fn tag_document(state: &AppState, tag: TagObject, owner: &str, name: &str)
     .await
     .map_err(Error::unavailable)?;
     Ok(json!({
-        "sha": tag.sha, "node_id": super::node_id::git("TAG", &tag.sha), "url": format!("{url}/git/tags/{}", tag.sha),
+        "sha": tag.sha, "node_id": super::node_id::git_object("TAG", repo, &tag.sha), "url": format!("{url}/git/tags/{}", tag.sha),
         "tag": tag.tag, "message": tag.message, "tagger": tag.tagger,
         "object": {"sha": tag.object, "type": tag.kind, "url": format!("{url}/git/{}s/{}", tag.kind, tag.object)},
         "verification": verification,
@@ -67,7 +73,8 @@ async fn tree(
         .git_tree(&sha, query.contains_key("recursive"))
         .await
         .map_err(store_error)?;
-    Ok(Json(tree_document(tree, &owner, &name)))
+    super::auth::recheck_repository_read(&state, &headers, repo.id, "contents").await?;
+    Ok(Json(tree_document(tree, &owner, &name, repo.id)))
 }
 
 async fn tag(
@@ -80,7 +87,9 @@ async fn tag(
         .git_tag(&sha)
         .await
         .map_err(store_error)?;
-    Ok(Json(tag_document(&state, tag, &owner, &name).await?))
+    Ok(Json(
+        tag_document(&state, tag, &owner, &name, repo.id).await?,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -96,7 +105,8 @@ async fn create_blob(
     request: Request,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user.id;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user.id;
     crate::backend::repositories::access::check_write(&state.pool, repo.id, actor)
         .await
         .map_err(|error| match error {
@@ -119,9 +129,15 @@ async fn create_blob(
     .map_err(|error| Error::new(error.status(), "Invalid blob request"))?;
     let bytes = match input.encoding.as_deref().unwrap_or("utf-8") {
         "utf-8" => input.content.into_bytes(),
-        "base64" => STANDARD
-            .decode(input.content.split_whitespace().collect::<String>())
-            .map_err(|_| Error::invalid("Invalid base64 content"))?,
+        "base64" => {
+            crate::backend::repositories::files::decode_base64(&input.content, MAX_BLOB_WRITE_BYTES)
+                .map_err(|error| match error {
+                    crate::backend::repositories::files::WriteFailure::TooLarge => {
+                        Error::invalid("Blobs must not exceed 100 MiB")
+                    }
+                    _ => Error::invalid("Invalid base64 content"),
+                })?
+        }
         _ => return Err(Error::invalid("encoding must be utf-8 or base64")),
     };
     if bytes.len() > MAX_BLOB_WRITE_BYTES {
@@ -129,12 +145,19 @@ async fn create_blob(
     }
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
-        .write_git_object_as(&state.pool, repo.id, actor, ObjectWrite::Blob, &bytes)
+        .write_git_object_as(
+            &state.pool,
+            repo.id,
+            actor,
+            Some(auth.token.id),
+            ObjectWrite::Blob,
+            &bytes,
+        )
         .await
         .map_err(write_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(json!({"sha": sha, "url": format!("{}/git/blobs/{sha}", repo_url(&owner, &name))})),
+        Json(json!({"sha": sha, "node_id": super::node_id::git_object("B", repo.id, &sha), "url": format!("{}/git/blobs/{sha}", repo_url(&owner, &name))})),
     )
         .into_response())
 }
@@ -165,13 +188,15 @@ async fn create_tree(
     Json(input): Json<Tree>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user.id;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user.id;
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
         .write_git_object_as(
             &state.pool,
             repo.id,
             actor,
+            Some(auth.token.id),
             ObjectWrite::Tree {
                 base_tree: input.base_tree,
                 tree: input.tree,
@@ -183,7 +208,7 @@ async fn create_tree(
     let tree = store.git_tree(&sha, false).await.map_err(store_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(tree_document(tree, &owner, &name)),
+        Json(tree_document(tree, &owner, &name, repo.id)),
     )
         .into_response())
 }
@@ -195,8 +220,15 @@ struct Commit {
     #[serde(default)]
     parents: Vec<String>,
     author: Option<Signature>,
-    committer: Option<Signature>,
+    committer: Option<Committer>,
     signature: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct Committer {
+    name: Option<String>,
+    email: Option<String>,
+    date: Option<chrono::DateTime<chrono::FixedOffset>>,
 }
 
 async fn create_commit(
@@ -206,21 +238,33 @@ async fn create_commit(
     Json(input): Json<Commit>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user;
     let author = input.author.unwrap_or(Signature {
-        name: actor.display_name.unwrap_or_else(|| actor.username.clone()),
+        name: actor
+            .display_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| actor.username.clone()),
         email: actor
             .email
             .unwrap_or_else(|| format!("{}@users.noreply", actor.username)),
         date: None,
     });
-    let committer = input.committer.unwrap_or_else(|| author.clone());
+    let committer = input
+        .committer
+        .map(|committer| Signature {
+            name: committer.name.unwrap_or_else(|| author.name.clone()),
+            email: committer.email.unwrap_or_else(|| author.email.clone()),
+            date: committer.date.or(author.date),
+        })
+        .unwrap_or_else(|| author.clone());
     let store = repo_store(&repo, state.cluster.as_ref());
     let sha = store
         .write_git_object_as(
             &state.pool,
             repo.id,
             actor.id,
+            Some(auth.token.id),
             ObjectWrite::Commit {
                 message: input.message,
                 tree: input.tree,
@@ -236,7 +280,17 @@ async fn create_commit(
     let commit = store.commit(&sha).await.map_err(store_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(super::commits::git_document(&state, &commit, &owner, &name).await?),
+        Json(
+            super::commits::git_document(
+                &state,
+                &mut Default::default(),
+                &commit,
+                &owner,
+                &name,
+                repo.id,
+            )
+            .await?,
+        ),
     )
         .into_response())
 }
@@ -258,9 +312,13 @@ async fn create_tag(
     Json(input): Json<Tag>,
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
-    let actor = auth.ok_or_else(super::auth::required)?.user;
+    let auth = auth.ok_or_else(super::auth::required)?;
+    let actor = auth.user;
     let tagger = input.tagger.unwrap_or(Signature {
-        name: actor.display_name.unwrap_or_else(|| actor.username.clone()),
+        name: actor
+            .display_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| actor.username.clone()),
         email: actor
             .email
             .unwrap_or_else(|| format!("{}@users.noreply", actor.username)),
@@ -272,6 +330,7 @@ async fn create_tag(
             &state.pool,
             repo.id,
             actor.id,
+            Some(auth.token.id),
             ObjectWrite::Tag {
                 tag: input.tag,
                 message: input.message,
@@ -286,7 +345,7 @@ async fn create_tag(
     let tag = store.git_tag(&sha).await.map_err(store_error)?;
     Ok((
         StatusCode::CREATED,
-        Json(tag_document(&state, tag, &owner, &name).await?),
+        Json(tag_document(&state, tag, &owner, &name, repo.id).await?),
     )
         .into_response())
 }

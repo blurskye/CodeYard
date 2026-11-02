@@ -589,6 +589,39 @@ async fn prepared_merge_contract(pg: bool) {
         json!({"is_private": false, "allow_squash_merge": true}),
     )
     .await;
+    // A merge asked for from a browser session publishes only while that session is signed in.
+    let session = crate::support::live_session(f.pool(), app.merger_id).await;
+    let prepared = prepare_pull_request_merge(
+        f.pool(),
+        &app.state.ci_runs,
+        codeyard::backend::db::credentials::Actor::from((app.merger_id, session.clone())),
+        ("alice".to_owned(), "proj".to_owned(), number),
+        request(head.as_str(), main1.as_str()),
+    )
+    .await
+    .unwrap();
+    codeyard::backend::db::users::sessions::delete_session(f.pool(), &session)
+        .await
+        .unwrap();
+    let signed_out = publish_prepared_merge(
+        f.pool(),
+        &app.state.ci_runs,
+        &app.state.notification_broadcaster,
+        prepared,
+    )
+    .await;
+    assert!(
+        matches!(
+            signed_out,
+            Err(OperationError::Denied {
+                code: "write_denied",
+                ..
+            })
+        ),
+        "a merge from a signed-out session was published"
+    );
+    assert_eq!(main_tip(&path), main1);
+    assert_eq!(app.alice.pull(number as i64).await["state"], "open");
     let prepared = prepare_pull_request_merge(
         f.pool(),
         &app.state.ci_runs,
@@ -640,6 +673,9 @@ async fn retained_history_and_merge_hook_contract(pg: bool) {
         f.pool(),
         db::webhooks::HookOwner::Repository(app.repository.id),
         app.owner,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), app.owner).await,
+        ),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,

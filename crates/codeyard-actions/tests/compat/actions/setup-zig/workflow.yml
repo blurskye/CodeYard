@@ -1,6 +1,10 @@
 # https://github.com/mlugg/setup-zig/tree/53fc45b17fe98b52f92ee5ea08ff48a85a3e7eb7
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

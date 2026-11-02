@@ -48,6 +48,11 @@ pub async fn copy_database_cmd(from: &str, to: &str) -> Result<()> {
 /// Create a new user
 pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>) -> Result<()> {
     validate_cli_username(username)?;
+    let email = email.map(str::trim).filter(|value| !value.is_empty());
+    if let Some(email) = email {
+        crate::backend::identity::credentials::validate_email(email)
+            .map_err(|_| anyhow::anyhow!("Invalid email address"))?;
+    }
     let user = match db::users::transitions::create_cli_user(pool, username, email).await? {
         db::users::transitions::AccountAdmission::User(user) => user,
         db::users::transitions::AccountAdmission::SetupRequired => anyhow::bail!(
@@ -61,7 +66,7 @@ pub async fn create_user_cmd(pool: &DbPool, username: &str, email: Option<&str>)
 
 fn validate_cli_username(username: &str) -> Result<()> {
     use crate::backend::identity::credentials;
-    credentials::validate_username(username).map_err(|_| anyhow::anyhow!(
+    credentials::validate_namespace(username, 3).map_err(|_| anyhow::anyhow!(
         "Username must be 3-1024 bytes, at most 255 characters, and contain only letters, numbers, hyphens and underscores"
     ))?;
     credentials::validate_new_account_name(username)
@@ -152,7 +157,18 @@ pub async fn add_key_from_file_cmd(
     key_name: &str,
     key_path: &std::path::Path,
 ) -> Result<()> {
-    let public_key = std::fs::read_to_string(key_path)?;
+    use tokio::io::AsyncReadExt;
+    let limit = db::users::ssh_keys::MAX_PUBLIC_KEY_BYTES + 1;
+    let mut public_key = String::new();
+    tokio::fs::File::open(key_path)
+        .await?
+        .take(limit as u64 + 1)
+        .read_to_string(&mut public_key)
+        .await?;
+    anyhow::ensure!(
+        public_key.len() <= limit,
+        "SSH public key file is too large"
+    );
     add_key_cmd(pool, username, key_name, &public_key).await
 }
 
@@ -315,6 +331,7 @@ pub async fn repo_info_cmd(
     );
     println!("Created: {}", repo.created_at);
 
+    let mut storage_failure = None;
     if store.exists().await {
         match tokio::try_join!(store.info(), store.commit_count()) {
             Ok((info, commit_count)) => {
@@ -327,12 +344,17 @@ pub async fn repo_info_cmd(
                     "\nGit Info: Error reading - {}",
                     terminal_text(&e.to_string())
                 );
+                storage_failure = Some(e.to_string());
             }
         }
+    } else {
+        storage_failure = Some("Repository Git storage is unavailable".to_owned());
     }
     if let Some(context) = &context {
         context.iroh.close().await;
     }
-
+    if let Some(error) = storage_failure {
+        anyhow::bail!("{}", terminal_text(&error));
+    }
     Ok(())
 }

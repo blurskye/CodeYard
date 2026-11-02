@@ -772,7 +772,8 @@ async fn contract(pg: bool) {
         &repo_runner_key.public_hex(),
         &format!("{}/slot", repo_runner_key.public_hex()),
         "local",
-        &[alice]
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -784,6 +785,7 @@ async fn contract(pg: bool) {
         &worker,
         "local",
         &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -845,12 +847,16 @@ async fn contract(pg: bool) {
         )
         .await;
     }
-    assert!(
-        db::runners::list_runners(f.pool(), alice, db::runners::Scope::Repository(repo))
-            .await
-            .unwrap()
-            .is_empty()
-    );
+    assert!(db::runners::list_runners(
+        f.pool(),
+        alice,
+        db::runners::Scope::Repository(repo),
+        &Default::default()
+    )
+    .await
+    .unwrap()
+    .rows
+    .is_empty());
     assert_eq!(
         call(
             &router,
@@ -895,7 +901,8 @@ async fn contract(pg: bool) {
         &org_runner_key.public_hex(),
         &worker,
         "local",
-        &[alice]
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
     )
     .await
     .unwrap()
@@ -974,9 +981,11 @@ async fn contract(pg: bool) {
                 f.pool(),
                 alice,
                 db::runners::Scope::Repository(personal),
+                &Default::default(),
             )
             .await
             .unwrap()
+            .rows
             .into_iter()
             .find(|r| r.id == jit["runner"]["id"].as_i64().unwrap())
             .unwrap();
@@ -1005,6 +1014,7 @@ async fn contract(pg: bool) {
                 &jit_worker,
                 "local",
                 &[alice],
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -1018,7 +1028,8 @@ async fn contract(pg: bool) {
                 &jit_key.public_hex(),
                 &format!("{}/second-slot", jit_key.public_hex()),
                 "local",
-                &[alice]
+                &[alice],
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
             )
             .await
             .unwrap()
@@ -1049,13 +1060,18 @@ async fn contract(pg: bool) {
     assert_eq!(wrong.status(), StatusCode::NOT_FOUND);
     let removable_key = NodeKey::generate();
     pair(&registration_tokens[0], &removable_key, "removable").await;
-    let removable =
-        db::runners::list_runners(f.pool(), alice, db::runners::Scope::Organization(org.id))
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|r| r.name == "removable")
-            .unwrap();
+    let removable = db::runners::list_runners(
+        f.pool(),
+        alice,
+        db::runners::Scope::Organization(org.id),
+        &Default::default(),
+    )
+    .await
+    .unwrap()
+    .rows
+    .into_iter()
+    .find(|r| r.name == "removable")
+    .unwrap();
     let removed = router
         .clone()
         .oneshot(
@@ -1193,9 +1209,10 @@ async fn runner_settings_browser() {
         String::from_utf8_lossy(&result.stderr)
     );
     println!("{}", String::from_utf8_lossy(&result.stdout));
-    let groups = db::runners::list_groups(f.pool(), alice, org.id)
+    let groups = db::runners::list_groups(f.pool(), alice, org.id, &Default::default())
         .await
-        .unwrap();
+        .unwrap()
+        .rows;
     assert_eq!(groups.len(), 1);
     assert!(groups[0].is_default);
     f.finish().await;

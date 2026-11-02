@@ -1,6 +1,6 @@
 //! Git smart HTTP. Basic auth accepts a personal access token, never a password or session.
 use crate::backend::api::http::session;
-use crate::backend::db::models::{AccessLevel, Repository};
+use crate::backend::db::models::Repository;
 use crate::backend::identity::tokens::token_hash;
 use crate::backend::repositories::store::{
     repo_store, GitService, GitSession, GitStreams, RepoError,
@@ -15,7 +15,6 @@ use axum::{
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use futures_util::{StreamExt, TryStreamExt};
 use serde::Deserialize;
 use std::{io::Read, sync::Arc};
@@ -55,21 +54,6 @@ fn store_unavailable(error: &RepoError) -> Response {
     unavailable()
 }
 
-fn basic_token(headers: &HeaderMap) -> Option<String> {
-    let mut values = headers.get_all(header::AUTHORIZATION).iter();
-    let value = values.next()?.to_str().ok()?;
-    if values.next().is_some() {
-        return None;
-    }
-    let (scheme, encoded) = value.split_once(' ')?;
-    if !scheme.eq_ignore_ascii_case("basic") || encoded.len() > 2048 {
-        return None;
-    }
-    let decoded = String::from_utf8(STANDARD.decode(encoded).ok()?).ok()?;
-    let (_, token) = decoded.split_once(':')?;
-    Some(token.to_owned())
-}
-
 async fn authenticate(
     state: &AppState,
     headers: &HeaderMap,
@@ -77,7 +61,7 @@ async fn authenticate(
     if !headers.contains_key(header::AUTHORIZATION) {
         return Ok(None);
     }
-    let presented = basic_token(headers);
+    let presented = super::http::credentials::basic(headers).map(|(_, token)| token);
     let found = match presented.as_deref() {
         Some(value) => db::users::tokens::find_token(&state.pool, &token_hash(value))
             .await
@@ -152,7 +136,7 @@ async fn authorize_repository(
         .filter(|config| config.setup_completed)
         .ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
     let token = authenticate(state, headers).await?;
-    let Some((token, user)) = token else {
+    let Some((token, _)) = token else {
         // A repository that does not exist looks like a private one, so names are not revealed.
         return match found {
             Some(repo) if !(write || repo.is_private || config.is_private()) => {
@@ -166,96 +150,33 @@ async fn authorize_repository(
         };
     };
     let repo = found.ok_or_else(|| StatusCode::NOT_FOUND.into_response())?;
-    // Gist repositories need the gist scope; every other repository needs repo.
-    if !crate::backend::identity::oauth_apps::allows_git(&state.pool, token.id, repo.is_gist)
+    let (user, _) = ReceiveCredential::Token(token.id)
+        .authorize(&state.pool, &repo, write)
         .await
-        .map_err(|_| unavailable())?
-    {
-        return Err((StatusCode::FORBIDDEN, "Resource not accessible by token").into_response());
-    }
-    if let Some(bounds) = crate::backend::identity::github_apps::authority(&state.pool, token.id)
-        .await
-        .map_err(|_| unavailable())?
-    {
-        let granted = bounds
-            .repository(&state.pool, user.id, repo.id)
-            .await
-            .map_err(|_| unavailable())?;
-        if !granted.as_ref().is_some_and(|granted| {
-            crate::backend::identity::github_apps::allows(granted, "contents", write)
-        }) {
-            // A repository outside a fine-grained token, or one its user cannot read, reads
-            // as missing, as on GitHub.
-            if bounds.personal().is_some()
-                && (granted.is_none()
-                    || crate::backend::repositories::access::user_git_access(
-                        &state.pool,
-                        &user,
-                        &repo,
-                    )
-                    .await
-                    .map_err(|_| unavailable())?
-                        < AccessLevel::Read)
-            {
-                return Err(StatusCode::NOT_FOUND.into_response());
-            }
-            return Err((
-                StatusCode::FORBIDDEN,
-                "Resource not accessible by integration",
-            )
-                .into_response());
-        }
-    } else if let Some(org) = repo.owner_org_id {
-        if db::fine_grained_tokens::classic_refused(&state.pool, token.id, org)
-            .await
-            .map_err(|_| unavailable())?
-        {
-            return Err((
-                StatusCode::FORBIDDEN,
-                "This organization forbids access with a personal access token (classic)",
-            )
-                .into_response());
-        }
-    }
-    if user.username == db::ci_tokens::BOT {
-        let credential = db::ci_tokens::get(&state.pool, token.id)
-            .await
-            .map_err(|_| unavailable())?
-            .ok_or_else(challenge)?;
-        if credential.repo_id != repo.id {
-            return Err(StatusCode::NOT_FOUND.into_response());
-        }
-        let permissions: crate::backend::ci::tokens::Permissions =
-            serde_json::from_str(&credential.permissions).map_err(|_| unavailable())?;
-        if !permissions.allows("contents", write) {
-            return Err((StatusCode::FORBIDDEN, "Resource not accessible by token").into_response());
-        }
-    }
-    let access = crate::backend::repositories::access::user_git_access(&state.pool, &user, &repo)
-        .await
-        .map_err(|_| unavailable())?;
-    if access < AccessLevel::Read {
-        // A repository its user cannot read does not exist as far as they can tell.
-        return Err(StatusCode::NOT_FOUND.into_response());
-    }
-    if write && token.scope != "write" {
-        return Err((StatusCode::FORBIDDEN, "Token is read-only").into_response());
-    }
-    if write && (access < AccessLevel::Write || repo.is_archived) {
-        return Err((StatusCode::FORBIDDEN, "Repository access denied").into_response());
-    }
-    if write
-        && crate::backend::db::repository_exports::locked(&state.pool, repo.id)
-            .await
-            .map_err(|_| unavailable())?
-    {
-        return Err((StatusCode::FORBIDDEN, "Repository is locked for migration").into_response());
-    }
+        .map_err(credential_refusal)?;
     Ok(AuthorizedRepository {
         repo,
         token_id: Some(token.id),
         actor_id: Some(user.id),
     })
+}
+
+fn credential_refusal(error: anyhow::Error) -> Response {
+    use crate::backend::repositories::git_sessions::CredentialRefusal;
+    let message = match error.downcast_ref::<CredentialRefusal>() {
+        Some(CredentialRefusal::Credential) => return challenge(),
+        Some(CredentialRefusal::Missing) => return StatusCode::NOT_FOUND.into_response(),
+        Some(CredentialRefusal::ReadOnly) => "Token is read-only",
+        Some(CredentialRefusal::TokenScope) => "Resource not accessible by token",
+        Some(CredentialRefusal::Integration) => "Resource not accessible by integration",
+        Some(CredentialRefusal::Classic) => {
+            "This organization forbids access with a personal access token (classic)"
+        }
+        Some(CredentialRefusal::Migration) => "Repository is locked for migration",
+        Some(CredentialRefusal::Denied | CredentialRefusal::Archived) => "Repository access denied",
+        None => return unavailable(),
+    };
+    (StatusCode::FORBIDDEN, message).into_response()
 }
 
 pub async fn info_refs(
@@ -296,8 +217,12 @@ pub async fn info_refs(
         return response;
     }
     let service = query.service.unwrap();
-    let line = format!("# service={service}\n");
-    let mut body = format!("{:04x}{line}0000", line.len() + 4).into_bytes();
+    let mut body = Vec::new();
+    crate::backend::repositories::store::source::append_packet(
+        &mut body,
+        &format!("# service={service}\n"),
+    );
+    body.extend_from_slice(b"0000");
     body.extend(refs);
     git_response(
         &format!("application/x-{service}-advertisement"),

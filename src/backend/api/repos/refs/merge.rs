@@ -49,7 +49,10 @@ pub(super) async fn merge_json(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
-        actor.id,
+        crate::backend::db::credentials::Actor::from((
+            actor.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
         repo,
         &owner,
         BranchMerge {
@@ -91,7 +94,7 @@ fn model(loaded: &Loaded, values: &HashMap<String, String>, submitted: bool) -> 
         .map(|(name, sha)| {
             SelectOption::new(
                 format!("{sha} {name}"),
-                format!("{name} ({})", sha.get(..7).unwrap_or(sha)),
+                format!("{name} ({})", crate::webui::components::short_sha(sha)),
             )
         })
         .collect();
@@ -224,11 +227,15 @@ async fn submit(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             &ctx.state.ci_runs,
-            ctx.require_user()
-                .map_err(|_| {
-                    RefError::Access(crate::backend::repositories::access::AccessError::WriteDenied)
-                })?
-                .id,
+            ctx.database_actor(
+                ctx.require_user()
+                    .map_err(|_| {
+                        RefError::Access(
+                            crate::backend::repositories::access::AccessError::WriteDenied,
+                        )
+                    })?
+                    .id,
+            ),
             loaded.repository.id,
             &loaded.chrome.owner,
             BranchMerge {

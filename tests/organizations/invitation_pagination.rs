@@ -215,6 +215,9 @@ async fn deletion_removes_release_uploads(pg: bool) {
     db::releases::add_release_asset(
         f.pool(),
         owner,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), owner).await,
+        ),
         repository.id,
         release.id,
         &db::releases::NewReleaseAsset {
@@ -246,10 +249,28 @@ async fn deletion_removes_release_uploads(pg: bool) {
             .unwrap();
         let pool = f.pool().clone();
         let id = repository.id;
-        let deleting =
-            tokio::spawn(
-                async move { delete_organization_repository(&pool, owner, org, id).await },
-            );
+        let deletion_session = db::users::sessions::create_session(
+            &pool,
+            &uuid::Uuid::new_v4().simple().to_string().repeat(2),
+            owner,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
+        let deleting = tokio::spawn(async move {
+            delete_organization_repository(
+                &pool,
+                (
+                    owner,
+                    &db::users::accounts::AccountCredential::Session(&deletion_session.id),
+                ),
+                org,
+                id,
+            )
+            .await
+        });
         wait_until_blocked(raw, holder, 1).await;
         sqlx::query("SELECT id FROM organizations WHERE id=$1 FOR UPDATE NOWAIT")
             .bind(org)
@@ -259,10 +280,28 @@ async fn deletion_removes_release_uploads(pg: bool) {
         reader.rollback().await.unwrap();
         applied(deleting.await.unwrap().unwrap());
     } else {
+        let deletion_session = db::users::sessions::create_session(
+            f.pool(),
+            &uuid::Uuid::new_v4().simple().to_string().repeat(2),
+            owner,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
         applied(
-            delete_organization_repository(f.pool(), owner, org, repository.id)
-                .await
-                .unwrap(),
+            delete_organization_repository(
+                f.pool(),
+                (
+                    owner,
+                    &db::users::accounts::AccountCredential::Session(&deletion_session.id),
+                ),
+                org,
+                repository.id,
+            )
+            .await
+            .unwrap(),
         );
     }
     assert!(db::files::get_file_by_id(f.pool(), file.id)

@@ -108,19 +108,21 @@ pub(super) async fn run(
     assert_eq!(values[0]["head"]["repo"]["id"], repo);
     assert_eq!(values[0]["base"]["repo"]["owner"]["login"], "alice");
     assert_eq!(values[0]["author_association"], "OWNER");
-    // Native account names are distinct identities; do not guess a differently cased owner.
-    call(
-        router,
-        "GET",
-        &format!(
-            "{}/commits/{head}/pulls",
-            base.replace("/alice/", "/ALICE/")
+    // Owner names resolve in any ASCII case, as on GitHub, so a differently cased owner names
+    // the same repository.
+    assert_eq!(
+        stable_documents(
+            list(
+                router,
+                &base.replace("/alice/", "/ALICE/"),
+                reader,
+                &head,
+                "?per_page=100"
+            )
+            .await
         ),
-        reader,
-        Value::Null,
-        (OP, 404),
-    )
-    .await;
+        stable_documents(values.clone())
+    );
     call(
         router,
         "POST",
@@ -216,9 +218,9 @@ pub(super) async fn run(
         repo,
         Some(milestone.number),
         db::milestones::MilestoneInput {
-            title: "Updated association release",
-            description: Some("Native milestone"),
-            due_on: Some(due_on),
+            title: Some("Updated association release"),
+            description: Some(Some("Native milestone")),
+            due_on: Some(Some(due_on)),
             state: None,
         },
     )
@@ -432,6 +434,17 @@ pub(super) async fn run(
     )
     .await
     .unwrap();
+    // A read collaborator is a collaborator on issues and pull requests too, as on GitHub.
+    let record = db::repositories::records::get_repository_by_id(pool, repo)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        codeyard::backend::repositories::access::author_association(pool, &record, bob)
+            .await
+            .unwrap(),
+        "COLLABORATOR"
+    );
     let forker = Client::login(router, pool, bob).await;
     let foreign = forker.expect("POST",&format!("/api{native}/pulls"),json!({"title":"Private source association","head_repo_id":fork.id,"head_branch":"main","base_branch":"main"}),StatusCode::CREATED).await;
     let foreign_sha = foreign["head_sha"].as_str().unwrap();
@@ -439,16 +452,30 @@ pub(super) async fn run(
     assert_eq!(values[0]["head"]["repo"]["id"], fork.id);
     assert_eq!(values[0]["head"]["repo"]["private"], true);
     assert_eq!(values[0]["author_association"], "COLLABORATOR");
-    let denied = call(
+    // The pull request is alice's to see, but its private source repository is not: the head
+    // names its owner and leaves the repository out, as GitHub does, and nothing names the fork.
+    let redacted = list(router, base, reader, foreign_sha, "").await;
+    assert_eq!(redacted[0]["number"], foreign["number"]);
+    assert_eq!(
+        redacted[0]["head"],
+        json!({"label":"bob:main","ref":"main","sha":foreign_sha,"user":values[0]["head"]["user"],"repo":null})
+    );
+    assert_eq!(redacted[0]["head"]["user"]["login"], "bob");
+    assert!(!redacted.to_string().contains("bob/proj"), "{redacted}");
+    // The pull request itself is shown with the same head, so `gh pr view` works where
+    // `gh pr list` does.
+    let (status, _, pull) = request(
         router,
         "GET",
-        &format!("{base}/commits/{foreign_sha}/pulls"),
-        reader,
+        &format!("{base}/pulls/{}", foreign["number"]),
+        Some(reader),
         Value::Null,
-        (OP, 404),
     )
     .await;
-    assert!(!denied.to_string().contains("bob"));
+    assert_eq!(status.as_u16(), 200, "{pull}");
+    assert_eq!(pull["number"], foreign["number"]);
+    assert_eq!(pull["head"], redacted[0]["head"]);
+    assert!(!pull.to_string().contains("bob/proj"), "{pull}");
     assert!(session
         .page_ok(&format!("/alice/proj/commit/{foreign_sha}"))
         .await

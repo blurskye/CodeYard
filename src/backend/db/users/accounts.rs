@@ -3,15 +3,59 @@ use crate::backend::db::models::{AdminAccountSummary, AdminActivityPoint, AdminU
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
-/// A settings mutation retains the live credential while it changes account data.
+/// A settings operation retains its originating credential alongside account data.
 pub enum AccountCredential<'a> {
     Session(&'a str),
-    Token(i64),
+    Token(i64, &'a str),
+}
+
+/// An account credential retained across queues, owned tasks and authenticated RPC.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub enum OwnedAccountCredential {
+    Session(String),
+    /// The token's id and stored hash, so a regenerated token stops the work it started.
+    Token(i64, String),
+}
+impl std::fmt::Debug for OwnedAccountCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Session(_) => f.write_str("Session(<redacted>)"),
+            Self::Token(id, _) => f.debug_tuple("Token").field(id).finish(),
+        }
+    }
+}
+impl OwnedAccountCredential {
+    pub(crate) fn as_credential(&self) -> AccountCredential<'_> {
+        match self {
+            Self::Session(session) => AccountCredential::Session(session),
+            Self::Token(id, hash) => AccountCredential::Token(*id, hash),
+        }
+    }
+}
+impl From<&str> for OwnedAccountCredential {
+    fn from(session: &str) -> Self {
+        Self::Session(session.to_owned())
+    }
+}
+impl From<&String> for OwnedAccountCredential {
+    fn from(session: &String) -> Self {
+        Self::Session(session.clone())
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
 #[error("A live unrestricted account credential is required")]
 pub struct AccountRestricted;
+
+pub struct AdminUserPage {
+    pub counts: (i64, i64, i64),
+    pub page: usize,
+    pub users: Vec<AdminUser>,
+}
+
+native_operation!(crate::backend::db::postgres::users::accounts::admin_users_page,
+    crate::backend::db::sqlite::users::accounts::admin_users_page,
+    fn admin_users_page(pool: &DbPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, text: &str, role: &str, limit: i64, page: usize) -> Result<AdminUserPage>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::create_user,
     crate::backend::db::sqlite::users::accounts::create_user,
@@ -68,13 +112,17 @@ native_operation!(crate::backend::db::postgres::users::accounts::get_user_by_ema
     crate::backend::db::sqlite::users::accounts::get_user_by_email,
     fn get_user_by_email(pool: &DbPool, email: &str) -> Result<Option<User>>);
 
-native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_emails,
-    crate::backend::db::sqlite::users::accounts::get_users_by_emails,
-    fn get_users_by_emails(pool: &DbPool, emails: &[String]) -> Result<Vec<User>>);
+/// An input Git address and its selected account from the same statement snapshot.
+#[derive(sqlx::FromRow)]
+pub struct CommitAuthor {
+    pub address: String,
+    #[sqlx(flatten)]
+    pub user: User,
+}
 
-native_operation!(crate::backend::db::postgres::users::accounts::get_verified_email_owners,
-    crate::backend::db::sqlite::users::accounts::get_verified_email_owners,
-    fn get_verified_email_owners(pool: &DbPool, emails: &[String]) -> Result<Vec<(String, i64)>>);
+native_operation!(crate::backend::db::postgres::users::accounts::commit_authors,
+    crate::backend::db::sqlite::users::accounts::commit_authors,
+    fn commit_authors(pool: &DbPool, emails: &[String]) -> Result<Vec<CommitAuthor>>);
 
 native_operation!(crate::backend::db::postgres::users::accounts::get_users_by_usernames,
     crate::backend::db::sqlite::users::accounts::get_users_by_usernames,
@@ -108,15 +156,15 @@ native_operation!(crate::backend::db::postgres::users::accounts::create_user_fro
 pub enum UserAvatarOutcome {
     Applied(Option<uuid::Uuid>),
     NotUsable,
-    /// The account was banned after the request authenticated.
-    Banned,
 }
 
 native_operation!(crate::backend::db::postgres::users::accounts::set_user_avatar,
     crate::backend::db::sqlite::users::accounts::set_user_avatar,
+    /// Fails with `AccountRestricted` when the account or `credential` is no longer live.
     fn set_user_avatar(
     pool: &DbPool,
     user_id: i64,
+    credential: &AccountCredential<'_>,
     avatar_file_id: Option<uuid::Uuid>,
 ) -> Result<UserAvatarOutcome>);
 

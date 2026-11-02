@@ -25,6 +25,48 @@ pub struct Package {
     pub deleted_at: Option<i64>,
 }
 
+pub(crate) struct Actor {
+    pub id: Option<i64>,
+    pub repo: Option<i64>,
+    pub owner: Option<(&'static str, i64)>,
+    pub selected: Option<i64>,
+    pub classic: bool,
+}
+
+impl Actor {
+    pub const ANONYMOUS: Self = Self {
+        id: None,
+        repo: None,
+        owner: None,
+        selected: None,
+        classic: false,
+    };
+
+    pub fn for_owner(self, kind: &str, id: Option<i64>) -> Self {
+        match self.owner {
+            Some((owner_kind, owner)) if owner_kind != kind || Some(owner) != id => Self::ANONYMOUS,
+            _ => self,
+        }
+    }
+
+    /// Scope applies to grants, not the anonymous public-read baseline.
+    pub fn scope_condition(&self) -> String {
+        let selection = self.selected.map_or_else(|| "TRUE".to_owned(), |token| format!("EXISTS(SELECT 1 FROM fine_grained_token_repositories s WHERE s.token_id={token} AND s.repo_id=p.repo_id)"));
+        let policy = if self.classic {
+            "NOT EXISTS(SELECT 1 FROM organization_token_policies policy WHERE policy.org_id=p.owner_org_id AND NOT policy.classic_allowed)"
+        } else {
+            "TRUE"
+        };
+        format!("({selection} AND {policy})")
+    }
+}
+
+pub(crate) fn read_condition(actor: &Actor, repository_access: &str) -> String {
+    let access = repository_access.replace("CASE WHEN NOT r.is_private THEN 1 ELSE 0 END", "0");
+    let scope = actor.scope_condition();
+    format!("((p.visibility='public' AND (p.repo_id IS NULL OR NOT r.is_private)) OR ({scope} AND (p.owner_user_id=u.id OR (p.owner_kind='user' AND u.is_admin) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=p.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin')) OR (p.repo_id IS NOT NULL AND r.owner_kind=p.owner_kind AND COALESCE(r.owner_user_id,r.owner_org_id)=COALESCE(p.owner_user_id,p.owner_org_id) AND ({access})>=1))))")
+}
+
 #[derive(Clone, Debug, sqlx::FromRow)]
 pub struct Version {
     pub id: i64,
@@ -51,6 +93,17 @@ pub struct RegistryToken {
     pub resources: String,
     pub write: bool,
     pub expires_at: i64,
+}
+
+/// How storing a blob counts against the uploader's package upload quota.
+#[derive(Clone, Copy)]
+pub enum Charge<'a> {
+    /// A whole upload.
+    Upload,
+    /// A chunk of the named OCI upload; the chunks of one upload count as one upload.
+    Chunk(&'a str),
+    /// A blob assembled from chunks that were already charged.
+    Assembled,
 }
 
 #[derive(sqlx::FromRow)]
@@ -112,6 +165,41 @@ native_operation!(crate::backend::db::postgres::packages::maven_file,
     crate::backend::db::sqlite::packages::maven_file,
     fn maven_file(pool: &DbPool, repo: i64, token: Option<Credential<'_>>, path: &str) -> Result<(Package, Blob)>);
 
+native_operation!(crate::backend::db::postgres::packages::container_namespace,
+    crate::backend::db::sqlite::packages::container_namespace,
+    fn container_namespace(pool: &DbPool, owner: &Owner) -> Result<String>);
+native_operation!(crate::backend::db::postgres::packages::container_owner,
+    crate::backend::db::sqlite::packages::container_owner,
+    fn container_owner(pool: &DbPool, namespace: &str) -> Result<Option<Owner>>);
+
+/// Registry listings read up to 100 versions' metadata at a time, so publication bounds the
+/// part they read: all of it for npm and RubyGems, and all but the stored .nuspec for NuGet.
+pub const MAX_LISTED_METADATA_BYTES: usize = 64 * 1024;
+
+pub(crate) fn listed_metadata_fits(package_type: &str, manifest: &str) -> bool {
+    match package_type {
+        "npm" | "rubygems" => manifest.len() <= MAX_LISTED_METADATA_BYTES,
+        "nuget" => serde_json::from_str::<serde_json::Value>(manifest)
+            .ok()
+            .and_then(|mut catalog| {
+                catalog.as_object_mut()?.remove("nuspec");
+                Some(catalog.to_string().len() <= MAX_LISTED_METADATA_BYTES)
+            })
+            .unwrap_or(false),
+        _ => true,
+    }
+}
+pub const MAX_METADATA_RESPONSE_BYTES: usize = 8 * 1024 * 1024;
+
+native_operation!(crate::backend::db::postgres::packages::owner_page, crate::backend::db::sqlite::packages::owner_page,
+    fn owner_page(pool: &DbPool, token: Option<Credential<'_>>, owner: &Owner, kind: &str, before: i64) -> Result<Vec<Package>>);
+native_operation!(crate::backend::db::postgres::packages::version_page,
+    crate::backend::db::sqlite::packages::version_page,
+    fn version_page(pool: &DbPool, package: i64, token: Option<Credential<'_>>, before: i64, names_only: bool) -> Result<Vec<Version>>);
+native_operation!(crate::backend::db::postgres::packages::finish_upload,
+    crate::backend::db::sqlite::packages::finish_upload,
+    fn finish_upload(pool: &DbPool, package: i64, token: i64, id: &str, offset: i64) -> Result<()>);
+
 #[derive(Clone, Copy)]
 pub enum Permission {
     Read,
@@ -142,9 +230,15 @@ native_operation!(crate::backend::db::postgres::packages::nuget_downloaded,
 native_operation!(crate::backend::db::postgres::packages::version_by_id,
     crate::backend::db::sqlite::packages::version_by_id,
     fn version_by_id(pool: &DbPool, package: i64, token: Option<Credential<'_>>, id: i64) -> Result<Version>);
+native_operation!(crate::backend::db::postgres::packages::version_counts,
+    crate::backend::db::sqlite::packages::version_counts,
+    fn version_counts(pool: &DbPool, ids: &[i64]) -> Result<Vec<(i64, i64)>>);
+native_operation!(crate::backend::db::postgres::packages::version_tags,
+    crate::backend::db::sqlite::packages::version_tags,
+    fn version_tags(pool: &DbPool, ids: &[i64]) -> Result<Vec<(i64, String)>>);
 native_operation!(crate::backend::db::postgres::packages::version_count,
     crate::backend::db::sqlite::packages::version_count,
-    fn version_count(pool: &DbPool, package: i64) -> Result<i64>);
+    fn version_count(pool: &DbPool, package: i64, token: Option<Credential<'_>>) -> Result<i64>);
 
 native_operation!(crate::backend::db::postgres::packages::issue_registry_token,
     crate::backend::db::sqlite::packages::issue_registry_token,
@@ -179,18 +273,28 @@ native_operation!(crate::backend::db::postgres::packages::count_linked,
 native_operation!(crate::backend::db::postgres::packages::create,
     crate::backend::db::sqlite::packages::create,
     fn create(pool: &DbPool, owner: &Owner, kind: &str, name: &str, token: i64, repo: Option<i64>) -> Result<Package>);
+// A page of versions without their metadata (`manifest` is `{}`); read one version for it.
 native_operation!(crate::backend::db::postgres::packages::versions,
     crate::backend::db::sqlite::packages::versions,
     fn versions(pool: &DbPool, package: i64, token: Option<Credential<'_>>, deleted: bool, offset: i64, limit: i64) -> Result<Vec<Version>>);
 native_operation!(crate::backend::db::postgres::packages::version,
     crate::backend::db::sqlite::packages::version,
     fn version(pool: &DbPool, package: i64, token: Option<Credential<'_>>, reference: &str) -> Result<Version>);
+native_operation!(crate::backend::db::postgres::packages::rubygems_file,
+    crate::backend::db::sqlite::packages::rubygems_file,
+    fn rubygems_file(pool: &DbPool, owner: &Owner, token: Option<Credential<'_>>, filename: &str) -> Result<Blob>);
 native_operation!(crate::backend::db::postgres::packages::tags,
     crate::backend::db::sqlite::packages::tags,
-    fn tags(pool: &DbPool, version: i64) -> Result<Vec<String>>);
+    fn tags(pool: &DbPool, package: i64, token: Option<Credential<'_>>, version: i64) -> Result<Vec<String>>);
 native_operation!(crate::backend::db::postgres::packages::tag_page,
     crate::backend::db::sqlite::packages::tag_page,
-    fn tag_page(pool: &DbPool, package: i64, token: Option<Credential<'_>>, after: &str, limit: i64) -> Result<Vec<String>>);
+    fn tag_page(pool: &DbPool, package: i64, token: Option<Credential<'_>>, after: &str, limit: i64) -> Result<Vec<(String, String)>>);
+native_operation!(crate::backend::db::postgres::packages::set_tag,
+    crate::backend::db::sqlite::packages::set_tag,
+    fn set_tag(pool: &DbPool, package: i64, token: i64, tag: &str, version: &str) -> Result<()>);
+native_operation!(crate::backend::db::postgres::packages::delete_tag,
+    crate::backend::db::sqlite::packages::delete_tag,
+    fn delete_tag(pool: &DbPool, package: i64, token: i64, tag: &str) -> Result<()>);
 native_operation!(crate::backend::db::postgres::packages::publish,
     crate::backend::db::sqlite::packages::publish,
     fn publish(pool: &DbPool, token: i64, new: Publish<'_>) -> Result<Version>);
@@ -202,7 +306,7 @@ native_operation!(crate::backend::db::postgres::packages::settings,
     fn settings(pool: &DbPool, package: i64, token: Credential<'_>, visibility: &str, repo: Option<i64>) -> Result<()>);
 native_operation!(crate::backend::db::postgres::packages::reserve_blob,
     crate::backend::db::sqlite::packages::reserve_blob,
-    fn reserve_blob(pool: &DbPool, package: i64, token: i64, blob: &Blob) -> Result<bool>);
+    fn reserve_blob(pool: &DbPool, package: i64, token: i64, blob: &Blob, charge: Charge<'_>) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::packages::ready_blob,
     crate::backend::db::sqlite::packages::ready_blob,
     fn ready_blob(pool: &DbPool, package: i64, token: i64, blob: &Blob) -> Result<()>);

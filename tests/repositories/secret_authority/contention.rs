@@ -13,17 +13,23 @@ async fn attempt(
     match operation {
         0 => put(pool, repo, Some(actor)).await,
         1 => secrets::list_secrets(pool, actor, repo).await.map(|_| ()),
-        _ => secrets::delete_secret(pool, actor, repo, NAME)
-            .await
-            .map(|_| ()),
+        _ => secrets::delete_secret(
+            pool,
+            actor,
+            repo,
+            NAME,
+            &db::users::accounts::AccountCredential::Session(&format!("{actor:064x}")),
+        )
+        .await
+        .map(|_| ()),
     }
 }
 
 #[tokio::test]
 async fn postgres_secrets_wait_for_uncommitted_grant_revocation() {
     let mut d = Database::new(true).await;
-    let owner = d.actor("secret_wait_owner").await;
-    let actor = d.actor("secret_wait_admin").await;
+    let owner = d.secret_actor("secret_wait_owner").await;
+    let actor = d.secret_actor("secret_wait_admin").await;
     let org = applied(
         orgs::create_organization(
             d.pool(),
@@ -89,8 +95,8 @@ async fn postgres_secrets_wait_for_uncommitted_grant_revocation() {
 #[tokio::test]
 async fn postgres_secret_write_keeps_its_grant_until_commit() {
     let mut d = Database::new(true).await;
-    let owner = d.actor("secret_commit_owner").await;
-    let actor = d.actor("secret_commit_admin").await;
+    let owner = d.secret_actor("secret_commit_owner").await;
+    let actor = d.secret_actor("secret_commit_admin").await;
     let repo = d.repo(owner, None, "secret_commit_repo", true).await;
     put(d.pool(), repo, Some(owner)).await.unwrap();
     db::repositories::access::grant_repo_access(d.pool(), actor, repo, AccessLevel::Admin)
@@ -137,8 +143,8 @@ async fn postgres_secret_write_keeps_its_grant_until_commit() {
 #[tokio::test]
 async fn sqlite_secrets_require_reserved_writer_even_for_metadata() {
     let mut d = Database::new(false).await;
-    let owner = d.actor("secret_reserved_owner").await;
-    let actor = d.actor("secret_reserved_admin").await;
+    let owner = d.secret_actor("secret_reserved_owner").await;
+    let actor = d.secret_actor("secret_reserved_admin").await;
     let repo = d.repo(owner, None, "secret_reserved_repo", true).await;
     put(d.pool(), repo, Some(owner)).await.unwrap();
     db::repositories::access::grant_repo_access(d.pool(), actor, repo, AccessLevel::Admin)

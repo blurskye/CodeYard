@@ -6,18 +6,35 @@ use crate::backend::db::{
 use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
-async fn write(pool: &SqlitePool, actor: i64, org: i64) -> Result<Transaction<'_, Sqlite>> {
+async fn write<'a>(
+    pool: &'a SqlitePool,
+    actor: &crate::backend::db::credentials::Actor,
+    org: i64,
+) -> Result<Transaction<'a, Sqlite>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    match super::organizations::authority::authority(&mut tx, actor, org).await? {
+    match super::organizations::authority::authority(&mut tx, actor.user_id, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
+        OrganizationOutcome::Applied(OrgRole::Member)
+            if super::organizations::roles::manages_security(&mut tx, actor.user_id, org)
+                .await? => {}
         OrganizationOutcome::Missing => return Err(Refusal::Missing.into()),
         _ => return Err(Refusal::Denied.into()),
     }
+    ensure!(
+        super::credentials::organization(&mut tx, actor, org, "organization_administration", true)
+            .await?,
+        Refusal::Denied
+    );
     Ok(tx)
 }
 async fn readable(connection: &mut SqliteConnection, actor: i64, org: i64) -> Result<()> {
     match super::organizations::authority::read_authority(connection, actor, org).await? {
         OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(()),
+        OrganizationOutcome::Applied(OrgRole::Member)
+            if super::organizations::roles::holds_security_role(connection, actor, org).await? =>
+        {
+            Ok(())
+        }
         OrganizationOutcome::Missing => Err(Refusal::Missing.into()),
         _ => Err(Refusal::Denied.into()),
     }
@@ -67,12 +84,15 @@ async fn apply_repository(
             connection,
             actor,
             repo,
-            &scanning_settings(&settings, previous.unwrap_or_default())?,
+            &scanning_settings(
+                &apply(None, &config.settings)?,
+                previous.unwrap_or_default(),
+            )?,
         )
         .await?;
         // Private vulnerability reporting lives in its own table and is offered on public
         // repositories only.
-        match private_reporting(&config.settings)? {
+        match private_reporting(&config.settings, false)? {
             Some(true) => {
                 sqlx::query("INSERT INTO repository_private_reporting(repo_id,enabled_by_id) SELECT id,$2 FROM repositories WHERE id=$1 AND NOT is_private ON CONFLICT(repo_id) DO NOTHING")
                     .bind(repo).bind(actor).execute(&mut *connection).await?;
@@ -101,14 +121,66 @@ pub async fn list(pool: &SqlitePool, actor: i64, org: i64) -> Result<Vec<Configu
     tx.commit().await?;
     Ok(rows)
 }
-pub async fn save(
+pub async fn settings_page(
     pool: &SqlitePool,
     actor: i64,
+    session: &str,
+    org: i64,
+    before: Option<i64>,
+) -> Result<SettingsPage> {
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, actor, org).await?;
+    ensure!(before.is_none_or(|id| id > 0), Refusal::Invalid);
+    let (name, writable) = sqlx::query_as::<_, (String, bool)>(
+        "SELECT o.name,EXISTS(SELECT 1 FROM org_memberships owner JOIN users active ON active.id=owner.user_id
+         WHERE owner.org_id=o.id AND owner.role='owner' AND NOT active.is_banned AND NOT active.must_change_password)
+         FROM organizations o JOIN sessions s ON s.user_id=?1 AND s.id=?2 JOIN users u ON u.id=s.user_id
+         WHERE o.id=?3 AND julianday(s.expires_at)>julianday('now') AND NOT u.is_banned AND NOT u.must_change_password")
+        .bind(actor).bind(session).bind(org).fetch_optional(&mut *tx).await?.ok_or(Refusal::Denied)?;
+    let rows = sqlx::query_as(
+        "WITH page AS MATERIALIZED (
+             SELECT id FROM code_security_configurations WHERE org_id=?1 AND id<=?2 ORDER BY id DESC LIMIT ?3
+         ) SELECT c.* FROM page p JOIN code_security_configurations c ON c.id=p.id ORDER BY c.id DESC")
+        .bind(org).bind(before.map(|id| id - 1).unwrap_or(i64::MAX)).bind((SETTINGS_PAGE_SIZE + 1) as i64)
+        .fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(SettingsPage::from_rows(name, writable, rows))
+}
+
+pub async fn list_window(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+) -> Result<Vec<Configuration>> {
+    ensure!(after >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
+    let mut tx = pool.begin().await?;
+    readable(&mut tx, actor, org).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let rows = sqlx::query_as(&format!(
+        "SELECT * FROM code_security_configurations WHERE org_id=$1 AND id>$2 AND id<$3 ORDER BY id {direction} LIMIT $4"
+    ))
+    .bind(org)
+    .bind(after)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(rows)
+}
+pub async fn save(
+    pool: &SqlitePool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     id: Option<i64>,
     patch: &serde_json::Value,
 ) -> Result<Configuration> {
-    let mut tx = write(pool, actor, org).await?;
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
+    let actor_id = actor.user_id;
     let current = match id {
         Some(id) => Some(configuration(&mut tx, org, id).await?),
         None => None,
@@ -125,13 +197,19 @@ pub async fn save(
     };
     let repos:Vec<i64>=sqlx::query_scalar("SELECT r.id FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 ORDER BY r.id").bind(org).bind(row.id).fetch_all(&mut *tx).await?;
     for repo in repos {
-        apply_repository(&mut tx, repo, Some(actor), Some(&row)).await?;
+        apply_repository(&mut tx, repo, Some(actor_id), Some(&row)).await?;
     }
     tx.commit().await?;
     Ok(row)
 }
-pub async fn delete(pool: &SqlitePool, actor: i64, org: i64, id: i64) -> Result<()> {
-    let mut tx = write(pool, actor, org).await?;
+pub async fn delete(
+    pool: &SqlitePool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    org: i64,
+    id: i64,
+) -> Result<()> {
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
     configuration(&mut tx, org, id).await?;
     sqlx::query("DELETE FROM code_security_configurations WHERE org_id=$1 AND id=$2")
         .bind(org)
@@ -143,7 +221,7 @@ pub async fn delete(pool: &SqlitePool, actor: i64, org: i64, id: i64) -> Result<
 }
 pub async fn set_default(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     id: i64,
     scope: &str,
@@ -152,7 +230,8 @@ pub async fn set_default(
         ["all", "none", "public", "private_and_internal"].contains(&scope),
         Refusal::Invalid
     );
-    let mut tx = write(pool, actor, org).await?;
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
     configuration(&mut tx, org, id).await?;
     let rows: Vec<Configuration> =
         sqlx::query_as("SELECT * FROM code_security_configurations WHERE org_id=$1")
@@ -185,7 +264,7 @@ pub async fn set_default(
 }
 pub async fn attach(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     id: Option<i64>,
     scope: &str,
@@ -210,25 +289,21 @@ pub async fn attach(
         },
         Refusal::Invalid
     );
-    let mut tx = write(pool, actor, org).await?;
+    let actor = actor.into();
+    let mut tx = write(pool, &actor, org).await?;
+    let actor_id = actor.user_id;
     let config = match id {
         Some(id) => Some(configuration(&mut tx, org, id).await?),
         None => None,
     };
-    let rows: Vec<Repository> =
-        sqlx::query_as("SELECT * FROM repositories WHERE owner_org_id=$1 ORDER BY id")
-            .bind(org)
-            .fetch_all(&mut *tx)
-            .await?;
+    let rows: Vec<i64> = sqlx::query_scalar("SELECT r.id FROM repositories r WHERE r.owner_org_id=?1 AND (?2='all' OR (?2='selected' AND r.id IN (SELECT value FROM json_each(?3))) OR (?2='public' AND NOT r.is_private) OR (?2='private_or_internal' AND r.is_private) OR (?2='all_without_configurations' AND NOT EXISTS(SELECT 1 FROM repository_security_settings s WHERE s.repo_id=r.id AND s.configuration_id IS NOT NULL))) ORDER BY r.id")
+        .bind(org).bind(scope).bind(serde_json::to_string(selected)?).fetch_all(&mut *tx).await?;
     ensure!(
-        selected.iter().all(|id| rows.iter().any(|r| r.id == *id)),
+        selected.iter().all(|id| rows.contains(id)),
         Refusal::Missing
     );
     for repo in rows {
-        let chosen=match scope {"selected"=>selected.contains(&repo.id),"public"=>!repo.is_private,"private_or_internal"=>repo.is_private,"all_without_configurations"=>!sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM repository_security_settings WHERE repo_id=$1 AND configuration_id IS NOT NULL)").bind(repo.id).fetch_one(&mut *tx).await?,_=>true};
-        if chosen {
-            apply_repository(&mut tx, repo.id, Some(actor), config.as_ref()).await?;
-        }
+        apply_repository(&mut tx, repo, Some(actor_id), config.as_ref()).await?;
     }
     tx.commit().await?;
     Ok(())
@@ -238,11 +313,25 @@ pub async fn repositories(
     actor: i64,
     org: i64,
     id: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
 ) -> Result<Vec<Repository>> {
+    ensure!(after >= 0 && (1..=101).contains(&limit), Refusal::Invalid);
     let mut tx = pool.begin().await?;
     readable(&mut tx, actor, org).await?;
     configuration(&mut tx, org, id).await?;
-    let rows=sqlx::query_as("SELECT r.* FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 ORDER BY r.id").bind(org).bind(id).fetch_all(&mut *tx).await?;
+    let direction = if before < i64::MAX { "DESC" } else { "ASC" };
+    let rows = sqlx::query_as(&format!(
+        "SELECT r.* FROM repositories r JOIN repository_security_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.configuration_id=$2 AND r.id>$3 AND r.id<$4 ORDER BY r.id {direction} LIMIT $5"
+    ))
+    .bind(org)
+    .bind(id)
+    .bind(after)
+    .bind(before)
+    .bind(limit)
+    .fetch_all(&mut *tx)
+    .await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -257,8 +346,8 @@ pub async fn repository_settings(
             .await?,
     )
 }
-pub async fn repository_configuration(
-    pool: &SqlitePool,
+pub async fn repository_configuration<'e>(
+    pool: impl sqlx::Executor<'e, Database = sqlx::Sqlite>,
     repo: i64,
 ) -> Result<Option<Configuration>> {
     Ok(sqlx::query_as("SELECT c.* FROM code_security_configurations c JOIN repository_security_settings s ON s.configuration_id=c.id JOIN repositories r ON r.id=s.repo_id AND r.owner_org_id=c.org_id WHERE r.id=$1").bind(repo).fetch_optional(pool).await?)

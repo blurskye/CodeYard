@@ -7,12 +7,13 @@ use std::collections::HashMap;
 pub async fn link_team(
     pool: &PgPool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     project: i64,
     team: i64,
     linked: bool,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    let project = write_project(&mut tx, actor, project).await?;
+    let project = write_project(&mut tx, actor, credential, project).await?;
     let org: i64 = sqlx::query_scalar("SELECT org_id FROM teams WHERE id=$1 FOR SHARE")
         .bind(team)
         .fetch_optional(&mut *tx)
@@ -41,10 +42,36 @@ pub async fn link_team(
     Ok(())
 }
 
-pub async fn by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Project> {
+async fn read_snapshot(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
-    readable(&mut tx, viewer, id).await?;
-    let project = sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+        .execute(&mut *tx)
+        .await?;
+    Ok(tx)
+}
+
+pub async fn by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Project> {
+    by_id_at(pool, viewer, id, false).await
+}
+
+pub async fn by_id_at(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<Project> {
+    super::super::retry_on_conflict(|| by_id_at_once(pool, viewer, id, include_deleted)).await
+}
+
+async fn by_id_at_once(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<Project> {
+    let mut tx = read_snapshot(pool).await?;
+    readable_at(&mut tx, viewer, id, include_deleted).await?;
+    let project = sqlx::query_as("SELECT * FROM projects WHERE id=$1")
         .bind(id)
         .fetch_one(&mut *tx)
         .await?;
@@ -52,7 +79,11 @@ pub async fn by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Projec
     Ok(project)
 }
 pub async fn field_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Field> {
-    let mut tx = pool.begin().await?;
+    super::super::retry_on_conflict(|| field_by_id_once(pool, viewer, id)).await
+}
+
+async fn field_by_id_once(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Field> {
+    let mut tx = read_snapshot(pool).await?;
     let field: Field = sqlx::query_as("SELECT * FROM project_fields WHERE id=$1")
         .bind(id)
         .fetch_optional(&mut *tx)
@@ -63,13 +94,31 @@ pub async fn field_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<
     Ok(field)
 }
 pub async fn item_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<Item> {
-    let mut tx = pool.begin().await?;
+    item_by_id_at(pool, viewer, id, false).await
+}
+
+pub async fn item_by_id_at(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<Item> {
+    super::super::retry_on_conflict(|| item_by_id_at_once(pool, viewer, id, include_deleted)).await
+}
+
+async fn item_by_id_at_once(
+    pool: &PgPool,
+    viewer: Option<i64>,
+    id: i64,
+    include_deleted: bool,
+) -> Result<Item> {
+    let mut tx = read_snapshot(pool).await?;
     let item: Item = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
         .bind(id)
         .fetch_optional(&mut *tx)
         .await?
         .ok_or(Refusal::Missing)?;
-    readable(&mut tx, viewer, item.project_id).await?;
+    readable_at(&mut tx, viewer, item.project_id, include_deleted).await?;
     if let Some(repo) = item.repo_id {
         super::items::repository_read(&mut tx, viewer.unwrap_or(0), repo).await?;
     }
@@ -79,13 +128,17 @@ pub async fn item_by_id(pool: &PgPool, viewer: Option<i64>, id: i64) -> Result<I
 pub async fn metadata(
     pool: &PgPool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     project: i64,
     readme: Option<&str>,
     template: Option<bool>,
 ) -> Result<Project> {
-    anyhow::ensure!(readme.is_none_or(|s| s.len() <= 65536), Refusal::Invalid);
+    anyhow::ensure!(
+        readme.is_none_or(|text| crate::backend::issues::validate_body(text, false).is_ok()),
+        Refusal::Invalid
+    );
     let mut tx = pool.begin().await?;
-    write_project(&mut tx, actor, project).await?;
+    write_project(&mut tx, actor, credential, project).await?;
     let result = sqlx::query_as("UPDATE projects SET readme=COALESCE($2,readme),template=COALESCE($3,template),updated_at=$4 WHERE id=$1 RETURNING *").bind(project).bind(readme).bind(template).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(result)
@@ -93,13 +146,14 @@ pub async fn metadata(
 pub async fn archive_item(
     pool: &PgPool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     project: i64,
     item: i64,
     archived: bool,
 ) -> Result<Item> {
     let mut tx = pool.begin().await?;
-    writable_item(&mut tx, actor, project, item).await?;
-    sqlx::query("UPDATE project_items SET archived=$2,updated_at=$3 WHERE id=$1")
+    writable_item(&mut tx, actor, credential, project, item).await?;
+    sqlx::query("UPDATE project_items SET archived=$2,archived_at=CASE WHEN $2 THEN COALESCE(archived_at,$3) ELSE NULL END,updated_at=$3 WHERE id=$1")
         .bind(item)
         .bind(archived)
         .bind(chrono::Utc::now())
@@ -115,6 +169,7 @@ pub async fn archive_item(
 pub async fn edit_draft(
     pool: &PgPool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     item: i64,
     title: Option<&str>,
     body: Option<&str>,
@@ -131,7 +186,7 @@ pub async fn edit_draft(
     .fetch_optional(&mut *tx)
     .await?
     .ok_or(Refusal::Missing)?;
-    writable_item(&mut tx, actor, project, item).await?;
+    writable_item(&mut tx, actor, credential, project, item).await?;
     sqlx::query("UPDATE project_items SET draft_title=COALESCE($2,draft_title),draft_body=COALESCE($3,draft_body),updated_at=$4 WHERE id=$1").bind(item).bind(title).bind(body).bind(chrono::Utc::now()).execute(&mut *tx).await?;
     let result = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
         .bind(item)
@@ -143,15 +198,16 @@ pub async fn edit_draft(
 pub async fn reorder_item(
     pool: &PgPool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     project: i64,
     item: i64,
     after: Option<i64>,
 ) -> Result<Item> {
     anyhow::ensure!(after != Some(item), Refusal::Invalid);
     let mut tx = pool.begin().await?;
-    writable_item(&mut tx, actor, project, item).await?;
+    writable_item(&mut tx, actor, credential, project, item).await?;
     if let Some(after) = after {
-        writable_item(&mut tx, actor, project, after).await?;
+        writable_item(&mut tx, actor, credential, project, after).await?;
     }
     let mut ids: Vec<i64> =
         sqlx::query_scalar("SELECT id FROM project_items WHERE project_id=$1 ORDER BY position,id")
@@ -169,13 +225,11 @@ pub async fn reorder_item(
         .transpose()?
         .unwrap_or(0);
     ids.insert(at, item);
-    for (position, id) in ids.iter().enumerate() {
-        sqlx::query("UPDATE project_items SET position=$2 WHERE id=$1")
-            .bind(id)
-            .bind(position as i64)
-            .execute(&mut *tx)
-            .await?;
-    }
+    sqlx::query("UPDATE project_items i SET position=t.ord-1 FROM UNNEST($2::bigint[]) WITH ORDINALITY AS t(id,ord) WHERE i.id=t.id AND i.project_id=$1 AND i.position<>t.ord-1")
+        .bind(project)
+        .bind(&ids)
+        .execute(&mut *tx)
+        .await?;
     let result = sqlx::query_as(&format!("{ITEM} WHERE i.id=$1"))
         .bind(item)
         .fetch_one(&mut *tx)
@@ -187,6 +241,7 @@ pub async fn reorder_item(
 pub async fn copy(
     pool: &PgPool,
     actor: i64,
+    credential: &AccountCredential<'_>,
     source: i64,
     owner: Owner,
     title: &str,
@@ -194,17 +249,12 @@ pub async fn copy(
 ) -> Result<Project> {
     validate_project(title, None)?;
     let mut tx = pool.begin().await?;
-    owner_authority(&mut tx, actor, owner).await?;
+    owner_authority(&mut tx, actor, owner, true).await?;
     let (kind, id) = owner.parts();
-    let table = if kind == "user" {
-        "users"
-    } else {
-        "organizations"
-    };
-    sqlx::query(&format!("SELECT id FROM {table} WHERE id=$1 FOR UPDATE"))
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
+    anyhow::ensure!(
+        super::super::users::transitions::credential_live(&mut tx, actor, credential, true).await?,
+        Refusal::Denied
+    );
     readable(&mut tx, Some(actor), source).await?;
     let original: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
@@ -259,7 +309,7 @@ pub async fn copy(
                         .map(|id| (id.to_string(), v))
                 })
                 .collect();
-            sqlx::query("INSERT INTO project_items(project_id,creator_id,draft_title,draft_body,field_values,archived,position,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$8)").bind(result.id).bind(actor).bind(item.draft_title).bind(item.draft_body).bind(serde_json::to_string(&values)?).bind(item.archived).bind(item.position).bind(now).execute(&mut *tx).await?;
+            sqlx::query("INSERT INTO project_items(project_id,creator_id,draft_title,draft_body,field_values,archived,archived_at,position,created_at,updated_at) VALUES($1,$2,$3,$4,$5,$6,CASE WHEN $6 THEN $8 ELSE NULL END,$7,$8,$8)").bind(result.id).bind(actor).bind(item.draft_title).bind(item.draft_body).bind(serde_json::to_string(&values)?).bind(item.archived).bind(item.position).bind(now).execute(&mut *tx).await?;
         }
     }
     tx.commit().await?;

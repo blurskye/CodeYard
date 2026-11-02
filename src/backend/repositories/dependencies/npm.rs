@@ -1,4 +1,5 @@
 //! Bounded npm lockfiles and conservative registry patch updates, without running npm.
+use crate::backend::npm::dependency_name;
 use anyhow::{ensure, Context, Result};
 use base64::{engine::general_purpose::STANDARD, Engine};
 use semver::{Version, VersionReq};
@@ -7,13 +8,12 @@ use sha2::{Digest, Sha512};
 use std::{
     collections::BTreeMap,
     io::{Read, Write},
-    path::Component,
 };
 
 pub const MAX_LOCK_BYTES: usize = 4 * 1024 * 1024;
-pub const MAX_PACKAGES: usize = 2000;
-const MAX_MANIFEST: usize = 256 * 1024;
-const MAX_ARCHIVE: usize = 8 * 1024 * 1024;
+pub use crate::backend::db::repositories::dependencies::MAX_PACKAGES;
+pub const MAX_MANIFEST: usize = 256 * 1024;
+pub const MAX_ARCHIVE: usize = 8 * 1024 * 1024;
 const MAX_EXPANDED: u64 = 32 * 1024 * 1024;
 
 #[derive(Clone, Debug)]
@@ -44,22 +44,6 @@ pub struct Archive {
     pub integrity: String,
 }
 
-pub fn package_name(name: &str) -> bool {
-    if name.is_empty() || name.len() > 214 {
-        return false;
-    }
-    let parts: Vec<_> = name.strip_prefix('@').unwrap_or(name).split('/').collect();
-    if parts.len() != if name.starts_with('@') { 2 } else { 1 } {
-        return false;
-    }
-    parts.iter().all(|part| {
-        !part.is_empty()
-            && !part.starts_with(['.', '_'])
-            && part
-                .bytes()
-                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || b"._~-".contains(&c))
-    })
-}
 pub fn registry_url(raw: &str) -> bool {
     if raw.len() > 4096 {
         return false;
@@ -101,7 +85,7 @@ fn package(path: String, location: Vec<String>, value: &Value) -> Option<Package
         .get("name")
         .and_then(Value::as_str)
         .unwrap_or(inferred);
-    if !package_name(name) {
+    if !dependency_name(name) {
         return None;
     }
     let raw_version = value.get("version")?.as_str()?;
@@ -147,6 +131,26 @@ impl Lockfile {
                 .and_then(Value::as_object)
                 .context("Missing npm packages")?;
             ensure!(entries.len() <= MAX_PACKAGES + 1, "Too many npm packages");
+            let root = entries
+                .get("")
+                .and_then(Value::as_object)
+                .context("Missing npm root package")?;
+            for section in ["dependencies", "devDependencies", "optionalDependencies"] {
+                let declarations =
+                    |value: Option<&Value>| -> Result<serde_json::Map<String, Value>> {
+                        match value {
+                            None => Ok(serde_json::Map::new()),
+                            Some(value) => value
+                                .as_object()
+                                .cloned()
+                                .context("Invalid root dependency declarations"),
+                        }
+                    };
+                ensure!(
+                    declarations(manifest.get(section))? == declarations(root.get(section))?,
+                    "The npm manifest and root lock declarations disagree"
+                );
+            }
             for (path, value) in entries {
                 if path.is_empty() {
                     continue;
@@ -196,7 +200,7 @@ impl Lockfile {
                         .as_object()
                         .context("Invalid nested npm dependencies")?;
                     for (name, child) in children {
-                        ensure!(package_name(name), "Invalid npm dependency name");
+                        ensure!(dependency_name(name), "Invalid npm dependency name");
                         let mut nested = location.clone();
                         nested.extend(["dependencies".into(), name.clone()]);
                         pending.push((
@@ -225,7 +229,7 @@ impl Lockfile {
                     declared += 1;
                     ensure!(
                         declared <= MAX_PACKAGES
-                            && package_name(name)
+                            && dependency_name(name)
                             && requirement.as_str().is_some_and(
                                 |s| s.len() <= 4096 && !s.chars().any(char::is_control)
                             ),
@@ -269,6 +273,10 @@ impl Lockfile {
     }
     pub fn patch(mut self, path: &str, old: &Archive, new: &Archive) -> Result<Patch> {
         ensure!(
+            self.version >= 2,
+            "Npm v1 updates require manual peer-constraint verification"
+        );
+        ensure!(
             self.unsupported == 0
                 && self.manifest.get("workspaces").is_none()
                 && self.manifest.get("overrides").is_none(),
@@ -309,18 +317,14 @@ impl Lockfile {
         // Do not silently invalidate another installed package's dependency or
         // peer constraint. Unknown/complex npm range syntax stays manual rather
         // than implementing a second package-manager resolver.
-        let fields: &[&str] = if self.version == 1 {
-            &["requires"]
-        } else {
-            &["dependencies", "optionalDependencies", "peerDependencies"]
-        };
+        let fields = ["dependencies", "optionalDependencies", "peerDependencies"];
         for installed in &self.packages {
             let mut entry = &self.document;
             for component in &installed.location {
                 entry = entry.get(component).context("Lockfile entry moved")?;
             }
             for field in fields {
-                if let Some(requirements) = entry.get(*field) {
+                if let Some(requirements) = entry.get(field) {
                     let requirements = requirements
                         .as_object()
                         .context("Invalid installed dependency requirements")?;
@@ -385,9 +389,7 @@ impl Lockfile {
         for component in &package.location {
             entry = entry.get_mut(component).context("Lockfile entry moved")?;
         }
-        if self.version == 1 {
-            legacy_graph(entry, &old.document)?;
-        } else {
+        {
             let actual = graph(entry);
             let expected = graph(&old.document);
             ensure!(
@@ -453,7 +455,7 @@ fn legacy_graph(entry: &Value, document: &Value) -> Result<()> {
                 .context("Invalid npm package dependencies")?;
             for (name, requirement) in map {
                 ensure!(
-                    package_name(name) && requirement.as_str().is_some_and(|s| s.len() <= 2048),
+                    dependency_name(name) && requirement.as_str().is_some_and(|s| s.len() <= 2048),
                     "Invalid npm dependency requirement"
                 );
                 expected.insert(name.clone(), requirement.clone());
@@ -551,7 +553,7 @@ impl Archive {
             let mut entry = entry?;
             let path = entry.path()?.into_owned();
             ensure!(
-                path.components().all(|p| matches!(p, Component::Normal(_)))
+                crate::backend::repositories::imports::archive::safe_path(&path)
                     && path.starts_with("package"),
                 "Unsafe npm archive path"
             );
@@ -595,7 +597,7 @@ impl Archive {
             .and_then(Value::as_str)
             .context("Missing npm package name")?;
         ensure!(
-            package_name(name) && metadata.get("name").and_then(Value::as_str) == Some(name),
+            dependency_name(name) && metadata.get("name").and_then(Value::as_str) == Some(name),
             "Npm package name mismatch"
         );
         let version = Version::parse(

@@ -1,6 +1,10 @@
 # https://github.com/aws-actions/setup-sam/tree/f84ec7d548307efafe33230528756de3c5841a17
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

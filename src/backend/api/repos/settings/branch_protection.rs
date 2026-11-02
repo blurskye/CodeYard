@@ -32,18 +32,13 @@ pub struct BranchProtectionRuleResponse {
     pub restrict_pushes: bool,
     pub push_allowances: Vec<String>,
     pub push_team_allowances: Vec<String>,
+    pub push_apps: Vec<i64>,
     pub force_push_allowances: Vec<String>,
 }
-
-/// More approvals than this cannot be met by a small team and would block every merge.
-const MAX_REQUIRED_APPROVALS: i32 = 10;
 
 fn yes() -> bool {
     true
 }
-
-/// Bound each allowance list before resolving their combined usernames.
-const MAX_ALLOWANCE_NAMES: usize = 100;
 
 /// An omitted `require_pull_request`, `dismiss_stale_reviews` or `enforce_admins` means
 /// true, the strict default. The settings form builds the same request, so both paths refuse
@@ -95,13 +90,15 @@ pub struct UpsertBranchProtectionRuleRequest {
 pub(in crate::backend::api::repos) async fn rule_response(
     pool: &db::DbPool,
     rule: db::models::BranchProtectionRule,
+    actor: i64,
 ) -> Result<BranchProtectionRuleResponse, (StatusCode, Json<ApiError>)> {
-    Ok(rule_responses(pool, vec![rule]).await?.remove(0))
+    Ok(rule_responses(pool, vec![rule], actor).await?.remove(0))
 }
 
 pub(in crate::backend::api::repos) async fn rule_responses(
     pool: &db::DbPool,
     rules: Vec<db::models::BranchProtectionRule>,
+    actor: i64,
 ) -> Result<Vec<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
     let mut ids: Vec<_> = rules
         .iter()
@@ -129,15 +126,32 @@ pub(in crate::backend::api::repos) async fn rule_responses(
             .filter(|id| !teams.contains_key(&(rule.repo_id, **id)))
             .copied()
             .collect();
+        if ids.is_empty() {
+            continue;
+        }
         for team in db::repositories::push_teams::by_ids(pool, rule.repo_id, &ids)
             .await
             .map_err(|_| storage_unavailable())?
         {
-            teams.insert((rule.repo_id, team.team.id), team.team.slug);
+            if db::organizations::teams::get_team_by_id(pool, actor, team.team.id)
+                .await
+                .map_err(|_| storage_unavailable())?
+                .is_some()
+            {
+                teams.insert((rule.repo_id, team.team.id), team.team.slug);
+            }
         }
     }
+    Ok(project_rules(rules, &users, &teams))
+}
+
+fn project_rules(
+    rules: Vec<db::models::BranchProtectionRule>,
+    users: &std::collections::HashMap<i64, String>,
+    teams: &std::collections::HashMap<(i64, i64), String>,
+) -> Vec<BranchProtectionRuleResponse> {
     let names = |ids: &[i64]| ids.iter().filter_map(|id| users.get(id)).cloned().collect();
-    Ok(rules
+    rules
         .into_iter()
         .map(|rule| {
             let push_allowances = names(&rule.push_allowances);
@@ -165,10 +179,36 @@ pub(in crate::backend::api::repos) async fn rule_responses(
                 restrict_pushes: rule.restrict_pushes,
                 push_allowances,
                 push_team_allowances,
+                push_apps: rule.github_settings.push_apps,
                 force_push_allowances,
             }
         })
-        .collect())
+        .collect()
+}
+
+pub(in crate::backend::api::repos) async fn authorized_rule_responses(
+    pool: &db::DbPool,
+    actor: impl Into<db::credentials::Actor>,
+    repository: i64,
+) -> Result<Vec<BranchProtectionRuleResponse>, (StatusCode, Json<ApiError>)> {
+    let actor = actor.into();
+    let viewer = actor.user_id;
+    let snapshot = db::repositories::protection::read_protection_snapshot(pool, actor, repository)
+        .await
+        .map_err(protection_write_error)?;
+    let repository = snapshot.repository_id;
+    // Secret team names stay with the people who may see the team, as in `rule_responses`.
+    let mut teams = std::collections::HashMap::new();
+    for (id, name) in snapshot.teams {
+        if db::organizations::teams::get_team_by_id(pool, viewer, id)
+            .await
+            .map_err(|_| storage_unavailable())?
+            .is_some()
+        {
+            teams.insert((repository, id), name);
+        }
+    }
+    Ok(project_rules(snapshot.rules, &snapshot.users, &teams))
 }
 
 pub async fn list_branch_protection_rules(
@@ -180,12 +220,11 @@ pub async fn list_branch_protection_rules(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &user).await?;
 
-    let rules =
-        db::repositories::protection::list_branch_protection_rules(&state.pool, repository.id)
-            .await
-            .map_err(|_| storage_unavailable())?;
-
-    Ok(Json(rule_responses(&state.pool, rules).await?))
+    let session =
+        crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
+    Ok(Json(
+        authorized_rule_responses(&state.pool, (user.id, session), repository.id).await?,
+    ))
 }
 
 pub async fn upsert_branch_protection_rule(
@@ -198,8 +237,10 @@ pub async fn upsert_branch_protection_rule(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    let rule = save_rule(&state.pool, actor.id, &repository, req).await?;
-    Ok(Json(rule_response(&state.pool, rule).await?))
+    let session =
+        crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default();
+    let rule = save_rule(&state.pool, (actor.id, session), &repository, req).await?;
+    Ok(Json(rule_response(&state.pool, rule, actor.id).await?))
 }
 
 /// Checks one rule and saves it. The JSON API and the settings form both save through this, so
@@ -207,20 +248,23 @@ pub async fn upsert_branch_protection_rule(
 /// the actor administers the repository first.
 pub(in crate::backend::api::repos) async fn save_rule(
     pool: &db::DbPool,
-    actor_id: i64,
+    actor: impl Into<db::credentials::Actor>,
     repository: &db::models::Repository,
     req: UpsertBranchProtectionRuleRequest,
 ) -> Result<db::models::BranchProtectionRule, (StatusCode, Json<ApiError>)> {
+    let authority = actor.into();
+    let actor_id = authority.user_id;
     let pattern = req.pattern.trim();
     db::repositories::protection::validate_branch_pattern(pattern)
         .map_err(|error| protection_write_error(error.into()))?;
 
-    if !(0..=MAX_REQUIRED_APPROVALS).contains(&req.required_approving_reviews) {
+    let max_approvals = db::repositories::protection::MAX_REQUIRED_APPROVALS;
+    if !(0..=max_approvals).contains(&req.required_approving_reviews) {
         return Err((
             StatusCode::BAD_REQUEST,
             Json(ApiError::new(
                 "validation_error",
-                "required_approving_reviews must be between 0 and 10",
+                &format!("required_approving_reviews must be between 0 and {max_approvals}"),
             )),
         ));
     }
@@ -301,6 +345,7 @@ pub(in crate::backend::api::repos) async fn save_rule(
         pool,
         db::repositories::protection::BranchProtectionRuleUpsert {
             actor_id,
+            credential: authority.credential(),
             repo_id: repository.id,
             pattern,
             require_pull_request: req.require_pull_request,
@@ -336,12 +381,15 @@ async fn write_user_ids(
 ) -> Result<[Vec<i64>; 2], (StatusCode, Json<ApiError>)> {
     let fields = ["push_allowances", "force_push_allowances"];
     for (names, field) in lists.iter().zip(fields) {
-        if names.len() > MAX_ALLOWANCE_NAMES {
+        if names.len() > db::repositories::protection::MAX_ALLOWANCE_ACTORS {
             return Err((
                 StatusCode::BAD_REQUEST,
                 Json(ApiError::new(
                     "validation_error",
-                    &format!("{field} can list at most {MAX_ALLOWANCE_NAMES} entries"),
+                    &format!(
+                        "{field} can list at most {} entries",
+                        db::repositories::protection::MAX_ALLOWANCE_ACTORS
+                    ),
                 )),
             ));
         }
@@ -393,7 +441,16 @@ pub async fn delete_branch_protection_rule(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    delete_rule(&state.pool, actor.id, repository.id, &pattern).await?;
+    delete_rule(
+        &state.pool,
+        crate::backend::db::credentials::Actor::from((
+            actor.id,
+            crate::backend::api::http::session::extract_session_id(&headers).unwrap_or_default(),
+        )),
+        repository.id,
+        &pattern,
+    )
+    .await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -401,7 +458,7 @@ pub async fn delete_branch_protection_rule(
 /// this, so a missing rule is the same not-found answer in both.
 pub(in crate::backend::api::repos) async fn delete_rule(
     pool: &db::DbPool,
-    actor_id: i64,
+    actor_id: impl Into<db::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<(), (StatusCode, Json<ApiError>)> {

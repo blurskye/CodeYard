@@ -3,6 +3,10 @@ use crate::backend::db::models::AuditEntry;
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+native_operation!(crate::backend::db::postgres::audit::page,
+    crate::backend::db::sqlite::audit::page,
+    fn page(pool: &DbPool, authority: super::users::transitions::AdministratorActor, action: &str, actor: &str, page: i64, limit: i64) -> Result<Option<(i64, Vec<AuditEntry>)>>);
+
 native_operation!(crate::backend::db::postgres::audit::count_audit_entries,
     crate::backend::db::sqlite::audit::count_audit_entries,
     /// Rows whose action contains `action` and whose actor name contains `actor`, ignoring case.

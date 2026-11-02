@@ -395,7 +395,7 @@ async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
     assert_eq!(token_uses(&db.pool, &ticket).await, 3);
 
     // An invite is only good until it expires.
-    let expired = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address));
+    let expired = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address)).unwrap();
     db::cluster::create_join_token(
         &db.pool,
         NewJoinToken {
@@ -403,7 +403,7 @@ async fn a_reusable_invite_admits_many_nodes_within_its_roles() {
             roles: &["web".to_owned()],
             reusable: true,
             requires_approval: false,
-            expires_at: Utc::now() - Age::minutes(1),
+            lifetime_seconds: -60,
         },
     )
     .await
@@ -506,7 +506,7 @@ async fn unknown_keys_are_refused_everywhere_but_can_only_pair() {
     assert_refused(try_echo(&stranger, &core.address).await);
 
     // The pairing door is open to strangers, but only a real secret opens the cluster.
-    let forged = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address));
+    let forged = JoinTicket::new(core.key.public_key(), NodeAddress::of(&core.address)).unwrap();
     let error = join(&forged, &stranger, "intruder", None)
         .await
         .unwrap_err();
@@ -1048,7 +1048,11 @@ async fn membership_contract(pool: &DbPool) {
     let hash = |byte: u8| cluster::hash_secret(&[byte; 32]);
     let key = |_: u8| NodeKey::generate().public_hex();
     let storage = ["storage".to_owned()];
-    let token = |hash: &str, roles: &[String], reusable: bool, approval: bool, expires_at| {
+    let token = |hash: &str,
+                 roles: &[String],
+                 reusable: bool,
+                 approval: bool,
+                 expires_at: chrono::DateTime<Utc>| {
         let hash = hash.to_owned();
         let roles = roles.to_vec();
         async move {
@@ -1059,7 +1063,7 @@ async fn membership_contract(pool: &DbPool) {
                     roles: &roles,
                     reusable,
                     requires_approval: approval,
-                    expires_at,
+                    lifetime_seconds: (expires_at - Utc::now()).num_seconds(),
                 },
             )
             .await

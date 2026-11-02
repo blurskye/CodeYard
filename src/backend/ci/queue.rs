@@ -42,7 +42,7 @@ pub(super) async fn run_variables(pool: &DbPool, repo: i64) -> Result<Vec<(Strin
         if variables.contains_key(&name) {
             continue;
         }
-        if bytes + name.len() + value.len() > 256 * 1024 {
+        if bytes + name.len() + value.len() > codeyard_actions::values::MAX_VARIABLE_BYTES {
             break;
         }
         bytes += name.len() + value.len();
@@ -67,6 +67,9 @@ pub struct ClaimedRun {
     pub repository: Uuid,
     pub repository_name: String,
     pub owner: String,
+    /// The owner's id, which `github.repository_owner_id` shows; 0 from a core that sent none.
+    #[serde(default)]
+    pub owner_id: i64,
     /// Login of the user who started the run; empty when no account did.
     pub actor: String,
     #[serde(default)]
@@ -177,6 +180,7 @@ pub(crate) fn prepare_logs(lines: &[LogLine]) -> Result<Vec<LogLine>> {
 pub(crate) enum Operation {
     Claim {
         mode: CiExecutionMode,
+        platforms: Vec<String>,
     },
     Heartbeat {
         id: i64,
@@ -271,8 +275,13 @@ impl RunQueue {
         else {
             return Ok(());
         };
-        let (finished, created) = db::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
+        let (finished, created, jobs) = db::ci::fail_stale_ci_runs(pool, stale_seconds).await?;
         notifications.send_created(&created).await;
+        if let Some(ci) = self.events() {
+            for (run, job) in jobs {
+                ci.emit_workflow_job(run, job, "completed").await;
+            }
+        }
         for run in &finished {
             self.emit_workflow_run(run, "completed").await;
         }
@@ -325,29 +334,43 @@ impl RunQueue {
             .as_deref()
             .context("the run has no commit")?;
         if let Err(error) = store.checkout(destination, sha).await {
-            let Self::Remote { context, .. } = self else {
+            if let Self::Database { pool, context, .. } = self {
+                let repository =
+                    db::repositories::records::get_repository_by_id(pool, claim.run.repo_id)
+                        .await?
+                        .context("the repository no longer exists")?;
+                store = repo_store(&repository, context.as_ref()).for_ci_run(
+                    claim.run.id,
+                    claim
+                        .run
+                        .worker
+                        .as_deref()
+                        .context("the CI run has no worker")?,
+                );
+            } else if let Self::Remote { context, .. } = self {
+                let worker = claim
+                    .run
+                    .worker
+                    .as_deref()
+                    .context("the CI run has no worker")?;
+                let local_worker = worker
+                    .strip_prefix(&format!("{}/", context.key.public_hex()))
+                    .context("the CI run belongs to another worker")?;
+                let (node, peer): (i64, cluster::CorePeer) = self
+                    .call(
+                        local_worker,
+                        Operation::Storage {
+                            run_id: claim.run.run_id,
+                        },
+                        None,
+                    )
+                    .await?;
+                context.remember_peer(node, peer);
+                store = RepoStore::remote(claim.repository, node, context)
+                    .for_ci_run(claim.run.id, worker);
+            } else {
                 return Err(error.into());
-            };
-            let worker = claim
-                .run
-                .worker
-                .as_deref()
-                .context("the CI run has no worker")?;
-            let local_worker = worker
-                .strip_prefix(&format!("{}/", context.key.public_hex()))
-                .context("the CI run belongs to another worker")?;
-            let (node, peer): (i64, cluster::CorePeer) = self
-                .call(
-                    local_worker,
-                    Operation::Storage {
-                        run_id: claim.run.run_id,
-                    },
-                    None,
-                )
-                .await?;
-            context.remember_peer(node, peer);
-            store =
-                RepoStore::remote(claim.repository, node, context).for_ci_run(claim.run.id, worker);
+            }
             let _lock = crate::backend::git::locks::lock(destination).await;
             if destination.exists() {
                 tokio::fs::remove_dir_all(destination).await?;
@@ -358,8 +381,13 @@ impl RunQueue {
         Ok(store)
     }
 
-    pub async fn claim(&self, worker: &str, mode: CiExecutionMode) -> Result<Option<ClaimedRun>> {
-        self.claim_with_stop(worker, mode, None).await
+    pub async fn claim(
+        &self,
+        worker: &str,
+        mode: CiExecutionMode,
+        platforms: &[String],
+    ) -> Result<Option<ClaimedRun>> {
+        self.claim_with_stop(worker, mode, platforms, None).await
     }
 
     /// `claim` for a worker that may be shutting down. A remote claim that is still dialing when
@@ -370,10 +398,37 @@ impl RunQueue {
         &self,
         worker: &str,
         mode: CiExecutionMode,
+        platforms: &[String],
+        stop: Option<&mut watch::Receiver<bool>>,
+    ) -> Result<Option<ClaimedRun>> {
+        // The preparation's state runs to tens of kilobytes in a debug build. On the heap, the
+        // futures that await a claim stay small, and so do the stack frames that poll them.
+        let prepare = Box::pin(self.claim_prepared(worker, mode, platforms, stop));
+        match self {
+            Self::Database { pool, .. } => db::ci::prepare_claim(pool, worker, prepare).await,
+            Self::Remote { .. } => prepare.await,
+        }
+    }
+
+    async fn claim_prepared(
+        &self,
+        worker: &str,
+        mode: CiExecutionMode,
+        platforms: &[String],
         stop: Option<&mut watch::Receiver<bool>>,
     ) -> Result<Option<ClaimedRun>> {
         match self {
-            Self::Remote { .. } => self.call(worker, Operation::Claim { mode }, stop).await,
+            Self::Remote { .. } => {
+                self.call(
+                    worker,
+                    Operation::Claim {
+                        mode,
+                        platforms: platforms.to_vec(),
+                    },
+                    stop,
+                )
+                .await
+            }
             Self::Database {
                 pool,
                 config,
@@ -392,11 +447,15 @@ impl RunQueue {
                             worker,
                             mode.as_str(),
                             &trusted,
+                            platforms,
                         )
                         .await?
                     }
                     // A database without cluster membership has no node rows to check.
-                    None => db::ci::claim_ci_run(pool, worker, mode.as_str(), &trusted).await?,
+                    None => {
+                        db::ci::claim_ci_run(pool, worker, mode.as_str(), &trusted, platforms)
+                            .await?
+                    }
                 };
                 let Some(mut run) = claimed else {
                     return Ok(None);
@@ -424,17 +483,21 @@ impl RunQueue {
                             let source = db::ci::get_ci_run_by_id(pool, run.repo_id, root)
                                 .await?
                                 .context("original workflow run is unavailable")?;
-                            let user = db::users::accounts::get_user_by_id(
-                                pool,
-                                source
-                                    .triggered_by_id
-                                    .context("original actor is unavailable")?,
-                            )
-                            .await?
-                            .context("original actor is unavailable")?;
-                            Some(RunActor {
-                                id: user.id,
-                                login: user.username,
+                            Some(match source.triggered_by_id {
+                                Some(id) => db::users::accounts::get_user_by_id(pool, id)
+                                    .await?
+                                    .map(|user| RunActor {
+                                        id: user.id,
+                                        login: user.username,
+                                    })
+                                    .unwrap_or(RunActor {
+                                        id: 0,
+                                        login: "ghost".into(),
+                                    }),
+                                None => RunActor {
+                                    id: 0,
+                                    login: "ghost".into(),
+                                },
                             })
                         } else {
                             run.triggered_by_id.map(|id| RunActor {
@@ -494,33 +557,28 @@ impl RunQueue {
                     db::secrets::validate_workflow_secrets(&secrets)?;
                     let variables = run_variables(pool, run.repo_id).await?;
                     db::variables::validate_workflow_variables(&variables)?;
-                    let storage_id = repository
+                    let primary = repository
                         .storage_node_id
                         .or_else(|| context.as_ref().map(|c| c.node_id));
-                    let storage_peer = match storage_id {
-                        Some(id) => {
-                            let node = db::cluster::get_node_by_id(pool, id)
-                                .await?
-                                .filter(|node| {
-                                    node.status == "active"
-                                        && node.roles.iter().any(|r| r == "storage")
-                                })
-                                .context("storage node unavailable")?;
-                            Some(cluster::CorePeer {
-                                public_key: node.public_key,
-                                address: serde_json::from_str(
-                                    node.addr_hint
-                                        .as_deref()
-                                        .context("storage node unavailable")?,
-                                )?,
-                            })
+                    let mut targets = Vec::new();
+                    if let Some(primary) = primary {
+                        let mut candidates = vec![primary];
+                        if let Some(context) = context {
+                            candidates.extend(
+                                context
+                                    .read_copies(uuid, primary)
+                                    .await
+                                    .into_iter()
+                                    .map(|(id, _)| id),
+                            );
                         }
-                        None => None,
-                    };
-                    let mut storage_replicas = Vec::new();
-                    if let (Some(context), Some(primary)) = (context, storage_id) {
-                        for (id, _) in context.read_copies(uuid, primary).await {
-                            let Some(node) = db::cluster::get_node_by_id(pool, id).await? else {
+                        for id in candidates {
+                            let Some(node) =
+                                db::cluster::get_node_by_id(pool, id).await?.filter(|node| {
+                                    node.status == "active"
+                                        && node.roles.iter().any(|role| role == "storage")
+                                })
+                            else {
                                 continue;
                             };
                             let Some(address) = node
@@ -530,15 +588,22 @@ impl RunQueue {
                             else {
                                 continue;
                             };
-                            storage_replicas.push((
+                            targets.push((
                                 id,
                                 cluster::CorePeer {
+                                    target: None,
                                     public_key: node.public_key,
                                     address,
                                 },
                             ));
                         }
+                        ensure!(!targets.is_empty(), "storage node unavailable");
                     }
+                    let (storage_id, storage_peer) = match targets.first() {
+                        Some((id, peer)) => (Some(*id), Some(peer.clone())),
+                        None => (None, None),
+                    };
+                    let storage_replicas = targets.into_iter().skip(1).collect();
                     load_error = "CI could not run";
                     let store = repo_store(&repository, context.as_ref()).for_ci_run(
                         run.id,
@@ -626,8 +691,9 @@ impl RunQueue {
                     let store = Some(store);
                     Ok::<_, anyhow::Error>(ClaimedRun {
                         run: run.clone(),
-                        storage_node_id: repository.storage_node_id,
+                        storage_node_id: storage_id,
                         repository: uuid,
+                        owner_id: repository.owner_id(),
                         repository_name: repository.name,
                         owner,
                         actor,
@@ -654,20 +720,33 @@ impl RunQueue {
                     tick.tick().await;
                     loop {
                         tick.tick().await;
-                        if let Ok(None) = db::ci::heartbeat_ci_run(pool, run_id, worker).await {
+                        if matches!(self.heartbeat(worker, run_id).await, Ok(None | Some(true))) {
                             return;
                         }
                     }
                 };
+                let prepare_and_announce = async {
+                    let claim = loaded.await?;
+                    self.emit_workflow_run(&claim.run, "in_progress").await;
+                    ensure!(
+                        self.heartbeat(worker, run_id)
+                            .await?
+                            .is_some_and(|cancelled| !cancelled),
+                        "the CI run was taken back while it was prepared"
+                    );
+                    Ok(claim)
+                };
                 let loaded = tokio::select! {
-                    loaded = loaded => loaded,
+                    loaded = tokio::time::timeout(std::time::Duration::from_secs(60), prepare_and_announce) => loaded.unwrap_or_else(|_| Err(anyhow::anyhow!("CI claim preparation timed out"))),
                     () = renew => Err(anyhow::anyhow!("the CI run was taken back while it was prepared")),
                 };
                 if loaded.is_err() {
-                    self.finish(worker, run.id, "failed", Some(load_error))
-                        .await?;
-                } else {
-                    self.emit_workflow_run(&run, "in_progress").await;
+                    // A run cancelled while it was prepared ends as cancelled, not as a failure.
+                    let (status, message) = match self.heartbeat(worker, run_id).await {
+                        Ok(Some(true)) => ("cancelled", "Cancelled"),
+                        _ => ("failed", load_error),
+                    };
+                    self.finish(worker, run_id, status, Some(message)).await?;
                 }
                 loaded.map(Some)
             }
@@ -683,7 +762,7 @@ impl RunQueue {
         event: &codeyard_actions::progress::Event,
     ) -> Result<i64> {
         ensure!(
-            serde_json::to_vec(event)?.len() <= 16 * 1024,
+            serde_json::to_vec(event)?.len() <= codeyard_actions::progress::MAX_EVENT_BYTES,
             "progress exceeds native limits"
         );
         match self {
@@ -697,10 +776,12 @@ impl RunQueue {
                     Update::Finished { .. } => Some("completed"),
                     _ => None,
                 };
-                if let (Some(action), Some(ci)) = (action, self.events()) {
-                    ci.emit_workflow_job(id, job, action).await;
+                if job.transitioned {
+                    if let (Some(action), Some(ci)) = (action, self.events()) {
+                        ci.emit_workflow_job(id, job.id, action).await;
+                    }
                 }
-                Ok(job)
+                Ok(job.id)
             }
             Self::Remote { .. } => {
                 self.call(
@@ -725,10 +806,7 @@ impl RunQueue {
         workflow: &str,
         state: &codeyard_actions::progress::State,
     ) -> Result<()> {
-        ensure!(
-            serde_json::to_vec(state)?.len() <= 8 * 1024 * 1024,
-            "job state exceeds native limits"
-        );
+        state.validate()?;
         match self {
             Self::Database { pool, .. } => {
                 db::action_jobs::save_state(pool, worker, id, generation, workflow, state).await
@@ -799,7 +877,18 @@ impl RunQueue {
 
     pub async fn heartbeat(&self, worker: &str, id: i64) -> Result<Option<bool>> {
         match self {
-            Self::Database { pool, .. } => db::ci::heartbeat_ci_run(pool, id, worker).await,
+            Self::Database { pool, context, .. } => match context {
+                Some(_) => {
+                    db::ci::heartbeat_ci_run_on_node(
+                        pool,
+                        id,
+                        worker,
+                        worker.split_once('/').map_or(worker, |(key, _)| key),
+                    )
+                    .await
+                }
+                None => db::ci::heartbeat_ci_run(pool, id, worker).await,
+            },
             Self::Remote { .. } => self.call(worker, Operation::Heartbeat { id }, None).await,
         }
     }
@@ -835,8 +924,13 @@ impl RunQueue {
                 ..
             } => {
                 let finished = db::ci::finish_ci_run(pool, id, worker, status, message).await?;
-                if let Some((run, created)) = &finished {
+                if let Some((run, created, jobs)) = &finished {
                     notifications.send_created(created).await;
+                    if let Some(ci) = self.events() {
+                        for job in jobs {
+                            ci.emit_workflow_job(run.id, *job, "completed").await;
+                        }
+                    }
                     self.emit_workflow_run(run, "completed").await;
                 }
                 Ok(finished.is_some())
@@ -891,7 +985,10 @@ impl RunQueue {
             // dial_node bounds each attempt itself. An outer timeout here would cut the
             // fallback short, so the other addresses and iroh would never be tried. A stop
             // ends only the dial: once the request is written, its reply is awaited below.
-            let dial = cluster::dial_node(&context.iroh, node, &peer.address, cluster::ALPN_EVENTS);
+            let dial = async {
+                let address = peer.resolved_address().await?;
+                cluster::dial_node(&context.iroh, node, &address, cluster::ALPN_EVENTS).await
+            };
             let dialed = match stop.as_deref_mut() {
                 Some(stop) => {
                     // The stop wins a tie, and is read again once the dial is ready, so a
@@ -915,8 +1012,8 @@ impl RunQueue {
             let Ok(mut link) = dialed else {
                 continue;
             };
-            let result = tokio::time::timeout(std::time::Duration::from_secs(20), async {
-                rpc::write_frame(&mut link.writer, &header, rpc::MAX_JSON).await?;
+            let result = tokio::time::timeout(std::time::Duration::from_secs(100), async {
+                rpc::write_frame(&mut link.writer, &header, rpc::MAX_JSON + 64 * 1024).await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
                     &rpc::read_frame(&mut link.reader, rpc::MAX_JSON).await?,

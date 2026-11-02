@@ -684,15 +684,12 @@ async fn contract(pg: bool) {
     assert_eq!(body["id"], expired);
     assert_eq!(body["failed_at"], Value::Null);
     // Exhausting actual outbox attempts updates the linked invitation's failure state.
-    db::email::enqueue_invitation_email(
-        f.pool(),
-        expired,
-        "other@example.com",
-        "Invitation",
-        "Accept in settings",
+    // No mail server is set up, so the renewed offer queued no message; stand one in.
+    f.execute(
+        "INSERT INTO email_outbox(to_address,subject,body_text,organization_invitation_id) VALUES('other@example.com','Invitation','Accept in settings',$1)",
+        &[expired],
     )
-    .await
-    .unwrap();
+    .await;
     let mail = f
         .scalar(
             "SELECT id FROM email_outbox WHERE organization_invitation_id=$1",
@@ -701,7 +698,7 @@ async fn contract(pg: bool) {
         .await;
     f.execute("UPDATE email_outbox SET attempts=5 WHERE id=$1", &[mail])
         .await;
-    db::email::mark_email_failed(f.pool(), mail, "SMTP rejected the recipient", 60, 5)
+    db::email::mark_email_failed(f.pool(), mail, 5, "SMTP rejected the recipient", 60, 5)
         .await
         .unwrap();
     let (_, body) = request(

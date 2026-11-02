@@ -9,7 +9,7 @@ use crate::backend::api::user::profile::settings_result;
 use crate::backend::api::user::responses::{field, mutation_guard, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::settings::AccountSession;
+use crate::webui::pages::settings::{AccountSession, SessionPagination};
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
@@ -23,17 +23,48 @@ fn session_key(id: &str) -> String {
     format!("{:x}", Sha256::digest(id.as_bytes()))
 }
 
-/// The sessions the settings page lists for `user_id`, with the current one marked.
+#[derive(Default)]
+pub(crate) struct SessionListing {
+    pub items: Vec<AccountSession>,
+    pub pagination: SessionPagination,
+}
+
+fn session_failure(error: anyhow::Error) -> ApiFailure {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        (
+            StatusCode::FORBIDDEN,
+            Json(ApiError::new(
+                "forbidden",
+                "A live unrestricted account session is required.",
+            )),
+        )
+    } else {
+        database_failure()
+    }
+}
+
+/// One authorized page, with an upper cursor retained in each revocation form.
 pub(crate) async fn load_sessions(
     pool: &db::DbPool,
     user_id: i64,
     current: Option<&str>,
-) -> Result<Vec<AccountSession>, ApiFailure> {
-    let sessions = db::users::sessions::list_user_sessions(pool, user_id)
-        .await
-        .map_err(|_| database_failure())?;
-    Ok(sessions
+    before: i64,
+) -> Result<SessionListing, ApiFailure> {
+    let mut sessions =
+        db::users::sessions::session_page(pool, user_id, current.unwrap_or_default(), before)
+            .await
+            .map_err(session_failure)?;
+    let more = sessions.len() > 100;
+    sessions.truncate(100);
+    let pagination = SessionPagination {
+        before: sessions.first().map_or(before.max(0), |row| row.ordinal),
+        next_before: more
+            .then(|| sessions.last().map(|row| row.ordinal.saturating_sub(1)))
+            .flatten(),
+    };
+    let items = sessions
         .into_iter()
+        .map(|row| row.session)
         .map(|session| AccountSession {
             key: session_key(&session.id),
             current: current == Some(session.id.as_str()),
@@ -42,7 +73,8 @@ pub(crate) async fn load_sessions(
             user_agent: session.user_agent.unwrap_or_default(),
             ip_address: session.ip_address.unwrap_or_default(),
         })
-        .collect())
+        .collect();
+    Ok(SessionListing { items, pagination })
 }
 
 pub(crate) async fn revoke_post(
@@ -63,28 +95,43 @@ pub(crate) async fn revoke_post(
         .as_ref()
         .expect("mutation guard checked account")
         .id;
-    let result = match revoke_one(&ctx, actor, field(&form, "session")).await {
+    let before = field(&form, "sessions_before")
+        .parse::<i64>()
+        .unwrap_or(0)
+        .max(0);
+    let result = match revoke_one(&ctx, actor, field(&form, "session"), before).await {
         Ok(true) => Ok(()),
         Ok(false) => Err(not_found()),
         Err(error) => Err(error),
     };
+    if result.is_ok() {
+        return ctx.redirect(&format!(
+            "/settings?tab=sessions&sessions_before={before}&saved=sessions-revoked"
+        ));
+    }
     settings_result(&ctx, "sessions", &form, result, "sessions-revoked").await
 }
 
-async fn revoke_one(ctx: &PageContext, actor: i64, key: &str) -> Result<bool, ApiFailure> {
-    let sessions = db::users::sessions::list_user_sessions(&ctx.state.pool, actor)
-        .await
-        .map_err(|_| database_failure())?;
-    let Some(target) = sessions
-        .into_iter()
-        .find(|session| session_key(&session.id) == key)
-    else {
-        return Ok(false);
-    };
+async fn revoke_one(
+    ctx: &PageContext,
+    actor: i64,
+    key: &str,
+    before: i64,
+) -> Result<bool, ApiFailure> {
     let Some(current) = session::extract_session_id(&ctx.headers) else {
         return Ok(false);
     };
-    db::users::sessions::revoke_user_session(&ctx.state.pool, actor, &target.id, &current)
+    let sessions = db::users::sessions::session_page(&ctx.state.pool, actor, &current, before)
+        .await
+        .map_err(session_failure)?;
+    let Some(target) = sessions
+        .into_iter()
+        .take(100)
+        .find(|row| session_key(&row.session.id) == key)
+    else {
+        return Ok(false);
+    };
+    db::users::sessions::revoke_user_session(&ctx.state.pool, actor, &target.session.id, &current)
         .await
         .map_err(|_| database_failure())
 }

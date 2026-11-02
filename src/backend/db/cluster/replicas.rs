@@ -1,16 +1,15 @@
 //! Which copies a repository should have. The primary is not a copy: with `Copies(n)`
 //! the repository has n-1 copies, fewer when fewer storage nodes exist, and with `All`
 //! it has one on every other storage node.
-use crate::backend::{
-    cluster::placement,
-    db::models::{ClusterNode, ReplicaSetting},
-};
+use crate::backend::db::models::{ClusterNode, ReplicaSetting};
 
-/// A node that holds a copy. A negative version means it has not copied any data.
+/// A holder's readiness and allocation history. Negative versions cannot serve reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Holder {
     pub node: i64,
     pub version: i64,
+    /// Previously completed bytes remain allocated during an incremental refresh.
+    pub completed: bool,
 }
 
 /// The copies to add and to remove for one repository.
@@ -45,6 +44,7 @@ pub fn plan(
             .map_or(-1, |copy| copy.version)
     };
     let applied = |id: i64| version(id) >= 0;
+    let completed = |id: i64| copies.iter().any(|copy| copy.node == id && copy.completed);
     let held: Vec<i64> = copies.iter().map(|copy| copy.node).collect();
     let mut kept: Vec<i64> = held
         .iter()
@@ -53,13 +53,15 @@ pub fn plan(
             id != primary
                 && storage.iter().any(|node| {
                     node.id == id
-                        && (applied(id) || node.disk_free.is_some_and(|free| free >= size))
+                        && (completed(id)
+                            || applied(id)
+                            || node.disk_free.is_some_and(|free| free >= size))
                 })
         })
         .collect();
     let mut missing = wanted.saturating_sub(kept.iter().filter(|&&id| online(id)).count());
     let mut add = Vec::new();
-    for node in placement::ranked(storage) {
+    for node in ClusterNode::ranked_storage(storage) {
         if missing == 0 {
             break;
         }
@@ -92,6 +94,118 @@ pub fn plan(
         }
     }
     Plan { add, remove }
+}
+
+/// All members share targets. Existing split copies remain until their common
+/// replacements are complete, so alignment never throws away the only usable bytes.
+/// Callers hold capacity serialization through applying every returned row change.
+pub(crate) fn family_plan(
+    setting: ReplicaSetting,
+    primary: i64,
+    storage: &mut [ClusterNode],
+    rows: &[super::PrimaryReplicaRow],
+    reservations: &[(i64, i64)],
+) -> anyhow::Result<Vec<(i64, Plan)>> {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut members = BTreeMap::<i64, i64>::new();
+    let mut holders = BTreeSet::new();
+    for (repository, _, node, _, size, _) in rows {
+        members.insert(
+            *repository,
+            (*size)
+                .max(1)
+                .checked_mul(super::REPLICA_STAGING_FACTOR)
+                .ok_or_else(|| anyhow::anyhow!("replica reservation overflow"))?,
+        );
+        holders.extend(*node);
+    }
+    let size = members
+        .values()
+        .try_fold(0i64, |sum, size| sum.checked_add(*size))
+        .ok_or_else(|| anyhow::anyhow!("fork family reservation overflow"))?;
+    for node in storage.iter_mut() {
+        let reserved = reservations
+            .iter()
+            .find(|(id, _)| *id == node.id)
+            .map_or(0, |(_, bytes)| *bytes);
+        let mut free = node.disk_free.unwrap_or(0).saturating_sub(reserved);
+        for (repository, _, holder, _, _, _) in rows {
+            if *holder == Some(node.id) {
+                // Refund this family's pending reservations; credit already allocated
+                // members so the plan charges only the family's missing members.
+                free = free.saturating_add(members[repository]);
+            }
+        }
+        node.disk_free = node.disk_free.map(|_| free);
+    }
+    let copies: Vec<_> = holders
+        .iter()
+        .map(|node| {
+            let held: Vec<_> = rows.iter().filter(|row| row.2 == Some(*node)).collect();
+            Holder {
+                node: *node,
+                version: if held.len() == members.len() {
+                    held.iter()
+                        .map(|row| row.3.unwrap_or(-1))
+                        .min()
+                        .unwrap_or(-1)
+                } else {
+                    -1
+                },
+                completed: held.len() == members.len()
+                    && held
+                        .iter()
+                        .all(|row| row.5 || row.3.is_some_and(|version| version >= 0)),
+            }
+        })
+        .collect();
+    let family = plan(setting, primary, storage, &copies, size);
+    let targets: BTreeSet<_> = holders
+        .into_iter()
+        .filter(|node| !family.remove.contains(node))
+        .chain(family.add)
+        .collect();
+    let common_ready = !targets.is_empty()
+        && targets.iter().all(|target| {
+            members.keys().all(|repository| {
+                let newest = rows
+                    .iter()
+                    .filter(|row| row.0 == *repository)
+                    .filter_map(|row| row.3)
+                    .max()
+                    .unwrap_or(-1);
+                rows.iter().any(|row| {
+                    row.0 == *repository
+                        && row.2 == Some(*target)
+                        && row
+                            .3
+                            .is_some_and(|version| version >= 0 && version >= newest)
+                })
+            })
+        });
+    Ok(members
+        .keys()
+        .map(|repository| {
+            let held: BTreeSet<_> = rows
+                .iter()
+                .filter(|row| row.0 == *repository)
+                .filter_map(|row| row.2)
+                .collect();
+            let add = targets.difference(&held).copied().collect();
+            let remove = held
+                .difference(&targets)
+                .copied()
+                .filter(|node| {
+                    // Keep split/offline data until the aligned family has caught up.
+                    common_ready
+                        || !storage.iter().any(|candidate| candidate.id == *node)
+                        || *node == primary
+                        || matches!(setting, ReplicaSetting::Copies(1))
+                })
+                .collect();
+            (*repository, Plan { add, remove })
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -158,6 +272,7 @@ mod tests {
         Holder {
             node,
             version: if applied { 0 } else { -1 },
+            completed: applied,
         }
     }
 
@@ -274,10 +389,12 @@ mod tests {
                 Holder {
                     node: 2,
                     version: 10,
+                    completed: true,
                 },
                 Holder {
                     node: 3,
                     version: 1,
+                    completed: true,
                 },
             ];
             assert!(plan(ReplicaSetting::Copies(2), 1, &storage, &copies)

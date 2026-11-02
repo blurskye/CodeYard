@@ -59,6 +59,12 @@ pub async fn revert_pull_request(
             message: "This pull request was merged with the stack above it; revert the top pull request instead".into(),
         });
     }
+    // The merge commit landed on the base of the bottom layer it merged, at the tip recorded for
+    // that layer. A stacked layer's own base names the layer below it, which the merge left alone.
+    let (base_branch, before) = db::pull_requests::records::merged_trunk(pool, repo.id, merged)
+        .await
+        .map_err(database_error)?
+        .unwrap_or_else(|| (pull.base_branch.clone(), pull.base_sha.clone()));
     // The default title shortens a long original so it fits the 255-byte title limit.
     let title = request.title.unwrap_or_else(|| {
         let mut end = pull.title.len().min(255 - "Revert \"\"".len());
@@ -78,7 +84,7 @@ pub async fn revert_pull_request(
         })?;
     let store = repo_store(&repo, ci.cluster.as_ref());
     let current = store
-        .commit_from_primary(&format!("refs/heads/{}", pull.base_branch))
+        .commit_from_primary(&format!("refs/heads/{base_branch}"))
         .await
         .map_err(super::merge::prepare_error)?
         .sha;
@@ -86,7 +92,7 @@ pub async fn revert_pull_request(
         .prepare_revert(&RevertCommit {
             current,
             merged: merged.into(),
-            before: pull.base_sha,
+            before,
             message: format!("Revert \"{}\"\n\nThis reverts commit {merged}.", pull.title),
             name: user.username.clone(),
             email: user.commit_email(),
@@ -124,10 +130,11 @@ pub async fn revert_pull_request(
     })?;
     mutations::create_pull_request(pool, ci, broadcaster, actor, owner, name,
         mutations::CreatePullRequestRequest {
+            suppress_ci: false,
             head_repo_id: None,
             source: mutations::PullRequestSource::New { title, body: Some(body) },
             head_branch: branch.clone(),
-            base_branch: pull.base_branch,
+            base_branch,
             is_draft: request.is_draft,
             maintainer_can_modify: Some(false),
         }).await.map_err(|error| OperationError::Unavailable {

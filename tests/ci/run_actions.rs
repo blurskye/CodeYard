@@ -91,10 +91,16 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap());
-    let claimed = db::ci::claim_ci_run(f.pool(), "log-worker", "local", &[alice_id, bob_id])
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db::ci::claim_ci_run(
+        f.pool(),
+        "log-worker",
+        "local",
+        &[alice_id, bob_id],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.id, run.id);
     let output = [
         "failed to pull act-latest",
@@ -133,7 +139,7 @@ async fn contract(pg: bool) {
     let cancel = format!("/alice/proj/actions/runs/{job}/cancel");
     let rerun = format!("/alice/proj/actions/runs/{job}/rerun");
 
-    // The run page offers the cancel form to a writer, and nothing to a reader.
+    // The run page offers the cancel form to every writer, and nothing to a reader.
     let (_, page) = alice.page(&format!("/alice/proj/actions?job={job}")).await;
     assert!(page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let page = dave
@@ -141,7 +147,7 @@ async fn contract(pg: bool) {
         .await;
     assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let page = bob.page_ok(&format!("/alice/proj/actions?job={job}")).await;
-    assert!(!page.contains(&format!("action=\"{cancel}\"")), "{page}");
+    assert!(page.contains(&format!("action=\"{cancel}\"")), "{page}");
     let logs = db::ci::list_ci_logs(f.pool(), run.id, 10).await.unwrap();
     let incremental = alice
         .expect(
@@ -246,13 +252,13 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert!(page.contains(&format!("action=\"{cancel}\"")));
 
-    // A reader cannot re-run or cancel, and a writer who did not start the run cannot cancel it.
+    // Readers cannot re-run or cancel; any repository writer may cancel.
     let (status, page) = dave.form(&rerun, &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
     let (status, page) = dave.form(&cancel, &[]).await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
     let (status, page) = bob.form(&cancel, &[]).await;
-    assert_eq!(status, StatusCode::FORBIDDEN, "{page}");
+    assert_eq!(status, StatusCode::SEE_OTHER, "{page}");
 
     // Another writer can re-run a manual commit displaced by an unrelated branch reset.
     {
@@ -710,10 +716,16 @@ async fn pull_request_run_is_run_again(pg: bool) {
 
     // The run fails on its worker, which then records the result.
     let worker = "node/slot-1";
-    let claimed = db::ci::claim_ci_run(f.pool(), worker, "local", &[alice_id, bob_id])
-        .await
-        .unwrap()
-        .expect("the run is claimed");
+    let claimed = db::ci::claim_ci_run(
+        f.pool(),
+        worker,
+        "local",
+        &[alice_id, bob_id],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .expect("the run is claimed");
     assert_eq!(claimed.id, first.id);
     db::ci::finish_ci_run(
         f.pool(),

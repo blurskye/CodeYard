@@ -1,6 +1,10 @@
 # https://github.com/DeterminateSystems/nix-installer-action/tree/21a544727d0c62386e78b4befe52d19ad12692e3
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

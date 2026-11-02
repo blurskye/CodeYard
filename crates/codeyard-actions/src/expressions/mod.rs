@@ -59,16 +59,54 @@ impl Value {
         }
     }
 
-    /// Text for interpolation, with JSON for arrays and objects.
+    /// Actions string coercion; collections keep their types only in whole expressions.
     pub fn to_text(&self) -> String {
         match self {
             Self::Null => String::new(),
             Self::Bool(v) => v.to_string(),
             Self::Number(v) => number_text(*v),
             Self::String(v) => v.clone(),
-            Self::Array(_) | Self::Object(_) => json_text(self, false, 0),
+            Self::Array(_) => "Array".into(),
+            Self::Object(_) => "Object".into(),
         }
     }
+}
+
+struct ExecutionLimits {
+    deadline: std::time::Instant,
+    cancel: tokio::sync::watch::Receiver<bool>,
+}
+thread_local! {
+    static EXECUTION_LIMITS: std::cell::RefCell<Option<ExecutionLimits>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Used only inside a bounded blocking evaluation, never across an async suspension.
+pub(crate) fn with_execution_limits<T>(
+    deadline: std::time::Instant,
+    cancel: tokio::sync::watch::Receiver<bool>,
+    evaluate: impl FnOnce() -> T,
+) -> T {
+    struct Restore(Option<ExecutionLimits>);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            EXECUTION_LIMITS.with(|limits| {
+                limits.replace(self.0.take());
+            });
+        }
+    }
+    let _restore = Restore(
+        EXECUTION_LIMITS.with(|limits| limits.replace(Some(ExecutionLimits { deadline, cancel }))),
+    );
+    evaluate()
+}
+
+pub(super) fn execution_expired(deadline: std::time::Instant) -> bool {
+    std::time::Instant::now() >= deadline
+        || EXECUTION_LIMITS.with(|limits| {
+            limits.borrow().as_ref().is_some_and(|limits| {
+                std::time::Instant::now() >= limits.deadline || *limits.cancel.borrow()
+            })
+        })
 }
 
 /// The named contexts an expression can read. Lookups ignore case.
@@ -90,6 +128,11 @@ pub enum Error {
     Syntax(String),
     #[error("{0}")]
     Evaluation(String),
+}
+
+/// Check the original expression with the same parser and limits used at execution.
+pub fn validate(expression: &str, contexts: &Contexts) -> Result<(), Error> {
+    parser::parse(expression, contexts).map(|_| ())
 }
 
 /// Evaluates one expression, without the `${{ }}` around it.
@@ -128,24 +171,47 @@ pub fn evaluate_condition(
 
 /// Replaces each `${{ }}` in a string. A whole expression keeps its value's type.
 pub fn interpolate(template: &str, contexts: &Contexts, status: Status) -> Result<Value, Error> {
+    interpolate_bounded(template, contexts, status, eval::MAX_TEXT_BYTES)
+}
+
+/// Interpolates without ever accumulating more than the caller's text budget.
+pub fn interpolate_bounded(
+    template: &str,
+    contexts: &Contexts,
+    status: Status,
+    limit: usize,
+) -> Result<Value, Error> {
     let mut remaining = template;
     let mut output = String::new();
     while let Some(start) = remaining.find("${{") {
-        output.push_str(&remaining[..start]);
+        append_text(&mut output, &remaining[..start], limit)?;
         let inner = &remaining[start + 3..];
         let end = expression_end(inner)?;
         let value = evaluate(&inner[..end], contexts, status)?;
         remaining = &inner[end + 2..];
         if start == 0 && inner.len() + 3 == template.len() && remaining.is_empty() {
+            if let Value::String(text) = &value {
+                if text.len() > limit {
+                    return Err(eval::memory_limit());
+                }
+            }
             return Ok(value);
         }
-        output.push_str(&value.to_text());
+        append_text(&mut output, &value.to_text(), limit)?;
     }
-    output.push_str(remaining);
+    append_text(&mut output, remaining, limit)?;
     Ok(Value::String(output))
 }
 
-fn expression_end(inner: &str) -> Result<usize, Error> {
+fn append_text(output: &mut String, text: &str, limit: usize) -> Result<(), Error> {
+    if text.len() > limit.saturating_sub(output.len()) {
+        return Err(eval::memory_limit());
+    }
+    output.push_str(text);
+    Ok(())
+}
+
+pub(crate) fn expression_end(inner: &str) -> Result<usize, Error> {
     let bytes = inner.as_bytes();
     let mut quoted = false;
     let mut i = 0;
@@ -165,9 +231,8 @@ fn expression_end(inner: &str) -> Result<usize, Error> {
 }
 
 fn lookup<'a, T>(map: &'a BTreeMap<String, T>, key: &str) -> Option<&'a T> {
-    map.iter()
-        .find(|(k, _)| fold(k) == fold(key))
-        .map(|(_, v)| v)
+    let key = fold(key);
+    map.iter().find(|(k, _)| fold(k) == key).map(|(_, v)| v)
 }
 
 // OrdinalIgnoreCase uses simple Unicode case folding, not culture-sensitive comparison.
@@ -177,10 +242,13 @@ fn fold(value: &str) -> String {
         .map(|c| {
             let mut upper = c.to_uppercase();
             let first = upper.next().unwrap_or(c);
-            if upper.next().is_some() {
-                c
-            } else {
+            let simple = if upper.next().is_some() { c } else { first };
+            let mut lower = simple.to_lowercase();
+            let first = lower.next().unwrap_or(simple);
+            if lower.next().is_none() {
                 first
+            } else {
+                simple
             }
         })
         .collect()
@@ -257,46 +325,59 @@ fn number_text(value: f64) -> String {
 #[cfg(test)]
 mod tests;
 
-fn json_text(value: &Value, pretty: bool, depth: usize) -> String {
-    let (open, close, items) = match value {
-        Value::Array(items) => (
-            '[',
-            ']',
-            items
-                .iter()
-                .map(|v| json_text(v, pretty, depth + 1))
-                .collect::<Vec<_>>(),
-        ),
-        Value::Object(items) => (
-            '{',
-            '}',
-            items
-                .iter()
-                .map(|(k, v)| {
-                    format!(
-                        "{}:{}{}",
-                        serde_json::Value::String(k.clone()),
-                        if pretty { " " } else { "" },
-                        json_text(v, pretty, depth + 1)
-                    )
-                })
-                .collect(),
-        ),
-        Value::String(v) => return serde_json::Value::String(v.clone()).to_string(),
-        Value::Null => return "null".into(),
-        _ => return value.to_text(),
-    };
-    if items.is_empty() {
-        return format!("{open}{close}");
+fn json_text(value: &Value) -> Result<String, Error> {
+    struct Bounded(Vec<u8>);
+    impl std::io::Write for Bounded {
+        fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+            if bytes.len() > eval::MAX_TEXT_BYTES.saturating_sub(self.0.len()) {
+                return Err(std::io::Error::other("expression text limit"));
+            }
+            self.0.extend_from_slice(bytes);
+            Ok(bytes.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
     }
-    if pretty {
-        format!(
-            "{open}\n{}{}\n{}{close}",
-            "  ".repeat(depth + 1),
-            items.join(&format!(",\n{}", "  ".repeat(depth + 1))),
-            "  ".repeat(depth)
-        )
-    } else {
-        format!("{open}{}{close}", items.join(","))
+    fn write(value: &Value, out: &mut Bounded, depth: usize) -> std::io::Result<()> {
+        use std::io::Write;
+        match value {
+            Value::String(text) => serde_json::to_writer(out, text).map_err(std::io::Error::other),
+            Value::Array(items) => {
+                out.write_all(b"[")?;
+                for (index, item) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.write_all(b",")?;
+                    }
+                    write!(out, "\n{}", "  ".repeat(depth + 1))?;
+                    write(item, out, depth + 1)?;
+                }
+                if !items.is_empty() {
+                    write!(out, "\n{}", "  ".repeat(depth))?;
+                }
+                out.write_all(b"]")
+            }
+            Value::Object(items) => {
+                out.write_all(b"{")?;
+                for (index, (key, item)) in items.iter().enumerate() {
+                    if index > 0 {
+                        out.write_all(b",")?;
+                    }
+                    write!(out, "\n{}", "  ".repeat(depth + 1))?;
+                    serde_json::to_writer(&mut *out, key).map_err(std::io::Error::other)?;
+                    out.write_all(b": ")?;
+                    write(item, out, depth + 1)?;
+                }
+                if !items.is_empty() {
+                    write!(out, "\n{}", "  ".repeat(depth))?;
+                }
+                out.write_all(b"}")
+            }
+            Value::Null => out.write_all(b"null"),
+            _ => out.write_all(value.to_text().as_bytes()),
+        }
     }
+    let mut out = Bounded(Vec::new());
+    write(value, &mut out, 0).map_err(|_| eval::memory_limit())?;
+    String::from_utf8(out.0).map_err(|_| eval::memory_limit())
 }

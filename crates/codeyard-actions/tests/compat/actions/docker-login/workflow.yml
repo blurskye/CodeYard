@@ -1,6 +1,10 @@
 # https://github.com/docker/login-action/tree/c94ce9fb468520275223c153574b00df6fe4bcc9
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

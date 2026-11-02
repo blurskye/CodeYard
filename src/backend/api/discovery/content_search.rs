@@ -6,19 +6,22 @@ use super::{owner_name, search::RESULTS_PER_PAGE, DiscoveryReadError};
 use crate::backend::{
     app::AppState,
     db,
-    db::repositories::records::RepositorySort,
     git::CommitFilter,
     repositories::access::{self, AccessError},
-    repositories::store::{repo_store, RepoError, RepoStore},
+    repositories::store::{repo_store, RepoError, RepoStore, MAX_COMMIT_OFFSET},
 };
 use crate::webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
 use futures_util::{stream, StreamExt};
+use std::collections::{HashMap, HashSet};
 use tokio::time::{timeout_at, Instant};
 
 /// Hits one repository shows in a walk over several repositories. A repository with more says so.
 const HITS_PER_REPOSITORY: usize = 5;
 /// Repositories read from the database per step of the walk.
-const STEP: i64 = 50;
+const STEP: usize = 50;
+/// Candidate repositories one walk reads. A walk that searches all of them and finds the list
+/// full says how many more there are.
+const MAX_CANDIDATES: i64 = 5_000;
 /// Repository searches a request runs at once. Results are kept in walk order.
 const CONCURRENCY: usize = 4;
 /// Repository bytes one request may search, summed from the stored sizes. The first repository
@@ -36,6 +39,8 @@ pub(super) struct ContentPage {
     pub has_older: bool,
     /// Set when the budget stopped the walk before its end.
     pub scan: Option<SearchScan>,
+    /// Set when later hits lie past the furthest commit the store pages to.
+    pub window_limited: bool,
     /// Repositories the walk reached that could not be read, such as a storage node that is down.
     pub unsearched: usize,
     /// Repositories with hits on this page that have more matches than the walk shows, as
@@ -109,13 +114,14 @@ async fn page_hits(
     limit: usize,
     deadline: std::time::Instant,
 ) -> Result<Vec<Hit>, RepoError> {
-    if store.refs().await?.is_empty() {
+    // The full ref name, so a branch named `refs/heads/x` is not read as the branch `x`. The hits
+    // come from this one commit and their links name it, so a later push cannot change them.
+    let refs = store.refs().await?;
+    let Some(tip) = refs.get(&format!("refs/heads/{}", repo.default_branch)) else {
         return Ok(Vec::new());
-    }
+    };
     if query.code {
-        let matches = store
-            .search_code(&repo.default_branch, query.needle, offset, limit)
-            .await?;
+        let matches = store.search_code(tip, query.needle, offset, limit).await?;
         return Ok(matches
             .into_iter()
             .map(|hit| {
@@ -123,6 +129,7 @@ async fn page_hits(
                     owner: owner.to_owned(),
                     repo: repo.name.clone(),
                     branch: repo.default_branch.clone(),
+                    sha: tip.clone(),
                     path: hit.path,
                     line_number: hit.line_number,
                     line: hit.line,
@@ -135,7 +142,7 @@ async fn page_hits(
         ..Default::default()
     };
     let commits = store
-        .commits_until(&repo.default_branch, offset, limit, &filter, deadline)
+        .commits_until(tip, offset, limit, &filter, deadline)
         .await?;
     Ok(commits
         .into_iter()
@@ -220,6 +227,12 @@ async fn repository_page(
         Err(AccessError::NotFound) => return Ok(content),
         Err(_) => return Err(DiscoveryReadError::Unavailable),
     }
+    // The store pages commits only up to `MAX_COMMIT_OFFSET`; later pages say so instead of
+    // failing as a repository that could not be searched.
+    if !query.code && skip > MAX_COMMIT_OFFSET {
+        content.window_limited = true;
+        return Ok(content);
+    }
     let store = repo_store(&repo, state.cluster.as_ref());
     let deadline = Instant::now() + state.search_time_budget;
     // One hit past the page shows that an older page has hits.
@@ -254,7 +267,13 @@ async fn repository_page(
         Err(AccessError::NotFound) => return Ok(ContentPage::default()),
         Err(_) => return Err(DiscoveryReadError::Unavailable),
     }
-    content.has_older = hits.len() > RESULTS_PER_PAGE;
+    if hits.len() > RESULTS_PER_PAGE {
+        if query.code || skip + RESULTS_PER_PAGE <= MAX_COMMIT_OFFSET {
+            content.has_older = true;
+        } else {
+            content.window_limited = true;
+        }
+    }
     hits.truncate(RESULTS_PER_PAGE);
     for hit in hits {
         keep(&mut content, hit);
@@ -277,35 +296,61 @@ async fn walk(
     let mut position = 0usize;
     let mut kept = Vec::new();
     let mut truncated = Vec::new();
+    // The repository of the first hit past the page, which shows that an older page has hits.
+    let mut lookahead = None;
     let mut searched = 0usize;
     let mut admitted = 0usize;
     let mut bytes = 0i64;
     let mut stopped = false;
-    let mut offset = 0i64;
-    'walk: loop {
-        let repos = db::repositories::discovery::search_repositories(
+    // The candidates come from one statement, so a repository deleted or updated during the walk
+    // cannot shift a later one out of it or bring an earlier one back. Each step reads its rows
+    // again, and the hits are authorized again at the end.
+    let candidates = timeout_at(
+        deadline,
+        db::repositories::discovery::search_repository_ids(
             &state.pool,
             viewer,
             scope.repository_query(),
-            RepositorySort::Updated,
-            offset,
-            STEP,
-        )
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?;
-        if repos.is_empty() {
-            break;
-        }
-        offset = offset.saturating_add(i64::try_from(repos.len()).unwrap_or(i64::MAX));
-        let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
-        let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
-            .await
-            .map_err(|_| DiscoveryReadError::Unavailable)?;
+            MAX_CANDIDATES,
+        ),
+    )
+    .await
+    .map_err(|_| DiscoveryReadError::Unavailable)?
+    .map_err(|_| DiscoveryReadError::Unavailable)?;
+    'walk: for step in candidates.chunks(STEP) {
+        let rows = timeout_at(deadline, async {
+            let repos =
+                db::repositories::records::get_repositories_by_ids(&state.pool, step).await?;
+            let owners =
+                db::repositories::records::repository_owner_names(&state.pool, step).await?;
+            anyhow::Ok((repos, owners))
+        })
+        .await;
+        let (repos, owners) = match rows {
+            Ok(Ok(rows)) => rows,
+            Ok(Err(_)) => return Err(DiscoveryReadError::Unavailable),
+            Err(_) => {
+                stopped = true;
+                break;
+            }
+        };
+        let mut repos = repos
+            .into_iter()
+            .map(|repo| (repo.id, repo))
+            .collect::<HashMap<_, _>>();
         // A repository is admitted by its stored size before it is searched. The first one always is.
-        let mut batch = Vec::with_capacity(repos.len());
+        let mut batch = Vec::with_capacity(step.len());
         let mut over_budget = false;
-        for repo in repos {
-            let owner = owner_name(&repo, &owners)?;
+        for id in step {
+            // Deleted since the candidates were read.
+            let Some(repo) = repos.remove(id) else {
+                continue;
+            };
+            let owner = match owner_name(&repo, &owners) {
+                Ok(owner) => owner,
+                Err(DiscoveryReadError::MissingOwner) => continue,
+                Err(error) => return Err(error),
+            };
             if admitted > 0 && bytes.saturating_add(repo.size_bytes) > BYTE_BUDGET {
                 over_budget = true;
                 break;
@@ -358,7 +403,7 @@ async fn walk(
             }
             for hit in hits {
                 if position >= end {
-                    content.has_older = true;
+                    lookahead = Some(repo_id);
                     break 'walk;
                 }
                 if position >= skip {
@@ -372,25 +417,40 @@ async fn walk(
             break;
         }
     }
+    let full = i64::try_from(candidates.len()).unwrap_or(i64::MAX) >= MAX_CANDIDATES;
+    // A walk that searched a full candidate list did not reach every repository either.
+    if full && lookahead.is_none() {
+        stopped = true;
+    }
     if stopped {
-        let total = db::repositories::discovery::count_repositories(
-            &state.pool,
-            viewer,
-            scope.repository_query(),
-            i64::MAX,
-        )
-        .await
-        .map_err(|_| DiscoveryReadError::Unavailable)?;
-        content.scan = Some(SearchScan {
-            searched,
-            total: usize::try_from(total).unwrap_or(usize::MAX),
-        });
+        // The total of a full list is counted in the time left, and is the list's length when
+        // none is left: the count is only for the notice.
+        let mut total = candidates.len();
+        if full && Instant::now() < deadline {
+            let count = timeout_at(
+                deadline,
+                db::repositories::discovery::count_repositories(
+                    &state.pool,
+                    viewer,
+                    scope.repository_query(),
+                    i64::MAX,
+                ),
+            )
+            .await;
+            if let Ok(Ok(count)) = count {
+                total = usize::try_from(count).unwrap_or(usize::MAX).max(total);
+            }
+        }
+        content.scan = Some(SearchScan { searched, total });
     }
     let ids = kept
         .iter()
         .map(|(id, _)| *id)
-        .collect::<std::collections::HashSet<_>>();
+        .chain(lookahead)
+        .collect::<HashSet<_>>();
     let readable = readable_repositories(state, viewer, ids).await?;
+    // Only a hit the viewer can still read shows that an older page exists.
+    content.has_older = lookahead.is_some_and(|id| readable.contains(&id));
     content.truncated = truncated
         .into_iter()
         .filter(|(id, _)| readable.contains(id))
@@ -404,22 +464,21 @@ async fn walk(
     Ok(content)
 }
 
+/// The repositories in `ids` that `viewer` can read now, in one query. A page holds at most
+/// `RESULTS_PER_PAGE` hits and one past it, so the ids stay within the query's bound.
 async fn readable_repositories(
     state: &AppState,
     viewer: Option<i64>,
-    ids: std::collections::HashSet<i64>,
-) -> Result<std::collections::HashSet<i64>, DiscoveryReadError> {
-    let mut readable = std::collections::HashSet::new();
-    for id in ids {
-        match access::check_read(&state.pool, id, viewer).await {
-            Ok(_) => {
-                readable.insert(id);
-            }
-            Err(AccessError::NotFound) => {}
-            Err(_) => return Err(DiscoveryReadError::Unavailable),
-        }
-    }
-    Ok(readable)
+    ids: HashSet<i64>,
+) -> Result<HashSet<i64>, DiscoveryReadError> {
+    let ids = ids.into_iter().collect::<Vec<_>>();
+    Ok(
+        db::repositories::access::readable_repository_ids(&state.pool, viewer, &ids)
+            .await
+            .map_err(|_| DiscoveryReadError::Unavailable)?
+            .into_iter()
+            .collect(),
+    )
 }
 
 #[cfg(test)]

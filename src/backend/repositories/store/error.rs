@@ -147,6 +147,15 @@ impl RepoError {
         }
     }
 
+    /// A credential without the workflows permission tried to change workflow files.
+    pub fn workflow_denied() -> Self {
+        Self {
+            kind: ErrorKind::Invalid,
+            reason: Some(RepoErrorReason::WriteDenied),
+            message: crate::backend::git::oauth::WORKFLOW_DENIED.into(),
+        }
+    }
+
     pub fn protected_branch() -> Self {
         Self {
             kind: ErrorKind::Invalid,
@@ -253,6 +262,9 @@ impl From<anyhow::Error> for RepoError {
         if let Some(error) = error.downcast_ref::<RepoError>() {
             return error.clone();
         }
+        if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+            return Self::write_denied();
+        }
         if error.is::<crate::backend::git::repository::process::SessionsBusy>() {
             return Self::sessions_busy();
         }
@@ -294,6 +306,7 @@ impl From<anyhow::Error> for RepoError {
         }
         let kind = match error.downcast_ref::<git2::Error>() {
             Some(error) if crate::backend::git::is_missing_path(error) => ErrorKind::MissingPath,
+            Some(error) if error.code() == git2::ErrorCode::Ambiguous => ErrorKind::Invalid,
             // A repository directory that cannot be opened is an outage, not a
             // missing branch.
             Some(error)

@@ -29,6 +29,12 @@ async fn fill(
         .get_mut("repository")
         .filter(|value| value.is_object())
     {
+        // A source subscription does not grant access to its private remediation forks.
+        let forks = db::repositories::discovery::public_fork_counts(pool, &[repo.id])
+            .await?
+            .remove(&repo.id)
+            .unwrap_or_default();
+        payloads::set_fork_counts(repository, forks);
         repository["topics"] = json!(topics(pool, repo.id).await?);
     }
     if let Some(item) = issue_item(&payload["issue"]) {
@@ -57,7 +63,12 @@ async fn fill(
                     }
                 }
             }
-            payload["issue"] = stored;
+            // A transfer committed while the document was read could have swapped in the
+            // destination's labels and milestone. A transfer moves the issue and gives it a new
+            // number, so the document is kept only if the issue is still here under its number.
+            if still_here(pool, repo, item, &payload["issue"]).await? {
+                payload["issue"] = stored;
+            }
         }
         if payload["comment"].is_object() {
             comment(pool, repo, item, &mut payload["comment"]).await?;
@@ -65,12 +76,22 @@ async fn fill(
     }
     if let Some(id) = payload["pull_request"]["id"].as_i64() {
         pull_request(pool, repo, owner, id, &mut payload["pull_request"]).await?;
+        let repository = payload["repository"].clone();
+        if repository.is_object() {
+            payload["pull_request"]["base"]["repo"] = repository.clone();
+            if payload["pull_request"]["head"]["repo"]["id"].as_i64() == Some(repo.id) {
+                payload["pull_request"]["head"]["repo"] = repository;
+            }
+        }
     }
     // A review comment comes with its pull request and no issue, so the issue branch skipped it.
     if payload["issue"].is_null() && payload["pull_request"].is_object() {
         if let Some(user) = payload["comment"]["user"]["id"].as_i64() {
             payload["comment"]["author_association"] =
                 json!(access::author_association(pool, repo, user).await?);
+        }
+        if payload["comment"].is_object() {
+            review_comment(pool, repo, &mut payload["comment"]).await?;
         }
     }
     if let Some(user) = payload["review"]["user"]["id"].as_i64() {
@@ -93,6 +114,23 @@ async fn topics(pool: &DbPool, repo_id: i64) -> anyhow::Result<Vec<String>> {
             .remove(&repo_id)
             .unwrap_or_default(),
     )
+}
+
+/// Whether `item` is still the issue `event` describes in `repo`. Pull requests do not move.
+async fn still_here(
+    pool: &DbPool,
+    repo: &Repository,
+    item: AssignedItem,
+    event: &Value,
+) -> anyhow::Result<bool> {
+    let AssignedItem::Issue(id) = item else {
+        return Ok(true);
+    };
+    Ok(db::issues::get_issue_by_id(pool, id)
+        .await?
+        .is_some_and(|issue| {
+            issue.repo_id == repo.id && Some(i64::from(issue.number)) == event["number"].as_i64()
+        }))
 }
 
 /// A pull request's issue document has a `pull_request` object and the pull request's id.
@@ -134,6 +172,63 @@ async fn comment(
     Ok(())
 }
 
+/// A review comment's reactions, by the comment document's `id` and `url`.
+pub(crate) async fn review_comment_reactions(
+    pool: &DbPool,
+    comment: &Value,
+) -> anyhow::Result<Value> {
+    let (Some(id), Some(url)) = (comment["id"].as_i64(), comment["url"].as_str()) else {
+        return Ok(Value::Null);
+    };
+    let counts =
+        db::reactions::reaction_counts(pool, Subject::PullRequestComment.name(), &[id], 0).await?;
+    Ok(payloads::reaction_rollup(
+        &format!("{url}/reactions"),
+        &counts,
+    ))
+}
+
+/// Fills a review comment's reactions, and its diff hunk and positions from the diff it was
+/// written on. The diff is read from this node's copy of the repository; where another node
+/// stores it, the hunk stays empty rather than delaying the event.
+async fn review_comment(
+    pool: &DbPool,
+    repo: &Repository,
+    document: &mut Value,
+) -> anyhow::Result<()> {
+    let reactions = review_comment_reactions(pool, document).await?;
+    document["reactions"] = reactions;
+    let Some(id) = document["id"].as_i64() else {
+        return Ok(());
+    };
+    let Some(comment) =
+        db::pull_requests::reviews::get_pull_request_comment_by_id(pool, id).await?
+    else {
+        return Ok(());
+    };
+    let Some(path) = comment.path.as_deref() else {
+        return Ok(());
+    };
+    let Some(pull) =
+        db::pull_requests::records::get_pull_request_by_id(pool, comment.pull_request_id)
+            .await?
+            .filter(|pull| pull.repo_id == repo.id)
+    else {
+        return Ok(());
+    };
+    let (base, head) = payloads::review_comment_revisions(&comment, &pull);
+    match crate::backend::repositories::store::repo_store(repo, None)
+        .diff_file(base, head, path)
+        .await
+    {
+        Ok(diff) => payloads::review_comment_diff(document, &comment, &pull, &diff.files),
+        Err(error) => {
+            tracing::warn!(repo_id = repo.id, comment_id = id, %error, "review comment diff could not be read for a webhook")
+        }
+    }
+    Ok(())
+}
+
 async fn pull_request(
     pool: &DbPool,
     repo: &Repository,
@@ -150,7 +245,15 @@ async fn pull_request(
     document["author_association"] =
         json!(access::author_association(pool, repo, pull.author_id).await?);
     let base_user = document["base"]["repo"]["owner"].clone();
-    document["base"]["label"] = json!(format!("{owner}:{}", pull.base_branch));
+    let base_branch = document["base"]["ref"]
+        .as_str()
+        .unwrap_or(&pull.base_branch)
+        .to_owned();
+    let head_branch = document["head"]["ref"]
+        .as_str()
+        .unwrap_or(&pull.head_branch)
+        .to_owned();
+    document["base"]["label"] = json!(format!("{owner}:{base_branch}"));
     document["base"]["user"] = base_user;
     document["base"]["repo"]["topics"] = json!(topics(pool, repo.id).await?);
     let head = match pull.head_repo_id {
@@ -168,7 +271,7 @@ async fn pull_request(
     match head {
         Some((head, head_owner)) => {
             let mut value = payloads::repository(&head, &head_owner);
-            document["head"]["label"] = json!(format!("{head_owner}:{}", pull.head_branch));
+            document["head"]["label"] = json!(format!("{head_owner}:{head_branch}"));
             document["head"]["user"] = value["owner"].clone();
             // A private fork is described only to its own readers. The base repository's
             // readers and hooks get the branch, not the fork's metadata.
@@ -183,6 +286,11 @@ async fn pull_request(
                         .await?
                         .is_some_and(|now| !now.is_private);
                 if public {
+                    if fork {
+                        let mut payload = json!({"repository":value});
+                        super::set_open_issues(pool, head.id, &mut payload).await;
+                        value = payload["repository"].take();
+                    }
                     value
                 } else {
                     Value::Null
@@ -191,11 +299,16 @@ async fn pull_request(
         }
         // The fork was deleted.
         None => {
-            document["head"]["label"] = Value::Null;
+            document["head"]["repo"] = Value::Null;
+            document["head"]["label"] = json!(head_branch);
             document["head"]["user"] = Value::Null;
         }
     }
-    let labels = db::labels::get_pull_request_labels(pool, pull.id).await?;
+    if document["head"]["repo"].is_null() {
+        document["head"]["user"] = Value::Null;
+        document["head"]["label"] = json!(head_branch);
+    }
+    let labels = db::labels::get_pull_request_labels(pool, pull.repo_id, pull.id).await?;
     document["labels"] = json!(labels
         .iter()
         .map(|label| payloads::label(label, owner, &repo.name))
@@ -222,10 +335,16 @@ async fn pull_request(
     let reviewers = db::pull_requests::reviews::list_pull_request_reviewers(pool, pull.id).await?;
     document["requested_reviewers"] =
         json!(reviewers.iter().map(payloads::user).collect::<Vec<_>>());
+    let teams = db::pull_requests::team_reviewers::list(pool, repo.id, Some(pull.id), None).await?;
+    document["requested_teams"] = json!(teams
+        .iter()
+        .map(|row| payloads::team_document(&row.team, &row.org_slug, row.permission))
+        .collect::<Vec<_>>());
     let (comments, review_comments) =
         db::pull_requests::reviews::pull_request_comment_counts(pool, pull.id).await?;
     document["comments"] = json!(comments);
     document["review_comments"] = json!(review_comments);
+    document["auto_merge"] = auto_merge(pool, pull.id).await?;
     document["merged_by"] = match pull.merged_by_id {
         Some(id) => db::users::accounts::get_user_by_id(pool, id)
             .await?
@@ -236,6 +355,16 @@ async fn pull_request(
     Ok(())
 }
 
+/// A pull request's `auto_merge` object, or null when auto-merge is not enabled.
+pub(crate) async fn auto_merge(pool: &DbPool, pull_request_id: i64) -> anyhow::Result<Value> {
+    let Some(entry) = db::pull_requests::auto_merge::get_auto_merge(pool, pull_request_id).await?
+    else {
+        return Ok(Value::Null);
+    };
+    let enabled_by = db::users::accounts::get_user_by_id(pool, entry.request.enabled_by).await?;
+    Ok(payloads::auto_merge(&entry.request, enabled_by.as_ref()))
+}
+
 /// The documents of a release's assets whose stored files remain.
 pub(crate) async fn release_assets(
     pool: &DbPool,
@@ -243,13 +372,27 @@ pub(crate) async fn release_assets(
     owner: &str,
     release: &Release,
 ) -> anyhow::Result<Vec<Value>> {
-    let mut assets = Vec::new();
-    for asset in db::releases::list_release_assets(pool, release.id).await? {
-        if let Some(value) = release_asset(pool, owner, &repo.name, release, &asset).await? {
-            assets.push(value);
-        }
-    }
-    Ok(assets)
+    Ok(db::releases::list_asset_files(pool, release.id)
+        .await?
+        .into_iter()
+        .map(|row| {
+            let uploader = row.uploader_id.zip(row.uploader_name).map(|(id, login)| {
+                payloads::simple_person(&payloads::Person {
+                    id,
+                    login,
+                    site_admin: row.uploader_is_admin.unwrap_or(false),
+                })
+            });
+            payloads::release_asset(
+                &row.asset,
+                release,
+                owner,
+                &repo.name,
+                uploader,
+                &row.sha256_hex,
+            )
+        })
+        .collect())
 }
 
 /// A release asset as REST and webhooks show it. `None` when its stored file is gone.

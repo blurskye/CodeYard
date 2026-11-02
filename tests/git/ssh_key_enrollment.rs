@@ -52,6 +52,8 @@ async fn contract(pg: bool) {
         format!("command=bad {PUBLIC}"),
         format!("{PUBLIC}\n{PUBLIC}"),
         "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----".into(),
+        // A private key body pasted without its header.
+        "b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAAB".into(),
     ] {
         let error = db::users::ssh_keys::add_ssh_key(f.pool(), alice_id, "Invalid", &invalid)
             .await
@@ -68,6 +70,10 @@ async fn contract(pg: bool) {
             assert!(!reply.text().contains("AAAA"));
         } else {
             assert!(reply.text().contains("Invalid SSH public key format."));
+        }
+        // Only a draft that starts with a public key type is echoed back.
+        if !invalid.starts_with("ssh-") {
+            assert!(!reply.text().contains(invalid.as_str()), "{invalid}");
         }
     }
     assert!(db::users::ssh_keys::list_user_keys(f.pool(), alice_id)

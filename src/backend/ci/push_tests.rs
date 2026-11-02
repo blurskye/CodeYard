@@ -1,5 +1,5 @@
 use super::*;
-use crate::backend::ci::workflows::parse_push_workflow;
+use crate::backend::ci::workflows::parse_workflow_definition;
 
 fn revision(paths: usize) -> (tempfile::TempDir, RepoStore, String) {
     let root = tempfile::tempdir().unwrap();
@@ -22,7 +22,7 @@ fn revision(paths: usize) -> (tempfile::TempDir, RepoStore, String) {
 }
 
 fn workflow(name: &str, filters: &str) -> WorkflowDefinition {
-    parse_push_workflow(
+    parse_workflow_definition(
         &format!(".github/workflows/{name}.yml"),
         &format!(
             "on:\n  push: {filters}\njobs: {{check: {{runs-on: ubuntu-latest, steps: []}}}}\n"
@@ -60,7 +60,7 @@ async fn new_refs_match_paths_against_the_same_root_tree_for_every_publisher() {
 }
 
 #[tokio::test]
-async fn unavailable_large_path_lists_skip_only_path_filtered_workflows() {
+async fn unavailable_large_path_lists_run_ref_matched_workflows() {
     let (_root, store, sha) = revision(crate::backend::git::MAX_CI_CHANGED_PATHS + 1);
     let update = RefUpdate {
         reference: "refs/heads/main".into(),
@@ -83,12 +83,14 @@ async fn unavailable_large_path_lists_skip_only_path_filtered_workflows() {
     .unwrap();
     assert_eq!(
         matched.iter().map(|w| w.path.as_str()).collect::<Vec<_>>(),
-        [".github/workflows/all.yml"]
+        [".github/workflows/all.yml", ".github/workflows/docs.yml"]
     );
 }
 
+/// The skip check reads every pushed commit's message, so an old revision it cannot find refuses
+/// the push's runs instead of running workflows the push may have asked to skip.
 #[tokio::test]
-async fn branch_excluded_path_filters_do_not_require_a_comparison() {
+async fn an_unknown_old_revision_fails_the_skip_check_closed() {
     let (_root, store, sha) = revision(0);
     let update = RefUpdate {
         reference: "refs/heads/main".into(),
@@ -106,8 +108,6 @@ async fn branch_excluded_path_filters_do_not_require_a_comparison() {
         None,
         &mut WorkflowMatchBudget::new(),
     )
-    .await
-    .unwrap();
-    assert_eq!(matched.len(), 1);
-    assert_eq!(matched[0].path, ".github/workflows/all.yml");
+    .await;
+    assert!(matched.is_err());
 }

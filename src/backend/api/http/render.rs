@@ -183,18 +183,54 @@ struct ModelRender {
 }
 
 static MODEL_RENDERS: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(4);
+/// How long a page waits for a render slot before the server answers that it is busy.
+const RENDER_WAIT: std::time::Duration = std::time::Duration::from_secs(10);
+static RENDER_WAITERS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A page waiting for a render slot. Each holds its whole page model, so their number is capped.
+struct RenderWaiter;
+
+impl RenderWaiter {
+    fn join(limit: usize) -> Option<Self> {
+        let earlier = RENDER_WAITERS.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        let waiter = Self;
+        (earlier < limit).then_some(waiter)
+    }
+}
+
+impl Drop for RenderWaiter {
+    fn drop(&mut self) {
+        RENDER_WAITERS.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+async fn render_slot(waiters: usize) -> Option<tokio::sync::SemaphorePermit<'static>> {
+    if let Ok(permit) = MODEL_RENDERS.try_acquire() {
+        return Some(permit);
+    }
+    let _waiter = RenderWaiter::join(waiters)?;
+    tokio::time::timeout(RENDER_WAIT, MODEL_RENDERS.acquire())
+        .await
+        .ok()?
+        .ok()
+}
 
 pub(crate) async fn render_page(
+    axum::Extension(config): axum::Extension<Arc<super::config::WebConfig>>,
     request: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> Response {
     let head = request.method() == Method::HEAD;
     let mut response = next.run(request).await;
     if let Some(render) = response.extensions_mut().remove::<ModelRender>() {
-        let permit = MODEL_RENDERS
-            .acquire()
-            .await
-            .expect("render semaphore remains open");
+        // A burst of page loads waits its turn; a slot that stays taken, or a full queue,
+        // answers busy.
+        let Some(permit) = render_slot(config.page_render_waiters).await else {
+            return public_error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Page rendering busy. Please try again.",
+            );
+        };
         let html = tokio::task::spawn_blocking(move || {
             let _permit = permit;
             document::render_model(render.envelope, render.runtime_module)
@@ -313,10 +349,23 @@ pub(crate) fn error_model_response(
 }
 
 pub(crate) fn public_error(status: StatusCode, message: &str) -> Response {
+    public_error_returning_to(status, message, String::new())
+}
+
+/// A public error page whose appearance switch returns to `return_to`, a page the handler
+/// chose because the failing address itself may accept only POST.
+pub(crate) fn public_error_returning_to(
+    status: StatusCode,
+    message: &str,
+    return_to: String,
+) -> Response {
     html_response(
         status,
         status.canonical_reason().unwrap_or("Request failed"),
-        Chrome::default(),
+        Chrome {
+            return_to,
+            ..Chrome::default()
+        },
         None,
         crate::webui::pages::error::render(status.as_u16(), message, None, false),
     )
@@ -337,8 +386,7 @@ pub(crate) async fn not_found(
             Some(query) => format!("{trimmed}?{query}"),
             None => trimmed.to_owned(),
         };
-        // Doubled slashes would make a protocol-relative address.
-        if !trimmed.is_empty() && !target.starts_with("//") {
+        if crate::webui::navigation::safe_page_target(&target) {
             return Redirect::permanent(&target).into_response();
         }
     }
@@ -353,10 +401,18 @@ mod tests {
     use super::*;
     use tower::ServiceExt;
 
+    fn config(page_render_waiters: usize) -> axum::Extension<Arc<super::super::config::WebConfig>> {
+        axum::Extension(Arc::new(super::super::config::WebConfig {
+            cors_origins: Vec::new(),
+            trusted_proxies: Default::default(),
+            page_render_waiters,
+        }))
+    }
+
     #[tokio::test]
     async fn model_rendering_waits_for_a_bounded_slot_without_blocking_http() {
         let permits = MODEL_RENDERS.acquire_many(4).await.unwrap();
-        let router = axum::Router::new()
+        let page = axum::Router::new()
             .route(
                 "/",
                 axum::routing::get(|| async {
@@ -377,6 +433,20 @@ mod tests {
                 }),
             )
             .layer(axum::middleware::from_fn(render_page));
+        // With no room to wait, a page is answered busy at once instead of queueing.
+        let full = page
+            .clone()
+            .layer(config(0))
+            .oneshot(
+                axum::http::Request::builder()
+                    .uri("/")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(full.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let router = page.layer(config(64));
         let mut request = tokio::spawn(
             router.clone().oneshot(
                 axum::http::Request::builder()

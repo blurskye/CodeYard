@@ -17,12 +17,12 @@ pub async fn create_organization(
     if !active(&mut tx, actor).await? {
         return Ok(Denied);
     }
-    let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE username=$1 UNION ALL SELECT 1 FROM organizations WHERE name=$1)")
+    let occupied: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE lower(username COLLATE \"C\")=lower($1 COLLATE \"C\") UNION ALL SELECT 1 FROM organizations WHERE lower(name COLLATE \"C\")=lower($1 COLLATE \"C\"))")
         .bind(&input.slug).fetch_one(&mut *tx).await?;
     if occupied {
         return Ok(Conflict);
     }
-    let id: Option<i64> = sqlx::query_scalar("INSERT INTO organizations(name,display_name,description) VALUES($1,$2,$3) ON CONFLICT(name) DO NOTHING RETURNING id")
+    let id: Option<i64> = sqlx::query_scalar("INSERT INTO organizations(name,display_name,description) VALUES($1,$2,$3) ON CONFLICT DO NOTHING RETURNING id")
         .bind(&input.slug).bind(input.profile.display_name.clone().flatten()).bind(input.profile.description.clone().flatten()).fetch_optional(&mut *tx).await?;
     let Some(id) = id else {
         return Ok(Conflict);
@@ -39,12 +39,21 @@ pub async fn create_organization(
 pub async fn update_organization_profile(
     pool: &PgPool,
     actor: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     org: i64,
     input: &OrganizationProfile,
 ) -> Result<OrganizationOutcome<OrganizationMetadata>> {
     let mut tx = begin(pool).await?;
     let role = require_org!(tx, actor, org);
     if !administers(role) {
+        return Ok(Denied);
+    }
+    // The browser session or token that sent the change must still be live when it commits.
+    if !crate::backend::db::postgres::users::transitions::credential_live(
+        &mut tx, actor, credential, true,
+    )
+    .await?
+    {
         return Ok(Denied);
     }
     // The authority check locked this row, so an omitted field keeps the value committed
@@ -88,10 +97,11 @@ pub async fn set_organization_avatar(
     if let Some(file) = file {
         // Activate verified form uploads in the same transaction as assignment.
         let usable: Option<uuid::Uuid> = sqlx::query_scalar(
-            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>NOW())) AND reason='org_avatar' AND content_type IN ('image/png','image/jpeg','image/gif','image/webp') RETURNING id",
+            "UPDATE files SET is_active=TRUE,upload_expires_at=NULL,updated_at=NOW() WHERE id=$1 AND user_id=$2 AND (is_active OR (confirmed_at IS NOT NULL AND upload_expires_at>NOW())) AND reason='org_avatar' AND content_type IN (SELECT jsonb_array_elements_text($3::jsonb)) RETURNING id",
         )
         .bind(file)
         .bind(actor)
+        .bind(serde_json::to_string(&crate::media::AVATAR_CONTENT_TYPES)?)
         .fetch_optional(&mut *tx)
         .await?;
         if usable.is_none() {
@@ -166,7 +176,7 @@ pub async fn list_actor_organizations(
         return Ok(Denied);
     }
     // One statement snapshot: revocations cannot expose partially joined facts.
-    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE m.user_id=$1 AND m.role IN ('owner','admin','member') AND o.id>$2 ORDER BY o.id LIMIT $3")
+    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,NOT EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) AS governance_suspended,o.avatar_file_id FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE m.user_id=$1 AND m.role IN ('owner','admin','member') AND o.id>$2 ORDER BY o.id LIMIT $3")
         .bind(actor).bind(page.after).bind(page.limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))
@@ -183,7 +193,7 @@ pub async fn list_repository_creation_organizations(
     }
     // Role and usable governance filter BEFORE LIMIT in the same read snapshot.
     // Never enumerate memberships or apply a site-administrator exception.
-    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,FALSE AS governance_suspended FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE m.user_id=$1 AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM organization_settings s WHERE s.org_id=o.id AND (s.members_can_create_public_repositories OR s.members_can_create_private_repositories)))) AND o.id>$2 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) ORDER BY o.id LIMIT $3")
+    let rows = sqlx::query_as("SELECT o.id,o.name,o.display_name,o.description,o.is_verified,FALSE AS governance_suspended,o.avatar_file_id FROM organizations o JOIN org_memberships m ON m.org_id=o.id WHERE m.user_id=$1 AND (m.role IN ('owner','admin') OR (m.role='member' AND EXISTS(SELECT 1 FROM organization_settings s WHERE s.org_id=o.id AND (s.members_can_create_public_repositories OR s.members_can_create_private_repositories)))) AND o.id>$2 AND EXISTS(SELECT 1 FROM org_memberships own JOIN users u ON u.id=own.user_id WHERE own.org_id=o.id AND own.role='owner' AND NOT u.is_banned AND NOT u.must_change_password) ORDER BY o.id LIMIT $3")
         .bind(actor).bind(page.after).bind(page.limit).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(rows))

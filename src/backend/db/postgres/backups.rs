@@ -2,6 +2,26 @@ use crate::backend::db::{backups::PullRequestHead, models::Repository};
 use anyhow::Result;
 use sqlx::PgPool;
 
+pub async fn export_snapshot(
+    pool: &PgPool,
+) -> Result<(
+    sqlx::Transaction<'static, sqlx::Postgres>,
+    String,
+    Vec<Repository>,
+)> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let snapshot = sqlx::query_scalar("SELECT pg_export_snapshot()")
+        .fetch_one(&mut *tx)
+        .await?;
+    let repositories = sqlx::query_as("SELECT * FROM repositories ORDER BY id")
+        .fetch_all(&mut *tx)
+        .await?;
+    Ok((tx, snapshot, repositories))
+}
+
 pub async fn list_repositories(pool: &PgPool) -> Result<Vec<Repository>> {
     Ok(sqlx::query_as("SELECT * FROM repositories ORDER BY id")
         .fetch_all(pool)
@@ -19,7 +39,7 @@ pub async fn set_disk_path(pool: &PgPool, repo_id: i64, disk_path: &str) -> Resu
 
 pub async fn list_pull_request_heads(pool: &PgPool, repo_id: i64) -> Result<Vec<PullRequestHead>> {
     Ok(sqlx::query_as(
-        "SELECT id, number::BIGINT AS number, state, head_sha, base_sha, fork_sha, merge_commit_sha FROM pull_requests WHERE repo_id = $1 ORDER BY number",
+        "SELECT id, number::BIGINT AS number, state, head_sha, head_repo_id, head_branch, base_sha, base_branch, fork_sha, merge_commit_sha FROM pull_requests WHERE repo_id = $1 ORDER BY number",
     )
     .bind(repo_id)
     .fetch_all(pool)

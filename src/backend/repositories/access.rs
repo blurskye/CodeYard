@@ -6,6 +6,60 @@ use crate::backend::db::{
 };
 use anyhow::Result;
 
+/// Retained account identity, without substituting Git permissions for a metadata operation.
+pub(crate) async fn credential_user(
+    pool: &db::DbPool,
+    actor: &db::credentials::Actor,
+    write: bool,
+) -> Result<User> {
+    use db::users::accounts::{AccountRestricted, OwnedAccountCredential};
+    let user = match &actor.credential {
+        None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
+        Some(OwnedAccountCredential::Session(session)) => {
+            db::users::sessions::get_session_user(pool, session).await?
+        }
+        Some(OwnedAccountCredential::Token(token_id, _)) => {
+            db::users::tokens::token_user(pool, *token_id, write).await?
+        }
+    }
+    .ok_or(AccountRestricted)?;
+    anyhow::ensure!(
+        user.id == actor.user_id && !user.is_banned && !user.must_change_password,
+        AccountRestricted
+    );
+    Ok(user)
+}
+
+/// Recheck the credential retained by a native publication, after preparation and lock waits.
+pub(crate) async fn check_publication_actor(
+    pool: &db::DbPool,
+    actor: &db::credentials::Actor,
+    repository: &Repository,
+) -> Result<()> {
+    use db::users::accounts::OwnedAccountCredential;
+    let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
+        .await?
+        .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
+    let user = match &actor.credential {
+        None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
+        Some(OwnedAccountCredential::Session(session)) => {
+            db::users::sessions::get_session_user(pool, session).await?
+        }
+        Some(OwnedAccountCredential::Token(token_id, _)) => Some(
+            super::git_sessions::ReceiveCredential::Token(*token_id)
+                .authorize(pool, &repository, true)
+                .await?
+                .0,
+        ),
+    }
+    .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
+    anyhow::ensure!(
+        user.id == actor.user_id && can_write(pool, &user, &repository).await?,
+        db::users::accounts::AccountRestricted
+    );
+    Ok(())
+}
+
 /// The access projection with the personal-repository administrator policy applied.
 pub async fn user_access(
     pool: &db::DbPool,
@@ -72,6 +126,9 @@ pub async fn can_read(
     let Some(user) = user else {
         return Ok(false);
     };
+    if user.is_banned || user.must_change_password {
+        return Ok(false);
+    }
     if repository.owner_kind == "user" && (user.is_admin || repository.is_personal_owner(user.id)) {
         return Ok(true);
     }
@@ -88,26 +145,26 @@ pub async fn author_association(
     repository: &Repository,
     user_id: i64,
 ) -> Result<&'static str> {
-    if repository.is_personal_owner(user_id) {
-        return Ok("OWNER");
-    }
-    let member = match repository.owner_org_id {
-        Some(org) => matches!(
-            db::organizations::membership::get_organization_role(pool, user_id, org).await?,
-            db::organizations::OrganizationOutcome::Applied(_)
-        ),
-        None => false,
-    };
-    let writer = db::repositories::access::get_user_repo_access(pool, user_id, repository.id)
-        .await?
-        .can_write();
-    Ok(if member {
-        "MEMBER"
-    } else if writer {
-        "COLLABORATOR"
-    } else {
-        "NONE"
+    let associations = author_associations(pool, repository, &[user_id]).await?;
+    Ok(match associations.get(&user_id).map(String::as_str) {
+        Some("OWNER") => "OWNER",
+        Some("MEMBER") => "MEMBER",
+        Some("COLLABORATOR") => "COLLABORATOR",
+        _ => "NONE",
     })
+}
+
+pub async fn author_associations(
+    pool: &db::DbPool,
+    repository: &Repository,
+    users: &[i64],
+) -> Result<std::collections::HashMap<i64, String>> {
+    Ok(
+        db::repositories::access::author_associations(pool, repository.id, users)
+            .await?
+            .into_iter()
+            .collect(),
+    )
 }
 
 pub async fn can_admin(pool: &db::DbPool, user: &User, repository: &Repository) -> Result<bool> {
@@ -205,6 +262,20 @@ pub async fn current_repository(
         .ok_or(AccessError::NotFound)
 }
 
+/// A repository that a caller already resolved and authorized, read again by ID so that a
+/// rename in between cannot switch it, with its owner's current name for links.
+pub async fn current_repository_with_owner(
+    pool: &db::DbPool,
+    id: i64,
+) -> std::result::Result<(Repository, String), AccessError> {
+    let repository = current_repository(pool, id).await?;
+    let owner = db::repositories::records::repository_owner_name(pool, id)
+        .await
+        .map_err(|_| AccessError::Unavailable)?
+        .ok_or(AccessError::NotFound)?;
+    Ok((repository, owner))
+}
+
 pub async fn check_read(
     pool: &db::DbPool,
     repo_id: i64,
@@ -286,7 +357,7 @@ pub async fn check_write(
 /// Personal repository owners retain the existing collaborator policy.
 pub async fn change_collaborator(
     pool: &db::DbPool,
-    actor: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<db::models::AccessLevel>,
@@ -295,7 +366,13 @@ pub async fn change_collaborator(
         pool, actor, repo_id, username, permission,
     )
     .await
-    .map_err(|_| AccessError::Unavailable)?;
+    .map_err(|error| {
+        if error.is::<db::users::accounts::AccountRestricted>() {
+            AccessError::NotFound
+        } else {
+            AccessError::Unavailable
+        }
+    })?;
     match change {
         CollaboratorChange::Applied(user) => Ok(*user),
         CollaboratorChange::NotFound => Err(AccessError::NotFound),

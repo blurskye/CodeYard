@@ -1,9 +1,11 @@
 //! Replays the commits of one history onto another, one at a time, the way a rebase does.
-use super::checked::{command, commit_tree, merge_tree_result, tree_of, Person, UnsupportedMerge};
+use super::checked::{
+    command, commit_tree_bytes, merge_tree_with_base, tree_of, Person, UnsupportedMerge,
+};
 use super::validate_merge_revision;
 use super::MAX_COMMIT_OBJECT_BYTES;
 use anyhow::{bail, ensure, Context, Result};
-use std::{path::Path, time::Duration};
+use std::{ffi::OsString, os::unix::ffi::OsStringExt, path::Path, time::Duration};
 
 /// The most time one replay may take, across all of its Git commands together.
 const REPLAY_DEADLINE: Duration = Duration::from_secs(120);
@@ -25,8 +27,8 @@ struct PendingCommit {
 }
 
 struct OriginalCommit {
-    name: String,
-    email: String,
+    name: OsString,
+    email: OsString,
     date: String,
     message: Vec<u8>,
 }
@@ -61,33 +63,23 @@ async fn replay(
     let mut tip_tree = tree_of(path, onto).await?;
     let mut replayed = 0;
     for commit in &commits {
-        let merge_base = format!("--merge-base={}", commit.parent);
-        let (status, output) = command(
-            path,
-            &[
-                "merge-tree",
-                "--write-tree",
-                "--name-only",
-                &merge_base,
-                tip.as_str(),
-                commit.id.as_str(),
-            ],
-            b"",
-            None,
-        )
-        .await?;
-        let tree = merge_tree_result(status, &output)?;
+        let tree = merge_tree_with_base(path, &commit.parent, &tip, &commit.id).await?;
         if tree == tip_tree {
             continue;
         }
         let original = original_commit(path, &commit.id).await?;
-        let author = Person {
-            name: &original.name,
-            email: &original.email,
-            date: Some(&original.date),
-        };
         let parents = [tip.as_str()];
-        tip = commit_tree(path, &tree, &parents, &original.message, &author, committer).await?;
+        tip = commit_tree_bytes(
+            path,
+            &tree,
+            &parents,
+            &original.message,
+            &original.name,
+            &original.email,
+            Some(&original.date),
+            committer,
+        )
+        .await?;
         ensure_commit_fits(path, &tip).await?;
         tip_tree = tree;
         replayed += 1;
@@ -166,6 +158,7 @@ async fn original_commit(path: &Path, commit: &str) -> Result<OriginalCommit> {
             "log",
             "-1",
             "--date=raw",
+            "--encoding=none",
             "--pretty=format:%an%x00%ae%x00%ad%x00%B",
             commit,
         ],
@@ -179,8 +172,8 @@ async fn original_commit(path: &Path, commit: &str) -> Result<OriginalCommit> {
         bail!("Git returned an unreadable commit");
     };
     Ok(OriginalCommit {
-        name: std::str::from_utf8(name)?.to_owned(),
-        email: std::str::from_utf8(email)?.to_owned(),
+        name: OsString::from_vec(name.to_vec()),
+        email: OsString::from_vec(email.to_vec()),
         date: std::str::from_utf8(date)?.to_owned(),
         message: message.to_vec(),
     })

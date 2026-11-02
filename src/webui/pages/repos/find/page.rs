@@ -1,5 +1,5 @@
 //! "Go to file": every file path at one revision. The server applies the `q` query when it
-//! renders; after hydration the same box filters the list as the reader types, with the same rule.
+//! renders; hydration filters complete listings locally and submits incomplete searches to the server.
 use crate::webui::pages::repos::{
     chrome::{chrome, icon, RepoChrome},
     ref_path::file_url,
@@ -22,20 +22,8 @@ pub struct FindPage {
     pub query: String,
 }
 
-/// The whitespace-separated terms of a query: lowercased, deduplicated and cut to 256 characters.
-pub fn query_terms(query: &str) -> Vec<String> {
-    let query: String = query.chars().take(256).collect();
-    let mut terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
-    terms.sort_unstable();
-    terms.dedup();
-    terms
-}
-
-/// Whether every term appears in `path`, ignoring case. No terms match every path.
-fn matches_terms(path: &str, terms: &[String]) -> bool {
-    let path = path.to_lowercase();
-    terms.iter().all(|term| path.contains(term))
-}
+use crate::file_search::matches_terms;
+pub use crate::file_search::query_terms;
 
 pub fn find(repo: &RepoChrome, page: &FindPage) -> Element {
     let base = repo.base();
@@ -110,6 +98,9 @@ fn FindFiles(base: String, page: FindPage) -> Element {
     let current = filter();
     let terms = query_terms(&current);
     let filtering = !terms.is_empty();
+    // A server-filtered listing is not a complete tree even if all its matches fit.
+    let server_search = page.truncated || !query_terms(&page.query).is_empty();
+    let needs_server_search = server_search && terms != query_terms(&page.query);
     let matches: Vec<&String> = page
         .paths
         .iter()
@@ -118,7 +109,7 @@ fn FindFiles(base: String, page: FindPage) -> Element {
     // Enter opens the first match once the page runs in the browser.
     let highlighted = matches
         .first()
-        .filter(|_| filtering)
+        .filter(|_| filtering && !needs_server_search)
         .map(|path| file_url(&base, "blob", &page.reference, path));
     let summary = count_label(matches.len(), "file", "files");
     let find_url = file_url(&base, "find", &page.reference, "");
@@ -153,11 +144,13 @@ fn FindFiles(base: String, page: FindPage) -> Element {
                     let _ = (event, &highlighted);
                 }
             }
+            button { r#type: "submit", class: "btn", "Search all files" }
         }
         p { class: "repo-find-summary", "{summary}" }
-        if page.truncated { p { class: "repo-find-notice", "Showing the first {MAX_LISTED_FILES} files." } }
+        if needs_server_search { p { class: "repo-find-notice", "Press Enter or Search all files to search the complete repository." } }
+        if page.truncated { p { class: "repo-find-notice", "Only a bounded set of matching paths is loaded. Search to reach other files." } }
         if matches.is_empty() {
-            div { class: "repo-empty panel", {icon("search")} h3 { "No files match" } p { "Try part of the file name or the folder path." } }
+            div { class: "repo-empty panel", {icon("search")} h3 { if needs_server_search { "No loaded matches" } else { "No files match" } } p { "Try part of the file name or the folder path." } }
         } else {
             div { class: "repo-file-browser border border-border rounded-md bg-card",
                 table { class: "repo-file-table repo-find-table w-full border-collapse text-sm",

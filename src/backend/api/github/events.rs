@@ -15,10 +15,12 @@ type Params = HashMap<String, String>;
 
 async fn event_document(
     state: &AppState,
+    auth: Option<&super::auth::Authentication>,
     repo: &db::models::Repository,
     owner: &str,
     id: i64,
     include_issue: bool,
+    issues: &mut HashMap<(String, i64), Value>,
 ) -> Result<Value> {
     let event = db::timeline::get_event(&state.pool, repo.id, id)
         .await
@@ -39,12 +41,10 @@ async fn event_document(
     match event.kind.as_str() {
         "renamed" => value["rename"] = json!({"from":event.previous,"to":event.detail}),
         "labeled" | "unlabeled" => {
-            let label = db::labels::list_repo_labels(&state.pool, repo.id)
-                .await
-                .map_err(Error::unavailable)?
-                .into_iter()
-                .find(|label| label.name.eq_ignore_ascii_case(&event.detail));
-            value["label"] = json!({"name":event.detail,"color":label.map(|label|label.color.trim_start_matches('#').to_owned())});
+            // Older entries have no retained color; never substitute today's mutable label.
+            let color =
+                (!event.previous.is_empty()).then(|| event.previous.trim_start_matches('#'));
+            value["label"] = json!({"name":event.detail,"color":color});
         }
         "milestoned" | "demilestoned" => value["milestone"] = json!({"title":event.detail}),
         "assigned" | "unassigned" => {
@@ -57,7 +57,21 @@ async fn event_document(
         _ => {}
     }
     if include_issue {
-        value["issue"] = issues::document(&state.pool, repo, owner, item).await?;
+        let key = (event.subject_kind.clone(), event.subject_id);
+        if !issues.contains_key(&key) {
+            issues.insert(
+                key.clone(),
+                issues::document(
+                    &state.pool,
+                    issues::Reader::Request(state, auth),
+                    repo,
+                    owner,
+                    item,
+                )
+                .await?,
+            );
+        }
+        value["issue"] = issues[&key].clone();
     }
     Ok(value)
 }
@@ -67,10 +81,19 @@ async fn read(
     headers: HeaderMap,
     Path(p): Path<Params>,
 ) -> Result<Json<Value>> {
-    let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
+    let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let id = p["event_id"].parse().map_err(|_| Error::missing())?;
     Ok(Json(
-        event_document(&state, &repo, &p["owner"], id, true).await?,
+        event_document(
+            &state,
+            auth.as_ref(),
+            &repo,
+            &p["owner"],
+            id,
+            true,
+            &mut HashMap::new(),
+        )
+        .await?,
     ))
 }
 
@@ -115,7 +138,7 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
+    let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], false).await?;
     let item = match p.get("issue_number") {
         Some(number) => Some(labels::item(&state.pool, repo.id, number).await?),
         None => None,
@@ -135,9 +158,21 @@ async fn list(
     .map_err(Error::unavailable)?;
     let next = rows.len() > limit;
     let mut items = Vec::new();
+    let mut issues = HashMap::new();
     for (kind, id) in rows.into_iter().take(limit) {
         let value = match kind.as_str() {
-            "event" => event_document(&state, &repo, &p["owner"], id, item.is_none()).await?,
+            "event" => {
+                event_document(
+                    &state,
+                    auth.as_ref(),
+                    &repo,
+                    &p["owner"],
+                    id,
+                    item.is_none(),
+                    &mut issues,
+                )
+                .await?
+            }
             "review" => review_document(&state, &repo, &p["owner"], id).await?,
             "issue_comment" | "pr_comment" => {
                 let comment = comments::find(

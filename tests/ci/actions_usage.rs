@@ -60,14 +60,27 @@ async fn contract(pg: bool) {
     assert_eq!(empty, json!({"billable":{},"run_duration_ms":0}));
     let mut expected_jobs = Vec::new();
     for attempt in 0..2 {
-        let run = db::ci::claim_ci_run(f.pool(), "usage", "local", &[alice])
-            .await
-            .unwrap()
-            .unwrap();
+        let run = db::ci::claim_ci_run(
+            f.pool(),
+            "usage",
+            "local",
+            &[alice],
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         let generation = runtime::token_hash(&format!("usage-{attempt}"));
-        db::action_objects::issue_token(f.pool(), run.id, &generation, &run.run_id.to_string())
-            .await
-            .unwrap();
+        db::action_objects::issue_token(
+            f.pool(),
+            run.id,
+            run.worker.as_deref().unwrap_or(""),
+            &generation,
+            &run.run_id.to_string(),
+        )
+        .await
+        .unwrap();
+        super::actions_objects::job_credentials(&f, &run, &["build"]).await;
         for (variant, labels, duration) in [
             (0, vec!["ubuntu-latest".into()], 1234),
             (1, vec!["windows-2022".into()], 999),
@@ -101,7 +114,8 @@ async fn contract(pg: bool) {
                     },
                 )
                 .await
-                .unwrap();
+                .unwrap()
+                .id;
             }
             if variant == 0 {
                 expected_jobs.push(json!({"job_id":job_id,"duration_ms":1234}));

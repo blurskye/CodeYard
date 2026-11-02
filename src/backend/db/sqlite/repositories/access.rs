@@ -3,6 +3,33 @@ use crate::backend::db::repositories::access::CollaboratorChange;
 use anyhow::Result;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
+pub async fn git_access(
+    pool: &SqlitePool,
+    user_id: i64,
+    repo_id: i64,
+    write: bool,
+) -> Result<AccessLevel> {
+    let level: Option<i16> = sqlx::query_scalar(&format!("SELECT CASE WHEN u.is_banned OR u.must_change_password OR ($3 AND r.is_archived) THEN 0 WHEN r.is_gist THEN CASE WHEN EXISTS(SELECT 1 FROM gists g JOIN users own ON own.id=r.owner_user_id WHERE g.repo_id=r.id AND g.ready AND NOT own.is_banned) THEN CASE WHEN r.owner_user_id=u.id THEN 6 WHEN NOT $3 THEN 1 ELSE 0 END ELSE 0 END WHEN r.owner_kind='user' AND u.is_admin THEN 6 ELSE ({USER_REPO_ACCESS_SQL}) END FROM repositories r JOIN users u ON u.id=$1 WHERE r.id=$2"))
+        .bind(user_id).bind(repo_id).bind(write).fetch_optional(pool).await?;
+    Ok(AccessLevel::from(level.unwrap_or(0)))
+}
+
+pub async fn author_associations(
+    pool: &SqlitePool,
+    repo_id: i64,
+    users: &[i64],
+) -> Result<Vec<(i64, String)>> {
+    anyhow::ensure!(
+        users.len() <= 500,
+        "Author association batch exceeds its limit"
+    );
+    if users.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(&format!("SELECT u.id,CASE WHEN r.owner_kind='user' AND r.owner_user_id=u.id THEN 'OWNER' WHEN NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships m JOIN organizations o ON o.id=m.org_id WHERE m.org_id=r.owner_org_id AND m.user_id=u.id AND m.role IN ('owner','admin','member')) THEN 'MEMBER' WHEN ({USER_REPO_ACCESS_SQL}) >= CASE WHEN EXISTS(SELECT 1 FROM repo_access a WHERE a.repo_id=r.id AND a.user_id=u.id AND a.access_level>0) THEN 1 ELSE 3 END THEN 'COLLABORATOR' ELSE 'NONE' END FROM repositories r CROSS JOIN users u WHERE r.id=?1 AND u.id IN (SELECT value FROM json_each(?2))"))
+        .bind(repo_id).bind(serde_json::to_string(users)?).fetch_all(pool).await?)
+}
+
 pub async fn get_user_repo_access(
     pool: &SqlitePool,
     user_id: i64,
@@ -40,7 +67,7 @@ pub async fn readable_repository_ids(
     repo_ids: &[i64],
 ) -> Result<Vec<i64>> {
     anyhow::ensure!(repo_ids.len() <= 100, "Repository page exceeds its limit");
-    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id IN (SELECT value FROM json_each(?2)) AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
+    Ok(sqlx::query_scalar(&format!("SELECT r.id FROM repositories r LEFT JOIN users u ON u.id=?1 WHERE r.id IN (SELECT value FROM json_each(?2)) AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND NOT u.is_banned AND NOT u.must_change_password AND (u.is_admin OR r.owner_user_id=u.id)) OR ({USER_REPO_ACCESS_SQL}) >= 1)"))
         .bind(user_id).bind(serde_json::to_string(repo_ids)?).fetch_all(pool).await?)
 }
 
@@ -97,7 +124,8 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                     AND EXISTS(SELECT 1 FROM org_memberships member WHERE member.org_id=a.org_id
                         AND member.user_id=u.id AND member.role IN ('owner','admin','member'))
                     AND ((a.user_id=u.id AND a.team_id IS NULL) OR (a.user_id IS NULL AND EXISTS(
-                        SELECT 1 FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id
+                        SELECT 1 FROM teams t JOIN team_ancestors lineage ON lineage.ancestor_id=t.id
+                        JOIN team_memberships tm ON tm.team_id=lineage.team_id
                         WHERE t.id=a.team_id AND t.org_id=a.org_id AND t.privacy IN ('visible','secret')
                             AND tm.user_id=u.id AND tm.role IN ('member','maintainer'))))),0),
             COALESCE((
@@ -105,7 +133,8 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
                     WHEN 'member' THEN COALESCE((
                         SELECT MAX(a.permission) FROM team_repo_access a
                         JOIN teams t ON t.id = a.team_id AND t.org_id = m.org_id
-                        JOIN effective_team_memberships tm ON tm.team_id = t.id
+                        JOIN team_ancestors lineage ON lineage.ancestor_id=t.id
+                        JOIN team_memberships tm ON tm.team_id=lineage.team_id
                             AND tm.user_id = u.id AND tm.role IN ('member','maintainer')
                         WHERE a.repo_id = r.id AND a.permission BETWEEN 1 AND 5
                             AND t.privacy IN ('visible','secret')
@@ -124,13 +153,34 @@ pub(crate) const USER_REPO_ACCESS_SQL: &str = r#"
         ELSE 0 END)
     "#;
 
+const PUBLIC_READ_BASELINE: &str = "CASE WHEN NOT r.is_private THEN 1 ELSE 0 END";
+
+/// The access projection without the read that every visitor has on a public repository: what
+/// the user's own grants, organization settings and team memberships give. A collaborator is
+/// someone with such a grant, not everyone who can read.
+pub(crate) fn user_repo_grant_sql() -> String {
+    debug_assert!(USER_REPO_ACCESS_SQL.contains(PUBLIC_READ_BASELINE));
+    USER_REPO_ACCESS_SQL.replacen(PUBLIC_READ_BASELINE, "0", 1)
+}
+
 /// Whether repository `r` is readable by the viewer, whom the query joins as `u` (NULL for an
 /// anonymous visitor). It follows `repositories::access::can_read`: public repositories, the
 /// personal repositories of a site admin, and the access projection for everything else.
 pub(crate) fn readable_condition() -> String {
     format!(
-        "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
+        "(NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind = 'user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password) OR ({USER_REPO_ACCESS_SQL}) >= 1))"
     )
+}
+
+/// Read-only callers retain one snapshot; effectful callers reserve BEGIN IMMEDIATE first.
+/// Archival and interaction restrictions do not remove repository read access.
+pub(crate) async fn lock_readable_repository_in_transaction(
+    connection: &mut sqlx::SqliteConnection,
+    user_id: i64,
+    repo_id: i64,
+) -> Result<bool> {
+    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND {})", readable_condition()))
+        .bind(user_id).bind(repo_id).fetch_one(connection).await?)
 }
 
 /// Current visibility and metadata in one snapshot for a bounded run list.
@@ -209,12 +259,17 @@ pub(super) async fn revoke_repo_access_in_transaction(
 
 pub async fn change_personal_repository_collaborator(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<AccessLevel>,
 ) -> Result<CollaboratorChange> {
+    let admission = actor.into();
+    let actor = admission.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if let Some(credential) = admission.credential() {
+        super::super::users::transitions::require_account(&mut tx, actor, &credential).await?;
+    }
     let actor_state: Option<(bool, bool)> =
         sqlx::query_as("SELECT is_banned,must_change_password FROM users WHERE id=?1")
             .bind(actor)

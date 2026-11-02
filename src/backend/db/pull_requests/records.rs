@@ -6,7 +6,7 @@ use anyhow::Result;
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::commit_association_candidates,
     crate::backend::db::sqlite::pull_requests::records::commit_association_candidates,
-    fn commit_association_candidates(pool: &DbPool, repo: i64, before: i64, limit: i64) -> Result<Vec<PullRequest>>);
+    fn commit_association_candidates(pool: &DbPool, repo: i64, before: i64, limit: i64, merged_only: bool) -> Result<Vec<PullRequest>>);
 
 #[derive(Debug, thiserror::Error)]
 #[error("duplicate_open_pull_request")]
@@ -73,6 +73,22 @@ pub fn can_grant_maintainer_edit(
     head.id == base || (head.owner_kind == "user" && head.owner_user_id == Some(actor))
 }
 
+pub(crate) fn retarget_dismisses_reviews(patterns: &[String], branch: &str) -> Result<bool> {
+    let mut budget = crate::backend::ci::workflows::WorkflowMatchBudget::new();
+    for pattern in patterns {
+        if crate::backend::db::repositories::protection::branch_pattern_matches(
+            pattern,
+            branch,
+            &mut budget,
+        )
+        .map_err(|_| anyhow::anyhow!("branch protection could not be checked"))?
+        {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 /// The commits a pull request records for its branches. Comparing them with the
 /// branches' tips shows whether a branch has moved.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
@@ -120,6 +136,13 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::merged_a
     /// Whether a pull request stacked on `head_branch` was merged in the same merge commit.
     fn merged_above(pool: &DbPool, repo_id: i64, merge_sha: &str, head_branch: &str) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::records::merged_trunk,
+    crate::backend::db::sqlite::pull_requests::records::merged_trunk,
+    /// The base branch and base commit of the bottom layer merged in `merge_sha`: the branch the
+    /// merge commit landed on and its tip before the merge. A stack lands on its trunk, while
+    /// each upper layer keeps naming the layer below it.
+    fn merged_trunk(pool: &DbPool, repo_id: i64, merge_sha: &str) -> Result<Option<(String, String)>>);
+
 native_operation!(crate::backend::db::postgres::pull_requests::records::list_open_pull_requests_from_branches,
     crate::backend::db::sqlite::pull_requests::records::list_open_pull_requests_from_branches,
     fn list_open_pull_requests_from_branches(
@@ -135,6 +158,9 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::move_ope
     pull_request_id: i64,
     old_head: &str,
     new_head: &str,
+    head_repo: Option<i64>,
+    head_branch: &str,
+    pusher: Option<i64>,
 ) -> Result<bool>);
 
 // Moves base_sha from `old_base` to `new_base`, only while the pull request is open, still has
@@ -150,6 +176,19 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::move_ope
     new_base: &str,
     base_branch: &str,
     fork: Option<&str>,
+) -> Result<bool>);
+
+// Drops the recorded fork point of an open pull request whose head now contains its base, as after
+// a restack, so its diff starts at the base again. Only while the fork, base and head are still
+// the ones the caller checked.
+native_operation!(crate::backend::db::postgres::pull_requests::records::clear_fork_point,
+    crate::backend::db::sqlite::pull_requests::records::clear_fork_point,
+    fn clear_fork_point(
+    pool: &DbPool,
+    pull_request_id: i64,
+    fork: &str,
+    base: &str,
+    head: &str,
 ) -> Result<bool>);
 
 /// What came of asking to take a pull request out of draft.
@@ -196,9 +235,17 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::get_conv
     crate::backend::db::sqlite::pull_requests::records::get_converted_pull_request,
     fn get_converted_pull_request(pool: &DbPool, repo_id: i64, number: i32) -> Result<Option<PullRequest>>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::records::retained_revisions,
+    crate::backend::db::sqlite::pull_requests::records::retained_revisions,
+    fn retained_revisions(pool: &DbPool, repo: i64) -> Result<Vec<String>>);
 native_operation!(crate::backend::db::postgres::pull_requests::records::get_pull_request_by_id,
     crate::backend::db::sqlite::pull_requests::records::get_pull_request_by_id,
     fn get_pull_request_by_id(pool: &DbPool, id: i64) -> Result<Option<PullRequest>>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::records::get_pull_requests_by_ids,
+    crate::backend::db::sqlite::pull_requests::records::get_pull_requests_by_ids,
+    /// The pull requests of the repository among `ids` (at most 500), in no order.
+    fn get_pull_requests_by_ids(pool: &DbPool, repo_id: i64, ids: &[i64]) -> Result<Vec<PullRequest>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::records::list_repo_pull_requests,
     crate::backend::db::sqlite::pull_requests::records::list_repo_pull_requests,
@@ -245,6 +292,30 @@ native_operation!(crate::backend::db::postgres::pull_requests::records::count_vi
 pub struct NewBase<'a> {
     pub branch: &'a str,
     pub sha: &'a str,
+    /// The server chose this base while reopening a stacked pull request whose parent merged.
+    /// It belongs to the reopen, so it needs no base-edit permission; the store checks it again
+    /// under lock and refuses it on anything but a reopen.
+    pub automatic_reopen: bool,
+}
+
+/// Follow only merged layers of this stack; a cycle never authorizes a retarget.
+pub fn reopened_stack_base(pull: &PullRequest, members: &[PullRequest]) -> Option<String> {
+    let stack = pull.stack_id?;
+    let mut branch = pull.base_branch.clone();
+    let mut seen = std::collections::HashSet::new();
+    while seen.insert(branch.clone()) {
+        let Some(parent) = members.iter().find(|member| {
+            member.repo_id == pull.repo_id
+                && member.stack_id == Some(stack)
+                && member.state == "merged"
+                && member.head_repo_id == Some(pull.repo_id)
+                && member.head_branch == branch
+        }) else {
+            return (branch != pull.base_branch).then_some(branch);
+        };
+        branch = parent.base_branch.clone();
+    }
+    None
 }
 
 #[derive(Default)]
@@ -480,6 +551,7 @@ mod tests {
             mergeable: None,
             merged: false,
             merged_by_id: None,
+            closed_by_id: None,
             merge_commit_sha: None,
             additions: 0,
             deletions: 0,
@@ -607,10 +679,14 @@ pub struct PullRequestListEntry {
     pub head_repository: Option<PullRequestHeadDisplay>,
 }
 
-/// A pull request with the owner and name of its repository, for a link to it.
-#[derive(Debug, Clone)]
+/// A pull request on the signed-in user's dashboard: what its row shows, and the owner and name
+/// of its repository for a link to it.
+#[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ViewerPullRequestEntry {
-    pub pull_request: PullRequest,
+    pub number: i32,
+    pub title: String,
+    pub state: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
     pub repo_owner: String,
     pub repo_name: String,
 }

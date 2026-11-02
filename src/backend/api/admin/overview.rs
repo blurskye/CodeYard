@@ -39,18 +39,10 @@ async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
             runs: point.runs,
         })
         .collect();
-    let private = db::node_config::get_node_configuration(pool)
+    let pending = db::users::signup_requests::count_signup_requests(pool, "pending")
         .await
-        .map_err(|_| unavailable())?
-        .is_some_and(|config| config.is_private());
-    let pending_requests = if private {
-        let pending = db::users::signup_requests::count_signup_requests(pool, "pending")
-            .await
-            .map_err(|_| unavailable())?;
-        Some(pending as usize)
-    } else {
-        None
-    };
+        .map_err(|_| unavailable())?;
+    let pending_requests = Some(pending as usize);
     Ok(Admin {
         pending_requests,
         activity,

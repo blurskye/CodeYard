@@ -140,14 +140,25 @@ pub fn organization_role_user(
     value
 }
 
+/// An organization's picture: its uploaded file, or the generated one.
+pub fn organization_avatar(org: &crate::backend::db::models::Organization) -> String {
+    org.avatar_file_id.map_or_else(
+        || {
+            format!(
+                "{}/avatars/{}",
+                link_origin(),
+                crate::webui::encode_component(&org.name)
+            )
+        },
+        |id| format!("{}/api/files/{id}/download", link_origin()),
+    )
+}
+
 /// Organization links are shared by membership responses and organization events.
 pub fn organization(org: &crate::backend::db::models::Organization) -> Value {
     let name = crate::webui::encode_component(&org.name);
     let url = crate::backend::api::github::api_url(&format!("/orgs/{name}"));
-    let avatar = org.avatar_file_id.map_or_else(
-        || format!("{}/avatars/{name}", link_origin()),
-        |id| format!("{}/api/files/{id}/download", link_origin()),
-    );
+    let avatar = organization_avatar(org);
     json!({"login": org.name, "id": org.id, "node_id": node_id::encode("O", org.id),
         "url": url, "repos_url": format!("{url}/repos"), "events_url": format!("{url}/events"),
         "hooks_url": format!("{url}/hooks"), "issues_url": format!("{url}/issues"),
@@ -226,12 +237,7 @@ pub fn community_file(file: Option<&crate::backend::repositories::community::Fil
         return Value::Null;
     };
     let encode = crate::webui::encode_component;
-    let path = file
-        .path
-        .split('/')
-        .map(encode)
-        .collect::<Vec<_>>()
-        .join("/");
+    let path = crate::webui::pages::repos::ref_path::encode_path(&file.path);
     let base = format!(
         "/repos/{}/{}",
         encode(&file.owner),
@@ -245,7 +251,7 @@ pub fn community_profile(profile: &crate::backend::repositories::community::Prof
     let conduct = community_file(profile.conduct.as_ref());
     let license = match (profile.license_info, profile.license.as_ref()) {
         (Some(info), Some(file)) => {
-            json!({"key":info.key,"name":info.name,"spdx_id":info.spdx,"node_id":node_id::encode("L",info.id),"url":if info.key=="other" {Value::Null}else {json!(api_url(&format!("/licenses/{}",info.key)))},"html_url":community_file(Some(file))["html_url"]})
+            json!({"key":info.key,"name":info.name,"spdx_id":info.spdx,"node_id":node_id::git("LIC",info.key),"url":if info.key=="other" {Value::Null}else {json!(api_url(&format!("/licenses/{}",info.key)))},"html_url":community_file(Some(file))["html_url"]})
         }
         _ => Value::Null,
     };
@@ -402,16 +408,17 @@ pub fn deployment_status(
 pub fn team_organization(
     org: &crate::backend::db::models::Organization,
     public_repos: i64,
+    has_organization_projects: bool,
 ) -> Value {
     let slug = crate::webui::encode_component(&org.name);
     let url = crate::backend::api::github::api_url(&format!("/orgs/{slug}"));
     json!({"id":org.id,"node_id":node_id::encode("O",org.id),"login":org.name,
         "name":org.display_name.as_deref().unwrap_or(&org.name),"description":org.description,"url":url,
-        "html_url":format!("{}{}",link_origin(),crate::webui::profile_path(&org.name)),"avatar_url":format!("{}/avatars/{slug}",link_origin()),
+        "html_url":format!("{}{}",link_origin(),crate::webui::profile_path(&org.name)),"avatar_url":organization_avatar(org),
         "repos_url":format!("{url}/repos"),"events_url":format!("{url}/events"),
         "hooks_url":format!("{url}/hooks"),"issues_url":format!("{url}/issues"),
         "members_url":format!("{url}/members{{/member}}"),"public_members_url":format!("{url}/public_members{{/member}}"),
-        "has_organization_projects":false,"has_repository_projects":false,"public_repos":public_repos,
+        "has_organization_projects":has_organization_projects,"has_repository_projects":false,"public_repos":public_repos,
         "public_gists":0,"followers":0,"following":0,"type":"Organization",
         "created_at":time(org.created_at),"updated_at":time(org.updated_at),"archived_at":null})
 }
@@ -430,7 +437,11 @@ pub fn environment(
         value["wait_timer"] = json!(environment.wait_timer);
         rules.push(value);
     }
-    if !reviewers.is_empty() {
+    if serde_json::from_str::<Vec<crate::backend::db::environments::Reviewer>>(
+        &environment.reviewers,
+    )
+    .is_ok_and(|stored| !stored.is_empty())
+    {
         let mut value = rule("required_reviewers");
         value["prevent_self_review"] = json!(environment.prevent_self_review);
         value["reviewers"] = json!(reviewers);
@@ -441,7 +452,7 @@ pub fn environment(
     }
     json!({"id": environment.id, "node_id": node_id::encode("EN", environment.id), "name": environment.name,
         "url": format!("{}/environments/{name}", repo_url(owner, repo)),
-        "html_url": format!("{}/{}/{}/deployments/activity_log?environments_filter={name}", link_origin(), crate::webui::encode_component(owner), crate::webui::encode_component(repo)),
+        "html_url": format!("{}/settings?tab=secrets&environment={name}", repository_url(owner, repo)),
         "created_at": time(environment.created_at), "updated_at": time(environment.updated_at),
         "protection_rules": rules, "deployment_branch_policy": environment.branch_policy.as_ref().map(|policy| json!({"protected_branches": policy == "protected", "custom_branch_policies": policy == "custom"}))})
 }
@@ -491,7 +502,7 @@ pub fn public_user(
     value["location"] = json!(user.location);
     value["blog"] = json!(user.website.as_deref().unwrap_or(""));
     value["company"] = json!(profile.company);
-    value["email"] = json!(profile.public_email(user));
+    value["email"] = json!(profile.public_email());
     value["hireable"] = json!(profile.hireable);
     value["twitter_username"] = json!(profile.twitter_username);
     value["public_repos"] = json!(public_repos);
@@ -531,15 +542,15 @@ pub fn package(
     repository: Option<Value>,
 ) -> Value {
     let path = package_url(owner, package);
-    let mut account = simple_person(&Person {
-        id: owner.id,
-        login: owner.name.clone(),
-        site_admin: false,
-    });
-    if owner.kind == "org" {
-        account["type"] = json!("Organization");
-        account["node_id"] = json!(node_id::encode("O", owner.id));
-    }
+    let account = if owner.kind == "org" {
+        organization_person(owner.id, &owner.name)
+    } else {
+        simple_person(&Person {
+            id: owner.id,
+            login: owner.name.clone(),
+            site_admin: false,
+        })
+    };
     json!({"id":package.id,"name":package.name,"package_type":package.package_type,
         "visibility":package.visibility,"owner":account,"repository":repository,
         "url":crate::backend::api::github::api_url(&path),"html_url":format!("{}{path}",link_origin()),
@@ -624,7 +635,7 @@ pub fn project(
         "closed_at": optional_time(project.closed_at), "deleted_at": optional_time(project.deleted_at),
         "deleted_by": null, "created_at": time(project.created_at), "updated_at": time(project.updated_at),
         "state": if project.closed_at.is_some() { "closed" } else { "open" },
-        "is_template": false, "latest_status_update": null,
+        "is_template": project.template, "latest_status_update": null,
     })
 }
 
@@ -658,7 +669,7 @@ pub fn project_field(
             .as_array()
             .ok_or_else(|| anyhow::anyhow!("Invalid iteration configuration"))?;
         value["configuration"] = json!({"start_day": date.weekday().number_from_monday(), "duration": config["duration"],
-            "iterations": iterations.iter().map(|iteration| json!({"id": iteration["id"], "title": rich_text(iteration["title"].as_str().unwrap_or("")), "start_date": iteration["start_date"], "duration": iteration["duration"], "completed": iteration["start_date"].as_str().and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()).zip(iteration["duration"].as_i64()).is_some_and(|(start, days)| start.checked_add_signed(chrono::Duration::days(days)).is_some_and(|end| end < chrono::Utc::now().date_naive()))})).collect::<Vec<_>>()});
+            "iterations": iterations.iter().map(|iteration| json!({"id": iteration["id"], "title": rich_text(iteration["title"].as_str().unwrap_or("")), "start_date": iteration["start_date"], "duration": iteration["duration"], "completed": iteration["start_date"].as_str().and_then(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok()).zip(iteration["duration"].as_i64()).is_some_and(|(start, days)| start.checked_add_signed(chrono::Duration::days(days)).is_some_and(|end| end <= chrono::Utc::now().date_naive()))})).collect::<Vec<_>>()});
     }
     Ok(value)
 }
@@ -672,7 +683,8 @@ pub fn project_item(
     json!({"id": item.id, "node_id": node_id::encode("PVTI",item.id),
         "project_url": project_url, "item_url": format!("{project_url}/items/{}", item.id),
         "content_type": item.content_type(), "content": content, "creator": creator,
-        "created_at": time(item.created_at), "updated_at": time(item.updated_at), "archived_at": null})
+        "created_at": time(item.created_at), "updated_at": time(item.updated_at),
+        "is_archived": item.archived, "archived_at": optional_time(item.archived_at)})
 }
 
 pub fn project_draft(item: &crate::backend::db::projects::Item, creator: Value) -> Value {
@@ -708,6 +720,10 @@ pub fn organization_person(id: i64, name: &str) -> Value {
     });
     value["type"] = json!("Organization");
     value["node_id"] = json!(node_id::encode("O", id));
+    value["repos_url"] = json!(crate::backend::api::github::api_url(&format!(
+        "/orgs/{}/repos",
+        crate::webui::encode_component(name)
+    )));
     value
 }
 pub fn topic(topic: &crate::backend::db::catalog_search::Topic) -> Value {
@@ -724,10 +740,35 @@ pub fn repository_owner(repo: &Repository, owner: &str) -> Value {
     })
 }
 
+pub fn repository_snapshot(
+    snapshot: &crate::backend::db::repository_stats::RepositorySnapshot,
+) -> Value {
+    let mut value = repository(&snapshot.repository, &snapshot.owner);
+    value["open_issues"] = json!(snapshot.facts.open_items);
+    value["open_issues_count"] = json!(snapshot.facts.open_items);
+    value["pushed_at"] = json!(snapshot.facts.pushed_at);
+    value["language"] = json!(snapshot.facts.language);
+    value
+}
+
+/// Replaces the zero fork counts of an unscoped repository document with the count its
+/// audience may see.
+pub fn set_fork_counts(repository: &mut Value, count: i32) {
+    if !repository.is_object() {
+        return;
+    }
+    for field in ["forks", "forks_count", "network_count"] {
+        repository[field] = json!(count);
+    }
+}
+
 pub fn repository(repo: &Repository, owner: &str) -> Value {
     let full_name = format!("{owner}/{}", repo.name);
     let html_url = repository_url(owner, &repo.name);
     let api = crate::backend::api::github::repo_url(owner, &repo.name);
+    let ssh = crate::backend::api::http::config::ssh_clone_base();
+    let ssh_url = (!ssh.trim().is_empty())
+        .then(|| format!("{}/{owner}/{}.git", ssh.trim_end_matches('/'), repo.name));
     let mut value = json!({
         "id": repo.id,
         "node_id": crate::backend::api::github::node_id::encode("R", repo.id),
@@ -739,22 +780,23 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
         "html_url": html_url,
         "clone_url": format!("{}/{owner}/{}.git", http_clone_base().trim_end_matches('/'), repo.name),
         "git_url": format!("{}/{owner}/{}.git", http_clone_base().trim_end_matches('/'), repo.name),
-        "ssh_url": format!("{}/{owner}/{}.git", crate::backend::api::http::config::ssh_clone_base().trim_end_matches('/'), repo.name),
+        "ssh_url": ssh_url,
         "svn_url": html_url, "homepage": repo.website, "language": null, "license": null,
         "mirror_url": null, "pushed_at": null, "size": repo.size_bytes / 1024,
         "has_issues": true, "has_downloads": true, "has_projects": false, "has_wiki": false,
         "has_pages": false, "has_discussions": false, "disabled": false,
-        "forks": repo.forks_count, "watchers": repo.stars_count, "open_issues": repo.open_issues_count,
-        "network_count": repo.forks_count,
+        "watchers": repo.stars_count, "open_issues": repo.open_issues_count,
         "description": repo.description,
         "fork": repo.is_fork,
+        // The cached total includes private forks, so the builder reports none; readers that
+        // know their audience replace these with set_fork_counts.
+        "forks": 0, "forks_count": 0, "network_count": 0,
         "is_template": repo.is_template,
         "archived": repo.is_archived,
         "default_branch": repo.default_branch,
         "stargazers_count": repo.stars_count,
         "watchers_count": repo.stars_count,
         "subscribers_count": repo.watchers_count,
-        "forks_count": repo.forks_count,
         "open_issues_count": repo.open_issues_count,
         "created_at": time(repo.created_at),
         "updated_at": time(repo.updated_at),
@@ -854,21 +896,45 @@ fn git_verification(signature: Option<&str>, payload: Option<&[u8]>) -> Value {
 
 /// GitHub's short commit object, as a workflow run names its head commit.
 pub fn simple_commit(commit: &CommitInfo) -> Value {
+    simple_commit_document(
+        (&commit.sha, &commit.tree_sha, &commit.message),
+        commit.committer_timestamp,
+        (&commit.author_name, &commit.author_email),
+        (&commit.committer_name, &commit.committer_email),
+    )
+}
+
+/// The same short commit from the bounded snapshot already captured for a push event.
+pub fn pushed_head(commit: &PushedCommit) -> Value {
+    simple_commit_document(
+        (&commit.id, &commit.tree_id, &commit.message),
+        commit.committer_time,
+        (&commit.author_name, &commit.author_email),
+        (&commit.committer_name, &commit.committer_email),
+    )
+}
+
+fn simple_commit_document(
+    (id, tree_id, message): (&str, &str, &str),
+    timestamp: i64,
+    (author, author_email): (&str, &str),
+    (committer, committer_email): (&str, &str),
+) -> Value {
     json!({
-        "id": commit.sha, "tree_id": commit.tree_sha, "message": commit.message,
-        "timestamp": chrono::DateTime::from_timestamp(commit.committer_timestamp, 0).map(time),
-        "author": {"name": commit.author_name, "email": commit.author_email},
-        "committer": {"name": commit.committer_name, "email": commit.committer_email},
+        "id": id, "tree_id": tree_id, "message": message,
+        "timestamp": chrono::DateTime::from_timestamp(timestamp, 0).map(time),
+        "author": {"name": author, "email": author_email},
+        "committer": {"name": committer, "email": committer_email},
     })
 }
 
 /// The Git object shared by the contents API and commit responses.
-pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str) -> Value {
+pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str, repo_id: i64) -> Value {
     let url = repo_url(owner, repo);
     let html = repository_url(owner, repo);
     let signature = |name: &str, email: &str, timestamp: i64| json!({"name": name, "email": email, "date": chrono::DateTime::from_timestamp(timestamp, 0)});
     json!({
-        "sha": commit.sha, "node_id": node_id::git("C", &commit.sha),
+        "sha": commit.sha, "node_id": node_id::git_object("C", repo_id, &commit.sha),
         "url": format!("{url}/git/commits/{}", commit.sha),
         "html_url": format!("{html}/commit/{}", commit.sha),
         "message": commit.message,
@@ -879,6 +945,68 @@ pub fn git_commit(commit: &CommitInfo, owner: &str, repo: &str) -> Value {
             "sha": sha, "url": format!("{url}/git/commits/{sha}"), "html_url": format!("{html}/commit/{sha}")
         })).collect::<Vec<_>>(),
         "verification": git_verification(commit.signature.as_deref(), commit.signature_payload.as_deref()),
+    })
+}
+
+/// GitHub's commit object: the Git commit `detail` with its comment count, and the accounts
+/// its author and committer emails belong to.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one part of GitHub's commit object."
+)]
+pub fn commit(
+    commit: &CommitInfo,
+    mut detail: Value,
+    owner: &str,
+    name: &str,
+    repo_id: i64,
+    comment_count: i64,
+    author: Option<&Person>,
+    committer: Option<&Person>,
+) -> Value {
+    // The Git object's parents link to Git commits; the commit object's link to commits.
+    detail["parents"].take();
+    detail["comment_count"] = json!(comment_count);
+    let (url, html) = (repo_url(owner, name), repository_url(owner, name));
+    let parents: Vec<_> = commit.parents.iter().map(|sha| json!({
+        "sha": sha, "url": format!("{url}/commits/{sha}"), "html_url": format!("{html}/commit/{sha}")
+    })).collect();
+    json!({
+        "sha": commit.sha, "node_id": node_id::git_object("C", repo_id, &commit.sha),
+        "url": format!("{url}/commits/{}", commit.sha),
+        "html_url": detail["html_url"],
+        "comments_url": format!("{url}/commits/{}/comments", commit.sha),
+        "commit": detail, "author": author.map(person),
+        "committer": committer.map(person), "parents": parents,
+    })
+}
+
+/// A `status` event. `commit` is the commit object, and `branches` the branches whose tip it is.
+pub fn status(
+    status: &crate::backend::db::models::CommitStatus,
+    commit: Value,
+    branches: &[String],
+    scope: Scope<'_>,
+) -> Value {
+    let Scope {
+        repo,
+        owner,
+        sender,
+    } = scope;
+    let api = repo_url(owner, &repo.name);
+    let sender = person(sender);
+    json!({
+        "id": status.id, "sha": status.sha, "name": format!("{owner}/{}", repo.name),
+        "target_url": status.target_url, "context": status.context,
+        "description": status.description, "state": status.state,
+        "avatar_url": sender["avatar_url"], "commit": commit,
+        "branches": branches.iter().map(|branch| json!({
+            "name": branch,
+            "commit": {"sha": status.sha, "url": format!("{api}/commits/{}", status.sha)},
+            "protected": false,
+        })).collect::<Vec<_>>(),
+        "created_at": time(status.created_at), "updated_at": time(status.updated_at),
+        "repository": repository(repo, owner), "sender": sender,
     })
 }
 
@@ -1091,6 +1219,7 @@ pub fn conversation_comment(
 
 pub fn issue_comment(
     action: &str,
+    previous_body: Option<&str>,
     comment: &IssueComment,
     issue: &Issue,
     issue_author: &Person,
@@ -1102,7 +1231,7 @@ pub fn issue_comment(
         owner,
         sender,
     } = scope;
-    json!({
+    let mut payload = json!({
         "action": action,
         "issue": issue_json(issue, issue_author, repo, owner),
         "comment": ({
@@ -1112,7 +1241,11 @@ pub fn issue_comment(
         }),
         "repository": repository(repo, owner),
         "sender": person(sender),
-    })
+    });
+    if let Some(body) = previous_body {
+        payload["changes"] = json!({"body":{"from":body}});
+    }
+    payload
 }
 
 /// The issue page resolves `?comment=` to the page that holds the comment. A deleted comment
@@ -1268,6 +1401,19 @@ pub fn pull_request_json(
     value
 }
 
+/// GitHub's `auto_merge` object for a pull request's saved auto-merge request.
+pub fn auto_merge(
+    request: &crate::backend::db::pull_requests::auto_merge::AutoMergeRequest,
+    enabled_by: Option<&User>,
+) -> Value {
+    json!({
+        "enabled_by": enabled_by.map_or(Value::Null, user),
+        "merge_method": request.merge_method.to_ascii_lowercase(),
+        "commit_title": request.commit_title.as_deref().unwrap_or(""),
+        "commit_message": request.commit_message.as_deref().unwrap_or(""),
+    })
+}
+
 pub fn pull_request_review_json(
     review: &PullRequestReview,
     reviewer: &Person,
@@ -1347,28 +1493,130 @@ pub fn pull_request_review_comment_json(
         pull.number,
         id = comment.id
     );
+    let current = review_comment_is_current(comment, pull);
+    // GitHub sends the range and position fields as null rather than leaving them out;
+    // `review_comment_diff` fills the positions from the diff.
     let mut value = json!({"id":comment.id,"node_id":node_id::encode("PRRC",comment.id),"url":url,"html_url":html,"pull_request_url":pull_url,
         "pull_request_review_id":comment.review_id,"body":comment.body,"path":comment.path,"diff_hunk":"",
         "commit_id":comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),"original_commit_id":comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),
         "user":person(author),"created_at":time(comment.created_at),"updated_at":time(comment.updated_at),"author_association":if repo.is_personal_owner(author.id){"OWNER"}else{"NONE"},
         "subject_type":if comment.line.is_some(){"line"}else{"file"},
+        "line":comment.line.filter(|_| current),"original_line":comment.line,"side":comment.side,
+        "start_line":comment.start_line.filter(|_| current),"original_start_line":comment.start_line,
+        "start_side":comment.start_line.and(comment.start_side.as_deref()),
+        "position":null,"original_position":null,
         "_links":{"self":{"href":url},"html":{"href":html},"pull_request":{"href":pull_url}}});
-    if let Some(line) = comment.line {
-        value["line"] = json!(line);
-        value["original_line"] = json!(line);
-    }
-    if let Some(side) = &comment.side {
-        value["side"] = json!(side);
-    }
-    if let Some(start) = comment.start_line {
-        value["start_line"] = json!(start);
-        value["original_start_line"] = json!(start);
-        value["start_side"] = json!(comment.start_side);
-    }
     if let Some(parent) = comment.in_reply_to_comment_id {
         value["in_reply_to_id"] = json!(parent);
     }
     value
+}
+
+/// Whether a review comment was written on the pull request's current head. An outdated
+/// comment keeps only its original coordinates.
+pub fn review_comment_is_current(comment: &PullRequestComment, pull: &PullRequest) -> bool {
+    comment
+        .commit_sha
+        .as_deref()
+        .is_none_or(|sha| sha == pull.head_sha)
+}
+
+/// The revision pair whose diff a review comment was written on. A comment keeps the base it
+/// was written against.
+pub fn review_comment_revisions<'a>(
+    comment: &'a PullRequestComment,
+    pull: &'a PullRequest,
+) -> (&'a str, &'a str) {
+    (
+        comment
+            .diff_base_sha
+            .as_deref()
+            .unwrap_or_else(|| pull.diff_base()),
+        comment.commit_sha.as_deref().unwrap_or(&pull.head_sha),
+    )
+}
+
+/// Fills a review comment's `diff_hunk` and positions from `files`, the diff of
+/// `review_comment_revisions`. An outdated comment has no `position` in the current diff.
+pub fn review_comment_diff(
+    value: &mut Value,
+    comment: &PullRequestComment,
+    pull: &PullRequest,
+    files: &[crate::backend::repositories::store::DiffFileInfo],
+) {
+    let Some(file) = files
+        .iter()
+        .find(|file| Some(file.filename.as_str()) == comment.path.as_deref())
+    else {
+        return;
+    };
+    value["diff_hunk"] = json!(file.patch);
+    let Some(line) = comment.line else {
+        return;
+    };
+    let left = comment.side.as_deref() == Some("LEFT");
+    if let Some((position, _, _)) = diff_positions(&file.patch)
+        .into_iter()
+        .find(|(_, old, new)| {
+            if left {
+                *old == Some(line)
+            } else {
+                *new == Some(line)
+            }
+        })
+    {
+        value["original_position"] = json!(position);
+        if review_comment_is_current(comment, pull) {
+            value["position"] = json!(position);
+        }
+    }
+}
+
+/// Each diff row's position with its old and new line. Positions count diff rows, not file
+/// lines; later hunk headers count too.
+pub fn diff_positions(patch: &str) -> Vec<(i32, Option<i32>, Option<i32>)> {
+    let (mut old, mut new, mut pos, mut begun) = (0, 0, 0, false);
+    let mut rows = Vec::new();
+    for row in patch.lines() {
+        if row.starts_with("@@ ") {
+            let mut fields = row.split_whitespace();
+            fields.next();
+            old = fields
+                .next()
+                .and_then(|s| s.trim_start_matches('-').split(',').next()?.parse().ok())
+                .unwrap_or(0);
+            new = fields
+                .next()
+                .and_then(|s| s.trim_start_matches('+').split(',').next()?.parse().ok())
+                .unwrap_or(0);
+            if begun {
+                pos += 1;
+            }
+            begun = true;
+            continue;
+        }
+        if !begun {
+            continue;
+        }
+        pos += 1;
+        match row.as_bytes().first() {
+            Some(b'+') => {
+                rows.push((pos, None, Some(new)));
+                new += 1;
+            }
+            Some(b'-') => {
+                rows.push((pos, Some(old), None));
+                old += 1;
+            }
+            Some(b' ') => {
+                rows.push((pos, Some(old), Some(new)));
+                old += 1;
+                new += 1;
+            }
+            _ => {}
+        }
+    }
+    rows
 }
 
 pub fn pull_request_review_comment(
@@ -1462,8 +1710,8 @@ pub fn release_json(
         "upload_url": format!("{base}/releases/{id}/assets{{?name,label}}"),
         "html_url": format!("{}/{}/{}/releases/tag/{}", link_origin(), crate::webui::encode_component(owner),
             crate::webui::encode_component(name), crate::webui::encode_component(&release.tag_name)),
-        "tarball_url": format!("{base}/tarball/{}", crate::webui::encode_component(&release.tag_name)),
-        "zipball_url": format!("{base}/zipball/{}", crate::webui::encode_component(&release.tag_name)),
+        "tarball_url": format!("{base}/tarball/{}", crate::webui::encode_component(&format!("refs/tags/{}", release.tag_name))),
+        "zipball_url": format!("{base}/zipball/{}", crate::webui::encode_component(&format!("refs/tags/{}", release.tag_name))),
         "tag_name": release.tag_name, "target_commitish": release.target_commitish,
         "name": release.name, "body": release.body, "draft": release.is_draft, "prerelease": release.is_prerelease,"immutable":release.is_immutable,
         "author": simple_person(author), "created_at": time(release.created_at),
@@ -1475,6 +1723,24 @@ pub fn release_json(
         value["assets"] = json!(assets);
     }
     value
+}
+
+/// GitHub's `changes` of an `edited` release event: the previous value of each changed field.
+pub fn release_changes(before: &Release, after: &Release) -> Value {
+    let mut changes = json!({});
+    if before.name != after.name {
+        changes["name"] = json!({"from": before.name.as_deref().unwrap_or("")});
+    }
+    if before.body != after.body {
+        changes["body"] = json!({"from": before.body.as_deref().unwrap_or("")});
+    }
+    if before.tag_name != after.tag_name {
+        changes["tag_name"] = json!({"from": before.tag_name});
+    }
+    if before.is_latest != after.is_latest {
+        changes["make_latest"] = json!({"to": after.is_latest});
+    }
+    changes
 }
 
 pub fn release(action: &str, release: &Release, author: &Person, scope: Scope) -> Value {
@@ -1570,7 +1836,8 @@ pub fn fork(
     forkee_owner: &str,
 ) -> Value {
     json!({
-        "forkee": repository(forkee, forkee_owner),
+        // Source-scoped deliveries do not confer access to a private destination owner.
+        "forkee": if forkee.is_private { Value::Null } else { repository(forkee, forkee_owner) },
         "repository": repository(repo, owner),
         "sender": person(forker),
     })
@@ -1599,9 +1866,37 @@ pub struct PushedCommit {
     pub committer_name: String,
     pub committer_email: String,
     pub committer_time: i64,
+    /// No ref held the commit before this push.
+    pub distinct: bool,
+    /// The paths the commit changed against its first parent; `None` when they were not read.
+    pub files: Option<ChangedFiles>,
 }
 
-#[derive(Debug, Default)]
+/// GitHub's `added`, `removed` and `modified` path lists of one pushed commit.
+#[derive(Debug, Default, Clone)]
+pub struct ChangedFiles {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub modified: Vec<String>,
+}
+
+impl ChangedFiles {
+    pub fn bytes(&self) -> usize {
+        self.added
+            .iter()
+            .chain(&self.removed)
+            .chain(&self.modified)
+            .map(|path| std::mem::size_of::<String>() + path.len())
+            .sum()
+    }
+}
+
+/// Paths listed for one pushed commit; a larger commit lists only its first paths.
+const MAX_PUSHED_COMMIT_FILES: usize = 3000;
+/// Wall-clock budget for reading the changed paths of one push's commits.
+const PUSHED_FILES_BUDGET: std::time::Duration = std::time::Duration::from_secs(2);
+
+#[derive(Debug, Default, Clone)]
 pub struct PushedCommits {
     pub commits: Vec<PushedCommit>,
     pub head: Option<PushedCommit>,
@@ -1617,44 +1912,130 @@ pub(crate) fn bounded_text(text: &str, limit: usize) -> String {
     text[..end].to_owned()
 }
 
-fn pushed_commit(repository: &git2::Repository, revision: &str) -> Option<PushedCommit> {
+fn pushed_commit(
+    repository: &git2::Repository,
+    revision: &str,
+    distinct: &dyn Fn(&str) -> bool,
+    files_until: std::time::Instant,
+) -> Option<PushedCommit> {
     let commit =
         crate::backend::git::repository::peel_to_commit_checked(repository, revision).ok()?;
     let (author, committer) = (commit.author(), commit.committer());
+    let id = commit.id().to_string();
+    let files = (std::time::Instant::now() < files_until)
+        .then(|| changed_files(repository, &commit))
+        .flatten();
     Some(PushedCommit {
-        id: commit.id().to_string(),
+        distinct: distinct(&id),
+        files,
         tree_id: commit.tree_id().to_string(),
         message: bounded_text(commit.message().unwrap_or(""), 4096),
-        time: commit.time().seconds(),
+        time: author.when().seconds(),
         author_name: bounded_text(author.name().unwrap_or(""), 256),
         author_email: bounded_text(author.email().unwrap_or(""), 256),
         committer_name: bounded_text(committer.name().unwrap_or(""), 256),
         committer_email: bounded_text(committer.email().unwrap_or(""), 256),
         committer_time: committer.when().seconds(),
+        id,
     })
 }
 
-/// At most 20 introduced commits, with a separate new head even for a rewind. Git's bounded
-/// subprocess avoids libgit2's eager hidden-range walk. Called only on a blocking thread.
-pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> PushedCommits {
-    use crate::backend::git::repository::process;
-    let Ok(repository) = git2::Repository::open_bare(path) else {
-        return PushedCommits::default();
+/// The paths a commit changed against its first parent, or against nothing for a root
+/// commit, like the commit page shows them. Renames are listed as a removal and an addition.
+fn changed_files(repository: &git2::Repository, commit: &git2::Commit<'_>) -> Option<ChangedFiles> {
+    fn path(file: git2::DiffFile<'_>) -> Option<String> {
+        file.path_bytes()
+            .map(|path| String::from_utf8_lossy(path).into_owned())
+    }
+    let tree = commit.tree().ok()?;
+    let parent = match commit.parent_count() {
+        0 => None,
+        _ => Some(commit.parent(0).ok()?.tree().ok()?),
     };
-    let head = pushed_commit(&repository, after);
-    let collect = async {
-        let mut command = process::git_command()?;
-        command
-            .current_dir(path)
-            .args(["rev-list", "--max-count=20", after]);
-        if let Some(before) = before {
-            command.args(["--not", before]);
+    let mut options = git2::DiffOptions::new();
+    options.skip_binary_check(true);
+    let diff = repository
+        .diff_tree_to_tree(parent.as_ref(), Some(&tree), Some(&mut options))
+        .ok()?;
+    let mut files = ChangedFiles::default();
+    for delta in diff.deltas().take(MAX_PUSHED_COMMIT_FILES) {
+        match delta.status() {
+            git2::Delta::Added => files.added.extend(path(delta.new_file())),
+            git2::Delta::Deleted => files.removed.extend(path(delta.old_file())),
+            git2::Delta::Modified | git2::Delta::Typechange => {
+                files.modified.extend(path(delta.new_file()))
+            }
+            _ => {}
         }
-        command.arg("--");
-        let (status, output) =
-            process::buffered(command, b"", 20 * 41, std::time::Duration::from_secs(2)).await?;
-        anyhow::ensure!(status.success(), "Webhook commit listing failed");
-        Ok::<_, anyhow::Error>(output)
+    }
+    Some(files)
+}
+
+/// The newest 2048 commits reachable from `after` and from none of `excluded`, oldest first
+/// when `reverse` is set. Git's bounded subprocess avoids libgit2's eager hidden-range walk.
+async fn rev_list<'a>(
+    path: &Path,
+    after: &str,
+    excluded: impl Iterator<Item = &'a str>,
+    reverse: bool,
+) -> anyhow::Result<Vec<String>> {
+    use crate::backend::git::repository::process;
+    let mut command = process::git_command()?;
+    command
+        .current_dir(path)
+        .args(["rev-list", "--max-count=2048", "--stdin"]);
+    if reverse {
+        command.arg("--reverse");
+    }
+    let mut input = format!("{after}\n");
+    for id in excluded {
+        input.push('^');
+        input.push_str(id);
+        input.push('\n');
+    }
+    let (status, output) = process::buffered(
+        command,
+        input.as_bytes(),
+        2048 * 65,
+        std::time::Duration::from_secs(2),
+    )
+    .await?;
+    anyhow::ensure!(status.success(), "Webhook commit listing failed");
+    Ok(String::from_utf8_lossy(&output)
+        .lines()
+        .take(2048)
+        .map(str::to_owned)
+        .collect())
+}
+
+/// At most 2048 introduced commits, with a separate new head even for a rewind. `previous`
+/// holds the tips every ref had before the push: a new ref lists only commits none of them
+/// reached, and a listed commit is distinct when none of them reached it. Without it, a new
+/// ref lists its history and every listed commit counts as distinct. Called only on a
+/// blocking thread.
+pub fn pushed_commits(
+    path: &Path,
+    before: Option<&str>,
+    after: &str,
+    previous: Option<&[String]>,
+) -> anyhow::Result<PushedCommits> {
+    use crate::backend::git::repository::process;
+    let repository = git2::Repository::open_bare(path)?;
+    let previous_tips = || previous.into_iter().flatten().map(String::as_str);
+    let collect = async {
+        match before {
+            Some(before) => rev_list(path, after, std::iter::once(before), true).await,
+            None => rev_list(path, after, previous_tips(), true).await,
+        }
+    };
+    // For a moved ref, its own range may hold commits another ref already had.
+    let distinct = async {
+        match (before, previous) {
+            (Some(_), Some(_)) => rev_list(path, after, previous_tips(), false)
+                .await
+                .map(|ids| Some(ids.into_iter().collect::<std::collections::HashSet<_>>())),
+            _ => Ok(None),
+        }
     };
     // `merge-base --is-ancestor` exits 1 when the old tip is not in the new history.
     let forced = async {
@@ -1667,44 +2048,52 @@ pub fn pushed_commits(path: &Path, before: Option<&str>, after: &str) -> PushedC
             .args(["merge-base", "--is-ancestor", before, after]);
         let (status, _) =
             process::buffered(command, b"", 64, std::time::Duration::from_secs(2)).await?;
-        Ok::<_, anyhow::Error>(status.code() == Some(1))
+        match status.code() {
+            Some(0) => Ok(false),
+            Some(1) => Ok(true),
+            _ => anyhow::bail!("Webhook ancestry lookup failed"),
+        }
     };
-    let (output, forced) = tokio::runtime::Handle::current().block_on(async {
-        (
-            collect.await.unwrap_or_default(),
-            forced.await.unwrap_or(false),
-        )
-    });
-    let commits = String::from_utf8_lossy(&output)
-        .lines()
-        .take(20)
-        .filter_map(|oid| pushed_commit(&repository, oid))
-        .collect();
-    PushedCommits {
+    let (listed, distinct, forced) = tokio::runtime::Handle::current().block_on(async {
+        Ok::<_, anyhow::Error>((collect.await?, distinct.await?, forced.await?))
+    })?;
+    let files_until = std::time::Instant::now() + PUSHED_FILES_BUDGET;
+    // Without a separate walk every listed commit is new; the head is new only when listed.
+    let distinct = distinct.unwrap_or_else(|| listed.iter().cloned().collect());
+    let is_distinct = |id: &str| distinct.contains(id);
+    let head = pushed_commit(&repository, after, &is_distinct, files_until);
+    let commits = listed
+        .iter()
+        .map(|oid| {
+            pushed_commit(&repository, oid, &is_distinct, files_until)
+                .ok_or_else(|| anyhow::anyhow!("Webhook commit lookup failed"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
+    Ok(PushedCommits {
         commits,
         head,
         forced,
-    }
+    })
 }
 
-/// `distinct` is false for a commit the ref already reached before this push.
-fn pushed_commit_json(
-    commit: &PushedCommit,
-    distinct: bool,
-    repo: &Repository,
-    owner: &str,
-) -> Value {
+fn pushed_commit_json(commit: &PushedCommit, repo: &Repository, owner: &str) -> Value {
     let date = |seconds| chrono::DateTime::from_timestamp(seconds, 0).map(time);
-    json!({
+    let mut value = json!({
         "id": commit.id,
         "tree_id": commit.tree_id,
-        "distinct": distinct,
+        "distinct": commit.distinct,
         "message": commit.message,
         "timestamp": date(commit.time),
         "url": format!("{}/commit/{}", repository_url(owner, &repo.name), commit.id),
         "author": { "name": commit.author_name, "email": commit.author_email, "date": date(commit.time) },
         "committer": { "name": commit.committer_name, "email": commit.committer_email, "date": date(commit.committer_time) },
-    })
+    });
+    if let Some(files) = &commit.files {
+        value["added"] = json!(files.added);
+        value["removed"] = json!(files.removed);
+        value["modified"] = json!(files.modified);
+    }
+    value
 }
 
 /// A branch or tag push. `before` is absent for a new ref; the caller sends `create` and
@@ -1721,22 +2110,34 @@ pub fn push(
     let commit_values: Vec<Value> = commits
         .commits
         .iter()
-        .map(|commit| pushed_commit_json(commit, true, repo, owner))
+        .map(|commit| pushed_commit_json(commit, repo, owner))
         .collect();
-    let head = commits.head.as_ref().map(|head| {
-        let distinct = commits.commits.iter().any(|commit| commit.id == head.id);
-        pushed_commit_json(head, distinct, repo, owner)
-    });
+    let head = commits
+        .head
+        .as_ref()
+        .map(|head| pushed_commit_json(head, repo, owner));
+    let created = before.chars().all(|c| c == '0');
+    let deleted = after.chars().all(|c| c == '0');
+    let html = repository_url(owner, &repo.name);
+    // A zero revision is not a commit the comparison page can open, so a created or deleted
+    // ref links to the one commit that exists.
+    let compare = if created {
+        format!("{html}/commit/{after}")
+    } else if deleted {
+        format!("{html}/commit/{before}")
+    } else {
+        format!("{html}/compare/{before}...{after}")
+    };
     json!({
         "ref": reference,
         "before": before,
         "after": after,
-        "created": before.chars().all(|c| c == '0'),
-        "deleted": after.chars().all(|c| c == '0'),
+        "created": created,
+        "deleted": deleted,
         "forced": commits.forced,
         // GitHub names a branch here only for a tag pushed at a branch tip.
         "base_ref": null,
-        "compare": format!("{}/compare/{before}...{after}", repository_url(owner, &repo.name)),
+        "compare": compare,
         "commits": commit_values,
         "head_commit": head,
         "repository": repository(repo, owner),
@@ -1773,6 +2174,45 @@ pub fn workflow_job(action: &str, job: Value, scope: Scope<'_>) -> Value {
         "repository":repository(scope.repo, scope.owner), "sender":person(scope.sender)})
 }
 
+/// `head_repository` is the pull request's head repository, which for a `pull_request_target`
+/// run is not the repository the run checked out.
+pub fn action_run_pull_requests(
+    run: &crate::backend::db::models::CiRun,
+    pull: Option<&PullRequest>,
+    repository: &Value,
+    head_repository: &Value,
+    exclude: bool,
+) -> Value {
+    if exclude {
+        return json!([]);
+    }
+    let Some(pull) = pull else {
+        // The association was deleted; an empty list would falsely claim there never was one.
+        return if run.event == "pull_request" {
+            Value::Null
+        } else {
+            json!([])
+        };
+    };
+    let snapshot = run.pull_request_event.as_ref();
+    let event_head = run
+        .event_payload
+        .as_ref()
+        .map(|event| &event["pull_request"]["head"]);
+    let head_sha = snapshot
+        .and_then(|event| event["head_sha"].as_str())
+        .or_else(|| event_head.and_then(|head| head["sha"].as_str()))
+        .unwrap_or(if run.event == "pull_request_target" {
+            &pull.head_sha
+        } else {
+            run.head_sha.as_deref().unwrap_or(&pull.head_sha)
+        });
+    let side = |reference: &str, sha: &str, repository: &Value| json!({"ref":reference,"sha":sha,"repo":{"id":repository["id"],"url":repository["url"],"name":repository["name"]}});
+    json!([{"id":pull.id,"number":pull.number,"url":format!("{}/pulls/{}",repository["url"].as_str().unwrap_or(""),pull.number),
+        "head":side(snapshot.and_then(|event|event["head_ref"].as_str()).unwrap_or(&pull.head_branch),head_sha,head_repository),
+        "base":side(snapshot.and_then(|event|event["base_ref"].as_str()).unwrap_or(&pull.base_branch),snapshot.and_then(|event|event["base_sha"].as_str()).unwrap_or(&pull.base_sha),repository)}])
+}
+
 pub fn action_run(
     run: &crate::backend::db::models::CiRun,
     owner: &str,
@@ -1799,6 +2239,7 @@ pub fn action_run(
                 .and_then(|message| message.lines().next())
         })
         .unwrap_or(&run.workflow_path);
+    let title = bounded_text(title, 1024);
     let (status, conclusion) = crate::backend::db::action_runs::run_state(run);
     let mut value = json!({
         "id":id,"node_id":node_id::encode("WR",id),"head_branch":(!branch.is_empty()).then_some(branch),
@@ -1836,12 +2277,18 @@ pub fn action_job(
     let api = repo_url(owner, repo);
     let run_id = run.workflow_run_id.unwrap_or(run.id);
     let branch = run.head_branch();
+    // The run page opens a job's logs by its name when no other job shares it.
+    let query = url::form_urlencoded::Serializer::new(String::new())
+        .append_pair("job", &run.run_id.to_string())
+        .append_pair("view", "logs")
+        .append_pair("workflow_job", &job.name)
+        .finish();
     json!({"id":job.id,"node_id":node_id::encode("J",job.id),"run_id":run_id,"run_attempt":run.workflow_run_attempt.unwrap_or(1),
         "run_url":format!("{api}/actions/runs/{run_id}"),"head_sha":run.head_sha,"workflow_name":job.workflow_name,
         "head_branch":branch,"name":job.name,"url":format!("{api}/actions/jobs/{}",job.id),
-        "html_url":format!("{}/{}/{}/actions?job={}",link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo),run.run_id),
+        "html_url":format!("{}/{}/{}/actions?{query}",link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo)),
         "status":job.status,"conclusion":job.conclusion,"started_at":time(job.started_at.unwrap_or(job.created_at)),"completed_at":optional_time(job.completed_at),"created_at":time(job.created_at),
-        "check_run_url":"","labels":job.labels.0,"runner_id":null,"runner_name":if run.engine.as_deref()==Some("codeyard-actions"){Some("codeyard-actions")}else{None},"runner_group_id":null,"runner_group_name":null,
+        "check_run_url":format!("{api}/check-runs/{}",job.check_run_id),"labels":job.labels.0,"runner_id":null,"runner_name":if run.engine.as_deref()==Some("codeyard-actions"){Some("codeyard-actions")}else{None},"runner_group_id":null,"runner_group_name":null,
         "steps":steps.iter().map(|step|json!({"number":step.number,"name":step.name,"status":step.status,"conclusion":step.conclusion,"started_at":time(step.started_at),"completed_at":optional_time(step.completed_at)})).collect::<Vec<_>>()})
 }
 
@@ -1880,7 +2327,8 @@ pub fn secret_scanning_alert(
         "locations_url": format!("{url}/locations"), "state": alert.state,
         "resolution": alert.resolution, "resolution_comment": alert.resolution_comment,
         "resolved_at": alert.resolved_at, "resolved_by": resolved_by.map(user),
-        "secret_type": alert.secret_type, "secret_type_display_name": alert.display_name,
+        "secret_type": alert.secret_type,
+        "provider_slug": crate::backend::repositories::secret_scanning::provider(&alert.secret_type), "secret_type_display_name": alert.display_name,
         "secret": secret, "validity": alert.validity.as_deref().unwrap_or("unknown"), "push_protection_bypassed": bypass.is_some(),
         "push_protection_bypassed_by": bypassed_by.map(user), "push_protection_bypassed_at": bypass.and_then(|bypass|bypass.used_at),
         "publicly_leaked": null, "multi_repo": null, "is_base64_encoded": false
@@ -1940,17 +2388,39 @@ mod tests {
             let second = repo
                 .commit(None, &signature, &signature, "second", &tree, &[&parent])
                 .unwrap();
-            let rewound =
-                pushed_commits(root.path(), Some(&second.to_string()), &first.to_string());
+            let rewound = pushed_commits(
+                root.path(),
+                Some(&second.to_string()),
+                &first.to_string(),
+                None,
+            )
+            .unwrap();
             assert!(rewound.commits.is_empty());
             let head = rewound.head.unwrap();
             assert_eq!(head.id, first.to_string());
+            assert!(!head.distinct);
             assert_eq!(head.message.len(), 4096);
             assert!(head.message.is_char_boundary(head.message.len()));
-            let forward =
-                pushed_commits(root.path(), Some(&first.to_string()), &second.to_string());
+            let forward = pushed_commits(
+                root.path(),
+                Some(&first.to_string()),
+                &second.to_string(),
+                None,
+            )
+            .unwrap();
             assert_eq!(forward.commits.len(), 1);
+            assert!(forward.commits[0].distinct);
             assert_eq!(forward.head.unwrap().id, second.to_string());
+            // A new ref at a commit another ref already held lists nothing new.
+            let branch = pushed_commits(
+                root.path(),
+                None,
+                &second.to_string(),
+                Some(&[second.to_string()]),
+            )
+            .unwrap();
+            assert!(branch.commits.is_empty());
+            assert!(!branch.head.unwrap().distinct);
             assert_eq!(bounded_text("aé", 2), "a");
         })
         .await
@@ -2017,7 +2487,7 @@ mod tests {
         );
         assert_eq!(value["repository"]["size"], 12);
         assert_eq!(value["repository"]["stargazers_count"], 2);
-        assert_eq!(value["repository"]["forks_count"], 3);
+        assert_eq!(value["repository"]["forks_count"], 0);
         // GitHub's historical watchers aliases mean stars; subscriptions are separate.
         assert_eq!(value["repository"]["watchers_count"], 2);
         assert_eq!(value["repository"]["watchers"], 2);

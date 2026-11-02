@@ -23,10 +23,12 @@ pub struct ProfileSettings {
     pub public_email: Option<String>,
     pub primary_visibility: String,
     pub secondary_email_verified: bool,
+    pub primary_email: Option<String>,
+    pub primary_email_verified: bool,
 }
 
 impl ProfileSettings {
-    pub fn public_email<'a>(&'a self, user: &'a User) -> Option<&'a str> {
+    pub fn public_email(&self) -> Option<&str> {
         if let Some(selected) = self
             .public_email
             .as_deref()
@@ -34,19 +36,19 @@ impl ProfileSettings {
         {
             // The primary address follows the primary privacy setting even when it was once
             // published as a secondary address.
-            let primary = user
-                .email
+            let primary = self
+                .primary_email
                 .as_deref()
                 .is_some_and(|email| email.eq_ignore_ascii_case(selected));
             let shown = if primary {
-                self.primary_visibility == "public" && user.email_verified
+                self.primary_visibility == "public" && self.primary_email_verified
             } else {
                 self.secondary_email_verified
             };
             return shown.then_some(selected);
         }
-        (self.primary_visibility == "public" && user.email_verified)
-            .then_some(user.email.as_deref())
+        (self.primary_visibility == "public" && self.primary_email_verified)
+            .then_some(self.primary_email.as_deref())
             .flatten()
     }
 }
@@ -67,7 +69,11 @@ pub struct AccountStatistics {
 
 native_operation!(crate::backend::db::postgres::users::profiles::account_statistics,
     crate::backend::db::sqlite::users::profiles::account_statistics,
-    fn account_statistics(pool: &DbPool, user: i64) -> Result<AccountStatistics>);
+    fn account_statistics(pool: &DbPool, user: i64, token: i64) -> Result<Option<AccountStatistics>>);
+
+native_operation!(crate::backend::db::postgres::users::profiles::public_email,
+    crate::backend::db::sqlite::users::profiles::public_email,
+    fn public_email(pool: &DbPool, user: i64) -> Result<Option<String>>);
 
 native_operation!(crate::backend::db::postgres::users::profiles::get_profile_settings,
     crate::backend::db::sqlite::users::profiles::get_profile_settings,

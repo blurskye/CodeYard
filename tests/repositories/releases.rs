@@ -807,11 +807,19 @@ async fn publish_notifies_release_watchers(pg: bool) {
             StatusCode::OK,
         )
         .await;
+    let repo = db::repositories::records::get_repository(world.database.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
     let reply = world
         .bob
         .form_reply(
             "/alice/proj/_forms/watch-level",
-            &[("level", "custom"), ("events_releases", "on")],
+            &[
+                ("repository_id", &repo.id.to_string()),
+                ("level", "custom"),
+                ("events_releases", "on"),
+            ],
         )
         .await;
     assert!(
@@ -1132,11 +1140,18 @@ async fn release_validation_and_atomic_files(pg: bool) {
         size: 1,
     };
     // Unverified uploads cannot be attached, and a refused attachment leaves expiry intact.
-    assert!(
-        db::releases::add_release_asset(pool, actor, repo.id, release_id, &input)
-            .await
-            .is_err()
-    );
+    assert!(db::releases::add_release_asset(
+        pool,
+        actor,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, actor).await
+        ),
+        repo.id,
+        release_id,
+        &input
+    )
+    .await
+    .is_err());
     let pending = db::files::get_file_by_id(pool, file.id)
         .await
         .unwrap()
@@ -1145,9 +1160,18 @@ async fn release_validation_and_atomic_files(pg: bool) {
     db::files::verify_pending_upload(pool, file.id, actor)
         .await
         .unwrap();
-    let asset = db::releases::add_release_asset(pool, actor, repo.id, release_id, &input)
-        .await
-        .unwrap();
+    let asset = db::releases::add_release_asset(
+        pool,
+        actor,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, actor).await,
+        ),
+        repo.id,
+        release_id,
+        &input,
+    )
+    .await
+    .unwrap();
     let active = db::files::get_file_by_id(pool, file.id)
         .await
         .unwrap()
@@ -1201,6 +1225,9 @@ async fn release_validation_and_atomic_files(pg: bool) {
     db::releases::add_release_asset(
         pool,
         actor,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, actor).await,
+        ),
         repo.id,
         release_id,
         &db::releases::NewReleaseAsset {

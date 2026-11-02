@@ -19,16 +19,9 @@ pub fn configured_public_origin() -> Option<String> {
 }
 
 pub(crate) fn validated_public_origin(value: &str) -> Option<String> {
-    let url = url::Url::parse(value).ok()?;
+    let url = crate::backend::api::http::config::parse_public_url(value).ok()?;
     let loopback = matches!(url.host_str(), Some("localhost" | "127.0.0.1" | "[::1]"));
-    if !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
-        || !url.username().is_empty()
-        || url.password().is_some()
-        || url.host_str().is_none()
-        || url.path() != "/"
-        || url.query().is_some()
-        || url.fragment().is_some()
-    {
+    if !(url.scheme() == "https" || (url.scheme() == "http" && loopback)) {
         return None;
     }
     Some(url.origin().ascii_serialization())
@@ -217,23 +210,20 @@ pub async fn oauth_callback(
     )
     .await
     {
-        Ok((authenticated, return_to)) => {
-            admission::forgive_oauth_start(&state.pool, session::client_address(&headers)).await;
-            (
-                StatusCode::FOUND,
-                [
-                    (
-                        header::SET_COOKIE,
-                        session::build_session_cookie(
-                            &authenticated.session_id,
-                            session::session_duration_days(),
-                        ),
+        Ok((authenticated, return_to)) => (
+            StatusCode::FOUND,
+            [
+                (
+                    header::SET_COOKIE,
+                    session::build_session_cookie(
+                        &authenticated.session_id,
+                        session::session_duration_days(),
                     ),
-                    (header::LOCATION, local_return_to(&return_to).to_owned()),
-                ],
-            )
-                .into_response()
-        }
+                ),
+                (header::LOCATION, local_return_to(&return_to).to_owned()),
+            ],
+        )
+            .into_response(),
         Err(error) => failure(error, &provider),
     }
 }

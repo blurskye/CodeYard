@@ -62,6 +62,9 @@ async fn contract(pg: bool) {
         "BASE_SECRET",
         "base-value",
         Some(alice),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
     )
     .await
     .unwrap();
@@ -170,7 +173,11 @@ async fn contract(pg: bool) {
     assert_eq!(payload["pull_request"]["base"]["sha"], base);
     assert_eq!(payload["sender"]["id"], bob);
     let claim = queue
-        .claim("target-worker", CiExecutionMode::Local)
+        .claim(
+            "target-worker",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -221,7 +228,11 @@ async fn contract(pg: bool) {
         )
         .await;
     let claim = queue
-        .claim("fork-worker", CiExecutionMode::Local)
+        .claim(
+            "fork-worker",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -407,13 +418,21 @@ async fn dispatch_contract(pg: bool) {
     .await;
     // Claim the event run first, then the manual source that supplies the job credential.
     let first = queue
-        .claim("custom-worker", CiExecutionMode::Local)
+        .claim(
+            "custom-worker",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
     assert_eq!(first.run.event, "repository_dispatch");
     let source = queue
-        .claim("source-worker", CiExecutionMode::Local)
+        .claim(
+            "source-worker",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -573,14 +592,22 @@ async fn workflow_run_contract(pg: bool) {
     )
     .await;
     let source = queue
-        .claim("source-worker", CiExecutionMode::Local)
+        .claim(
+            "source-worker",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
     assert_eq!(source.run.event, "workflow_dispatch");
     // A repeated claim must not duplicate in_progress listeners.
     queue
-        .claim("source-worker", CiExecutionMode::Local)
+        .claim(
+            "source-worker",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -663,14 +690,31 @@ async fn workflow_run_contract(pg: bool) {
     f.finish().await;
 }
 
-#[tokio::test]
-async fn sqlite_workflow_run_events() {
-    workflow_run_contract(false).await;
+/// Runs the contract on its own 32 MiB thread: its deep async state outgrows the default
+/// 2 MiB test stack in debug builds.
+fn workflow_run_contract_on_a_large_stack(pg: bool) {
+    std::thread::Builder::new()
+        .stack_size(32 << 20)
+        .spawn(move || {
+            tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .unwrap()
+                .block_on(Box::pin(workflow_run_contract(pg)))
+        })
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
-#[tokio::test]
-async fn postgres_workflow_run_events() {
-    workflow_run_contract(true).await;
+#[test]
+fn sqlite_workflow_run_events() {
+    workflow_run_contract_on_a_large_stack(false);
+}
+
+#[test]
+fn postgres_workflow_run_events() {
+    workflow_run_contract_on_a_large_stack(true);
 }
 
 #[tokio::test]
@@ -683,12 +727,14 @@ async fn postgres_repository_dispatch_events() {
     dispatch_contract(true).await;
 }
 
+// `#[tokio::test]` pins its body on the 2 MiB test stack, and this contract's debug-build
+// future is too large for it, so the contract lives on the heap.
 #[tokio::test]
 async fn sqlite_pull_request_activity_events() {
-    contract(false).await;
+    Box::pin(contract(false)).await;
 }
 
 #[tokio::test]
 async fn postgres_pull_request_activity_events() {
-    contract(true).await;
+    Box::pin(contract(true)).await;
 }

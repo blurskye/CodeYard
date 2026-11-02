@@ -159,6 +159,35 @@ pub async fn verify_password(
     .await
 }
 
+/// Why a settings change refused the account's current password.
+#[derive(Debug, PartialEq, Eq)]
+pub enum CurrentPasswordError {
+    Admission(super::admission::AdmissionError),
+    Password(PasswordError),
+    Invalid,
+}
+
+/// Checks the account's current password before a settings change. A wrong one counts against
+/// the same account budget as a wrong sign-in password; a right one gives the attempt back.
+pub async fn verify_current_password(
+    pool: &crate::backend::db::DbPool,
+    user: &crate::backend::db::models::User,
+    password: &str,
+) -> Result<(), CurrentPasswordError> {
+    let attempt = super::admission::admit_login(pool, None, Some(user.id), &user.username)
+        .await
+        .map_err(CurrentPasswordError::Admission)?;
+    if !verify_password(password, user.password_hash.as_deref())
+        .await
+        .map_err(CurrentPasswordError::Password)?
+        .valid
+    {
+        return Err(CurrentPasswordError::Invalid);
+    }
+    super::admission::forgive_login(pool, &attempt).await;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -71,7 +71,12 @@ fn query_model(ctx: &PageContext) -> Result<BTreeMap<String, String>, Response> 
         "before",
     ] {
         if let Some(value) = ctx.query.get(key).filter(|value| !value.is_empty()) {
-            if value.len() > 500 || value.contains(['\r', '\n', '\0']) {
+            let too_long = if matches!(key, "branch" | "ref") {
+                !crate::backend::ci::admission::is_safe_ref(value)
+            } else {
+                value.len() > 500
+            };
+            if too_long || value.contains(['\r', '\n', '\0']) {
                 return Err(ctx.error(
                     StatusCode::BAD_REQUEST,
                     "Actions filter is too long or contains unsupported characters.",
@@ -130,10 +135,16 @@ async fn planned_jobs(
     definitions
         .into_iter()
         .filter(|definition| paths.split(',').any(|path| path.trim() == definition.path))
-        .flat_map(|definition| definition.jobs)
-        .map(|job| view_actions::PlannedJob {
-            name: job.name,
-            steps: job.steps,
+        .flat_map(|definition| {
+            let workflow = definition.path;
+            definition
+                .jobs
+                .into_iter()
+                .map(move |job| view_actions::PlannedJob {
+                    workflow: workflow.clone(),
+                    name: job.name,
+                    steps: job.steps,
+                })
         })
         .collect()
 }
@@ -168,21 +179,13 @@ async fn actions(
         Ok(limit) => limit,
         Err(response) => return response,
     };
-    let repository = if let Some((owner, repo)) = &scope {
-        let repository =
-            match db::repositories::records::get_repository(&ctx.state.pool, owner, repo).await {
-                Ok(Some(repository)) => repository,
-                Ok(None) => return ctx.error(StatusCode::NOT_FOUND, "Repository not found."),
-                Err(_) => return unavailable(&ctx),
-            };
-        if let Err((status, _)) =
-            super::jobs::ensure_repo_read_access(&ctx.state, user, &repository).await
-        {
-            return read_error(&ctx, status);
+    let (repository, repo_chrome) = if let Some((owner, repo)) = &scope {
+        match crate::backend::api::repos::chrome::load_database(&ctx, owner, repo).await {
+            Ok(loaded) => (Some(loaded.repository), Some(loaded.chrome)),
+            Err(response) => return response,
         }
-        Some(repository)
     } else {
-        None
+        (None, None)
     };
     // A global selection uses the repository's native action routes after authorization.
     if repository.is_none() {
@@ -241,6 +244,7 @@ async fn actions(
         .unwrap_or_else(|| ("/ci".into(), "CI/CD runs".into()));
     let mut workflows = Vec::new();
     let mut can_manage_runs = false;
+    let mut can_dispatch = false;
     let mut can_cancel = false;
     let mut workflow_warning = None;
     let mut dispatch_branch = "main".to_string();
@@ -253,6 +257,11 @@ async fn actions(
             return ctx.error(StatusCode::BAD_REQUEST, "Invalid workflow ref.");
         }
         let store = repo_store(repository, ctx.state.cluster.as_ref());
+        let discovery_ref = if query.contains_key("ref") {
+            dispatch_branch.clone()
+        } else {
+            format!("refs/heads/{}", repository.default_branch)
+        };
         let definitions = match tokio::time::timeout(std::time::Duration::from_secs(5), async {
             let refs = store.refs().await?;
             // A genuinely empty repository has no workflow tree yet. Do not
@@ -260,8 +269,8 @@ async fn actions(
             if refs.is_empty() {
                 return Ok(Vec::new());
             }
-            store.commit(&dispatch_branch).await?;
-            crate::backend::ci::list_workflows_for_ref(&store, &dispatch_branch).await
+            store.commit(&discovery_ref).await?;
+            crate::backend::ci::list_workflows_for_ref(&store, &discovery_ref).await
         })
         .await
         {
@@ -281,6 +290,7 @@ async fn actions(
             Ok(allowed) => allowed,
             Err(_) => return unavailable(&ctx),
         };
+        can_dispatch = can_manage_runs;
     }
     let before = match query.get("before").map(|value| value.parse::<i64>()) {
         None => 0,
@@ -440,7 +450,7 @@ async fn actions(
         };
         // When the workflow list above could not be read, the storage node is not answering,
         // so the page does not wait on it a second time.
-        let planned = if workflow_warning.is_some() {
+        let planned = if workflow_warning.is_some() || run.engine.as_deref() != Some("act") {
             Vec::new()
         } else {
             planned_jobs(
@@ -451,20 +461,22 @@ async fn actions(
             )
             .await
         };
-        let artifacts = match db::action_objects::list_artifacts(&ctx.state.pool, run.id).await {
-            Ok(artifacts) => artifacts
-                .into_iter()
-                .map(|artifact| view_actions::Artifact {
-                    can_delete: !user.is_banned
-                        && !user.must_change_password
-                        && (personal_admin || access.can_write()),
-                    id: artifact.id,
-                    name: artifact.name,
-                    size: artifact.size,
-                })
-                .collect(),
-            Err(_) => return unavailable(&ctx),
-        };
+        let artifacts =
+            match db::action_objects::list_artifacts(&ctx.state.pool, run.id, None, None).await {
+                Ok(artifacts) => artifacts
+                    .into_iter()
+                    .map(|artifact| view_actions::Artifact {
+                        can_delete: !run_repository.is_archived
+                            && !user.is_banned
+                            && !user.must_change_password
+                            && (personal_admin || access.can_write()),
+                        id: artifact.id,
+                        name: artifact.name,
+                        size: artifact.size,
+                    })
+                    .collect(),
+                Err(_) => return unavailable(&ctx),
+            };
         let groups = match db::action_concurrency::groups(
             &ctx.state.pool,
             run.repo_id,
@@ -515,6 +527,18 @@ async fn actions(
         } else {
             None
         };
+        let summaries = match db::action_jobs::summaries(&ctx.state.pool, run.repo_id, run.id).await
+        {
+            Ok(summaries) => summaries
+                .into_iter()
+                .map(|summary| view_actions::Summary {
+                    job: summary.job,
+                    number: summary.number,
+                    markdown: summary.markdown,
+                })
+                .collect(),
+            Err(_) => return unavailable(&ctx),
+        };
         let mut run_view = map_run(run, &run_repository);
         run_view.approval_pull = approval_pull;
         run_view.concurrency_groups = groups.into_iter().map(|group| group.name).collect();
@@ -522,22 +546,13 @@ async fn actions(
         run_view.artifacts = artifacts;
         Some(view_actions::SelectedRun {
             run: run_view,
+            summaries,
             logs,
             deployment,
             fetched_lines,
             logs_truncated: false,
             planned,
         })
-    } else {
-        None
-    };
-    // The path only identifies the scope; the shared loader independently checks
-    // read access before projecting engagement/visibility metadata for the browser.
-    let repo_chrome = if let Some((owner, name)) = &scope {
-        match crate::backend::api::repos::chrome::load_database(&ctx, owner, name).await {
-            Ok(loaded) => Some(loaded.chrome),
-            Err(response) => return response,
-        }
     } else {
         None
     };
@@ -552,7 +567,7 @@ async fn actions(
         workflows,
         selected,
         dispatch_branch,
-        can_dispatch: can_manage_runs && workflow_warning.is_none(),
+        can_dispatch: can_dispatch && workflow_warning.is_none(),
         can_manage_runs,
         can_cancel,
         workflow_warning,

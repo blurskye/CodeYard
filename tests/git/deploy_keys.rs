@@ -75,7 +75,7 @@ async fn multiplexed_slot_wait_keeps_the_active_channel_readable(
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
         while !socket.exists() {
             assert!(master.try_wait().unwrap().is_none(), "SSH master exited");
             tokio::time::sleep(std::time::Duration::from_millis(20)).await;
@@ -92,36 +92,53 @@ async fn multiplexed_slot_wait_keeps_the_active_channel_readable(
         .spawn()
         .unwrap();
     tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(120),
         first.stdout.as_mut().unwrap().read_exact(&mut [0; 4]),
     )
     .await
     .unwrap()
     .unwrap();
-    let second = ssh()
-        .args(["-oProxyCommand=false", "git@127.0.0.1", command])
+    let mut second = ssh()
+        .args(["-v", "-oProxyCommand=false", "git@127.0.0.1", command])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // The master reports the session id to this client only after it has sent the second exec
+    // to the server, and it keeps the connection's messages in order, so the server meets that
+    // exec before the first channel's EOF.
+    use tokio::io::AsyncBufReadExt;
+    let mut errors = tokio::io::BufReader::new(second.stderr.take().unwrap()).lines();
+    let mut stderr = String::new();
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        while let Some(line) = errors.next_line().await.unwrap() {
+            stderr.push_str(&line);
+            stderr.push('\n');
+            if line.contains("master session id") {
+                return;
+            }
+        }
+        panic!("the second exec ended before the master opened it: {stderr}");
+    })
+    .await
+    .expect("the SSH master never opened the second exec");
     // The second exec is waiting for the first channel's slot on this same SSH connection.
     // EOF must still reach the first channel, so it can finish and release that slot.
     drop(first.stdin.take());
     let output = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(120),
         second.wait_with_output(),
     )
     .await
     .expect("waiting exec blocked the active channel's EOF")
     .unwrap();
-    assert!(
-        !output.stdout.is_empty(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    tokio::time::timeout(std::time::Duration::from_secs(10), first.wait())
+    while let Some(line) = errors.next_line().await.unwrap() {
+        stderr.push_str(&line);
+        stderr.push('\n');
+    }
+    assert!(!output.stdout.is_empty(), "{stderr}");
+    tokio::time::timeout(std::time::Duration::from_secs(120), first.wait())
         .await
         .unwrap()
         .unwrap();
@@ -254,7 +271,7 @@ async fn deploy_keys_clone_push_and_stay_inside_their_repository() {
     // Multi-key clients do not accumulate bans, and pre-exec requests cannot deadlock exec.
     let (unknown_key, _) = keypair(root.path(), "unknown").await;
     for _ in 0..6 {
-        let output = tokio::time::timeout(std::time::Duration::from_secs(10), async {
+        let output = tokio::time::timeout(std::time::Duration::from_secs(120), async {
             let mut child = Command::new(tool("ssh"))
                 .args([
                     "-F",

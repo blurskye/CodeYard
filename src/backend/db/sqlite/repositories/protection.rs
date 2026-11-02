@@ -6,6 +6,74 @@ use crate::backend::db::repositories::protection::{
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+pub async fn read_protection_snapshot(
+    pool: &SqlitePool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<crate::backend::db::repositories::protection::ProtectionSnapshot> {
+    let actor = actor.into();
+    let mut tx = pool.begin().await?;
+    anyhow::ensure!(
+        super::super::discussions::lock_settings_read_authority(
+            &mut tx,
+            actor.user_id,
+            repo_id,
+            true
+        )
+        .await?,
+        ProtectionWriteRefusal::Denied
+    );
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_read_account(&mut tx, actor.user_id, &credential)
+            .await?;
+    }
+    let rules: Vec<BranchProtectionRule> =
+        sqlx::query_as("SELECT * FROM branch_protection_rules WHERE repo_id=?1 ORDER BY pattern")
+            .bind(repo_id)
+            .fetch_all(&mut *tx)
+            .await?;
+    let mut users = Vec::new();
+    let mut teams = Vec::new();
+    for rule in &rules {
+        users.extend(
+            rule.push_allowances
+                .iter()
+                .chain(&rule.force_push_allowances)
+                .copied(),
+        );
+        teams.extend(rule.push_team_allowances.iter().copied());
+    }
+    users.sort_unstable();
+    users.dedup();
+    teams.sort_unstable();
+    teams.dedup();
+    let users: Vec<(i64, String)> = if users.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as(
+            "SELECT id,username FROM users WHERE id IN (SELECT value FROM json_each(?1))",
+        )
+        .bind(serde_json::to_string(&users)?)
+        .fetch_all(&mut *tx)
+        .await?
+    };
+    let teams: Vec<(i64, String)> = if teams.is_empty() {
+        Vec::new()
+    } else {
+        sqlx::query_as("SELECT t.id,t.slug FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret')")
+            .bind(repo_id).bind(serde_json::to_string(&teams)?).fetch_all(&mut *tx).await?
+    };
+    tx.commit().await?;
+    Ok(
+        crate::backend::db::repositories::protection::ProtectionSnapshot {
+            repository_id: repo_id,
+            rules,
+            users: users.into_iter().collect(),
+            teams: teams.into_iter().collect(),
+        },
+    )
+}
+
 pub async fn list_branch_protection_rules(
     pool: &SqlitePool,
     repo_id: i64,
@@ -34,6 +102,20 @@ pub async fn upsert_branch_protection_rule(
         .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(credential) = input.credential.as_ref() {
+        let authority = crate::backend::db::credentials::Actor::from((input.actor_id, credential));
+        anyhow::ensure!(
+            super::super::credentials::repository(
+                &mut tx,
+                &authority,
+                input.repo_id,
+                "administration",
+                true
+            )
+            .await?,
+            ProtectionWriteRefusal::Denied
+        );
+    }
     let previous: Option<String> = sqlx::query_scalar(
         "SELECT github_settings FROM branch_protection_rules WHERE repo_id=?1 AND pattern=?2",
     )
@@ -52,6 +134,12 @@ pub async fn upsert_branch_protection_rule(
         .unwrap_or_else(|| previous.clone());
     // Signatures are changed only through their own subresource.
     settings.required_signatures = previous.required_signatures;
+    crate::backend::db::repositories::protection::normalize_check_bindings(&mut settings.checks)?;
+    crate::backend::db::repositories::protection::prune_check_bindings(
+        &mut settings,
+        input.require_status_checks,
+        &input.required_status_checks,
+    );
     if validate_apps {
         validate_push_apps_on(&mut tx, input.repo_id, &settings.push_apps).await?;
     }
@@ -160,13 +248,20 @@ pub async fn upsert_branch_protection_rule(
 
 pub async fn delete_branch_protection_rule(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
 ) -> Result<bool> {
+    let authority = actor_id.into();
+    let actor_id = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id,)
+            .await?,
+        ProtectionWriteRefusal::Denied
+    );
+    anyhow::ensure!(
+        super::super::credentials::repository(&mut tx, &authority, repo_id, "administration", true)
             .await?,
         ProtectionWriteRefusal::Denied
     );
@@ -183,14 +278,21 @@ pub async fn delete_branch_protection_rule(
 
 pub async fn update_branch_protection_rule(
     pool: &SqlitePool,
-    actor_id: i64,
+    actor_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     pattern: &str,
     update: crate::backend::db::repositories::protection::ProtectionUpdate,
 ) -> Result<BranchProtectionRule> {
+    let authority = actor_id.into();
+    let actor_id = authority.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         crate::backend::db::sqlite::discussions::lock_admin_authority(&mut tx, actor_id, repo_id)
+            .await?,
+        ProtectionWriteRefusal::Denied
+    );
+    anyhow::ensure!(
+        super::super::credentials::repository(&mut tx, &authority, repo_id, "administration", true)
             .await?,
         ProtectionWriteRefusal::Denied
     );
@@ -232,7 +334,7 @@ async fn validate_push_apps_on(
     ids: &[i64],
 ) -> Result<()> {
     anyhow::ensure!(
-        ids.len() <= 100,
+        ids.len() <= crate::backend::db::repositories::protection::MAX_ALLOWANCE_ACTORS,
         ProtectionWriteRefusal::InvalidPushAllowances
     );
     for id in ids {
@@ -284,6 +386,14 @@ pub async fn rename_branch_settings(
     .bind(new)
     .execute(&mut *tx)
     .await?;
+    sqlx::query("DELETE FROM issue_linked_branches WHERE repo_id=?1 AND name=?2 AND EXISTS(SELECT 1 FROM issue_linked_branches destination WHERE destination.issue_id=issue_linked_branches.issue_id AND destination.repo_id=?1 AND destination.name=?3)")
+        .bind(repo).bind(old).bind(new).execute(&mut *tx).await?;
+    sqlx::query("UPDATE issue_linked_branches SET name=?3 WHERE repo_id=?1 AND name=?2")
+        .bind(repo)
+        .bind(old)
+        .bind(new)
+        .execute(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM branch_redirects WHERE repo_id=?1 AND old_name=?2")
         .bind(repo)
         .bind(new)
@@ -316,6 +426,7 @@ pub async fn branch_redirect(pool: &SqlitePool, repo: i64, old: &str) -> Result<
 pub async fn upsert_commit_status(
     pool: &SqlitePool,
     input: CommitStatusUpsert<'_>,
+    token: Option<i64>,
 ) -> Result<CommitStatus> {
     anyhow::ensure!(
         !server_owned_status_context(input.context),
@@ -333,6 +444,19 @@ pub async fn upsert_commit_status(
         .await?,
         ProtectionWriteRefusal::Denied
     );
+    if let Some(token) = token {
+        anyhow::ensure!(
+            crate::backend::db::sqlite::users::tokens::repository_write_on(
+                &mut tx,
+                token,
+                actor_id,
+                input.repo_id,
+                "statuses"
+            )
+            .await?,
+            ProtectionWriteRefusal::Denied
+        );
+    }
     let sha = input.sha.to_ascii_lowercase();
     // GitHub compares contexts without case: a status updates the one differing only in case.
     let context: String = sqlx::query_scalar("SELECT context FROM commit_statuses WHERE repo_id=?1 AND sha=?2 AND lower(context)=lower(?3) ORDER BY id LIMIT 1")
@@ -373,6 +497,59 @@ pub async fn upsert_commit_status(
     tx.commit().await?;
 
     Ok(status)
+}
+
+pub async fn commit_status_page(
+    pool: &SqlitePool,
+    viewer: Option<i64>,
+    repo: i64,
+    sha: &str,
+    offset: i64,
+    limit: i64,
+    history: bool,
+) -> Result<Option<crate::backend::db::repositories::protection::CommitStatusPage>> {
+    // A zero limit reads only the counts, which the GraphQL rollup needs.
+    anyhow::ensure!(
+        (0..=100).contains(&limit) && offset >= 0,
+        "Invalid status page"
+    );
+    let mut tx = pool.begin().await?;
+    let visible: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM repositories r LEFT JOIN users u ON u.id=$2 WHERE r.id=$1 AND NOT r.is_gist AND (NOT r.is_private OR (r.owner_kind='user' AND (u.is_admin OR r.owner_user_id=u.id)) OR ({})>=1))", super::access::USER_REPO_ACCESS_SQL))
+        .bind(repo).bind(viewer).fetch_one(&mut *tx).await?;
+    if !visible {
+        return Ok(None);
+    }
+    let counts: Vec<(String, i64)> = if history {
+        Vec::new()
+    } else {
+        sqlx::query_as("SELECT state,COUNT(*) FROM commit_statuses_latest WHERE repo_id=$1 AND sha=$2 GROUP BY state")
+            .bind(repo).bind(sha).fetch_all(&mut *tx).await?
+    };
+    let total = if history {
+        sqlx::query_scalar("SELECT COUNT(*) FROM commit_status_history WHERE repo_id=$1 AND sha=$2")
+            .bind(repo)
+            .bind(sha)
+            .fetch_one(&mut *tx)
+            .await?
+    } else {
+        counts.iter().map(|(_, count)| count).sum()
+    };
+    let table = if history {
+        "commit_status_history"
+    } else {
+        "commit_statuses_latest"
+    };
+    let updated = if history { "created_at" } else { "updated_at" };
+    let statuses = sqlx::query_as(&format!("SELECT id,repo_id,sha,context,state,substr(description,1,1024) AS description,substr(target_url,1,2048) AS target_url,creator_id,created_at,{updated} AS updated_at FROM {table} WHERE repo_id=$1 AND sha=$2 ORDER BY id DESC LIMIT $3 OFFSET $4"))
+        .bind(repo).bind(sha).bind(limit).bind(offset).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(
+        crate::backend::db::repositories::protection::CommitStatusPage {
+            total,
+            counts,
+            statuses,
+        },
+    ))
 }
 
 pub async fn list_commit_statuses_page(

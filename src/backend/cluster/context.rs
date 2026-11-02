@@ -61,9 +61,19 @@ impl NodeContext {
 
     /// A worker learns storage addresses with its claim, without a database lookup.
     pub fn remember_peer(&self, id: i64, peer: CorePeer) {
-        self.peers
+        let mut peers = self
+            .peers
             .write()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id, peer);
+            .unwrap_or_else(|error| error.into_inner());
+        let changed = peers.get(&id).is_none_or(|old| {
+            old.public_key != peer.public_key
+                || old.address != peer.address
+                || old.target != peer.target
+        });
+        peers.insert(id, peer);
+        drop(peers);
+        if changed {
+            self.note_dial(id, true);
+        }
     }
 }

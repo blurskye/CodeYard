@@ -1,5 +1,5 @@
 //! Organization security configurations share the repository security settings store.
-use super::{api_url, auth, orgs, pagination::Pagination, repository, Error, Result};
+use super::{api_url, auth, orgs, pagination::Cursor, repository, Error, Result};
 use crate::backend::{
     app::AppState, db::code_security as records, repositories::access, webhooks::payloads,
 };
@@ -59,7 +59,7 @@ async fn scope(
     headers: &HeaderMap,
     org: &str,
     write: bool,
-) -> Result<(i64, i64)> {
+) -> Result<(auth::Authentication, i64)> {
     let auth = auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(auth::required)?;
@@ -67,7 +67,7 @@ async fn scope(
         auth.require_write()?;
     }
     let org = orgs::target(state, org).await?;
-    Ok((auth.user.id, org.id))
+    Ok((auth, org.id))
 }
 fn document(row: &records::Configuration, org: &str) -> Result<Value> {
     let mut value: Value = serde_json::from_str(&row.settings).map_err(Error::unavailable)?;
@@ -88,30 +88,39 @@ fn document(row: &records::Configuration, org: &str) -> Result<Value> {
     value["updated_at"] = json!(row.updated_at);
     Ok(value)
 }
-fn page(page: &Pagination, uri: &Uri, values: Vec<Value>) -> Result<Response> {
-    let (offset, limit) = page.window()?;
-    let values: Vec<_> = values.into_iter().skip(offset).take(limit + 1).collect();
-    let next = values.len() > limit;
-    page.response(uri, values, next)
+/// One cursor page of `rows`, which were read with one extra row to tell whether more follow.
+fn page<T>(
+    cursor: &Cursor,
+    uri: &Uri,
+    mut rows: Vec<T>,
+    id: impl Fn(&T) -> i64,
+    document: impl Fn(&T) -> Result<Value>,
+) -> Result<Response> {
+    let more = cursor.trim(&mut rows)?;
+    let (headers, _) = cursor.links(uri, rows.first().map(&id), rows.last().map(&id), more)?;
+    let values = rows.iter().map(document).collect::<Result<Vec<_>>>()?;
+    Ok((headers, Json(values)).into_response())
 }
 async fn list(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path(org): Path<String>,
-    Query(query): Query<Pagination>,
+    Query(query): Query<Cursor>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (actor, id) = scope(&state, &headers, &org, false).await?;
-    let rows = records::list(&state.pool, actor, id)
-        .await
-        .map_err(failure)?;
-    page(
-        &query,
-        &uri,
-        rows.iter()
-            .map(|row| document(row, &org))
-            .collect::<Result<Vec<_>>>()?,
+    let (after, before, limit) = query.window()?;
+    let rows = records::list_window(
+        &state.pool,
+        actor.user.id,
+        id,
+        after,
+        before,
+        limit as i64 + 1,
     )
+    .await
+    .map_err(failure)?;
+    page(&query, &uri, rows, |row| row.id, |row| document(row, &org))
 }
 async fn get_configuration(
     State(state): State<Arc<AppState>>,
@@ -119,7 +128,7 @@ async fn get_configuration(
     Path((org, id)): Path<(String, i64)>,
 ) -> Result<Json<Value>> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let row = records::list(&state.pool, actor, owner)
+    let row = records::list(&state.pool, actor.user.id, owner)
         .await
         .map_err(failure)?
         .into_iter()
@@ -141,7 +150,7 @@ async fn save(
         .transpose()?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration request"))?;
-    let row = records::save(&state.pool, actor, owner, id, &input)
+    let row = records::save(&state.pool, actor.database_actor(), owner, id, &input)
         .await
         .map_err(failure)?;
     Ok((
@@ -160,7 +169,7 @@ async fn remove(
     Path((org, id)): Path<(String, i64)>,
 ) -> Result<StatusCode> {
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
-    records::delete(&state.pool, actor, owner, id)
+    records::delete(&state.pool, actor.database_actor(), owner, id)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)
@@ -183,7 +192,7 @@ async fn attach(
         input.map_err(|_| Error::invalid_simple("Invalid security configuration attachment"))?;
     records::attach(
         &state.pool,
-        actor,
+        actor.database_actor(),
         owner,
         Some(id),
         &input.scope,
@@ -207,7 +216,7 @@ async fn detach(
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
     records::attach(
         &state.pool,
-        actor,
+        actor.database_actor(),
         owner,
         None,
         "selected",
@@ -231,9 +240,15 @@ async fn set_default(
     let (actor, owner) = scope(&state, &headers, &org, true).await?;
     let Json(input) =
         input.map_err(|_| Error::invalid_simple("Invalid security configuration default"))?;
-    let row = records::set_default(&state.pool, actor, owner, id, &input.default_for_new_repos)
-        .await
-        .map_err(failure)?;
+    let row = records::set_default(
+        &state.pool,
+        actor.database_actor(),
+        owner,
+        id,
+        &input.default_for_new_repos,
+    )
+    .await
+    .map_err(failure)?;
     Ok(Json(
         json!({"default_for_new_repos":row.default_for_new_repos,"configuration":document(&row,&org)?}),
     ))
@@ -244,7 +259,7 @@ async fn defaults(
     Path(org): Path<String>,
 ) -> Result<Json<Value>> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let rows = records::list(&state.pool, actor, owner)
+    let rows = records::list(&state.pool, actor.user.id, owner)
         .await
         .map_err(failure)?;
     let values=rows.iter().filter(|row|row.default_for_new_repos!="none").map(|row|Ok(json!({"default_for_new_repos":row.default_for_new_repos,"configuration":document(row,&org)?}))).collect::<Result<Vec<_>>>()?;
@@ -254,19 +269,28 @@ async fn repositories(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((org, id)): Path<(String, i64)>,
-    Query(query): Query<Pagination>,
+    Query(query): Query<Cursor>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (actor, owner) = scope(&state, &headers, &org, false).await?;
-    let rows = records::repositories(&state.pool, actor, owner, id)
-        .await
-        .map_err(failure)?;
+    let (after, before, limit) = query.window()?;
+    let rows = records::repositories(
+        &state.pool,
+        actor.user.id,
+        owner,
+        id,
+        after,
+        before,
+        limit as i64 + 1,
+    )
+    .await
+    .map_err(failure)?;
     page(
         &query,
         &uri,
-        rows.iter()
-            .map(|repo| json!({"status":"attached","repository":payloads::repository(repo,&org)}))
-            .collect(),
+        rows,
+        |repo| repo.id,
+        |repo| Ok(json!({"status":"attached","repository":payloads::repository(repo,&org)})),
     )
 }
 async fn repository_configuration(

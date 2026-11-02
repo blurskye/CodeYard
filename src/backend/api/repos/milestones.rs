@@ -49,6 +49,13 @@ pub(crate) fn milestone_choice_view(milestone: db::models::Milestone) -> view::M
 fn draft_of(milestone: &view::Milestone) -> MilestoneDraft {
     MilestoneDraft {
         repository_id: None,
+        original: serde_json::to_string(&(
+            &milestone.title,
+            &milestone.description,
+            &milestone.due_date,
+            &milestone.state,
+        ))
+        .unwrap_or_default(),
         title: milestone.title.clone(),
         description: milestone.description.clone().unwrap_or_default(),
         due_date: milestone.due_date.clone().unwrap_or_default(),
@@ -66,6 +73,11 @@ pub(crate) fn milestone_write_error(error: anyhow::Error) -> ApiFailure {
             StatusCode::NOT_FOUND,
             "not_found",
             "The requested resource was not found or you do not have access.",
+        ),
+        Some(MilestoneWriteRefusal::Conflict) => (
+            StatusCode::CONFLICT,
+            "milestone_changed",
+            "The milestone changed. Your draft is preserved; reload before saving.",
         ),
         Some(MilestoneWriteRefusal::DuplicateTitle) => (
             StatusCode::UNPROCESSABLE_ENTITY,
@@ -85,6 +97,7 @@ pub(crate) fn milestone_write_error(error: anyhow::Error) -> ApiFailure {
 fn submitted_milestone(form: &HashMap<String, String>) -> MilestoneDraft {
     MilestoneDraft {
         repository_id: form.get("repository_id").cloned(),
+        original: field(form, "original"),
         title: field(form, "title"),
         description: field(form, "description"),
         due_date: field(form, "due_date"),
@@ -178,8 +191,9 @@ pub(crate) async fn native_index(
             items,
             sort,
             page_number,
-            has_next: offset + db::milestones::MILESTONES_PER_PAGE
-                < if tab == "open" { open } else { closed },
+            has_next: page_number < crate::backend::api::repos::paging::MAX_PAGE
+                && offset + db::milestones::MILESTONES_PER_PAGE
+                    < if tab == "open" { open } else { closed },
         }),
     ))
 }
@@ -275,7 +289,7 @@ pub(crate) async fn native_create(
         Ok(input) => input,
         Err(failure) => return Ok(new_form_refused(&ctx, &repo, &draft, &failure)),
     };
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     match db::milestones::create_milestone(
         &ctx.state.pool,
         actor,
@@ -346,7 +360,7 @@ async fn milestone_page(
         .iter()
         .map(|entry| entry.issue.id)
         .collect::<Vec<_>>();
-    let mut labels = db::labels::get_issues_labels(&ctx.state.pool, &ids)
+    let mut labels = db::labels::get_issues_labels(&ctx.state.pool, repo.record.id, &ids)
         .await
         .map_err(|_| unavailable(ctx))?;
     let mut assignees = listed_assignees(ctx, &ids, false).await?;
@@ -384,9 +398,10 @@ async fn milestone_page(
         .iter()
         .map(|value| value.pull_request.id)
         .collect::<Vec<_>>();
-    let mut pull_labels = db::labels::get_pull_requests_labels(&ctx.state.pool, &pull_ids)
-        .await
-        .map_err(|_| unavailable(ctx))?;
+    let mut pull_labels =
+        db::labels::get_pull_requests_labels(&ctx.state.pool, repo.record.id, &pull_ids)
+            .await
+            .map_err(|_| unavailable(ctx))?;
     let mut pull_assignees = listed_assignees(ctx, &pull_ids, true).await?;
     let mut pull_items = Vec::new();
     let mut heads = HashMap::new();
@@ -418,6 +433,11 @@ async fn milestone_page(
         }
         None => (None, StatusCode::OK),
     };
+    // A failed form is shown at its POST address; appearance changes return to the milestone.
+    let mut ctx = ctx.clone();
+    if refused.is_some() {
+        ctx.return_to = Some(format!("{}/milestones/{number}", repo.view.url()));
+    }
     Ok(with_status(
         ctx.page_model(
             &title,
@@ -483,15 +503,21 @@ pub(crate) async fn native_update(
             return milestone_page(&ctx, &repo, number, "open", Some((draft, failure))).await
         }
     };
-    let actor = ctx.require_user()?.id;
-    match db::milestones::update_milestone(
+    let actor = ctx.database_actor(ctx.require_user()?.id);
+    match db::milestones::save_milestone_checked(
         &ctx.state.pool,
         actor,
         repo.record.id,
-        number,
-        &input.title,
-        input.description.as_deref(),
-        input.due_date.as_deref(),
+        Some(number),
+        db::milestones::MilestoneInput {
+            title: Some(&input.title),
+            description: Some(input.description.as_deref()),
+            due_on: Some(
+                db::milestones::due_on(input.due_date.as_deref()).map_err(|_| unavailable(&ctx))?,
+            ),
+            state: None,
+        },
+        Some(&draft.original),
     )
     .await
     {
@@ -519,7 +545,7 @@ async fn change_state(
     number: i32,
     state: &str,
 ) -> ResultPage<Response> {
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     match db::milestones::set_milestone_state(&ctx.state.pool, actor, repo.record.id, number, state)
         .await
     {
@@ -575,7 +601,7 @@ pub(crate) async fn native_delete(
             "Confirm the deletion before the milestone is deleted.",
         ));
     }
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     let expected_id = field(&form, "milestone_id").parse::<i64>().unwrap_or(0);
     require_current_repository(&ctx, &form, &repo)?;
     match db::milestones::delete_milestone(
@@ -606,6 +632,12 @@ pub(crate) async fn native_set_item_milestone(
     let kind = kind(&uri);
     let repo = repository(&ctx, &owner, &name).await?;
     let value = item(&ctx, &repo, kind, number).await?;
+    crate::backend::api::repos::discussion::require_item_binding(
+        &ctx,
+        &form,
+        repo.record.id,
+        value.id,
+    )?;
     let subject = assigned_item(&ctx, &repo, kind, number).await?;
     let choice = field(&form, "milestone_number");
     let chosen = match choice.trim() {
@@ -631,7 +663,7 @@ pub(crate) async fn native_set_item_milestone(
             }
         },
     };
-    let actor = ctx.require_user()?.id;
+    let actor = ctx.database_actor(ctx.require_user()?.id);
     let outcome = match subject {
         AssignedItem::Issue(item_id) => {
             db::milestones::set_issue_milestone(
@@ -655,34 +687,6 @@ pub(crate) async fn native_set_item_milestone(
         }
     }
     .map_err(milestone_write_error);
-    let previous = value.milestone.as_ref();
-    if outcome.is_ok() && chosen != previous.map(|milestone| milestone.number) {
-        let (event, title) = match chosen {
-            Some(number) => {
-                let found = db::milestones::get_milestone(&ctx.state.pool, repo.record.id, number)
-                    .await
-                    .ok()
-                    .flatten();
-                (
-                    "milestoned",
-                    found.map(|found| found.milestone.title).unwrap_or_default(),
-                )
-            }
-            None => (
-                "demilestoned",
-                previous.map(|old| old.title.clone()).unwrap_or_default(),
-            ),
-        };
-        db::timeline::record_for(
-            &ctx.state.pool,
-            repo.record.id,
-            subject,
-            actor,
-            event,
-            &title,
-        )
-        .await;
-    }
     detail_outcome(&ctx, &repo, kind, &value, number, outcome).await
 }
 

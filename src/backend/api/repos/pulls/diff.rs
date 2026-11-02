@@ -266,10 +266,13 @@ pub(crate) async fn render_diff(
         )
         .await
         .map_err(|_| unavailable(ctx))?,
-        None => Vec::new(),
+        None => Default::default(),
     };
+    let truncated = truncated || pending.truncated;
+    // The badge counts every pending comment, though the byte budget may show fewer.
+    let pending_comments = pending.count;
+    let pending = pending.comments;
     let pending_ids: HashSet<i64> = pending.iter().map(|entry| entry.comment.id).collect();
-    let pending_comments = pending.len();
     let stored = match (&review, ctx.user.as_ref()) {
         (None, Some(user)) => {
             db::pull_requests::reviews::get_pending_review(&ctx.state.pool, pull.id, user.id)

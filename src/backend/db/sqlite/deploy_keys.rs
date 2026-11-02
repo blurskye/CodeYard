@@ -6,10 +6,41 @@ use sqlx::SqlitePool;
 
 const COLUMNS: &str = "id, repo_id, name AS title, fingerprint, public_key, NOT read_only AS can_write, created_by_id, last_used_at, created_at";
 
-pub async fn list_deploy_keys(pool: &SqlitePool, repo_id: i64) -> Result<Vec<DeployKey>> {
-    let sql =
-        format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id = ?1 ORDER BY created_at, id");
-    Ok(sqlx::query_as(&sql).bind(repo_id).fetch_all(pool).await?)
+/// One page of keys, read in the transaction that re-checks the credential still administers
+/// the repository.
+pub async fn list_deploy_keys(
+    pool: &SqlitePool,
+    actor: i64,
+    repo_id: i64,
+    credential: impl Into<crate::backend::db::deploy_keys::Credential>,
+    after: i64,
+    limit: i64,
+) -> Result<Vec<DeployKey>> {
+    let credential = credential.into();
+    let mut tx = pool.begin().await?;
+    let live = super::credentials::repository(
+        &mut tx,
+        &(actor, &credential).into(),
+        repo_id,
+        "administration",
+        false,
+    )
+    .await?;
+    anyhow::ensure!(
+        live,
+        crate::backend::repositories::deploy_keys::DeployKeyError::Denied
+    );
+    let access = super::repositories::access::USER_REPO_ACCESS_SQL;
+    let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE repo_id=?1 AND id>?3 AND EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?2 WHERE r.id=deploy_keys.repo_id AND NOT r.is_gist AND NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({access})>=5)) ORDER BY id LIMIT ?4");
+    let keys = sqlx::query_as(&sql)
+        .bind(repo_id)
+        .bind(actor)
+        .bind(after)
+        .bind(limit)
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(keys)
 }
 
 pub async fn get_deploy_key(pool: &SqlitePool, key_id: i64) -> Result<Option<DeployKey>> {
@@ -21,7 +52,7 @@ pub async fn get_deploy_key(pool: &SqlitePool, key_id: i64) -> Result<Option<Dep
 }
 
 pub async fn usable_deploy_key(pool: &SqlitePool, key_id: i64) -> Result<Option<DeployKey>> {
-    let sql=format!("SELECT {COLUMNS} FROM deploy_keys WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=deploy_keys.repo_id AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories) AND NOT EXISTS(SELECT 1 FROM ssh_keys k WHERE k.fingerprint=deploy_keys.fingerprint)");
+    let sql=format!("SELECT {COLUMNS} FROM deploy_keys WHERE id=?1 AND NOT EXISTS(SELECT 1 FROM repositories r JOIN organization_settings s ON s.org_id=r.owner_org_id WHERE r.id=deploy_keys.repo_id AND r.owner_kind='org' AND r.owner_user_id IS NULL AND NOT s.deploy_keys_enabled_for_repositories) AND NOT EXISTS(SELECT 1 FROM ssh_keys k WHERE k.fingerprint=deploy_keys.fingerprint) AND (SELECT COUNT(*) FROM deploy_keys sibling WHERE sibling.fingerprint=deploy_keys.fingerprint)=1");
     Ok(sqlx::query_as(&sql)
         .bind(key_id)
         .fetch_optional(pool)
@@ -31,11 +62,13 @@ pub async fn get_deploy_key_by_fingerprint(
     pool: &SqlitePool,
     fingerprint: &str,
 ) -> Result<Option<DeployKey>> {
-    let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE fingerprint = ?1");
-    Ok(sqlx::query_as(&sql)
+    let sql = format!("SELECT {COLUMNS} FROM deploy_keys WHERE fingerprint = ?1 LIMIT 2");
+    let mut keys: Vec<DeployKey> = sqlx::query_as(&sql)
         .bind(fingerprint)
-        .fetch_optional(pool)
-        .await?)
+        .fetch_all(pool)
+        .await?;
+    anyhow::ensure!(keys.len() <= 1, "Ambiguous deploy key fingerprint");
+    Ok(keys.pop())
 }
 
 async fn require_admin(
@@ -48,12 +81,23 @@ async fn require_admin(
         super::repositories::access::user_repo_access_in_transaction(tx, actor, repo).await?;
     let site_admin: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN users u ON u.id=?1 WHERE r.id=?2 AND NOT r.is_gist AND r.owner_kind='user' AND u.is_admin AND NOT u.is_banned AND NOT u.must_change_password)")
         .bind(actor).bind(repo).fetch_one(&mut **tx).await?;
-    let live = match credential {
-        crate::backend::db::deploy_keys::Credential::Session(session) => super::users::transitions::live_session(tx, actor, &session).await?,
-        crate::backend::db::deploy_keys::Credential::Token(id) => sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM personal_access_tokens WHERE id=?1 AND user_id=?2 AND scope='write' AND (expires_at IS NULL OR expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')))").bind(id).bind(actor).fetch_one(&mut **tx).await?,
-    };
+    // Fine-grained, app, CI and OAuth tokens each need repository administration.
+    let live = super::credentials::repository(
+        tx,
+        &(actor, &credential).into(),
+        repo,
+        "administration",
+        true,
+    )
+    .await?;
+    let locked: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM repository_migration_locks WHERE repo_id=?1)",
+    )
+    .bind(repo)
+    .fetch_one(&mut **tx)
+    .await?;
     anyhow::ensure!(
-        (access.can_admin() || site_admin) && live,
+        !locked && (access.can_admin() || site_admin) && live,
         crate::backend::repositories::deploy_keys::DeployKeyError::Denied
     );
     Ok(())

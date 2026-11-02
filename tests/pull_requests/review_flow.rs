@@ -1851,8 +1851,9 @@ async fn literal_file_names_are_read_literally(pg: bool) {
     world.database.finish().await;
 }
 
-/// A new conversation written against an earlier head is refused once the head has moved, through
-/// REST and through the form, and nothing is stored.
+/// A new conversation may sit on an earlier commit of the pull request after the head moved, as
+/// GitHub allows. One on a commit outside the pull request is refused, through REST and through
+/// the form, and nothing is stored for it.
 async fn stale_head_refuses_new_conversations(pg: bool) {
     let mut world = World::new(pg).await;
     let (number, first) = open_pull(&world.alice, "topic", &world.base).await;
@@ -1869,12 +1870,23 @@ async fn stale_head_refuses_new_conversations(pg: bool) {
     refresh_head(&world.alice, number).await;
     assert_eq!(text(&world.alice.pull(number).await, "head_sha"), second);
 
-    let (status, refused) = world
+    let (status, stored) = world
         .bob
         .api(
             "POST",
             &comments,
             json!({"body": "Old head", "path": "topic.txt", "line": 1, "side": "RIGHT", "commit_sha": first}),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{stored}");
+    assert_eq!(stored["commit_sha"], first.as_str(), "{stored}");
+
+    let (status, refused) = world
+        .bob
+        .api(
+            "POST",
+            &comments,
+            json!({"body": "Base commit", "path": "topic.txt", "line": 1, "side": "RIGHT", "commit_sha": world.base}),
         )
         .await;
     assert_eq!(status, StatusCode::CONFLICT, "{refused}");
@@ -1888,7 +1900,7 @@ async fn stale_head_refuses_new_conversations(pg: bool) {
                 ("path", "topic.txt"),
                 ("side", "RIGHT"),
                 ("line", "1"),
-                ("commit_sha", first.as_str()),
+                ("commit_sha", world.base.as_str()),
                 ("base_sha", world.base.as_str()),
                 ("from", "diff"),
                 ("body", "Stale draft"),
@@ -1906,7 +1918,7 @@ async fn stale_head_refuses_new_conversations(pg: bool) {
         .as_array()
         .unwrap()
         .len();
-    assert_eq!(after, before);
+    assert_eq!(after, before + 1);
     world.database.finish().await;
 }
 

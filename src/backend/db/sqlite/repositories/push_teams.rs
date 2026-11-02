@@ -9,10 +9,13 @@ const PERMISSION:&str="MAX(CASE WHEN a.permission BETWEEN 1 AND 5 THEN a.permiss
 
 pub async fn by_names(pool: &SqlitePool, repo: i64, names: &[String]) -> Result<Vec<Team>> {
     validate_count(names.len())?;
-    Ok(sqlx::query_as("SELECT t.* FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL WHERE r.id=?1 AND LOWER(t.slug) IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret') ORDER BY t.id").bind(repo).bind(serde_json::to_string(names)?).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT t.* FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL WHERE r.id=?1 AND t.slug IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret') ORDER BY t.id").bind(repo).bind(serde_json::to_string(names)?).fetch_all(pool).await?)
 }
 pub async fn by_ids(pool: &SqlitePool, repo: i64, ids: &[i64]) -> Result<Vec<TeamAccess>> {
     validate_count(ids.len())?;
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
     Ok(sqlx::query_as(&format!("SELECT t.*,o.name AS org_slug,({PERMISSION}) AS permission FROM teams t JOIN repositories r ON r.owner_org_id=t.org_id AND r.owner_kind='org' AND r.owner_user_id IS NULL JOIN organizations o ON o.id=t.org_id LEFT JOIN effective_team_repo_access a ON a.team_id=t.id AND a.repo_id=r.id WHERE r.id=?1 AND t.id IN (SELECT value FROM json_each(?2)) AND t.privacy IN ('visible','secret') ORDER BY t.id")).bind(repo).bind(serde_json::to_string(ids)?).fetch_all(pool).await?)
 }
 pub(super) async fn eligible_ids_on(

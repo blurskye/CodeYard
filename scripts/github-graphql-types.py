@@ -329,7 +329,13 @@ class Generator:
             # string or a list of strings. Refusing other kinds in parse rejects bad input before any resolver of the same
             # request runs, as GitHub does.
             if definition.name == 'CustomPropertyValue':
-                checks = 'fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> { Ok(Self(value)) }\nfn is_valid(_value: &async_graphql::Value) -> bool { true }\n'
+                checks = ('fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> {\n'
+                          'if <Self as async_graphql::ScalarType>::is_valid(&value) { Ok(Self(value)) } else { Err(async_graphql::InputValueError::custom("expected a string or string array")) }\n}\n'
+                          'fn is_valid(value: &async_graphql::Value) -> bool { match value { async_graphql::Value::String(_) => true, async_graphql::Value::List(values) => values.iter().all(|value| matches!(value, async_graphql::Value::String(_))), _ => false } }\n')
+            elif definition.name == 'GitObjectID':
+                checks = ('fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> {\n'
+                          'if <Self as async_graphql::ScalarType>::is_valid(&value) { Ok(Self(value)) } else { Err(async_graphql::InputValueError::custom("expected a full hexadecimal object ID")) }\n}\n'
+                          'fn is_valid(value: &async_graphql::Value) -> bool { matches!(value, async_graphql::Value::String(value) if value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit())) }\n')
             elif definition.name == 'Date':
                 checks = ('fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> {\n'
                           'if <Self as async_graphql::ScalarType>::is_valid(&value) { Ok(Self(value)) } else { Err(async_graphql::InputValueError::custom("expected a date")) }\n}\n'
@@ -477,7 +483,7 @@ class Generator:
         return ''.join(out)
 
     def render(self):
-        return {name + '.rs': HEADER + ('#![allow(clippy::too_many_arguments)]\n' if name in ('objects', 'resolvers') else '') + ('// Interface attributes repeat ty/desc keys in distinct field and argument groups.\n#![allow(clippy::duplicated_attributes)]\n' if name == 'abstracts' else '') + getattr(self, name)() for name in ('objects', 'resolvers', 'inputs', 'enums', 'scalars', 'abstracts', 'schema', 'directives')}
+        return {name + '.rs': HEADER + ('#![allow(clippy::too_many_arguments, reason = "A generated resolver takes one argument per GraphQL field argument.")]\n' if name in ('objects', 'resolvers') else '') + ('#![allow(clippy::duplicated_attributes, reason = "Interface attributes repeat ty/desc keys in distinct field and argument groups.")]\n' if name == 'abstracts' else '') + getattr(self, name)() for name in ('objects', 'resolvers', 'inputs', 'enums', 'scalars', 'abstracts', 'schema', 'directives')}
 
 
 def main():

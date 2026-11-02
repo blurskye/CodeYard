@@ -362,7 +362,15 @@ async fn contract(pg: bool) {
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].head_sha.as_deref(), Some(admitted_sha.as_str()));
     assert_eq!(runs[0].workflow_inputs, Some(json!({"text":"hello"})));
-    assert_eq!(runs[0].workflow_blobs[".github/workflows/extra.yml"], blob);
+    // The run list leaves out workflow snapshots, so read the whole run.
+    let dispatched = db::ci::get_ci_run(f.pool(), runs[0].id)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        dispatched.workflow_blobs[".github/workflows/extra.yml"],
+        blob
+    );
     let (_, details) = checked(
         &api,
         "actions/create-workflow-dispatch",
@@ -383,10 +391,16 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::OK);
     assert!(String::from_utf8(svg).unwrap().contains("queued"));
     for _ in 0..2 {
-        let run = db::ci::claim_ci_run(f.pool(), "badge-worker", "local", &[alice])
-            .await
-            .unwrap()
-            .unwrap();
+        let run = db::ci::claim_ci_run(
+            f.pool(),
+            "badge-worker",
+            "local",
+            &[alice],
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
+        .await
+        .unwrap()
+        .unwrap();
         db::ci::finish_ci_run(f.pool(), run.id, "badge-worker", "success", None)
             .await
             .unwrap()

@@ -53,6 +53,8 @@ fn draft(data: &Data) -> Draft {
         vector: data.cvss_vector_string.clone().unwrap_or_default(),
         cve: data.cve_id.clone().unwrap_or_default(),
         ecosystem: "npm".into(),
+        vulnerabilities_json: serde_json::to_string_pretty(&data.vulnerabilities)
+            .unwrap_or_else(|_| "[]".into()),
         ..Default::default()
     }
 }
@@ -65,6 +67,7 @@ async fn render(
     status: StatusCode,
 ) -> Response {
     let mut page = AdvisoryPage {
+        can_administer: false,
         rows: Vec::new(),
         detail: None,
         draft: Draft {
@@ -77,6 +80,10 @@ async fn render(
     };
     let actor = ctx.user.as_ref().map(|u| u.id);
     let data = async {
+        if let Some(actor) = actor {
+            page.can_administer =
+                advisories::can_administer(&ctx.state.pool, actor, loaded.repository.id).await?;
+        }
         if let Some(ghsa) = ghsa {
             let advisory = advisories::get(&ctx.state.pool, actor, loaded.repository.id, ghsa)
                 .await?
@@ -90,13 +97,7 @@ async fn render(
                     if access::can_read(&ctx.state.pool, ctx.user.as_ref(), &fork).await? {
                         db::repositories::records::repository_owner_name(&ctx.state.pool, id)
                             .await?
-                            .map(|owner| {
-                                format!(
-                                    "/{}/{}",
-                                    crate::webui::encode_component(&owner),
-                                    crate::webui::encode_component(&fork.name)
-                                )
-                            })
+                            .map(|owner| crate::webui::repository_path(&owner, &fork.name))
                     } else {
                         None
                     }
@@ -235,12 +236,18 @@ async fn submit(
         Ok(loaded) => loaded,
         Err(response) => return response,
     };
-    if !loaded.chrome.can_admin
+    let actor = ctx.user.as_ref().unwrap().id;
+    let can_administer =
+        match advisories::can_administer(&ctx.state.pool, actor, loaded.repository.id).await {
+            Ok(allowed) => allowed,
+            Err(_) => return chrome::unavailable(&ctx),
+        };
+    if !can_administer
         || forms::field(&form, "repository_id").parse::<i64>().ok() != Some(loaded.repository.id)
     {
         return ctx.error(StatusCode::FORBIDDEN, "Advisory administration denied.");
     }
-    let actor = ctx.user.as_ref().unwrap().id;
+    let authority = ctx.database_actor(actor);
     let op = forms::field(&form, "op");
     let ghsa = forms::field(&form, "ghsa");
     let draft = Draft {
@@ -252,6 +259,7 @@ async fn submit(
         package: forms::field(&form, "package"),
         ecosystem: forms::field(&form, "ecosystem"),
         range: forms::field(&form, "range"),
+        vulnerabilities_json: forms::field(&form, "vulnerabilities_json"),
     };
     let effect=async {
         let optional=|s:&String|if s.is_empty(){None}else{Some(s.clone())};
@@ -259,14 +267,17 @@ async fn submit(
         if op=="create"||(op=="save"&&form.contains_key("package")) {
             value["vulnerabilities"]=if draft.package.is_empty(){json!([])}else{json!([{"package":{"ecosystem":draft.ecosystem,"name":draft.package},"vulnerable_version_range":draft.range}])};
         }
+        if op == "save" && form.contains_key("vulnerabilities_json") {
+            value["vulnerabilities"] = serde_json::from_str::<serde_json::Value>(&draft.vulnerabilities_json).map_err(|_| advisories::Refusal::Invalid)?;
+        }
         match op.as_str() {
             "create"=>{
-                return Ok(advisories::create(&ctx.state.pool,actor,loaded.repository.id,&value,false).await?.ghsa_id);
+                return Ok(advisories::create(&ctx.state.pool,authority.clone(),loaded.repository.id,&value,false).await?.ghsa_id);
             }
-            "save"=>{advisories::update(&ctx.state.pool,actor,loaded.repository.id,&ghsa,&value).await?;}
-            "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};advisories::update(&ctx.state.pool,actor,loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
-            "cve"=>advisories::request_cve(&ctx.state.pool,actor,loaded.repository.id,&ghsa).await?,
-            "fork"=>{workflow::private_fork(&ctx.state,actor,&loaded.repository,&ghsa).await?;}
+            "save"=>{advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&value).await?;}
+            "publish"|"close"|"draft"=>{let state=match op.as_str(){"publish"=>"published","close"=>"closed",_=>"draft"};advisories::update(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa,&json!({"state":state})).await?;}
+            "cve"=>advisories::request_cve(&ctx.state.pool,authority.clone(),loaded.repository.id,&ghsa).await?,
+            "fork"=>{workflow::private_fork(&ctx.state,authority.clone(),&loaded.repository,&ghsa).await?;}
             _=>anyhow::bail!(advisories::Refusal::Invalid),
         }
         Ok::<_,anyhow::Error>(ghsa.clone())
@@ -278,11 +289,15 @@ async fn submit(
         ))
         .into_response(),
         Err(error) => {
-            let status = match error.downcast_ref::<advisories::Refusal>() {
-                Some(advisories::Refusal::Denied) => StatusCode::FORBIDDEN,
-                Some(advisories::Refusal::Missing) => StatusCode::NOT_FOUND,
-                Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                None => StatusCode::SERVICE_UNAVAILABLE,
+            let status = if error.is::<db::users::accounts::AccountRestricted>() {
+                StatusCode::FORBIDDEN
+            } else {
+                match error.downcast_ref::<advisories::Refusal>() {
+                    Some(advisories::Refusal::Denied) => StatusCode::FORBIDDEN,
+                    Some(advisories::Refusal::Missing) => StatusCode::NOT_FOUND,
+                    Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
+                    None => StatusCode::SERVICE_UNAVAILABLE,
+                }
             };
             render(
                 &ctx,

@@ -3,22 +3,13 @@ use crate::backend::{
     db::{self, oauth_apps::Application, DbPool},
     identity::tokens::token_hash,
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
-use rand::RngCore;
-use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
 pub const CLI_CLIENT: &str = "178c6fc778ccc68e1d6a";
 const CLI_SECRET: &str = "34ddeff2b558a23d38fba8a6de74f086ede1cc0b";
 
-pub fn random() -> String {
-    let mut bytes = [0; 32];
-    rand::rngs::OsRng.fill_bytes(&mut bytes);
-    hex::encode(bytes)
-}
-
 pub fn user_code() -> String {
-    let value = random();
+    let value = crate::backend::crypto::random_hex();
     format!("{}-{}", &value[..4], &value[4..8]).to_uppercase()
 }
 
@@ -107,6 +98,9 @@ pub fn scopes(value: &str) -> Option<String> {
                 | "read:ssh_signing_key"
                 | "write:ssh_signing_key"
                 | "admin:ssh_signing_key"
+                | "read:gpg_key"
+                | "write:gpg_key"
+                | "admin:gpg_key"
         )
     }) {
         return None;
@@ -117,7 +111,11 @@ pub fn scopes(value: &str) -> Option<String> {
 }
 
 pub fn has_scope(scopes: &str, scope: &str) -> bool {
-    scopes.split(',').any(|s| s == scope)
+    scopes.split(',').any(|granted| {
+        granted == scope
+            || (scope == "read:org" && granted == "write:org")
+            || (matches!(scope, "read:user" | "user:email" | "user:follow") && granted == "user")
+    })
 }
 
 pub fn write_scope(scopes: &str) -> bool {
@@ -130,6 +128,8 @@ pub fn write_scope(scopes: &str) -> bool {
         || has_scope(scopes, "admin:public_key")
         || has_scope(scopes, "write:ssh_signing_key")
         || has_scope(scopes, "admin:ssh_signing_key")
+        || has_scope(scopes, "write:gpg_key")
+        || has_scope(scopes, "admin:gpg_key")
 }
 
 /// GitHub's key scopes: an admin scope includes write, and write includes read.
@@ -150,43 +150,29 @@ pub fn verify_challenge(challenge: &str, verifier: &str) -> bool {
     {
         return false;
     }
-    let actual = URL_SAFE_NO_PAD.encode(Sha256::digest(verifier.as_bytes()));
+    let actual = super::oauth::providers::pkce_challenge(verifier);
     bool::from(actual.as_bytes().ct_eq(challenge.as_bytes()))
 }
 
 /// OAuth permissions complement, rather than replace, the account's live access rules.
 pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
     let parts: Vec<_> = path.trim_start_matches('/').split('/').collect();
-    // These publishers cannot yet prove an unchanged workflow tree from just their actor ID.
-    if write
-        && !has_scope(scopes, "workflow")
-        && matches!(
-            parts.as_slice(),
-            ["repos", _, _, "merges" | "merge-upstream"]
-                | [
-                    "repos",
-                    _,
-                    _,
-                    "pulls",
-                    _,
-                    "merge" | "merge-async" | "update-branch"
-                ]
-        )
-    {
-        return false;
-    }
     match parts.as_slice() {
         [""] | ["user"] => !write,
         ["repos", _, _, "code-scanning", "default-setup", ..] => has_scope(scopes, "repo"),
-        ["repos", _, _, "code-scanning", ..] | ["orgs", _, "code-scanning", ..] => {
+        ["repos", _, _, "code-scanning" | "secret-scanning", ..]
+        | ["orgs", _, "code-scanning" | "secret-scanning", ..]
+        | ["repos", _, _, "dependabot", "alerts", ..]
+        | ["orgs", _, "dependabot", "alerts", ..] => {
             has_scope(scopes, "repo") || has_scope(scopes, "security_events")
         }
         ["orgs", _, "code-security", ..] => {
             has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
         }
-        ["user", "docker", "conflicts"] | ["users" | "orgs", _, "docker", "conflicts"] => {
-            !write && has_scope(scopes, "read:packages")
-        }
+        ["user", "docker", "conflicts"]
+        | ["users" | "orgs", _, "docker", "conflicts"]
+        | ["user", "packages", ..]
+        | ["users" | "orgs", _, "packages", ..] => !write && has_scope(scopes, "read:packages"),
         ["user", "repos" | "starred" | "subscriptions", ..]
         | ["repositories", ..]
         | ["repos", ..]
@@ -194,14 +180,39 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
         | ["orgs", _, "attestations" | "artifacts", ..]
         | ["users", _, "attestations", ..]
         | ["notifications", ..] => has_scope(scopes, "repo"),
-        ["user", "orgs"] | ["orgs", _] | ["orgs", _, "public_members", ..] => {
+        ["orgs", _] if write => has_scope(scopes, "repo"),
+        ["user", "teams"] => {
+            !write
+                && (has_scope(scopes, "repo")
+                    || has_scope(scopes, "read:org")
+                    || has_scope(scopes, "write:org"))
+        }
+        ["orgs", _, "public_members", ..] => {
+            has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
+        }
+        ["user", "orgs"] | ["orgs", _] | ["orgs", _, "issue-types", ..] => {
             !write && (has_scope(scopes, "read:org") || has_scope(scopes, "write:org"))
         }
+        ["orgs", _, "rulesets", ..] => {
+            has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
+        }
+        ["issues"] | ["user", "issues"] | ["orgs", _, "issues"] => {
+            !write && has_scope(scopes, "repo")
+        }
+        ["users", _, "events" | "received_events", ..]
+        | ["orgs", _, "events", ..]
+        | ["networks", _, _, "events"] => !write && has_scope(scopes, "repo"),
+        ["users"]
+        | ["organizations", ..]
+        | ["users", _, "orgs" | "gists" | "social_accounts"]
+        | ["feeds"]
+        | ["events"] => !write,
         ["orgs", _, "members" | "memberships" | "teams", ..]
         | ["user", "memberships", "orgs", ..] => {
             has_scope(scopes, "write:org") || (!write && has_scope(scopes, "read:org"))
         }
         ["gists", ..] => has_scope(scopes, "gist"),
+        ["markdown"] | ["markdown", "raw"] => true,
         ["users", _, "repos" | "starred" | "subscriptions", ..] | ["search", ..] => {
             !write && has_scope(scopes, "repo")
         }
@@ -215,6 +226,8 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
         // The only write to one key is its deletion, which GitHub keeps for the admin scope.
         ["user", "keys", _] if write => has_scope(scopes, "admin:public_key"),
         ["user", "ssh_signing_keys", _] if write => has_scope(scopes, "admin:ssh_signing_key"),
+        ["user", "gpg_keys", _] if write => has_scope(scopes, "admin:gpg_key"),
+        ["user", "gpg_keys"] | ["user", "gpg_keys", _] => key_scope(scopes, "gpg_key", write),
         ["user", "keys"] | ["user", "keys", _] => key_scope(scopes, "public_key", write),
         ["user", "ssh_signing_keys"] | ["user", "ssh_signing_keys", _] => {
             key_scope(scopes, "ssh_signing_key", write)
@@ -223,28 +236,41 @@ pub fn allows(scopes: &str, path: &str, write: bool) -> bool {
     }
 }
 
-/// Git access to a gist needs the `gist` scope; to any other repository, `repo`.
-pub async fn allows_git(pool: &DbPool, token_id: i64, gist: bool) -> anyhow::Result<bool> {
-    if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
+/// OAuth credentials retain anonymous-equivalent public reads; private reads and writes need scopes.
+/// `bounds` is the token's `github_apps::authority`, which the caller loads once and reuses for
+/// its repository check.
+pub async fn allows_git(
+    pool: &DbPool,
+    token_id: i64,
+    bounds: Option<&super::github_apps::Authority>,
+    gist: bool,
+    public_read: bool,
+) -> anyhow::Result<bool> {
+    if let Some(bounds) = bounds {
         // A fine-grained token's per-repository check follows, including public reads.
         if bounds.personal().is_some() {
             return Ok(true);
         }
-        return Ok(super::github_apps::allows(
-            &bounds.permissions,
-            "contents",
-            false,
-        ));
+        return Ok(!gist && super::github_apps::allows(&bounds.permissions, "contents", false));
     }
     let scope = if gist { "gist" } else { "repo" };
     Ok(db::oauth_apps::token(pool, token_id)
         .await?
-        .is_none_or(|token| has_scope(&token.scopes, scope)))
+        .is_none_or(|token| public_read || has_scope(&token.scopes, scope)))
 }
 
-/// Whether a token may publish workflow files. App installations use their `workflows`
-/// permission, and OAuth tokens need the `workflow` scope.
+/// Whether a token may change workflow files. Apps and fine-grained tokens use their
+/// `workflows` permission and OAuth tokens need the `workflow` scope. A job token never may,
+/// as GitHub's GITHUB_TOKEN cannot be given the workflows permission.
 pub async fn allows_workflows(pool: &DbPool, token_id: i64) -> anyhow::Result<bool> {
+    if db::ci_tokens::get(pool, token_id).await?.is_some() {
+        return Ok(false);
+    }
+    if let Some(grant) = super::fine_grained::grant(pool, token_id).await? {
+        return Ok(
+            grant.active && super::fine_grained::allows(&grant.permissions, "workflows", true)
+        );
+    }
     if let Some(bounds) = super::github_apps::authority(pool, token_id).await? {
         return Ok(super::github_apps::allows(
             &bounds.permissions,
@@ -334,6 +360,18 @@ mod tests {
         assert_eq!(scopes("read:packages").as_deref(), Some("read:packages"));
         assert!(!write_scope("read:packages"));
         assert!(allows("read:packages", "/user/docker/conflicts", false));
+        assert!(allows("read:packages", "/user/packages", false));
+        assert!(allows(
+            "read:packages",
+            "/orgs/acme/packages/container/app/versions",
+            false
+        ));
+        assert!(!allows(
+            "read:packages",
+            "/user/packages/container/app",
+            true
+        ));
+        assert!(!allows("repo", "/users/alice/packages", false));
         assert!(!allows("read:packages", "/repos/alice/project", false));
         assert!(!allows(
             "read:packages",
@@ -356,10 +394,11 @@ mod tests {
         );
         assert_eq!(scopes("offline_access"), Some(String::new()));
         assert_eq!(scopes("admin:enterprise"), None);
-        assert!(!allows("repo", "/repos/a/b/pulls/1/merge", true));
-        assert!(!allows("repo", "/repos/a/b/pulls/1/update-branch", true));
-        assert!(!allows("repo", "/repos/a/b/merges", true));
-        assert!(!allows("repo", "/repos/a/b/merge-upstream", true));
+        // The workflow scope is checked against the published trees, not the route.
+        assert!(allows("repo", "/repos/a/b/pulls/1/merge", true));
+        assert!(allows("repo", "/repos/a/b/pulls/1/update-branch", true));
+        assert!(allows("repo", "/repos/a/b/merges", true));
+        assert!(allows("repo", "/repos/a/b/merge-upstream", true));
         assert!(allows("repo,workflow", "/repos/a/b/merge-upstream", true));
         assert!(allows("repo,workflow", "/repos/a/b/pulls/1/merge", true));
         assert!(!allows("read:org", "/orgs/private/repos", false));

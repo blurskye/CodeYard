@@ -55,9 +55,9 @@ fn transport(config: &SmtpConfig) -> Result<AsyncSmtpTransport<Tokio1Executor>, 
 /// connection's own text, kept short.
 pub async fn send(config: &SmtpConfig, to: &str, subject: &str, body: &str) -> Result<(), String> {
     let message = build_message(config, to, subject, body)?;
-    transport(config)?
-        .send(message)
+    tokio::time::timeout(Duration::from_secs(60), transport(config)?.send(message))
         .await
+        .map_err(|_| "The SMTP send timed out.".to_owned())?
         .map(|_| ())
         .map_err(|error| error.to_string().chars().take(500).collect())
 }

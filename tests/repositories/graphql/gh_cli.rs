@@ -241,7 +241,7 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(labeled.title, "Edited through gh");
     assert_eq!(
-        db::labels::get_pull_request_labels(f.pool(), labeled.id)
+        db::labels::get_pull_request_labels(f.pool(), labeled.repo_id, labeled.id)
             .await
             .unwrap()
             .len(),

@@ -3,13 +3,20 @@
 use super::{identity::NodeKey, link::Link, pairing::PairingHandler, tcp};
 use crate::backend::db::{self, DbPool};
 use anyhow::{anyhow, bail, Context, Result};
+use futures_util::{stream::FuturesUnordered, StreamExt};
 use iroh::{
     endpoint::{presets, AfterHandshakeOutcome, Connection, EndpointHooks, QuicTransportConfig},
     protocol::{Router, RouterBuilder},
     Endpoint, EndpointAddr, PublicKey, RelayMode, RelayUrl, TransportAddr,
 };
 use serde::{Deserialize, Serialize};
-use std::{fmt, net::SocketAddr, str::FromStr, sync::Arc};
+use std::{
+    collections::HashMap,
+    fmt,
+    net::SocketAddr,
+    str::FromStr,
+    sync::{Arc, Mutex, OnceLock},
+};
 use tokio::sync::{OnceCell, Semaphore};
 use tracing::warn;
 
@@ -17,9 +24,9 @@ use tracing::warn;
 /// not (yet) members, and it can do nothing but pair.
 pub const ALPN_PAIR: &[u8] = b"codeyard/pair/1";
 /// Request and response calls between nodes. Members only.
-pub const ALPN_RPC: &[u8] = b"codeyard/rpc/3";
+pub const ALPN_RPC: &[u8] = b"codeyard/rpc/4";
 /// CI job claims and log upload for workers without a database. Members only.
-pub const ALPN_EVENTS: &[u8] = b"codeyard/events/5";
+pub const ALPN_EVENTS: &[u8] = b"codeyard/events/6";
 
 /// Close code for a peer that is not an active member.
 pub const CLOSE_NOT_A_MEMBER: u32 = 403;
@@ -187,6 +194,10 @@ pub(crate) async fn active_member(pool: &DbPool, peer: PublicKey) -> Result<bool
 /// here: a crashed storage node then ends the Git sessions that use it promptly.
 fn quic_config() -> QuicTransportConfig {
     QuicTransportConfig::builder()
+        .max_concurrent_uni_streams(0u32.into())
+        .max_concurrent_bidi_streams(1u32.into())
+        .stream_receive_window(1024u32.saturating_mul(1024).into())
+        .receive_window(1024u32.saturating_mul(1024).into())
         .max_idle_timeout(Some(
             std::time::Duration::from_secs(15)
                 .try_into()
@@ -237,6 +248,7 @@ pub struct IrohDialer {
     relay: Relay,
     key: NodeKey,
     opened: Arc<OnceCell<Endpoint>>,
+    _identity_lock: Option<Arc<std::fs::File>>,
 }
 
 impl IrohDialer {
@@ -246,6 +258,7 @@ impl IrohDialer {
             relay,
             key,
             opened: Arc::new(OnceCell::new()),
+            _identity_lock: None,
         }
     }
 
@@ -255,7 +268,13 @@ impl IrohDialer {
             relay,
             key,
             opened: Arc::new(OnceCell::new_with(Some(endpoint))),
+            _identity_lock: None,
         }
+    }
+
+    pub(crate) fn with_identity_lock(mut self, lock: std::fs::File) -> Self {
+        self._identity_lock = Some(Arc::new(lock));
+        self
     }
 
     pub fn key(&self) -> &NodeKey {
@@ -290,9 +309,10 @@ pub const DIAL_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
 /// How long all TCP attempts to one node may take together: two `DIAL_TIMEOUT`s.
 const TCP_DIAL_BUDGET: std::time::Duration = std::time::Duration::from_secs(10);
 
-/// Opens a request stream to a node. The TCP addresses are tried first, in order. They share
-/// `TCP_DIAL_BUDGET`: each attempt takes at most what is left of it, and once that is spent no
-/// more TCP addresses are tried. iroh comes next, and only when the node also has iroh addresses
+/// Opens a request stream to a node. The TCP addresses are tried first, side by side: each
+/// starts 200 ms after the one before it, at most a second after the first, and gets one
+/// `DIAL_TIMEOUT`. The first to connect is used, and all of them stop at `TCP_DIAL_BUDGET`.
+/// iroh comes next, and only when the node also has iroh addresses
 /// or relays. Opening the iroh endpoint and dialing over iroh share one `DIAL_TIMEOUT`. A call
 /// takes at most 15 seconds, so callers must not wrap it in a shorter timeout: that would cut
 /// off the later addresses. Closing the returned link ends the connection.
@@ -304,20 +324,23 @@ pub async fn dial_node(
 ) -> Result<Link> {
     let budget = tokio::time::Instant::now() + TCP_DIAL_BUDGET;
     let mut failure = anyhow!("the node has no address to dial");
-    for tcp_address in &address.tcp {
-        let left = budget.saturating_duration_since(tokio::time::Instant::now());
-        if left.is_zero() {
-            break;
-        }
-        match tokio::time::timeout(
-            left.min(DIAL_TIMEOUT),
-            Box::pin(tcp::dial(iroh.key(), *tcp_address, node, alpn)),
-        )
-        .await
-        {
-            Ok(Ok(link)) => return Ok(link),
-            Ok(Err(error)) => failure = error,
-            Err(_) => failure = anyhow!("timed out reaching {tcp_address} over TCP"),
+    let mut attempts = FuturesUnordered::new();
+    for (index, tcp_address) in address.tcp.iter().enumerate() {
+        attempts.push(async move {
+            // Later healthy addresses still get a complete attempt when earlier ones stall.
+            tokio::time::sleep(std::time::Duration::from_millis(index.min(5) as u64 * 200)).await;
+            tokio::time::timeout(
+                DIAL_TIMEOUT,
+                Box::pin(tcp::dial(iroh.key(), *tcp_address, node, alpn)),
+            )
+            .await
+            .map_err(|_| anyhow!("timed out reaching {tcp_address} over TCP"))?
+        });
+    }
+    while let Ok(Some(result)) = tokio::time::timeout_at(budget, attempts.next()).await {
+        match result {
+            Ok(link) => return Ok(link),
+            Err(error) => failure = error,
         }
     }
     if address.addrs.is_empty() && address.relays.is_empty() {
@@ -352,7 +375,18 @@ async fn dial(endpoint: &Endpoint, address: EndpointAddr, alpn: &[u8]) -> Result
 /// The next request stream a peer opens on an accepted connection. `None` once the
 /// connection has ended.
 pub async fn accept_stream(connection: &Connection) -> Option<Link> {
-    let (send, recv) = connection.accept_bi().await.ok()?;
+    let (send, recv) = match tokio::time::timeout(
+        std::time::Duration::from_secs(30),
+        connection.accept_bi(),
+    )
+    .await
+    {
+        Ok(Ok(stream)) => stream,
+        _ => {
+            connection.close(CLOSE_UNAVAILABLE.into(), b"request stream timeout");
+            return None;
+        }
+    };
     Some(Link::quic(
         connection.remote_id(),
         connection.alpn(),
@@ -360,6 +394,35 @@ pub async fn accept_stream(connection: &Connection) -> Option<Link> {
         send,
         connection.clone(),
     ))
+}
+
+pub(crate) fn connection_slot(
+    connection: &Connection,
+) -> Result<tokio::sync::OwnedSemaphorePermit> {
+    static CONNECTIONS: OnceLock<Arc<Semaphore>> = OnceLock::new();
+    CONNECTIONS
+        .get_or_init(|| Arc::new(Semaphore::new(64)))
+        .clone()
+        .try_acquire_owned()
+        .map_err(|error| {
+            connection.close(CLOSE_UNAVAILABLE.into(), b"connection admission busy");
+            error.into()
+        })
+}
+
+pub(crate) fn peer_header_slot(
+    registry: &Mutex<HashMap<PublicKey, Arc<Semaphore>>>,
+    peer: PublicKey,
+) -> Result<tokio::sync::OwnedSemaphorePermit> {
+    let slots = {
+        let mut headers = registry.lock().unwrap_or_else(|error| error.into_inner());
+        headers.retain(|_, slots| Arc::strong_count(slots) > 1);
+        headers
+            .entry(peer)
+            .or_insert_with(|| Arc::new(Semaphore::new(4)))
+            .clone()
+    };
+    Ok(slots.try_acquire_owned()?)
 }
 
 /// A router that already accepts pairing through `pairing`, so the caller can share that
@@ -489,8 +552,8 @@ mod tests {
     #[test]
     fn protocol_names_are_distinct_and_versioned() {
         assert_eq!(ALPN_PAIR, b"codeyard/pair/1");
-        assert_eq!(ALPN_RPC, b"codeyard/rpc/3");
-        assert_eq!(ALPN_EVENTS, b"codeyard/events/5");
+        assert_eq!(ALPN_RPC, b"codeyard/rpc/4");
+        assert_eq!(ALPN_EVENTS, b"codeyard/events/6");
         let names = [ALPN_PAIR, ALPN_RPC, ALPN_EVENTS];
         for (index, name) in names.iter().enumerate() {
             assert!(names[index + 1..].iter().all(|other| other != name));

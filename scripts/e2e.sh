@@ -37,6 +37,10 @@
 #                   hung step cannot hold the run open.
 #   E2E_ACT_BINARY  path to act for local CI runs. Use act 0.2.89, the version the
 #                   server image ships (see Containerfile).
+#
+# Local CI runs need a writable delegated cgroup v2 (docs/CI_LOCAL_RUNNER.md), for example
+# `systemd-run --user --scope -p Delegate=yes bash scripts/e2e.sh`. Without one, the checks
+# that need a finished run are reported as SKIP, so the run still exits non-zero.
 set -uo pipefail
 
 # Stop a hung run: run again under timeout, once.
@@ -59,7 +63,9 @@ E2E_VERBOSE=${E2E_VERBOSE:-0}
 ACT=${E2E_ACT_BINARY:-$(command -v act || true)}
 [[ -z $ACT ]] || ACT=$(realpath -m -- "$ACT")
 TARGET_DIR=$(realpath -m -- "${CARGO_TARGET_DIR:-$ROOT/target}")
-export WEBUI_DIST=${WEBUI_DIST:-$ROOT/dist/webui}
+export WEBUI_DIST=$(realpath -m -- "${WEBUI_DIST:-$ROOT/dist/webui}")
+# Repository selectors and injected configuration must never reach fixture Git commands.
+for git_variable in ${!GIT_@}; do unset "$git_variable"; done
 
 case $E2E_PROFILE in
     release) CARGO_PROFILE=(--release) ;;
@@ -92,13 +98,14 @@ ROUND_BLOCKED=0
 declare -A SERVER_PIDS=() HTTP_PORTS=() SSH_PORTS=() IROH_PORTS=()
 CLUSTER_NODES=(web1 store1 store2 ci1)
 PG_DB=''
+PG_OWNED=()
 RUN=''
 STARTED=$SECONDS
 
 drop_pg() { # drops the round's database and the one a restore made
-    [[ -n $PG_DB ]] || return 0
+    ((${#PG_OWNED[@]})) || return 0
     local dropdb name
-    for name in "$PG_DB" "${PG_DB}_r"; do
+    for name in "${PG_OWNED[@]}"; do
         if ! dropdb=$(pg_tool dropdb) || ! pg_command "$GITSERV_TEST_DATABASE_URL" \
             "$dropdb" --maintenance-db --if-exists --force "$name"; then
             echo "Failed to drop disposable PostgreSQL database $name" >&2
@@ -106,12 +113,14 @@ drop_pg() { # drops the round's database and the one a restore made
         fi
     done
     PG_DB=''
+    PG_OWNED=()
     return 0
 }
 
 cleanup() {
     local rc=$?
     trap - EXIT
+    terminate_operators
     terminate_servers
     drop_pg || rc=1
     if [[ $E2E_KEEP == 1 ]]; then
@@ -145,6 +154,7 @@ step() {
     fi
     local log started=$SECONDS rc
     log=$LOGS/$ROUND-$(printf '%02d' "$STEP_NO").log
+    STEP_SKIP=$log.skip
     if ((inline)); then
         "$@" >"$log" 2>&1
         rc=$?
@@ -157,6 +167,12 @@ step() {
         rc=$?
     fi
     local took=$((SECONDS - started))
+    # needs_ci_runs stopped the step; it neither fails nor blocks the round.
+    if ((rc != 0)) && [[ -s $STEP_SKIP ]]; then
+        RESULTS+=("SKIP|$ROUND|$name|$took")
+        printf 'SKIP  [%s] %s (%ss; %s)\n' "$ROUND" "$name" "$took" "$(<"$STEP_SKIP")"
+        return 0
+    fi
     if ((rc == 0)); then
         RESULTS+=("PASS|$ROUND|$name|$took")
         printf 'PASS  [%s] %s (%ss)\n' "$ROUND" "$name" "$took"
@@ -168,6 +184,13 @@ step() {
         if ((fatal)); then ROUND_BLOCKED=1; fi
     fi
     return "$rc"
+}
+
+# needs_ci_runs || return: where local CI runs cannot execute, the step ends here as SKIP.
+needs_ci_runs() {
+    [[ -n $CI_RUNS_UNAVAILABLE ]] || return 0
+    printf '%s\n' "$CI_RUNS_UNAVAILABLE" | tee "$STEP_SKIP" >&2
+    return 1
 }
 
 # State handed from one step to the next (steps run in subshells).
@@ -236,7 +259,9 @@ query = []
 for key, value in u.parse_qsl(parts.query, keep_blank_values=True):
     if key == "password":
         password = value
-    else:
+    elif key == "ssl-mode":
+        query.append(("sslmode", value))
+    elif key != "statement-cache-capacity":
         query.append((key, value))
 netloc = parts.netloc
 if parts.password is not None:
@@ -252,14 +277,7 @@ PY
 # ---------------------------------------------------------------- build -----
 
 check_css() {
-    local fresh=$WORK/tailwind.fresh.css committed=$ROOT/src/webui/assets/tailwind.css
-    bash "$ROOT/scripts/build-webui.sh" css >"$fresh"
-    if [[ $(sha256sum <"$fresh") != "$(sha256sum <"$committed")" ]]; then
-        echo "src/webui/assets/tailwind.css is stale: the views generate $(wc -c <"$fresh") bytes of CSS, the committed file has $(wc -c <"$committed")" >&2
-        echo "refresh it with: bash scripts/build-webui.sh css > src/webui/assets/tailwind.css" >&2
-        return 1
-    fi
-    echo "tailwind.css is what Tailwind generates from the views ($(wc -c <"$fresh") bytes)"
+    bash "$ROOT/scripts/build-webui.sh" check
 }
 
 build_bundle() {
@@ -268,7 +286,9 @@ build_bundle() {
 }
 
 build_server() {
-    cargo build --locked "${CARGO_PROFILE[@]}" -p codeyard --bin codeyard -p codeyard-actions --bin codeyard-actions
+    cargo build --locked "${CARGO_PROFILE[@]}" -p codeyard --bin codeyard -p codeyard-actions --bin codeyard-actions --message-format=json >"$WORK/cargo-artifacts.json" || return 1
+    BIN=$("$PYTHON" -I scripts/cargo-executable.py codeyard <"$WORK/cargo-artifacts.json") || return 1
+    ACTIONS_BIN=$("$PYTHON" -I scripts/cargo-executable.py codeyard-actions <"$WORK/cargo-artifacts.json") || return 1
     [[ -x $BIN && -x $ACTIONS_BIN ]]
     ls -l "$BIN" "$ACTIONS_BIN"
 }
@@ -285,7 +305,8 @@ check_build_artifacts() {
 pg_url() { # pg_url NAME: GITSERV_TEST_DATABASE_URL pointed at the database NAME
     E2E_PG_DATABASE="$1" "$PYTHON" -I -c 'import os, urllib.parse as u
 parts = u.urlsplit(os.environ["GITSERV_TEST_DATABASE_URL"])
-print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"]).geturl())'
+query = [(key, value) for key, value in u.parse_qsl(parts.query, keep_blank_values=True) if key != "dbname"]
+print(parts._replace(path="/" + os.environ["E2E_PG_DATABASE"], query=u.urlencode(query)).geturl())'
 }
 
 prepare_database() {
@@ -300,8 +321,10 @@ prepare_database() {
             fi
             local createdb
             createdb=$(pg_tool createdb) || { echo "createdb not found" >&2; return 1; }
-            PG_DB=gitserv_e2e_$(date +%s)_$$
-            pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$PG_DB" || return 1
+            local candidate=gitserv_e2e_$(random_hex)
+            pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "$candidate" || return 1
+            PG_DB=$candidate
+            PG_OWNED+=("$PG_DB")
             PG_CURRENT=$PG_DB
             DATABASE_URL=$(pg_url "$PG_DB") || return 1
             echo "PostgreSQL database $PG_DB"
@@ -328,7 +351,7 @@ configure_node() {
         ci1 | r1 | r2) roles=runner ;;
     esac
     NODE_ENV=(
-        "PATH=${PG_BIN:+$PG_BIN:}$PATH" "HOME=$NODE_DIR/home" "LANG=C.UTF-8" "NO_COLOR=1" "RUST_LOG=${RUST_LOG:-info}"
+        "PATH=${PG_BIN:+$PG_BIN:}$PATH" "HOME=$NODE_DIR/home" "LANG=C.UTF-8" "NO_COLOR=1" "RUST_LOG=warn,codeyard=info"
         "GITSERV_STATE_DIR=$NODE_DIR/state" "REPOS_PATH=$NODE_DIR/repos" "HOST_KEY_PATH=$NODE_DIR/host_key"
         "HTTP_ADDR=127.0.0.1:${HTTP_PORTS[$node]:-0}" "SSH_ADDR=127.0.0.1:${SSH_PORTS[$node]:-0}" "SSH_MODE=builtin"
         "GITSERV_NODE_ROLES=$roles"
@@ -355,10 +378,65 @@ configure_node() {
     fi
 }
 
+# Clear the inherited environment, then apply secrets with shell builtins, never external env
+# argv. `env -0` lists what a child would inherit, including an exported variable that a
+# caller's local of the same name hides, so each name is unset through every scope.
+node_exec() {
+    local _node_exec_entry
+    while IFS= read -r -d '' _node_exec_entry; do
+        # Bash sets `_` again after every command; the child gets its own.
+        [[ ${_node_exec_entry%%=*} != _ ]] || continue
+        while [[ -v ${_node_exec_entry%%=*} ]]; do
+            unset -v "${_node_exec_entry%%=*}" 2>/dev/null || break
+        done
+    done < <(env -0)
+    export "${NODE_ENV[@]}"
+    exec "$@"
+}
+
+operator() (
+    local seconds=$1 pid status=0
+    shift
+    mkdir -p "$WORK/operators"
+    (node_exec timeout --kill-after=10 "$seconds" "$BIN" "$@") &
+    pid=$!
+    printf '%s\n' "$pid" >"$WORK/operators/$BASHPID"
+    wait "$pid" || status=$?
+    rm -f "$WORK/operators/$BASHPID"
+    return "$status"
+)
+
+terminate_operators() {
+    [[ -d $WORK/operators ]] || return 0
+    # Git gives its children separate process groups. Walk descendants before terminating
+    # the timeout parent so those groups cannot become untracked orphans.
+    "$PYTHON" -I - "$WORK/operators" <<'PY'
+import os, pathlib, signal, sys
+parents = {}
+for entry in pathlib.Path('/proc').iterdir():
+    if entry.name.isdigit():
+        try:
+            fields = (entry / 'stat').read_text().rsplit(')', 1)[1].split()
+            parents[int(entry.name)] = int(fields[1])
+        except (OSError, ValueError, IndexError):
+            pass
+def stop(pid):
+    for child, parent in list(parents.items()):
+        if parent == pid:
+            stop(child)
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+for record in pathlib.Path(sys.argv[1]).glob('*'):
+    stop(int(record.read_text()))
+PY
+}
+
 # server_cli ARGS...: an operator command with the single server's environment.
 server_cli() {
     configure_node server
-    (cd "$NODE_DIR" && exec env -i "${NODE_ENV[@]}" timeout 900 "$BIN" "$@" < /dev/null)
+    (cd "$NODE_DIR" && operator 900 "$@" < /dev/null)
 }
 
 cluster_cli() {
@@ -368,7 +446,7 @@ cluster_cli() {
     if [[ -n ${CLUSTER_JOIN_TOKEN:-} ]]; then
         NODE_ENV+=("CLUSTER_JOIN_TOKEN=$CLUSTER_JOIN_TOKEN")
     fi
-    (cd "$NODE_DIR" && exec env -i "${NODE_ENV[@]}" timeout 60 "$BIN" cluster "$@" < /dev/null)
+    (cd "$NODE_DIR" && operator 60 cluster "$@" < /dev/null)
 }
 
 start_server() { # inline: starts a node and waits for its actual services
@@ -390,7 +468,7 @@ start_server() { # inline: starts a node and waits for its actual services
     touch "$dir/server.log"
     first_line=$(( $(wc -l <"$dir/server.log") + 1 ))
     echo "starting $node: HTTP ${HTTP_PORTS[$node]}, SSH ${SSH_PORTS[$node]}, iroh ${IROH_PORTS[$node]:-off}"
-    (cd "$dir" && exec env -i "${NODE_ENV[@]}" "$BIN" serve < /dev/null) >>"$dir/server.log" 2>&1 &
+    (cd "$dir" && node_exec "$BIN" serve < /dev/null) >>"$dir/server.log" 2>&1 &
     pid=$!
     SERVER_PIDS[$node]=$pid
     while ((waited < 120)); do
@@ -403,10 +481,10 @@ start_server() { # inline: starts a node and waits for its actual services
         fi
         case $node in
             server | web1)
-                if curl -fsS --max-time 2 -o "$dir/health.json" "$BASE/health" 2>/dev/null; then
+                if curl -q --noproxy '*' -fsS --max-time 2 -o "$dir/health.json" "$BASE/health" 2>/dev/null; then
                     grep -q '"status":"ok"' "$dir/health.json" && ready=1
                 fi ;;
-            store1 | store2) tail -n +"$first_line" "$dir/server.log" | grep 'starting codeyard' >/dev/null && ready=1 ;;
+            store1 | store2) tail -n +"$first_line" "$dir/server.log" | grep 'cluster node ready' >/dev/null && ready=1 ;;
             ci1 | r1 | r2) tail -n +"$first_line" "$dir/server.log" | grep 'database-free runner ready' >/dev/null && ready=1 ;;
         esac
         ((ready)) && break
@@ -435,8 +513,8 @@ stop_server() { # inline: SIGTERM, wait, and require exit status 0
     while kill -0 "$pid" 2>/dev/null; do
         sleep 0.2
         waited=$((waited + 1))
-        if ((waited > 200)); then
-            echo "$node was still running 40 s after SIGTERM" >&2
+        if ((waited > 475)); then
+            echo "$node was still running 95 s after SIGTERM" >&2
             kill -KILL "$pid" 2>/dev/null
             wait "$pid" 2>/dev/null
             unset 'SERVER_PIDS[$node]'
@@ -668,7 +746,16 @@ t_push() {
 }
 
 t_git_streaming() {
-    local source=$RUN/work/stream-source transport name url auth a b large expected node peak
+    local source=$RUN/work/stream-source transport name url auth a b large expected node peak growth
+    local nodes=(server)
+    local -A before=()
+    [[ $ROUND == cluster ]] && nodes=(web1 store1 store2)
+    # Measure what the transfers add: a debug server already holds about 240 MiB after the
+    # earlier steps. Writing 5 to clear_refs resets the peak (VmHWM) to the current size.
+    for node in "${nodes[@]}"; do
+        echo 5 >"/proc/${SERVER_PIDS[$node]}/clear_refs"
+        before[$node]=$(awk '/^VmHWM:/ {print $2}' "/proc/${SERVER_PIDS[$node]}/status")
+    done
     mkdir -p "$source"
     git_as alice -C "$source" init -q -b main
     printf 'streaming\n' >"$source/README"
@@ -710,12 +797,13 @@ PY
         [[ $(git_as alice -C "$large" rev-parse 'HEAD^{tree}') == "$expected" ]]
         find "$large/.git/objects/pack" -name '*.pack' -size +128M | grep -q .
     done
-    local nodes=(server)
-    [[ $ROUND == cluster ]] && nodes=(web1 store1 store2)
+    # Buffering one 150 MiB pack would add more than 150 MiB; streaming adds a few.
     for node in "${nodes[@]}"; do
         peak=$(awk '/^VmHWM:/ {print $2}' "/proc/${SERVER_PIDS[$node]}/status")
-        [[ -n $peak && $peak -lt 196608 ]] || { echo "$node peak memory: ${peak:-missing} KiB" >&2; return 1; }
-        echo "$node peak memory after Git transfers: $peak KiB"
+        [[ -n $peak && -n ${before[$node]} ]] || { echo "$node peak memory missing" >&2; return 1; }
+        growth=$((peak - before[$node]))
+        ((growth < 65536)) || { echo "$node memory grew $growth KiB during Git transfers, to $peak KiB" >&2; return 1; }
+        echo "$node memory grew $growth KiB during Git transfers, to $peak KiB"
     done
 }
 
@@ -1269,7 +1357,7 @@ t_pr_review_pages() {
         --submit intent=submit --set state=approved --set 'body=Approved by the end-to-end check' \
         --location "/alice/proj/pulls/$pr#review-*"
     as bob form "/alice/proj/pulls/$pr/diff?path=review-page.txt&side=RIGHT&line=1" \
-        --action "/alice/proj/pulls/$pr/comments" --has path \
+        --action "/alice/proj/pulls/$pr/comments" --has path_json \
         --set 'body=Please check this line' --location "/alice/proj/pulls/$pr/diff#thread-*"
     cid=$(as alice req GET "/api/repos/alice/proj/pulls/$pr/comments" --accept json --print json:0.id)
     as alice req GET "/alice/proj/pulls/$pr/diff" --contains 'Please check this line' \
@@ -1505,8 +1593,9 @@ t_pages() {
     as anon req GET /health --accept json --json-eq status=ok
     as anon req GET /ready --accept json --json-eq status=ready
     as bob req GET /admin/nodes --status 403
+    # Without PUBLIC_SSH_CLONE_BASE the SSH clone URL takes its host from PUBLIC_URL, which is $BASE.
     as anon req GET /alice/proj --contains-raw "$BASE/alice/proj.git" \
-        --contains-raw "ssh://git@localhost:$SSH_PORT/alice/proj.git"
+        --contains-raw "$SSH_URL/alice/proj.git"
     as anon req GET /no/such/page --status 404
 }
 
@@ -1548,6 +1637,7 @@ t_ci_result() {
     as alice req GET /alice/ci-demo/actions --no-scripts --contains "$id" --lacks refs/heads/main
     as alice req GET '/alice/ci-demo/actions?branch=main' --no-scripts --contains "$id"
     as alice req GET '/alice/ci-demo/actions?branch=other' --no-scripts --lacks "$id"
+    needs_ci_runs || return
     wait_ci_run "$id" "$deadline"
     # The claiming worker stored its mode; a queued run is still `unassigned` until then.
     as alice req GET "/api/ci/jobs/$id" --accept json --json-eq mode=local
@@ -1572,6 +1662,7 @@ t_ci_api_save() {
         sleep 1
     done
     as alice req GET "/api/ci/jobs/$id" --accept json --json-eq event=push --json-eq branch=main
+    needs_ci_runs || return
     # Let the run finish, so the restart below stops an idle server.
     wait_ci_run "$id" "$deadline"
 }
@@ -1579,11 +1670,13 @@ t_ci_api_save() {
 # The GHES TLS tunnel and webhook receiver belong to this helper and stop before it returns.
 t_github_clients() {
     local token id engine rc=0
+    local -a skip=()
     token=$(as bob form '/settings?tab=tokens' --action /settings/tokens --has name \
         --set 'name=real gh client' --set scope=write --set expiry=never --status 200 \
         --contains 'Copy this token now' --print 're:(?s)Copy this token now.*?(cy_pat_[0-9a-f]{64})')
     put gh_bob_token "$token"
-    "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" || rc=$?
+    [[ -z $CI_RUNS_UNAVAILABLE ]] || skip=(--skip-runs "$CI_RUNS_UNAVAILABLE")
+    "$GITHUB_PYTHON" -I "$GITHUB_HELPER" --base "$BASE" --run "$RUN" "${skip[@]}" || rc=$?
     id=$(get gh_run_id)
     [[ $id =~ ^[0-9a-f-]{36}$ ]]
     if [[ $ROUND == sqlite ]]; then
@@ -1597,7 +1690,8 @@ PY
         engine=$(pg_query "SELECT engine FROM ci_runs WHERE run_id='$id'")
     fi
     expect_eq 'github-script ran on the native engine' "$engine" codeyard-actions
-    return "$rc"
+    ((rc == 0)) || return "$rc"
+    needs_ci_runs || return
 }
 
 t_after_restart() {
@@ -1605,7 +1699,6 @@ t_after_restart() {
     # Sessions, accounts, repositories and CI history live in the database/disk.
     as alice req GET /settings --accept model --json-eq chrome.username=alice
     as alice req GET /alice/proj --contains README.md
-    as alice req GET "/api/ci/jobs/$(get ci_run)" --accept json --json-eq status=success
     as alice req GET "/api/repos/alice/proj/pulls/$(get pr_number)" --accept json --json-eq state=merged
     # SSH works again and presents the same host key (known_hosts remembers it).
     git_as alice ls-remote "$SSH_URL/alice/proj.git" refs/heads/main | grep -q refs/heads/main
@@ -1621,6 +1714,8 @@ t_after_restart() {
     head=$(git_as alice rev-parse HEAD)
     [[ $(git_as alice ls-remote "$SSH_URL/alice/proj.git" refs/heads/main | cut -f1) == "$head" ]]
     as alice req GET /alice/proj/raw/main/after-restart.txt --body-sha256 "$(sha_of $'after restart\n')"
+    needs_ci_runs || return
+    as alice req GET "/api/ci/jobs/$(get ci_run)" --accept json --json-eq status=success
 }
 
 t_log_clean() {
@@ -1675,7 +1770,7 @@ jobs:
   slow:
     runs-on: self-hosted
     steps:
-      - run: sleep 12
+      - run: while [ -e "$RUN/runner-latch" ]; do sleep 0.2; done; sleep 12
       - run: echo "\${{ github.sha }}" >>"$RUN/runner-marks"
 YAML
     git_as alice add -A
@@ -1711,12 +1806,19 @@ runner_of() { # runner_of RUN: the runner node that claimed RUN
 }
 
 t_runners_share() {
-    local n run sha taken=''
+    local n run sha taken='' deadline=$((SECONDS + 120))
+    needs_ci_runs || return
+    touch "$RUN/runner-latch"
     for n in 1 2 3 4; do
         read -r run sha < <(runners_push "Shared run $n")
         [[ -n $sha ]]
         put "shared_$n" "$run $sha"
     done
+    until [[ $(pg_query "SELECT count(DISTINCT worker) FROM ci_runs WHERE status='running' AND repo_id=(SELECT id FROM repositories WHERE name='runners')") == 2 ]]; do
+        ((SECONDS < deadline)) || { rm -f "$RUN/runner-latch"; echo 'both runners did not claim work' >&2; return 1; }
+        sleep 0.2
+    done
+    rm -f "$RUN/runner-latch"
     for n in 1 2 3 4; do
         # put stores no final newline, so read from a here-string.
         read -r run sha <<<"$(get "shared_$n")"
@@ -1732,6 +1834,7 @@ t_runners_share() {
 
 t_runner_revoked() {
     local n run sha first_line deadline=$((SECONDS + 60))
+    needs_ci_runs || return
     first_line=$(( $(wc -l <"$RUN/nodes/r1/server.log") + 1 ))
     server_cli cluster revoke r1
     for n in 1 2; do
@@ -1750,6 +1853,7 @@ t_runner_revoked() {
 
 t_runner_killed() { # inline: kill -9 the runner that is running a job
     local run sha node other status message started deadline=$((SECONDS + 90))
+    needs_ci_runs || return
     read -r run sha < <(runners_push 'Killed mid-job') || return 1
     [[ -n $run ]] || return 1
     until [[ $(pg_query "SELECT status FROM ci_runs WHERE run_id='$run'") == running ]] \
@@ -1846,6 +1950,7 @@ t_restore_into_empty() { # inline: the data moves aside, as on a new machine
     if [[ -n $DATABASE_URL ]]; then
         createdb=$(pg_tool createdb) || return 1
         pg_command "$GITSERV_TEST_DATABASE_URL" "$createdb" --maintenance-db "${PG_DB}_r" || return 1
+        PG_OWNED+=("${PG_DB}_r")
         PG_CURRENT=${PG_DB}_r
         DATABASE_URL=$(pg_url "$PG_CURRENT") || return 1
     fi
@@ -1869,8 +1974,9 @@ t_restored_works() {
     git_with_token read fetch -q origin "refs/pull/$(get pr_number)/head:restored-pull"
     git_as alice checkout -q restored-pull
     grep -q 'feature work' feature.txt || { echo "the pull request checkout lacks feature.txt" >&2; return 1; }
-    as alice req GET "/alice/ci-demo/actions?job=$(get ci_run)&view=logs" --contains '| hello'
     as alice req GET "/api/files/$(get note_id)/download" --accept any --body-sha256 "$(get note_sha)"
+    needs_ci_runs || return
+    as alice req GET "/alice/ci-demo/actions?job=$(get ci_run)&view=logs" --contains '| hello'
 }
 
 t_delete_kept() {
@@ -2143,6 +2249,7 @@ t_cluster_fork_ci() {
         --json "{\"expected_head\":\"$head\"}"
     id=$(pg_query "SELECT run_id FROM ci_runs WHERE head_sha='$head' AND event='pull_request' AND is_fork")
     [[ $id =~ ^[0-9a-f-]{36}$ ]]
+    needs_ci_runs || return
     wait_ci_run "$id"
     assert_ci_worker "$id"
     as alice req GET "/alice/ci-demo/actions?job=$id&view=logs" --contains 'CLUSTER_FORK_NO_SECRETS'
@@ -2318,6 +2425,7 @@ t_cluster_revoke_worker() {
 t_cluster_approve_worker() {
     local n id
     cluster_cli web1 approve ci1
+    needs_ci_runs || return
     for n in 1 2; do
         id=$(get "revoked_run_$n")
         wait_ci_run "$id"
@@ -2495,11 +2603,12 @@ run_cluster_round() {
     step 'organization: created for real GitHub clients' t_org
     step 'real clients: GHES gh, native github-script and webhooks through web1 and remote storage' t_github_clients
     step -f 'replica: setting 2 keeps a current copy on store2' t_replica_create
+    step -f 'failure: revoke store1 to hold automatic takeover during fallback checks' cluster_cli web1 revoke store1
     step -i 'failure: store1 exits cleanly on SIGTERM' stop_server store1
-    # Before the minute is over: no node has taken the repository over yet.
     step 'failure: store1 down: a push to alice/replica is refused and the copy stays put' t_replica_outage_push
     step 'failure: store1 down and store2 revoked: alice/replica reports 503' t_cluster_outage_no_copy
     step 'failure: store1 down: a copy serves alice/replica pages, API and clones' t_replica_outage_reads
+    step -f 'replica: approve the stopped store1 to allow automatic takeover' cluster_cli web1 approve store1
     step -f 'replica: store2 takes the repository over while store1 stays down' t_replica_take_over
     step -f 'replica: a clone and a push reach the promoted store2' t_replica_push
     step 'failure: store2 repositories keep working and web1 stays ready' t_cluster_outage_survivor
@@ -2540,6 +2649,20 @@ preflight() {
     ((missing == 0))
 }
 
+# The server makes each run's cgroup below its own, which is this script's. Prints why local
+# CI runs cannot execute here, or nothing.
+ci_runs_unavailable() {
+    local current probe
+    current=/sys/fs/cgroup/$(sed -n 's|^0::/||p' /proc/self/cgroup)
+    if [[ $(stat -f -c %T "$current" 2>/dev/null) != cgroup2fs ]]; then
+        echo 'needs a unified cgroup v2 for local CI runs'
+    elif [[ ! -w $current/cgroup.procs ]] || ! probe=$(mktemp -d "$current/codeyard-e2e-XXXXXX" 2>/dev/null); then
+        echo "needs a writable delegated cgroup v2 for local CI runs; $current is not"
+    else
+        rmdir "$probe"
+    fi
+}
+
 summary() {
     local line status round name took pass=0 fail=0 skip=0
     echo
@@ -2554,19 +2677,25 @@ summary() {
 }
 
 preflight || { echo "e2e: tools are missing" >&2; exit 2; }
+CI_RUNS_UNAVAILABLE=$(ci_runs_unavailable)
+[[ -z $CI_RUNS_UNAVAILABLE ]] || echo "e2e: this host $CI_RUNS_UNAVAILABLE; checks that need a finished run are skipped"
 echo "e2e: temporary directory $WORK"
 
-step 'build: committed tailwind.css matches what the views generate' check_css
 if [[ $E2E_SKIP_BUILD == 1 ]]; then
+    step 'build: committed tailwind.css matches what the views generate' check_css
     step -f 'build: existing server binary and bundle are present' check_build_artifacts
 else
     step -f 'build: browser bundle (Tailwind, dx)' build_bundle
-    step -f 'build: server binary (cargo)' build_server
+    step -f -i 'build: server binary (cargo)' build_server
 fi
 
 if [[ $E2E_BUILD_ONLY != 1 && $ROUND_BLOCKED == 0 ]]; then
     for database in $E2E_DATABASES; do
-        if [[ $database == cluster ]]; then run_cluster_round; else run_round "$database"; fi
+        if [[ $database == cluster ]]; then
+            [[ ${E2E_GITHUB_ONLY:-0} == 1 ]] || run_cluster_round
+        else
+            run_round "$database"
+        fi
     done
 fi
 

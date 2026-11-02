@@ -16,7 +16,6 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -80,9 +79,10 @@ pub(super) fn error(error: ValueError) -> Error {
         ValueError::Repository => {
             Error::validation("ActionsValue", "selected_repository_ids", "invalid")
         }
-        ValueError::InvalidValue | ValueError::Visibility | ValueError::Limit => {
-            Error::invalid(error.to_string())
-        }
+        ValueError::InvalidValue
+        | ValueError::Visibility
+        | ValueError::Limit
+        | ValueError::SecretsSize => Error::invalid(error.to_string()),
         _ => Error::unavailable(error),
     }
 }
@@ -142,10 +142,19 @@ async fn organization(
     Ok((org.id, auth))
 }
 fn document(org: &str, kind: Kind, row: &OrganizationValue) -> Value {
-    let mut value = json!({"name":row.name,"created_at":row.created_at,"updated_at":row.updated_at,"visibility":row.visibility,"selected_repositories_url":super::api_url(&format!("/orgs/{org}/actions/{}/{}/repositories", plural(kind), crate::webui::encode_component(&row.name)))});
-    if kind == Kind::Variable {
-        value["value"] = json!(row.value);
-    }
+    let mut value = super::environment_values::base_document(
+        kind,
+        &row.name,
+        &row.value,
+        &row.created_at,
+        &row.updated_at,
+    );
+    value["visibility"] = json!(row.visibility);
+    value["selected_repositories_url"] = json!(super::api_url(&format!(
+        "/orgs/{org}/actions/{}/{}/repositories",
+        plural(kind),
+        crate::webui::encode_component(&row.name)
+    )));
     value
 }
 fn page(page: &Pagination, uri: &Uri, key: &str, rows: Vec<Value>) -> Result<Response> {
@@ -196,9 +205,9 @@ async fn public_key(
     let (key_id, key) = values::key(&state.pool, encryptor, auth.user.id, org)
         .await
         .map_err(error)?;
-    Ok(Json(
-        json!({"key_id":key_id,"key":STANDARD.encode(key.public_key().as_bytes())}),
-    ))
+    Ok(Json(super::action_secrets::public_key_document(
+        &key_id, &key,
+    )))
 }
 async fn value(
     State(state): State<Arc<AppState>>,
@@ -236,7 +245,7 @@ async fn save_secret(
     body: std::result::Result<Json<SecretInput>, JsonRejection>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &params["org"], true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid secret input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let encryptor = state
         .secret_encryptor
         .as_deref()
@@ -249,6 +258,7 @@ async fn save_secret(
         &state.pool,
         Some(encryptor),
         auth.user.id,
+        &auth.credential(),
         org,
         &Save {
             kind: Kind::Secret,
@@ -282,11 +292,12 @@ async fn create_variable(
     body: std::result::Result<Json<CreateVariable>, JsonRejection>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid variable input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     values::save(
         &state.pool,
         None,
         auth.user.id,
+        &auth.credential(),
         org,
         &Save {
             kind: Kind::Variable,
@@ -318,12 +329,12 @@ async fn update_variable(
     body: std::result::Result<Json<UpdateVariable>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, auth) = organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid variable input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let previous = previous.to_ascii_uppercase();
-    let value = body
-        .value
-        .as_deref()
-        .or_else(|| body.name.is_none().then_some(""));
+    let value = body.value.as_deref().or_else(|| {
+        (body.name.is_none() && body.visibility.is_none() && body.selected_repository_ids.is_none())
+            .then_some("")
+    });
     let name = body
         .name
         .as_deref()
@@ -333,6 +344,7 @@ async fn update_variable(
         &state.pool,
         None,
         auth.user.id,
+        &auth.credential(),
         org,
         &Save {
             kind: Kind::Variable,
@@ -357,6 +369,7 @@ async fn remove(
     values::delete(
         &state.pool,
         auth.user.id,
+        &auth.credential(),
         org,
         kind(&route),
         &name(&params)?,
@@ -374,23 +387,24 @@ async fn repositories(
     Query(pagination): Query<Pagination>,
 ) -> Result<Response> {
     let (org, auth) = organization(&state, &headers, &params["org"], false).await?;
-    let rows = values::repositories(
+    let (offset, limit) = pagination.window()?;
+    let (total, rows) = values::repositories(
         &state.pool,
         auth.user.id,
         org,
         kind(&route),
         &name(&params)?,
+        offset as i64,
+        limit as i64,
     )
     .await
     .map_err(error)?;
-    let total = rows.len();
-    let (offset, limit) = pagination.window()?;
-    let mut items = Vec::new();
-    for row in rows.into_iter().skip(offset).take(limit) {
-        items.push(super::repos::document(&state, &row, Some(&auth.user)).await?);
-    }
+    let items: Vec<_> = rows
+        .iter()
+        .map(crate::backend::webhooks::payloads::repository_snapshot)
+        .collect();
     Ok((
-        pagination.headers(&uri, offset.saturating_add(limit) < total)?,
+        pagination.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,
         Json(json!({"total_count":total,"repositories":items})),
     )
         .into_response())
@@ -407,10 +421,11 @@ async fn set_repositories(
     body: std::result::Result<Json<Repositories>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, auth) = organization(&state, &headers, &params["org"], true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid repository selection"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     values::select(
         &state.pool,
         auth.user.id,
+        &auth.credential(),
         org,
         kind(&route),
         &name(&params)?,
@@ -434,6 +449,7 @@ async fn select_repository(
     values::select(
         &state.pool,
         auth.user.id,
+        &auth.credential(),
         org,
         kind,
         &name(params)?,
@@ -477,9 +493,20 @@ async fn inherited(
     let rows = values::inherited(&state.pool, auth.user.id, repo.id, kind)
         .await
         .map_err(error)?;
-    page(&pagination, &uri, plural(kind), rows.into_iter().map(|row| {
-        let mut value = json!({"name":row.name,"created_at":row.created_at,"updated_at":row.updated_at});
-        if kind==Kind::Variable { value["value"]=json!(row.value); }
-        value
-    }).collect())
+    page(
+        &pagination,
+        &uri,
+        plural(kind),
+        rows.into_iter()
+            .map(|row| {
+                super::environment_values::base_document(
+                    kind,
+                    &row.name,
+                    &row.value,
+                    &row.created_at,
+                    &row.updated_at,
+                )
+            })
+            .collect(),
+    )
 }

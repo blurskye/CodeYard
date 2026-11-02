@@ -3,6 +3,8 @@ use super::DbPool;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 
+pub const QUERY_LIMIT: i32 = 5000;
+
 #[derive(sqlx::FromRow)]
 pub struct RateLimit {
     pub used: i32,
@@ -13,10 +15,14 @@ pub struct RateLimit {
 /// before calling the same record readers as REST. Prefixes never supply SQL identifiers.
 pub(crate) fn node_repository_sql(kind: &str) -> Option<&'static str> {
     Some(match kind {
+        "I" => "SELECT repo_id FROM issues WHERE id=$1",
+        "PR" => "SELECT repo_id FROM pull_requests WHERE id=$1",
         "CC" => "SELECT repo_id FROM commit_comments WHERE id=$1",
         "M" => "SELECT repo_id FROM milestones WHERE id=$1",
         "REA" => "SELECT repo_id FROM reactions WHERE id=$1",
-        "CS" => "SELECT repo_id FROM commit_statuses WHERE id=$1",
+        "CS" => "SELECT repo_id FROM commit_status_history WHERE id=$1",
+        "CRU" => "SELECT repo_id FROM check_runs WHERE id=$1",
+        "CSU" => "SELECT repo_id FROM check_suites WHERE id=$1",
         "RE" => "SELECT repo_id FROM releases WHERE id=$1",
         "RA" => "SELECT r.repo_id FROM release_assets a JOIN releases r ON r.id=a.release_id WHERE a.id=$1",
         "PRR" => "SELECT p.repo_id FROM pr_reviews e JOIN pull_requests p ON p.id=e.pull_request_id WHERE e.id=$1",
@@ -31,6 +37,12 @@ pub(crate) fn node_repository_sql(kind: &str) -> Option<&'static str> {
 native_operation!(crate::backend::db::postgres::graphql::node_repository,
     crate::backend::db::sqlite::graphql::node_repository,
     fn node_repository(pool: &DbPool, kind: &str, id: i64) -> Result<Option<i64>>);
+native_operation!(crate::backend::db::postgres::graphql::linked_branch, crate::backend::db::sqlite::graphql::linked_branch,
+    fn linked_branch(pool: &DbPool, id: i64) -> Result<Option<super::issues::management::LinkedBranch>>);
+native_operation!(crate::backend::db::postgres::graphql::ruleset_owner, crate::backend::db::sqlite::graphql::ruleset_owner,
+    fn ruleset_owner(pool: &DbPool, id: i64) -> Result<Option<(Option<i64>, Option<i64>)>>);
+native_operation!(crate::backend::db::postgres::graphql::issue_type_repositories, crate::backend::db::sqlite::graphql::issue_type_repositories,
+    fn issue_type_repositories(pool: &DbPool, id: i64, after: i64, viewer: i64) -> Result<Vec<i64>>);
 native_operation!(crate::backend::db::postgres::graphql::team_locator,
     crate::backend::db::sqlite::graphql::team_locator,
     fn team_locator(pool:&DbPool,id:i64)->Result<Option<(i64,String)>>);

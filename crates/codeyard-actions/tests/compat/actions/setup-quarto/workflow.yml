@@ -1,6 +1,10 @@
 # https://github.com/quarto-dev/quarto-actions/tree/8a96df13519ee81fd526f2dfca5962811136661b
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

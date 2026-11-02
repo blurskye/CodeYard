@@ -7,17 +7,69 @@ use super::{
 use crate::backend::repositories::store::{repo_store, CommitInfo};
 use serde_json::json;
 
-pub(super) fn commit(repo: i64, row: &CommitInfo, scope: &str) -> Result<Value> {
+pub(super) fn charge_commit(row: &CommitInfo, request: &RequestContext) -> Result<()> {
+    request.charge(
+        row.message
+            .len()
+            .saturating_mul(4)
+            .saturating_add(row.author_name.len())
+            .saturating_add(row.author_email.len())
+            .saturating_add(row.committer_name.len())
+            .saturating_add(row.committer_email.len())
+            .saturating_add(row.parents.len().saturating_mul(64)),
+    )
+}
+
+pub(super) fn commit(
+    repo: i64,
+    row: &CommitInfo,
+    scope: &str,
+    request: &RequestContext,
+) -> Result<Value> {
+    charge_commit(row, request)?;
     let date = |time| chrono::DateTime::from_timestamp(time, 0).ok_or_else(|| unavailable(()));
     let authored = date(row.timestamp)?;
     let committed = date(row.committer_timestamp)?;
+    let zone = |minutes: i32| {
+        minutes
+            .checked_mul(60)
+            .and_then(chrono::FixedOffset::east_opt)
+            .ok_or_else(|| unavailable(()))
+    };
+    let author_date = authored.with_timezone(&zone(row.author_offset_minutes)?);
+    let committer_date = committed.with_timezone(&zone(row.committer_offset_minutes)?);
+    let actor = |name: &str, email: &str, date: chrono::DateTime<chrono::FixedOffset>| json!({"__typename":"GitActor","_repo":repo,"_scope":scope,"_email":email,"name":name,"email":email,"date":date});
+    let author = actor(&row.author_name, &row.author_email, author_date);
+    let mut authors = vec![author.clone()];
+    if let Ok(trailers) = git2::message_trailers_strs(&row.message) {
+        for (_, value) in trailers
+            .iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("Co-authored-by"))
+        {
+            if let Some((name, email)) = value.rsplit_once('<').and_then(|(name, rest)| {
+                rest.strip_suffix('>')
+                    .map(|email| (name.trim(), email.trim()))
+            }) {
+                if !name.is_empty()
+                    && !email.is_empty()
+                    && !authors.iter().any(|actor| {
+                        actor["email"]
+                            .as_str()
+                            .is_some_and(|existing| existing.eq_ignore_ascii_case(email))
+                    })
+                {
+                    authors.push(actor(name, email, author_date));
+                }
+            }
+        }
+    }
     Ok(
         json!({"__typename":"Commit","_repo":repo,"_scope":scope,"_parents":row.parents,
-        "id":node_id::git("C",&row.sha),"oid":row.sha,"abbreviatedOid":row.sha.chars().take(7).collect::<String>(),
+        "id":node_id::git_object("C",repo,&row.sha),"oid":row.sha,"abbreviatedOid":crate::webui::components::short_sha(&row.sha),
         "message":row.message,"messageHeadline":row.message.lines().next().unwrap_or(""),"messageBody":row.message.split_once('\n').map(|(_,s)|s.trim_start_matches('\n')).unwrap_or(""),
         "authoredDate":authored,"committedDate":committed,
-        "author":{"name":row.author_name,"email":row.author_email,"date":authored,"user":null},
-        "committer":{"name":row.committer_name,"email":row.committer_email,"date":committed,"user":null}}),
+        "author":author,"_authors":authors,
+        "committer":actor(&row.committer_name,&row.committer_email,committer_date)}),
     )
 }
 
@@ -31,7 +83,7 @@ pub(super) async fn load(
         .commit(oid)
         .await
         .map_err(unavailable)?;
-    commit(repo.id, &row, scope)
+    commit(repo.id, &row, scope, request)
 }
 
 pub(super) async fn resolve(
@@ -68,7 +120,13 @@ pub(super) async fn resolve(
                 )
                 .await?
             };
-            connection::slice(args, vec![value["author"].clone()])
+            connection::slice(
+                args,
+                value["_authors"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_else(|| vec![value["author"].clone()]),
+            )
         }
         ("Commit", "parents") => {
             let value = if parent["_parents"].is_array() {
@@ -103,7 +161,8 @@ pub(super) async fn resolve(
             Ok(page.finish(nodes))
         }
         ("Commit", "comments") => super::commit_comment::list(repo.id, oid, args, request).await,
-        ("Commit", "statusCheckRollup" | "status") => {
+        ("Commit", "statusCheckRollup") => super::checks::rollup(repo.id, oid, request).await,
+        ("Commit", "status") => {
             request.authorize(repo.id, "statuses", false).await?;
             let rows = db::repositories::protection::list_commit_statuses(
                 &request.state.pool,
@@ -126,10 +185,11 @@ pub(super) async fn resolve(
                 "SUCCESS"
             };
             Ok(
-                json!({"__typename":if field=="status" {"Status"} else {"StatusCheckRollup"},"_repo":repo.id,"_scope":"statuses","_oid":oid,"id":node_id::git(if field=="status" {"STAT"} else {"SCR"},&format!("{}/{oid}",repo.id)),"state":state}),
+                json!({"__typename":"Status","_repo":repo.id,"_scope":"statuses","_oid":oid,"id":node_id::git("STAT",&format!("{}/{oid}",repo.id)),"state":state}),
             )
         }
-        ("StatusCheckRollup", "contexts") | ("Status", "contexts") => {
+        ("StatusCheckRollup", "contexts") => super::checks::contexts(args, request, parent).await,
+        ("Status", "contexts") => {
             request.authorize(repo.id, "statuses", false).await?;
             let rows = db::repositories::protection::list_commit_statuses(
                 &request.state.pool,
@@ -138,29 +198,12 @@ pub(super) async fn resolve(
             )
             .await
             .map_err(unavailable)?;
-            let mut counts = std::collections::BTreeMap::<String, i64>::new();
-            for row in &rows {
-                *counts.entry(row.state.to_uppercase()).or_default() += 1;
-            }
-            let nodes = rows
+            Ok(json!(rows
                 .iter()
                 .map(|row| status(repo.id, row))
-                .collect::<Vec<_>>();
-            if ty == "Status" {
-                return Ok(json!(nodes));
-            }
-            let total = nodes.len();
-            let mut value = connection::slice(args, nodes)?;
-            value["checkRunCount"] = json!(0);
-            value["checkRunCountsByState"] = json!([]);
-            value["statusContextCount"] = json!(total);
-            value["statusContextCountsByState"] = json!(counts
-                .into_iter()
-                .map(|(state, count)| json!({"state":state,"count":count}))
-                .collect::<Vec<_>>());
-            Ok(value)
+                .collect::<Vec<_>>()))
         }
-        ("StatusContext", "isRequired") => {
+        ("StatusContext" | "CheckRun", "isRequired") => {
             let pull = if let Some(id) = args.args.get("pullRequestId").filter(|id| !id.is_null()) {
                 let (kind, id) = node_id::decode(id.string()?).ok_or_else(missing)?;
                 if kind != "PR" {
@@ -199,12 +242,15 @@ pub(super) async fn resolve(
             .await
             .map_err(unavailable)?;
             Ok(json!(rules.iter().any(|rule| rule.require_status_checks
-                && rule
-                    .required_status_checks
-                    .iter()
-                    .any(
-                        |name| Some(name.as_str()) == parent["context"].as_str()
-                    ))))
+                && rule.required_status_checks.iter().any(|name| Some(
+                    name.as_str()
+                )
+                    == parent[if ty == "CheckRun" {
+                        "name"
+                    } else {
+                        "context"
+                    }]
+                    .as_str()))))
         }
         ("StatusContext", "creator") => match parent["_creator"].as_i64() {
             Some(id) => user::actor_by_id(id, request).await,

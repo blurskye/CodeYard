@@ -272,6 +272,7 @@ async fn contract(pg: bool) {
         alice,
         &db::issue_attributes::Definition {
             id: None,
+            expected_updated: None,
             kind: "type".into(),
             name: "Task".into(),
             description: Some("A task".into()),
@@ -381,7 +382,7 @@ async fn contract(pg: bool) {
         label.id,
         None,
         None,
-        Some("Changed"),
+        Some(Some("Changed")),
     )
     .await
     .unwrap();
@@ -460,10 +461,14 @@ async fn contract(pg: bool) {
         json!({"input":{"subjectId":parent,"body":"A comment"}}),
     )
     .await;
-    assert!(data["addComment"]["commentEdge"]["node"]["url"]
+    // The same comment link as the REST html_url: the page and anchor the issue page renders.
+    let url = data["addComment"]["commentEdge"]["node"]["url"]
         .as_str()
-        .unwrap()
-        .contains("#issuecomment-"));
+        .unwrap();
+    assert!(
+        url.contains("?comment=") && url.contains("#comment-"),
+        "{url}"
+    );
     let fields = format!("id,number,title,body,state,closed,createdAt,updatedAt,closedAt,url,author{{login,...on User{{id,name}}}},assignees(first:100){{nodes{{id,login,name,databaseId}},totalCount}},labels(first:100){{nodes{{id,name,description,color}},totalCount}},milestone{{number,title,description,dueOn}},reactionGroups{{content,users{{totalCount}}}},{COMMENTS}");
     let issue_fields = format!("{fields},stateReason,issueType{{id,name,description,color}},parent{{id,number,title,url,state,repository{{nameWithOwner}}}},subIssues(first:100){{nodes{{id,number,title,url,state,repository{{nameWithOwner}}}},totalCount}},subIssuesSummary{{total,completed,percentCompleted}},blockedBy(first:50){{nodes{{id,number,title,url,state,repository{{nameWithOwner}}}},totalCount}},blocking(first:50){{nodes{{id,number,title,url,state,repository{{nameWithOwner}}}},totalCount}}");
     let data = query(
@@ -738,10 +743,12 @@ async fn contract(pg: bool) {
         json!({"input":{"labelableId":parent,"labelIds":[label_id]}}),
     )
     .await;
-    assert!(db::labels::get_issue_labels(f.pool(), parent_record.id)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        db::labels::get_issue_labels(f.pool(), parent_record.repo_id, parent_record.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     // gh issue edit --title --add-label sends both mutations at once, and a label change moves
     // the issue's update time while the title edit is saving.
     let edit =
@@ -770,10 +777,12 @@ async fn contract(pg: bool) {
             .title,
         "Renamed by gh"
     );
-    assert!(db::labels::get_issue_labels(f.pool(), parent_record.id)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        db::labels::get_issue_labels(f.pool(), parent_record.repo_id, parent_record.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     let text = "mutation CommentDelete($input:DeleteIssueCommentInput!){deleteIssueComment(input: $input){clientMutationId}}";
     assert_eq!(
         query(&router, token, text, json!({"input":{"id":comment_id}})).await,
@@ -842,7 +851,7 @@ async fn contract(pg: bool) {
         vec!["gh-issues-alice"]
     );
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), metadata_record.id)
+        db::labels::get_issue_labels(f.pool(), metadata_record.repo_id, metadata_record.id)
             .await
             .unwrap()[0]
             .id,
@@ -870,10 +879,12 @@ async fn contract(pg: bool) {
     .await
     .unwrap()
     .is_empty());
-    assert!(db::labels::get_issue_labels(f.pool(), metadata_record.id)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(
+        db::labels::get_issue_labels(f.pool(), metadata_record.repo_id, metadata_record.id)
+            .await
+            .unwrap()
+            .is_empty()
+    );
     query(&router, token, update, json!({"input":{"id":metadata_id,"assigneeIds":[assignee],"labelIds":[label_id],"milestoneId":milestone_id}})).await;
     let extra = query(
         &router,
@@ -1157,7 +1168,7 @@ async fn contract(pg: bool) {
         target.id
     );
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), moved.id)
+        db::labels::get_issue_labels(f.pool(), moved.repo_id, moved.id)
             .await
             .unwrap()[0]
             .id,

@@ -1,9 +1,35 @@
 use crate::backend::db::{
-    github_apps::{App, Installation, Token},
+    github_apps::{App, Installation, InstallationFilter, RepositoryChange, Token},
     models::{PersonalAccessToken, Repository},
 };
 use anyhow::Result;
 use sqlx::SqlitePool;
+
+pub async fn delete_registration(
+    pool: &SqlitePool,
+    actor: i64,
+    session: &str,
+    id: i64,
+) -> Result<bool> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let client: Option<String> = sqlx::query_scalar("SELECT a.client_id FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN sessions s ON s.user_id=u.id WHERE a.id=$1 AND u.id=$2 AND s.id=$3 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password")
+        .bind(id).bind(actor).bind(session).fetch_optional(&mut *tx).await?;
+    let Some(client) = client else {
+        return Ok(false);
+    };
+    sqlx::query("DELETE FROM personal_access_tokens WHERE id IN (SELECT t.token_id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE i.app_id=$1) OR id IN (SELECT token_id FROM oauth_app_tokens WHERE client_id=$2)")
+        .bind(id).bind(&client).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM oauth_app_grants WHERE client_id=$1")
+        .bind(&client)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query("DELETE FROM oauth_applications WHERE client_id=$1")
+        .bind(&client)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(true)
+}
 
 pub async fn register(
     pool: &SqlitePool,
@@ -24,8 +50,7 @@ pub(super) async fn register_in_connection(
     app: &App,
     secret_hash: &str,
 ) -> Result<Option<App>> {
-    let live: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now'))").bind(actor).bind(session).fetch_one(&mut *tx).await?;
-    if !live {
+    if !super::users::transitions::active_session(tx, actor, session).await? {
         return Ok(None);
     }
     sqlx::query("INSERT INTO oauth_applications(owner_id,client_id,secret_hash,name,homepage,redirect_uri,is_github_app) VALUES($1,$2,$3,$4,$5,$5,TRUE)").bind(actor).bind(&app.client_id).bind(secret_hash).bind(&app.name).bind(&app.homepage).execute(&mut *tx).await?;
@@ -39,16 +64,46 @@ pub(super) async fn register_in_connection(
         .bind(actor).bind(bot).bind(&app.client_id).bind(&app.slug).bind(&app.name).bind(&app.description).bind(&app.homepage).bind(&app.public_key).bind(&app.permissions).bind(&app.events).bind(app.access_level).bind(app.is_public).fetch_one(&mut *tx).await?;
     Ok(Some(app))
 }
+/// Whether a client's owner, and a GitHub App's bot, may still use it. A missing client is
+/// not active.
 pub async fn client_active(pool: &SqlitePool, client: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT NOT EXISTS(SELECT 1 FROM oauth_applications c WHERE c.client_id=$1 AND c.is_github_app AND NOT EXISTS(SELECT 1 FROM github_apps a JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.client_id=c.client_id AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password))").bind(client).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar(&format!(
+        "SELECT {}",
+        crate::backend::db::oauth_apps::client_condition("$1")
+    ))
+    .bind(client)
+    .fetch_one(pool)
+    .await?)
 }
 pub async fn app(pool: &SqlitePool, key: &str) -> Result<Option<App>> {
-    Ok(sqlx::query_as("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE (a.slug=$1 OR a.client_id=$1 OR CAST(a.id AS TEXT)=$1) AND NOT u.is_banned AND NOT u.must_change_password").bind(key).fetch_optional(pool).await?)
+    Ok(sqlx::query_as("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE (a.slug=$1 OR a.client_id=$1 OR CAST(a.id AS TEXT)=$1) AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password").bind(key).fetch_optional(pool).await?)
 }
-pub async fn apps(pool: &SqlitePool, actor: i64) -> Result<Vec<App>> {
+/// Authentication accepts indexed numeric ids and client ids, never discovery slugs.
+pub async fn app_issuer(pool: &SqlitePool, issuer: &str) -> Result<Option<App>> {
+    let id = issuer.parse::<i64>().ok();
+    let column = if id.is_some() { "a.id" } else { "a.client_id" };
+    let query = format!("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE {column}=$1 AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password");
+    Ok(if let Some(id) = id {
+        sqlx::query_as(&query).bind(id).fetch_optional(pool).await?
+    } else {
+        sqlx::query_as(&query)
+            .bind(issuer)
+            .fetch_optional(pool)
+            .await?
+    })
+}
+
+/// An app for documents already visible to the caller, regardless of owner state.
+pub async fn app_by_id(pool: &SqlitePool, id: i64) -> Result<Option<App>> {
+    Ok(sqlx::query_as("SELECT * FROM github_apps WHERE id=$1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await?)
+}
+pub async fn apps(pool: &SqlitePool, actor: i64, session: &str) -> Result<Vec<App>> {
     Ok(
-        sqlx::query_as("SELECT * FROM github_apps WHERE owner_id=$1 ORDER BY id")
-            .bind(actor)
+        sqlx::query_as("SELECT a.* FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN sessions s ON s.user_id=u.id WHERE a.owner_id=$1 AND s.id=$2 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY a.id")
+            .bind(actor).bind(session)
             .fetch_all(pool)
             .await?,
     )
@@ -64,14 +119,17 @@ pub async fn install(
 ) -> Result<Option<Installation>> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let allowed: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$1 AND s.id=$2 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password AND (($3=u.id AND $4 IS NULL) OR ($3 IS NULL AND EXISTS(SELECT 1 FROM org_memberships WHERE org_id=$4 AND user_id=u.id AND role='owner'))))").bind(actor).bind(session).bind(user).bind(org).fetch_one(&mut *tx).await?;
+    if !super::users::transitions::active_session(&mut tx, actor, session).await? {
+        return Ok(None);
+    }
+    let allowed: bool=sqlx::query_scalar("SELECT COALESCE(($2=$1 AND $3 IS NULL) OR ($2 IS NULL AND EXISTS(SELECT 1 FROM org_memberships WHERE org_id=$3 AND user_id=$1 AND role='owner')),FALSE)").bind(actor).bind(user).bind(org).fetch_one(&mut *tx).await?;
     let visible:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE a.id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND (a.is_public OR (a.owner_id=$2 AND a.owner_id=$3 AND CAST($4 AS BIGINT) IS NULL)))").bind(app).bind(actor).bind(user).bind(org).fetch_one(&mut *tx).await?;
     if !visible || !allowed || user.is_some() == org.is_some() {
         return Ok(None);
     }
     let installed: Installation=sqlx::query_as("INSERT INTO github_app_installations(app_id,user_id,org_id,all_repos) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING *").bind(app).bind(user).bind(org).bind(repos.is_none()).fetch_one(&mut *tx).await?;
     for repo in repos.unwrap_or(&[]) {
-        let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND (owner_user_id=$2 OR owner_org_id=$3))").bind(repo).bind(user).bind(org).fetch_one(&mut *tx).await?;
+        let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND NOT is_gist AND (owner_user_id=$2 OR owner_org_id=$3))").bind(repo).bind(user).bind(org).fetch_one(&mut *tx).await?;
         if !valid {
             return Ok(None);
         }
@@ -85,12 +143,64 @@ pub async fn install(
     tx.commit().await?;
     Ok(Some(installed))
 }
+/// Whether user `actor` reaches installation `i`: as its account, as a member of its
+/// organization or as a collaborator on one of its repositories.
+fn actor_reaches(actor: &str) -> String {
+    format!("(i.user_id={actor} OR EXISTS(SELECT 1 FROM org_memberships WHERE org_id=i.org_id AND user_id={actor}) OR EXISTS(SELECT 1 FROM repo_access ra JOIN repositories r ON r.id=ra.repo_id WHERE ra.user_id={actor} AND ra.access_level BETWEEN 1 AND 5 AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id))))")
+}
+/// An organization without a usable owner is hidden, as on its public pages.
+const ACCOUNT_AVAILABLE: &str = "(i.org_id IS NULL OR EXISTS(SELECT 1 FROM org_memberships m JOIN users owner ON owner.id=m.user_id WHERE m.org_id=i.org_id AND m.role='owner' AND NOT owner.is_banned AND NOT owner.must_change_password))";
 pub async fn installations(
     pool: &SqlitePool,
-    app: Option<i64>,
+    filter: &InstallationFilter,
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<Installation>)> {
+    let filters = format!("($1 IS NULL OR i.app_id=$1) AND ($2 IS NULL OR ({reaches} AND EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.id=i.app_id AND NOT u.is_banned AND NOT u.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password))) AND ($3 IS NULL OR i.org_id=$3) AND ($4 IS NULL OR i.id=$4) AND ($2 IS NULL OR $3 IS NULL OR EXISTS(SELECT 1 FROM org_memberships m JOIN users actor ON actor.id=m.user_id WHERE m.org_id=$3 AND m.user_id=$2 AND m.role='owner' AND NOT actor.is_banned AND NOT actor.must_change_password)) AND {ACCOUNT_AVAILABLE}", reaches = actor_reaches("$2"));
+    // One snapshot for the count and the page.
+    let mut tx = pool.begin().await?;
+    let total: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM github_app_installations i WHERE {filters}"
+    ))
+    .bind(filter.app)
+    .bind(filter.actor)
+    .bind(filter.org)
+    .bind(filter.id)
+    .fetch_one(&mut *tx)
+    .await?;
+    let rows = sqlx::query_as(&format!("SELECT i.* FROM github_app_installations i WHERE {filters} ORDER BY i.id LIMIT $5 OFFSET $6"))
+        .bind(filter.app).bind(filter.actor).bind(filter.org).bind(filter.id).bind(limit).bind(offset)
+        .fetch_all(&mut *tx).await?;
+    tx.commit().await?;
+    Ok((total, rows))
+}
+/// The installation of `app` on an account, for discovery by name.
+pub async fn account_installation(
+    pool: &SqlitePool,
+    app: i64,
+    user: Option<i64>,
+    org: Option<i64>,
+) -> Result<Option<Installation>> {
+    Ok(sqlx::query_as(
+        "SELECT * FROM github_app_installations WHERE app_id=$1 AND (user_id=$2 OR org_id=$3)",
+    )
+    .bind(app)
+    .bind(user)
+    .bind(org)
+    .fetch_optional(pool)
+    .await?)
+}
+/// The installation of `app` that covers `repo`, if any; `active` leaves out a suspended one,
+/// and `actor` one that user does not reach.
+pub async fn repository_installation(
+    pool: &SqlitePool,
+    app: i64,
+    repo: i64,
+    active: bool,
     actor: Option<i64>,
-) -> Result<Vec<Installation>> {
-    Ok(sqlx::query_as("SELECT i.* FROM github_app_installations i WHERE ($1 IS NULL OR i.app_id=$1) AND ($2 IS NULL OR i.user_id=$2 OR EXISTS(SELECT 1 FROM org_memberships WHERE org_id=i.org_id AND user_id=$2) OR EXISTS(SELECT 1 FROM repo_access ra JOIN repositories r ON r.id=ra.repo_id WHERE ra.user_id=$2 AND ra.access_level BETWEEN 1 AND 5 AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))) AND ($2 IS NULL OR EXISTS(SELECT 1 FROM github_apps a JOIN users u ON u.id=a.owner_id WHERE a.id=i.app_id AND NOT u.is_banned AND NOT u.must_change_password)) ORDER BY i.id").bind(app).bind(actor).fetch_all(pool).await?)
+) -> Result<Option<Installation>> {
+    Ok(sqlx::query_as(&format!("SELECT i.* FROM github_app_installations i JOIN repositories r ON r.id=$2 WHERE i.app_id=$1 AND (NOT $3 OR i.suspended_at IS NULL) AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ($4 IS NULL OR {reaches})", reaches = actor_reaches("$4")))
+        .bind(app).bind(repo).bind(active).bind(actor).fetch_optional(pool).await?)
 }
 pub async fn installation(pool: &SqlitePool, id: i64) -> Result<Option<Installation>> {
     Ok(
@@ -100,21 +210,105 @@ pub async fn installation(pool: &SqlitePool, id: i64) -> Result<Option<Installat
             .await?,
     )
 }
-pub async fn has_repository(pool: &SqlitePool, id: i64, repo: i64, active: bool) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN github_app_installations i ON i.id=$1 WHERE r.id=$2 AND (NOT $3 OR i.suspended_at IS NULL) AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))").bind(id).bind(repo).bind(active).fetch_one(pool).await?)
-}
-pub async fn repositories(pool: &SqlitePool, id: i64) -> Result<Vec<Repository>> {
-    Ok(sqlx::query_as("SELECT r.* FROM repositories r JOIN github_app_installations i ON i.id=$1 WHERE (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) ORDER BY r.id").bind(id).fetch_all(pool).await?)
+/// A page of the repositories installation `id` covers, among `selected` when that is not
+/// empty, and the count of them all. With a `viewer`, only repositories that user reaches
+/// explicitly: their own, as a collaborator or through an organization membership.
+pub async fn installation_repositories(
+    pool: &SqlitePool,
+    id: i64,
+    viewer: Option<i64>,
+    selected: &[i64],
+    offset: i64,
+    limit: i64,
+) -> Result<(i64, Vec<Repository>)> {
+    let filters = format!("(r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND NOT r.is_gist AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)) AND ($3 = '[]' OR r.id IN (SELECT value FROM json_each($3))) AND ($2 IS NULL OR ((r.owner_user_id=u.id OR EXISTS(SELECT 1 FROM repo_access d WHERE d.repo_id=r.id AND d.user_id=u.id AND d.access_level BETWEEN 1 AND 5) OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=r.owner_org_id AND m.user_id=u.id)) AND ({access}) >= 1))", access = crate::backend::db::sqlite::repositories::access::USER_REPO_ACCESS_SQL);
+    let from = "FROM repositories r JOIN github_app_installations i ON i.id=$1 LEFT JOIN users u ON u.id=$2";
+    let mut tx = pool.begin().await?;
+    let total: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) {from} WHERE {filters}"))
+        .bind(id)
+        .bind(viewer)
+        .bind(serde_json::to_string(selected)?)
+        .fetch_one(&mut *tx)
+        .await?;
+    let rows = sqlx::query_as(&format!(
+        "SELECT r.* {from} WHERE {filters} ORDER BY r.id LIMIT $4 OFFSET $5"
+    ))
+    .bind(id)
+    .bind(viewer)
+    .bind(serde_json::to_string(selected)?)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok((total, rows))
 }
 pub async fn managed_installations(
     pool: &SqlitePool,
     actor: i64,
+    session: &str,
 ) -> Result<Vec<crate::backend::db::github_apps::ManagedInstallation>> {
-    Ok(sqlx::query_as("SELECT i.id,a.name AS app_name,COALESCE(account.username,o.name) AS account_name,i.all_repos FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users u ON u.id=$1 LEFT JOIN users account ON account.id=i.user_id LEFT JOIN organizations o ON o.id=i.org_id WHERE NOT u.is_banned AND NOT u.must_change_password AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=u.id AND m.role='owner')) ORDER BY i.id").bind(actor).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT i.id,a.name AS app_name,COALESCE(account.username,o.name) AS account_name,i.all_repos FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id JOIN users u ON u.id=$1 LEFT JOIN users account ON account.id=i.user_id LEFT JOIN organizations o ON o.id=i.org_id WHERE NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM sessions s WHERE s.user_id=u.id AND s.id=$2 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now')) AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=u.id AND m.role='owner')) ORDER BY i.id").bind(actor).bind(session).fetch_all(pool).await?)
 }
+pub async fn rotate_credentials(
+    pool: &SqlitePool,
+    actor: i64,
+    session: &str,
+    slug: &str,
+    public_key: &str,
+    secret_hash: &str,
+) -> Result<Option<String>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::users::transitions::require_account(
+        &mut tx,
+        actor,
+        &crate::backend::db::users::accounts::AccountCredential::Session(session),
+    )
+    .await?;
+    let app: Option<(i64, String)> =
+        sqlx::query_as("SELECT id,client_id FROM github_apps WHERE owner_id=$1 AND slug=$2")
+            .bind(actor)
+            .bind(slug)
+            .fetch_optional(&mut *tx)
+            .await?;
+    let Some((id, client)) = app else {
+        return Ok(None);
+    };
+    let client_changed = sqlx::query(
+        "UPDATE oauth_applications SET secret_hash=$2 WHERE client_id=$1 AND owner_id=$3",
+    )
+    .bind(&client)
+    .bind(secret_hash)
+    .bind(actor)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    let key_changed = sqlx::query(
+        "UPDATE github_apps SET public_key=$2 WHERE id=$1 AND owner_id=$3 AND client_id=$4",
+    )
+    .bind(id)
+    .bind(public_key)
+    .bind(actor)
+    .bind(&client)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    anyhow::ensure!(
+        client_changed == 1 && key_changed == 1,
+        "App credentials changed concurrently"
+    );
+    sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id) VALUES($1,'github_app.credentials.rotate','github_app',$2)")
+        .bind(actor).bind(id).execute(&mut *tx).await?;
+    tx.commit().await?;
+    Ok(Some(client))
+}
+
 pub async fn uninstall(pool: &SqlitePool, actor: i64, session: &str, id: i64) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let app:Option<i64>=sqlx::query_scalar("SELECT i.app_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN sessions s ON s.user_id=u.id WHERE i.id=$3 AND s.id=$2 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=u.id AND m.role='owner'))").bind(actor).bind(session).bind(id).fetch_optional(&mut *tx).await?;
+    if !super::users::transitions::active_session_read(&mut tx, actor, session).await? {
+        return Ok(false);
+    }
+    let app:Option<i64>=sqlx::query_scalar("SELECT i.app_id FROM github_app_installations i WHERE i.id=$2 AND (i.user_id=$1 OR EXISTS(SELECT 1 FROM org_memberships m WHERE m.org_id=i.org_id AND m.user_id=$1 AND m.role='owner'))").bind(actor).bind(id).fetch_optional(&mut *tx).await?;
     let Some(app) = app else {
         return Ok(false);
     };
@@ -122,6 +316,8 @@ pub async fn uninstall(pool: &SqlitePool, actor: i64, session: &str, id: i64) ->
     tx.commit().await?;
     Ok(changed)
 }
+/// An app changes its own installation only while its owner and bot are active; an
+/// account owner uninstalls through `uninstall` whatever the app's state.
 pub async fn change_installation(
     pool: &SqlitePool,
     app: i64,
@@ -129,6 +325,13 @@ pub async fn change_installation(
     action: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let usable: Option<i64> = sqlx::query_scalar("SELECT a.id FROM github_apps a JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.id=$1 AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password")
+        .bind(app)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if usable.is_none() {
+        return Ok(false);
+    }
     let changed = change_in_connection(&mut tx, app, id, action).await?;
     tx.commit().await?;
     Ok(changed)
@@ -162,16 +365,32 @@ async fn change_in_connection(
 }
 pub async fn change_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     id: i64,
     repo: i64,
     add: bool,
-) -> Result<bool> {
+) -> Result<RepositoryChange> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let allowed: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT i.all_repos AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.user_id=u.id OR EXISTS(SELECT 1 FROM org_memberships WHERE org_id=i.org_id AND user_id=u.id AND role='owner')))").bind(actor).bind(id).bind(repo).fetch_one(&mut *tx).await?;
-    if !allowed {
-        return Ok(false);
+    let installation: Option<(bool, Option<i64>)> = sqlx::query_as(&format!("SELECT i.all_repos,i.org_id FROM github_app_installations i JOIN users u ON u.id=$1 JOIN repositories r ON r.id=$3 WHERE i.id=$2 AND NOT u.is_banned AND NOT u.must_change_password AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND ({})>=5", super::repositories::access::USER_REPO_ACCESS_SQL)).bind(actor).bind(id).bind(repo).fetch_optional(&mut *tx).await?;
+    let Some((all_repos, org)) = installation else {
+        return Ok(RepositoryChange::Missing);
+    };
+    if !super::credentials::writes(&mut tx, &credential, Some(repo), None, "administration").await?
+    {
+        return Ok(RepositoryChange::Missing);
+    }
+    if all_repos {
+        return Ok(RepositoryChange::AllRepositories);
+    }
+    if !add && org.is_some() {
+        // An organization installation keeps at least one repository, as on GitHub.
+        let others: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_repositories WHERE installation_id=$1 AND repo_id<>$2)").bind(id).bind(repo).fetch_one(&mut *tx).await?;
+        if !others {
+            return Ok(RepositoryChange::LastRepository);
+        }
     }
     if add {
         sqlx::query("INSERT INTO github_app_repositories(installation_id,repo_id) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(id).bind(repo).execute(&mut *tx).await?;
@@ -183,7 +402,7 @@ pub async fn change_repository(
             .await?;
     }
     tx.commit().await?;
-    Ok(true)
+    Ok(RepositoryChange::Changed)
 }
 #[expect(
     clippy::too_many_arguments,
@@ -212,17 +431,33 @@ pub async fn issue(
         let Some(source) = source else {
             return Ok(None);
         };
+        // A scoped source keeps its installation even after that installation is gone.
+        let bound: Option<i64> =
+            sqlx::query_scalar("SELECT installation_id FROM github_app_tokens WHERE token_id=$1")
+                .bind(source.id)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if bound.is_some_and(|bound| bound != installation) {
+            return Ok(None);
+        }
         if let Some(parent_expiry) = source.expires_at {
             expiry = expiry.min(parent_expiry);
         }
-        let eligible:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM github_app_installations i WHERE i.id=$1 AND (i.user_id=$2 OR EXISTS(SELECT 1 FROM org_memberships WHERE org_id=i.org_id AND user_id=$2) OR EXISTS(SELECT 1 FROM repo_access ra JOIN repositories r ON r.id=ra.repo_id WHERE ra.user_id=$2 AND ra.access_level BETWEEN 1 AND 5 AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))))").bind(installation).bind(actor).fetch_one(&mut *tx).await?;
+        let eligible: bool = sqlx::query_scalar(&format!(
+            "SELECT EXISTS(SELECT 1 FROM github_app_installations i WHERE i.id=$1 AND {})",
+            actor_reaches("$2")
+        ))
+        .bind(installation)
+        .bind(actor)
+        .fetch_one(&mut *tx)
+        .await?;
         if !eligible {
             return Ok(None);
         }
     }
     let requested: Vec<i64> = serde_json::from_str(repos)?;
     for repo in requested {
-        let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN github_app_installations i ON i.id=$1 WHERE r.id=$2 AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))").bind(installation).bind(repo).fetch_one(&mut *tx).await?;
+        let valid: bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r JOIN github_app_installations i ON i.id=$1 WHERE r.id=$2 AND NOT r.is_gist AND (r.owner_user_id=i.user_id OR r.owner_org_id=i.org_id) AND (i.all_repos OR EXISTS(SELECT 1 FROM github_app_repositories ar WHERE ar.installation_id=i.id AND ar.repo_id=r.id)))").bind(installation).bind(repo).fetch_one(&mut *tx).await?;
         if !valid {
             return Ok(None);
         }
@@ -241,6 +476,16 @@ pub async fn issue(
 pub async fn token(pool: &SqlitePool, id: i64) -> Result<Option<Token>> {
     Ok(sqlx::query_as("SELECT t.* FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id JOIN github_apps a ON a.id=i.app_id JOIN users u ON u.id=a.owner_id WHERE t.token_id=$1 AND i.suspended_at IS NULL AND NOT u.is_banned AND NOT u.must_change_password").bind(id).fetch_optional(pool).await?)
 }
+/// A token's App bounds even when its installation or app is gone, so a scoped token never
+/// reads as unscoped.
+pub async fn token_bounds(pool: &SqlitePool, id: i64) -> Result<Option<Token>> {
+    Ok(
+        sqlx::query_as("SELECT * FROM github_app_tokens WHERE token_id=$1")
+            .bind(id)
+            .fetch_optional(pool)
+            .await?,
+    )
+}
 pub async fn request_installation(
     pool: &SqlitePool,
     actor: i64,
@@ -249,7 +494,10 @@ pub async fn request_installation(
     org: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id JOIN org_memberships m ON m.user_id=u.id JOIN github_apps a ON a.id=$4 AND a.is_public WHERE u.id=$1 AND s.id=$2 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password AND m.org_id=$3 AND m.role IN ('member','admin') AND NOT EXISTS(SELECT 1 FROM github_app_installations WHERE app_id=$4 AND org_id=$3))").bind(actor).bind(session).bind(org).bind(app).fetch_one(&mut *tx).await?;
+    if !super::users::transitions::active_session(&mut tx, actor, session).await? {
+        return Ok(false);
+    }
+    let live:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN github_apps a ON a.id=$3 AND a.is_public WHERE m.user_id=$1 AND m.org_id=$2 AND m.role IN ('member','admin') AND NOT EXISTS(SELECT 1 FROM github_app_installations WHERE app_id=$3 AND org_id=$2))").bind(actor).bind(org).bind(app).fetch_one(&mut *tx).await?;
     if !live {
         return Ok(false);
     }
@@ -261,7 +509,7 @@ pub async fn requests(
     pool: &SqlitePool,
     app: i64,
 ) -> Result<Vec<crate::backend::db::github_apps::InstallationRequest>> {
-    Ok(sqlx::query_as("SELECT q.* FROM github_app_requests q JOIN org_memberships m ON m.org_id=q.org_id AND m.user_id=q.user_id JOIN users u ON u.id=q.user_id WHERE q.app_id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND NOT EXISTS(SELECT 1 FROM github_app_installations i WHERE i.app_id=q.app_id AND i.org_id=q.org_id) ORDER BY q.id").bind(app).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT q.* FROM github_app_requests q JOIN org_memberships m ON m.org_id=q.org_id AND m.user_id=q.user_id JOIN users u ON u.id=q.user_id WHERE q.app_id=$1 AND NOT u.is_banned AND NOT u.must_change_password AND NOT EXISTS(SELECT 1 FROM github_app_installations i WHERE i.app_id=q.app_id AND i.org_id=q.org_id) AND EXISTS(SELECT 1 FROM org_memberships om JOIN users owner ON owner.id=om.user_id WHERE om.org_id=q.org_id AND om.role='owner' AND NOT owner.is_banned AND NOT owner.must_change_password) ORDER BY q.id").bind(app).fetch_all(pool).await?)
 }
 
 pub async fn revoke(pool: &SqlitePool, id: i64) -> Result<()> {

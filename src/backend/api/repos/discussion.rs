@@ -141,34 +141,27 @@ pub(crate) async fn repository(
     owner: &str,
     name: &str,
 ) -> ResultPage<RepositoryData> {
-    let record = db::repositories::records::get_repository(&ctx.state.pool, owner, name)
-        .await
-        .map_err(|_| unavailable(ctx))?
-        .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
-    check_repo_read_access(&ctx.state.pool, &record, &ctx.headers)
-        .await
-        .map_err(|failure| api_error(ctx, failure))?;
-    let can_write = match &ctx.user {
+    let loaded = crate::backend::api::repos::chrome::load_database(ctx, owner, name).await?;
+    let record = loaded.repository;
+    let access = match &ctx.user {
         Some(user) => {
-            crate::backend::repositories::access::can_write(&ctx.state.pool, user, &record)
+            crate::backend::repositories::access::user_access(&ctx.state.pool, user, &record)
                 .await
                 .map_err(|_| unavailable(ctx))?
         }
-        None => false,
+        None => db::models::AccessLevel::None,
     };
-    let can_admin = match &ctx.user {
-        Some(user) => {
-            crate::backend::repositories::access::can_admin(&ctx.state.pool, user, &record)
-                .await
-                .map_err(|_| unavailable(ctx))?
-        }
-        None => false,
-    };
+    let mutable = ctx.user.is_some()
+        && !record.is_archived
+        && !db::repository_exports::locked(&ctx.state.pool, record.id)
+            .await
+            .map_err(|_| unavailable(ctx))?;
+    let can_write = mutable && access.can_write();
+    let can_triage = mutable && access.can_triage();
+    let can_admin = access.can_admin();
     // Reuse the Code page's authorized projection, including visibility, real
     // engagement counts and actor-scoped actions. Never serialize the DB record.
-    let chrome = crate::backend::api::repos::chrome::load_database(ctx, owner, name)
-        .await?
-        .chrome;
+    let chrome = loaded.chrome;
     Ok(RepositoryData {
         record,
         view: view::Repository {
@@ -176,6 +169,7 @@ pub(crate) async fn repository(
             name: name.to_owned(),
             signed_in: ctx.user.is_some(),
             can_write,
+            can_triage,
             can_admin,
             csrf: ctx.csrf_token.clone(),
             viewer: ctx
@@ -231,6 +225,15 @@ pub(crate) async fn issue_reference(
     })
 }
 
+fn can_edit_entry(ctx: &PageContext, repo: &RepositoryData, author_id: i64) -> bool {
+    !repo.record.is_archived
+        && ctx.user.as_ref().is_some_and(|user| {
+            !user.is_banned
+                && !user.must_change_password
+                && (repo.view.can_write || user.id == author_id)
+        })
+}
+
 pub(crate) fn issue_item(
     issue: db::models::Issue,
     author: String,
@@ -253,6 +256,7 @@ pub(crate) fn issue_item(
         milestone: None,
         comparison: None,
         comment_count: 0,
+        can_edit: false,
         can_tick: false,
         tasks: Default::default(),
         commit_count: None,
@@ -414,7 +418,8 @@ pub(crate) fn pull_item(
             .user
             .as_ref()
             .is_some_and(|user| user.id != pull.author_id);
-    let can_tick = repo.view.can_write;
+    let can_edit = can_edit_entry(ctx, repo, pull.author_id);
+    let can_tick = can_edit;
     Ok(view::Item {
         id: pull.id,
         number: pull.number,
@@ -431,6 +436,7 @@ pub(crate) fn pull_item(
         assignees: Vec::new(),
         milestone: None,
         comment_count: 0,
+        can_edit,
         can_tick,
         tasks: Default::default(),
         commit_count: None,
@@ -511,6 +517,26 @@ pub(crate) async fn item(
     kind: Kind,
     number: i32,
 ) -> ResultPage<view::Item> {
+    item_with_comparison(ctx, repo, kind, number, true).await
+}
+
+/// Mutation admission needs the stored text and revision, not Git comparisons or CI verdicts.
+pub(crate) async fn item_metadata(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    kind: Kind,
+    number: i32,
+) -> ResultPage<view::Item> {
+    item_with_comparison(ctx, repo, kind, number, false).await
+}
+
+async fn item_with_comparison(
+    ctx: &PageContext,
+    repo: &RepositoryData,
+    kind: Kind,
+    number: i32,
+    comparison: bool,
+) -> ResultPage<view::Item> {
     if number <= 0 {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Entry not found."));
     }
@@ -521,7 +547,7 @@ pub(crate) async fn item(
                 .map_err(|_| unavailable(ctx))?
                 .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
             let author = author(ctx, value.author_id).await?;
-            let labels = db::labels::get_issue_labels(&ctx.state.pool, value.id)
+            let labels = db::labels::get_issue_labels(&ctx.state.pool, repo.record.id, value.id)
                 .await
                 .map_err(|_| unavailable(ctx))?;
             let assignees = db::assignees::list_assignees(
@@ -536,9 +562,10 @@ pub(crate) async fn item(
                 .map_err(|_| unavailable(ctx))?
                 .first()
                 .map_or(0, |(_, count)| *count);
-            let can_tick = repo.view.can_write;
+            let can_edit = can_edit_entry(ctx, repo, value.author_id);
             let mut shown = issue_item(value, author, labels);
-            shown.can_tick = can_tick;
+            shown.can_edit = can_edit;
+            shown.can_tick = can_edit;
             shown.assignees = assignees;
             shown.milestone = milestone;
             shown.comment_count = comment_count;
@@ -554,6 +581,10 @@ pub(crate) async fn item(
             .map_err(|_| unavailable(ctx))?
             .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Pull request not found."))?;
             let author = author(ctx, value.author_id).await?;
+            if !comparison {
+                return pull_item(ctx, repo, value, author, HeadRepository::Unreadable)
+                    .map_err(|response| *response);
+            }
             let head = match value.head_repo_id {
                 Some(id) if id != repo.record.id => {
                     db::repositories::records::get_repository_by_id(&ctx.state.pool, id)
@@ -587,10 +618,12 @@ pub(crate) async fn item(
                 _ => false,
             };
             let milestone_id = value.milestone_id;
-            let labels = db::labels::get_pull_request_labels(&ctx.state.pool, current)
-                .await
-                .map_err(|_| unavailable(ctx))?;
+            let labels =
+                db::labels::get_pull_request_labels(&ctx.state.pool, repo.record.id, current)
+                    .await
+                    .map_err(|_| unavailable(ctx))?;
             let head_sha = value.head_sha.clone();
+            let diff_base = value.diff_base().to_owned();
             let mut view_item = pull_item(ctx, repo, value, author, head_repository)
                 .map_err(|response| *response)?;
             view_item.labels = labels.into_iter().map(label).collect();
@@ -632,13 +665,25 @@ pub(crate) async fn item(
                 !db::repositories::protection::server_owned_status_context(&status.context)
             })
             .collect::<Vec<_>>();
-            view_item.check_count = runs.len() as i64;
+            let integration = db::checks::summary(&ctx.state.pool, repo.record.id, &head_sha)
+                .await
+                .map_err(|_| unavailable(ctx))?;
+            view_item.check_count = runs.len() as i64
+                + integration.total
+                + statuses
+                    .iter()
+                    .filter(|status| {
+                        !runs
+                            .iter()
+                            .any(|run| run.commit_status_context() == status.context)
+                    })
+                    .count() as i64;
             // The Commits tab counts the commits of the pull request, up to one more than it lists so
             // the tab can say "100+". When Git cannot count them the count is left out, so the tab
             // shows no number instead of a wrong one.
             let commit_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .branch_statuses(&compare.base_sha, std::slice::from_ref(&compare.head_sha))
+                    .branch_statuses(&diff_base, std::slice::from_ref(&compare.head_sha))
                     .await
                     .ok()
                     .and_then(|heads| {
@@ -652,7 +697,7 @@ pub(crate) async fn item(
             // Tab counts use metadata only; their full payloads are loaded by the selected tab.
             let file_count = match view_item.comparison.as_ref() {
                 Some(compare) => repo_store(&repo.record, ctx.state.cluster.as_ref())
-                    .diff_paths(&compare.base_sha, &compare.head_sha)
+                    .diff_paths(&diff_base, &compare.head_sha)
                     .await
                     .ok()
                     .map(|paths| paths.len() as i64),
@@ -663,7 +708,8 @@ pub(crate) async fn item(
                 compare.merge_commit_only = merge_with.len() > 1;
                 compare.merge_target = merge_target;
                 compare.merge_with = merge_with;
-                compare.has_checks = !runs.is_empty() || !statuses.is_empty();
+                compare.has_checks =
+                    !runs.is_empty() || !statuses.is_empty() || integration.total > 0;
                 // Each check counts once. A run writes its commit status under its own context, so only
                 // the statuses of other producers are added. Runs are the latest attempt of each workflow.
                 let states: Vec<&str> = runs
@@ -686,45 +732,32 @@ pub(crate) async fn item(
                     .filter(|state| {
                         !matches!(**state, "success" | "queued" | "running" | "pending")
                     })
-                    .count() as i64;
-                compare.checks_running = states
-                    .iter()
-                    .any(|state| matches!(*state, "queued" | "running" | "pending"));
+                    .count() as i64
+                    + integration.failed;
+                compare.checks_running = integration.pending > 0
+                    || states
+                        .iter()
+                        .any(|state| matches!(*state, "queued" | "running" | "pending"));
             }
             Ok(view_item)
         }
     }
 }
-/// What the viewer may do to the comments of a discussion: change their own, and delete their own
-/// or, as a maintainer, anyone's. The server checks the same rules again when the form is sent.
+/// Comment authors and repository writers may moderate visible comments. The mutation transaction
+/// remains authoritative; this view uses the repository page's existing permission projection.
 pub(crate) struct CommentRights {
     viewer: Option<i64>,
-    maintains: bool,
+    writes: bool,
     open: bool,
 }
 
 impl CommentRights {
-    /// `open` is false for a locked thread. An archived repository is never open.
-    pub(crate) async fn load(
-        ctx: &PageContext,
-        repo: &RepositoryData,
-        open: bool,
-    ) -> ResultPage<Self> {
-        let maintains = match &ctx.user {
-            Some(user) => crate::backend::repositories::access::can_maintain(
-                &ctx.state.pool,
-                user,
-                &repo.record,
-            )
-            .await
-            .map_err(|_| unavailable(ctx))?,
-            None => false,
-        };
-        Ok(Self {
+    pub(crate) fn for_repository(ctx: &PageContext, repo: &RepositoryData, open: bool) -> Self {
+        Self {
             viewer: ctx.user.as_ref().map(|user| user.id),
-            maintains,
-            open: open && !repo.record.is_archived,
-        })
+            writes: repo.view.can_write,
+            open: (open || repo.view.can_write) && !repo.record.is_archived,
+        }
     }
 
     pub(crate) fn apply(
@@ -735,8 +768,8 @@ impl CommentRights {
         updated: DateTime<Utc>,
     ) {
         let mine = self.viewer == Some(author_id);
-        comment.can_edit = self.open && mine;
-        comment.can_delete = self.open && (mine || self.maintains);
+        comment.can_edit = self.open && (mine || self.writes);
+        comment.can_delete = self.open && (mine || self.writes);
         comment.edited = (updated > created).then(|| updated.to_rfc3339());
     }
 }
@@ -781,7 +814,7 @@ pub(crate) async fn discussion(
                 .map_err(|_| unavailable(ctx))?;
             locked = issue.locked;
             lock_reason = issue.lock_reason;
-            let rights = CommentRights::load(ctx, repo, !locked).await?;
+            let rights = CommentRights::for_repository(ctx, repo, !locked);
             has_more = paging::has_next_page(page, rows.len(), COMMENTS_PER_PAGE, MAX_COMMENT_PAGE);
             subject = (db::timeline::Subject::Issue, issue.id);
             span = (
@@ -846,7 +879,7 @@ pub(crate) async fn discussion(
             let mut page_reviews = Vec::new();
             locked = pull.locked;
             lock_reason = pull.lock_reason.clone();
-            let rights = CommentRights::load(ctx, repo, !locked).await?;
+            let rights = CommentRights::for_repository(ctx, repo, !locked);
             for row in rows.into_iter().take(COMMENTS_PER_PAGE) {
                 match row {
                     DiscussionItem::Comment(entry) => {
@@ -870,6 +903,7 @@ pub(crate) async fn discussion(
     let event_offset = (event_page as i64 - 1) * db::timeline::EVENT_LIMIT;
     let mut event_rows = db::timeline::list_events(
         &ctx.state.pool,
+        repo.record.id,
         subject.0.name(),
         subject.1,
         span.0,
@@ -936,6 +970,16 @@ pub(crate) async fn discussion(
         None
     };
     Ok(view::CommentPage {
+        can_triage: match &ctx.user {
+            Some(user) => crate::backend::repositories::access::can_triage(
+                &ctx.state.pool,
+                user,
+                &repo.record,
+            )
+            .await
+            .map_err(|_| unavailable(ctx))?,
+            None => false,
+        },
         issue_management,
         suggestions,
         attributes,
@@ -951,6 +995,23 @@ pub(crate) async fn discussion(
         events_next,
     })
 }
+pub(crate) fn require_item_binding(
+    ctx: &PageContext,
+    form: &HashMap<String, String>,
+    repository_id: i64,
+    item_id: i64,
+) -> ResultPage<()> {
+    if form.get("repository_id").and_then(|id| id.parse().ok()) != Some(repository_id)
+        || form.get("item_id").and_then(|id| id.parse().ok()) != Some(item_id)
+    {
+        return Err(ctx.error(
+            StatusCode::CONFLICT,
+            "The repository or entry changed. Reload before changing metadata.",
+        ));
+    }
+    Ok(())
+}
+
 pub(crate) async fn render_detail(
     ctx: &PageContext,
     repo: &RepositoryData,
@@ -1024,6 +1085,12 @@ pub(crate) async fn render_detail(
     texts.extend(draft.body.as_deref());
     texts.extend(
         comments
+            .pinned
+            .as_ref()
+            .map(|comment| comment.body.as_str()),
+    );
+    texts.extend(
+        comments
             .comments
             .iter()
             .map(|comment| comment.body.as_str()),
@@ -1053,18 +1120,30 @@ pub(crate) async fn render_detail(
     .await;
     // The label picker lists every label of the repository. A label the item has is removed by
     // clicking it, and any other label is added the same way.
-    let labels = if repo.view.can_admin {
-        db::labels::list_repo_labels(&ctx.state.pool, repo.record.id)
-            .await
-            .map_err(|_| unavailable(ctx))?
-            .into_iter()
-            .map(label)
-            .collect()
+    let mut labels: Vec<_> = if comments.can_triage {
+        db::labels::list_repo_labels_page(
+            &ctx.state.pool,
+            repo.record.id,
+            ctx.query.get("label_search").map_or("", String::as_str),
+            "name",
+            100,
+            0,
+        )
+        .await
+        .map_err(|_| unavailable(ctx))?
+        .into_iter()
+        .map(label)
+        .collect()
     } else {
         Vec::new()
     };
-    // Choices are offered to a writer only. Each form checks the write right again when it is sent.
-    let (assignable, milestones): (Vec<String>, Vec<view::Milestone>) = if repo.view.can_write {
+    for applied in &value.labels {
+        if !labels.iter().any(|label| label.id == applied.id) {
+            labels.push(applied.clone());
+        }
+    }
+    // Choices are offered only when the viewer may triage.
+    let (assignable, milestones): (Vec<String>, Vec<view::Milestone>) = if comments.can_triage {
         let assignable = if (value.assignees.len() as i64) < db::assignees::MAX_ASSIGNEES {
             db::assignees::list_assignable_usernames(&ctx.state.pool, repo.record.id)
                 .await
@@ -1129,6 +1208,16 @@ pub(crate) async fn render_detail(
         }
         _ => Vec::new(),
     };
+    if kind == Kind::Issue {
+        db::issues::get_issue_by_id(&ctx.state.pool, value.id)
+            .await
+            .map_err(|_| unavailable(ctx))?
+            .filter(|issue| issue.repo_id == repo.record.id)
+            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Issue not found."))?;
+    }
+    check_repo_read_access(&ctx.state.pool, &repo.record, &ctx.headers)
+        .await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(with_status(
         ctx.page_model(
             &format!("{} #{}", value.title, value.number),
@@ -1262,7 +1351,7 @@ pub(crate) async fn branches(
         .map_err(|error| {
             api_error(
                 ctx,
-                crate::backend::api::http::error::repo_store_error(
+                crate::backend::api::repos::responses::repo_store_error(
                     error,
                     StatusCode::SERVICE_UNAVAILABLE,
                 ),

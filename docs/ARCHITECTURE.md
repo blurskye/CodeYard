@@ -304,6 +304,9 @@ schema/                     SQL applied by db/{postgres,sqlite}/migrations.rs
   are locked before the fork, lowest id first, in every path that locks both: authority
   checks, notification reads and fork deletion (`lock_fork_ancestors`). Reads take the
   sources FOR SHARE; deletions and privacy changes take them FOR NO KEY UPDATE.
+- `repository_merge_epochs` is one hot row per repository, bumped by every write that can
+  change a merge decision; on PostgreSQL its triggers are deferred, so a transaction takes
+  it only at commit and never holds it across Git, network or file waits.
 - Uploads live in `<state_dir>/objects` or the S3 bucket from `S3_*`.
 
 ## 2. Clustering
@@ -385,7 +388,8 @@ where UDP is blocked (see `tls.rs`).
 - Protocols are ALPNs with the same names on both transports:
   - `codeyard/pair/1`: the join handshake (see Pairing). The only protocol open
     to keys that are not members yet; it reads one request, answers and hangs up.
-  - `codeyard/rpc/3`: repository request/response calls. Peers using an older
+  - `codeyard/rpc/4`: repository request/response calls, including gist token
+    credentials bound to both their ID and authenticated hash. Peers using an older
     generation fail ALPN negotiation before a request is decoded. Each bidirectional
     stream carries one request: a four-byte big-endian JSON length, JSON, a
     four-byte raw-body length, and the raw body. The response has the same

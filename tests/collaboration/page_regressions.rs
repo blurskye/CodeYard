@@ -257,6 +257,7 @@ async fn label_submissions(pg: bool) {
     );
     let labels = db::labels::get_issue_labels(
         database.pool(),
+        repo.id,
         db::issues::get_issue(database.pool(), repo.id, 1)
             .await
             .unwrap()
@@ -306,7 +307,34 @@ async fn label_submissions(pg: bool) {
         )
         .await;
     assert_eq!(exact.as_array().unwrap().len(), 2);
-    // A failed sidebar write must redirect after creating, never leave a replayable POST page.
+    // Issue 1's history names each of its labels once, with the label's color.
+    let first = db::issues::get_issue(database.pool(), repo.id, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    for (sql, expected) in [
+        ("SELECT COUNT(*) FROM timeline_events WHERE subject_kind='issue' AND subject_id=$1 AND kind='labeled'", 100),
+        ("SELECT COUNT(*) FROM timeline_events WHERE subject_kind='issue' AND subject_id=$1 AND kind='labeled' AND previous<>'123456'", 0),
+    ] {
+        assert_eq!(database.scalar(sql, &[first.id]).await, expected, "{sql}");
+    }
+    // A label that is not this repository's is the user's mistake: the form comes back with
+    // the draft, and nothing is created.
+    let refused = alice
+        .form_reply(
+            "/alice/proj/issues/new",
+            &[
+                ("repository_id", &repository_id),
+                ("title", "Foreign label"),
+                ("labels", &i64::MAX.to_string()),
+                ("intent", "create"),
+            ],
+        )
+        .await;
+    assert!(refused.status.is_client_error(), "{}", refused.text());
+    assert!(refused.text().contains("Foreign label"));
+    // Labels are saved with the issue, so a database failure creates nothing and returns
+    // the form with the draft instead of an issue without its labels.
     if pg {
         database.execute("CREATE FUNCTION reject_test_label() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'sidebar unavailable'; END $$", &[]).await;
         database.execute("CREATE TRIGGER reject_test_label BEFORE INSERT ON issue_labels FOR EACH ROW EXECUTE FUNCTION reject_test_label()", &[]).await;
@@ -324,25 +352,19 @@ async fn label_submissions(pg: bool) {
             ],
         )
         .await;
-    assert_eq!(partial.status, StatusCode::SEE_OTHER, "{}", partial.text());
-    let location = partial.location.unwrap();
-    assert!(location.starts_with("/alice/proj/issues/4?creation_warning="));
-    for _ in 0..2 {
-        let (status, html) = alice.page(&location).await;
-        assert_eq!(status, StatusCode::OK);
-        assert!(html.contains("Issue created, but some details could not be applied"));
-    }
-    // A link cannot put its own text in the warning.
-    let (_, forged) = alice
-        .page("/alice/proj/issues/4?creation_warning=Sign%20in%20again%20at%20evil.example")
-        .await;
-    assert!(!forged.contains("Sign in again at evil.example"));
+    assert_eq!(
+        partial.status,
+        StatusCode::SERVICE_UNAVAILABLE,
+        "{}",
+        partial.text()
+    );
+    assert!(partial.text().contains("Partial creation"));
     assert_eq!(
         db::issues::count_repo_issues(database.pool(), repo.id, &Default::default())
             .await
             .unwrap()
             .all,
-        4
+        3
     );
     database.finish().await;
 }

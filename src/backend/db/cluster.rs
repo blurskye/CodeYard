@@ -1,10 +1,46 @@
 //! Cluster membership: the `nodes` table and the join tokens that admit new nodes.
+pub(crate) mod replicas;
 use super::models::{
     ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
 };
 use super::DbPool;
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+
+/// Retains a serving lease on a dedicated connection; closing it releases the advisory lock.
+pub struct ServingLock {
+    postgres: Option<sqlx::PgConnection>,
+    _file: Option<std::fs::File>,
+}
+
+impl ServingLock {
+    /// Ends the lease before it returns, so a server started next with the same identity can
+    /// take it. Dropping the lock also ends it, but only once PostgreSQL notices the closed
+    /// connection.
+    pub async fn release(self) {
+        if let Some(connection) = self.postgres {
+            super::postgres::cluster::release_serving_lock(connection).await;
+        }
+    }
+}
+
+pub async fn serving_lock(pool: &DbPool, identity: &str) -> Result<ServingLock> {
+    match pool {
+        DbPool::Postgres(pool) => Ok(ServingLock {
+            postgres: Some(super::postgres::cluster::serving_lock(pool, identity).await?),
+            _file: None,
+        }),
+        DbPool::Sqlite(pool) => {
+            let mut path = pool.connect_options().get_filename().as_os_str().to_owned();
+            path.push(".serve.lock");
+            Ok(ServingLock {
+                postgres: None,
+                _file: Some(crate::backend::locks::exclusive_file(
+                    std::path::Path::new(&path),
+                )?),
+            })
+        }
+    }
+}
 
 /// Who asks for a membership change. The operator's command line already has database
 /// access; a web request acts as an account, which must still be an active administrator
@@ -15,6 +51,10 @@ pub enum Authority<'a> {
     Administrator { user_id: i64, session: &'a str },
 }
 
+native_operation!(crate::backend::db::postgres::cluster::has_storage_assignments,
+    crate::backend::db::sqlite::cluster::has_storage_assignments,
+    fn has_storage_assignments(pool: &DbPool, node: i64) -> Result<bool>);
+
 /// One entry of the declared membership list.
 pub struct DeclaredMember {
     pub public_key: String,
@@ -22,8 +62,16 @@ pub struct DeclaredMember {
     pub roles: Vec<String>,
 }
 
-/// A primary repository and one optional copy: id, path, holder, applied version, size.
-pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64);
+/// A fresh copy holds its downloaded staging pack and installed pack simultaneously.
+pub const REPLICA_STAGING_FACTOR: i64 = 2;
+
+native_operation!(crate::backend::db::postgres::cluster::assign_replica_family,
+    crate::backend::db::sqlite::cluster::assign_replica_family,
+    /// Replans a complete fork family under serialized capacity reservation ownership.
+    fn assign_replica_family(pool: &DbPool, repository: i64, primary: i64, setting: super::models::ReplicaSetting) -> Result<Vec<i64>>);
+
+/// A primary and optional copy: id, path, holder, applied version, size, ever completed.
+pub type PrimaryReplicaRow = (i64, String, Option<i64>, Option<i64>, i64, bool);
 
 pub struct NewJoinToken<'a> {
     /// Hex SHA-256 of the invite secret; the secret itself is never stored.
@@ -31,7 +79,7 @@ pub struct NewJoinToken<'a> {
     pub roles: &'a [String],
     pub reusable: bool,
     pub requires_approval: bool,
-    pub expires_at: DateTime<Utc>,
+    pub lifetime_seconds: i64,
 }
 
 pub struct JoinRequest<'a> {
@@ -106,6 +154,10 @@ native_operation!(crate::backend::db::postgres::cluster::get_node_by_name,
     crate::backend::db::sqlite::cluster::get_node_by_name,
     fn get_node_by_name(pool: &DbPool, name: &str) -> Result<Option<ClusterNode>>);
 
+native_operation!(crate::backend::db::postgres::cluster::admin_node_page,
+    crate::backend::db::sqlite::cluster::admin_node_page,
+    fn admin_node_page(pool: &DbPool, administrator: &crate::backend::db::users::transitions::AdministratorActor, after: &str) -> Result<Vec<ClusterNode>>);
+
 native_operation!(crate::backend::db::postgres::cluster::list_nodes,
     crate::backend::db::sqlite::cluster::list_nodes,
     fn list_nodes(pool: &DbPool) -> Result<Vec<ClusterNode>>);
@@ -147,6 +199,21 @@ native_operation!(crate::backend::db::postgres::cluster::get_node_by_id,
     crate::backend::db::sqlite::cluster::get_node_by_id,
     fn get_node_by_id(pool: &DbPool, id: i64) -> Result<Option<ClusterNode>>);
 
+native_operation!(crate::backend::db::postgres::cluster::promote_manual_family,
+    crate::backend::db::sqlite::cluster::promote_manual_family,
+    fn promote_manual_family(pool: &DbPool, repository: i64, from: i64, to: i64) -> Result<FamilyOutcome>);
+native_operation!(crate::backend::db::postgres::cluster::storage_needed,
+    crate::backend::db::sqlite::cluster::storage_needed,
+    fn storage_needed(pool: &DbPool, uuid: &str, node: i64) -> Result<bool>);
+native_operation!(crate::backend::db::postgres::cluster::list_primary_paths,
+    crate::backend::db::sqlite::cluster::list_primary_paths,
+    fn list_primary_paths(pool: &DbPool, node: i64) -> Result<Vec<(i64, String)>>);
+native_operation!(crate::backend::db::postgres::cluster::read_candidates,
+    crate::backend::db::sqlite::cluster::read_candidates,
+    fn read_candidates(pool: &DbPool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>>);
+native_operation!(crate::backend::db::postgres::cluster::replica_applied_version,
+    crate::backend::db::sqlite::cluster::replica_applied_version,
+    fn replica_applied_version(pool: &DbPool, repository: i64, node: i64) -> Result<Option<i64>>);
 native_operation!(crate::backend::db::postgres::cluster::get_repository_by_uuid,
     crate::backend::db::sqlite::cluster::get_repository_by_uuid,
     fn get_repository_by_uuid(pool: &DbPool, uuid: &str) -> Result<Option<super::models::Repository>>);
@@ -175,10 +242,29 @@ pub enum PromoteOutcome {
 /// What a whole-family promotion did.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FamilyOutcome {
-    /// Every member is on `to` now: their ids, lowest first.
+    /// The members that moved to `to`: their ids, lowest first.
     Promoted(Vec<i64>),
     /// A member is no longer on `from`, or `to` lacks a current copy of one. Nothing changed.
     Refused,
+}
+
+/// The rows of a fork family (id, primary, write version) that promoting `repository` off
+/// `from` moves: those on `from`. A take-over moves a family only when all of it is on the
+/// offline primary; a manual promotion leaves members on other primaries where they are.
+/// `None` when `repository` itself is no longer on `from`, or a take-over finds the family split.
+pub(crate) fn members_to_move(
+    family: &[(i64, Option<i64>, i64)],
+    repository: i64,
+    from: i64,
+    automatic: bool,
+) -> Option<Vec<(i64, Option<i64>, i64)>> {
+    let members: Vec<_> = family
+        .iter()
+        .filter(|(_, primary, _)| *primary == Some(from))
+        .copied()
+        .collect();
+    let whole = members.len() == family.len();
+    (members.iter().any(|(id, _, _)| *id == repository) && (whole || !automatic)).then_some(members)
 }
 
 native_operation!(crate::backend::db::postgres::cluster::get_replicas,

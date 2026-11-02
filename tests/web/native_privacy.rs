@@ -21,6 +21,8 @@ fn run_as_with_env(
     if let Some((uid, gid)) = identity {
         command.uid(uid).gid(gid);
     }
+    // SAFETY: the hook runs in the forked child before exec and only calls umask, which is
+    // async-signal-safe.
     unsafe {
         command.pre_exec(|| {
             libc::umask(0o022);
@@ -158,6 +160,7 @@ fn real_cli_creates_and_repairs_private_native_storage_under_umask_022() {
         "operator parent mode changed"
     );
 
+    // SAFETY: geteuid takes no arguments and cannot fail.
     if unsafe { libc::geteuid() } == 0 {
         let status = Command::new("/bin/sh")
             .arg("-c")
@@ -348,6 +351,7 @@ fn dotenv_errors_fail_before_default_state_but_missing_is_optional() {
     let unreadable_env = unreadable.path().join(".env");
     std::fs::write(&unreadable_env, "NOT_PRINTED=value\n").unwrap();
     std::fs::set_permissions(&unreadable_env, std::fs::Permissions::from_mode(0o000)).unwrap();
+    // SAFETY: geteuid takes no arguments and cannot fail.
     let identity = if unsafe { libc::geteuid() } == 0 {
         std::fs::set_permissions(unreadable.path(), std::fs::Permissions::from_mode(0o755))
             .unwrap();

@@ -7,7 +7,7 @@ use crate::backend::{
     app::AppState,
     db::{
         self,
-        fine_grained_tokens::Token,
+        fine_grained_tokens::{Token, TokenFilter},
         models::{OrgRole, Organization, User},
         organizations::{self, OrganizationPage},
     },
@@ -48,7 +48,7 @@ async fn context(
     headers: &HeaderMap,
     name: &str,
     write: bool,
-) -> Result<(User, Organization)> {
+) -> Result<(auth::Authentication, Organization)> {
     let actor = auth::authenticate(state, headers, true)
         .await?
         .ok_or_else(auth::required)?;
@@ -66,8 +66,15 @@ async fn context(
         ));
     }
     let org = target(state, name).await?;
+    owner(state, actor.user.id, org.id).await?;
+    Ok((actor, org))
+}
+
+/// Fails unless `actor` owns the organization now. Listings check again after reading, so
+/// nothing they return was read after the owner lost the organization.
+async fn owner(state: &AppState, actor: i64, org: i64) -> Result<()> {
     let role = outcome(
-        organizations::get_organization_role(&state.pool, actor.user.id, org.id)
+        organizations::get_organization_role(&state.pool, actor, org)
             .await
             .map_err(Error::unavailable)?,
     )?;
@@ -77,7 +84,7 @@ async fn context(
             "Must be an organization owner",
         ));
     }
-    Ok((actor.user, org))
+    Ok(())
 }
 
 #[derive(Default)]
@@ -96,7 +103,7 @@ fn filters(uri: &Uri) -> Result<Filters> {
     let mut filters = Filters::default();
     for (key, value) in url::form_urlencoded::parse(uri.query().unwrap_or_default().as_bytes()) {
         match key.as_ref() {
-            "owner" | "owner[]" => filters.owners.push(value.to_lowercase()),
+            "owner" | "owner[]" => filters.owners.push(value.into_owned()),
             "repository" => filters.repository = Some(value.into_owned()),
             "permission" => {
                 // Either a permission name or `name_level`, such as `issues_write`.
@@ -146,19 +153,53 @@ fn filters(uri: &Uri) -> Result<Filters> {
     Ok(filters)
 }
 
-/// The organization's tokens in `status` that pass the filters, with their users.
+/// A page of the organization's tokens in `status` that pass the filters, with their users.
 async fn tokens(
     state: &AppState,
     org: &Organization,
     status: &str,
     filters: &Filters,
+    offset: usize,
+    limit: usize,
 ) -> Result<Vec<(Token, User)>> {
-    let mut rows = db::fine_grained_tokens::organization_tokens(&state.pool, org.id, status)
-        .await
-        .map_err(Error::unavailable)?;
-    if filters.ascending {
-        rows.reverse();
-    }
+    let repository = match &filters.repository {
+        Some(name) => {
+            let Some(repo) =
+                db::repositories::records::get_repository(&state.pool, &org.name, name)
+                    .await
+                    .map_err(Error::unavailable)?
+                    .filter(|repo| repo.owner_org_id == Some(org.id) && !repo.is_gist)
+            else {
+                // No token reaches a repository the organization does not have.
+                return Ok(Vec::new());
+            };
+            Some(repo.id)
+        }
+        None => None,
+    };
+    let filter = TokenFilter {
+        status,
+        owners: &filters.owners,
+        token_ids: &filters.token_ids,
+        repository,
+        permission: filters
+            .permission
+            .as_ref()
+            .map(|(key, level)| (key.as_str(), level.as_deref())),
+        last_used_before: filters.last_used_before,
+        last_used_after: filters.last_used_after,
+        ascending: filters.ascending,
+        before: None,
+    };
+    let rows = db::fine_grained_tokens::organization_tokens(
+        &state.pool,
+        org.id,
+        &filter,
+        i64::try_from(offset).map_err(Error::unavailable)?,
+        i64::try_from(limit).map_err(Error::unavailable)?,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     let mut ids: Vec<_> = rows.iter().map(|token| token.user_id).collect();
     ids.sort_unstable();
     ids.dedup();
@@ -168,60 +209,13 @@ async fn tokens(
         .into_iter()
         .map(|user| (user.id, user))
         .collect();
-    let repository = match &filters.repository {
-        Some(name) => Some(
-            db::repositories::records::get_repository(&state.pool, &org.name, name)
-                .await
-                .map_err(Error::unavailable)?
-                .filter(|repo| repo.owner_org_id == Some(org.id) && !repo.is_gist)
-                .map(|repo| repo.id),
-        ),
-        None => None,
-    };
-    let mut matched = Vec::new();
-    for token in rows {
-        let Some(user) = users.get(&token.user_id) else {
-            continue;
-        };
-        if !filters.owners.is_empty() && !filters.owners.contains(&user.username.to_lowercase()) {
-            continue;
-        }
-        if !filters.token_ids.is_empty() && !filters.token_ids.contains(&token.token_id) {
-            continue;
-        }
-        if filters
-            .last_used_before
-            .is_some_and(|before| token.last_used_at.is_none_or(|at| at >= before))
-            || filters
-                .last_used_after
-                .is_some_and(|after| token.last_used_at.is_none_or(|at| at <= after))
-        {
-            continue;
-        }
-        if let Some((key, level)) = &filters.permission {
-            let permissions = permissions(&token);
-            let held = permissions.get(key).and_then(Value::as_str);
-            if held.is_none() || (level.is_some() && held != level.as_deref()) {
-                continue;
-            }
-        }
-        if let Some(repository) = repository {
-            let reaches = match (repository, Access::parse(&token.repository_access)) {
-                (Some(_), Some(Access::All)) => true,
-                (Some(repo), Some(Access::Selected)) => {
-                    db::fine_grained_tokens::selected(&state.pool, token.token_id, repo)
-                        .await
-                        .map_err(Error::unavailable)?
-                }
-                _ => false,
-            };
-            if !reaches {
-                continue;
-            }
-        }
-        matched.push((token, user.clone()));
-    }
-    Ok(matched)
+    Ok(rows
+        .into_iter()
+        .filter_map(|token| {
+            let user = users.get(&token.user_id)?.clone();
+            Some((token, user))
+        })
+        .collect())
 }
 
 fn permissions(token: &Token) -> Map<String, Value> {
@@ -273,15 +267,15 @@ async fn list(
     uri: &Uri,
     request: bool,
 ) -> Result<Response> {
-    let (_, org) = context(state, headers, name, false).await?;
+    let (actor, org) = context(state, headers, name, false).await?;
     let filters = filters(uri)?;
     let status = if request { "pending" } else { "approved" };
-    let rows = tokens(state, &org, status, &filters).await?;
     let (offset, limit) = page.window()?;
-    let more = rows.len() > offset + limit;
+    let rows = tokens(state, &org, status, &filters, offset, limit + 1).await?;
+    owner(state, actor.user.id, org.id).await?;
+    let more = rows.len() > limit;
     let items = rows
         .iter()
-        .skip(offset)
         .take(limit)
         .map(|(token, user)| document(token, user, &org, request))
         .collect();
@@ -319,7 +313,7 @@ async fn repositories(
     uri: &Uri,
     status: &str,
 ) -> Result<Response> {
-    let (_, org) = context(state, headers, name, false).await?;
+    let (actor, org) = context(state, headers, name, false).await?;
     let token = db::fine_grained_tokens::get(&state.pool, id)
         .await
         .map_err(Error::unavailable)?
@@ -330,9 +324,14 @@ async fn repositories(
     let mut more = false;
     match Access::parse(&token.repository_access) {
         Some(Access::Selected) => {
-            for (repo, _) in db::fine_grained_tokens::repositories(&state.pool, token.token_id)
-                .await
-                .map_err(Error::unavailable)?
+            for (repo, _) in db::fine_grained_tokens::repositories(
+                &state.pool,
+                token.token_id,
+                actor.user.id,
+                &actor.credential(),
+            )
+            .await
+            .map_err(Error::unavailable)?
             {
                 if let Some(repo) =
                     db::repositories::records::get_repository_by_id(&state.pool, repo)
@@ -370,6 +369,7 @@ async fn repositories(
         }
         _ => {}
     }
+    owner(state, actor.user.id, org.id).await?;
     let items = repositories
         .iter()
         .map(|repo| payloads::repository(repo, &org.name))
@@ -423,7 +423,7 @@ async fn review(
 ) -> Result<u64> {
     let (reviewer, org) = context(state, headers, name, true).await?;
     let invalid = |field: &str| Error::validation("PersonalAccessTokenRequest", field, "invalid");
-    let Json(body) = body.map_err(|_| invalid("body"))?;
+    let Json(body) = body.map_err(super::super::json_error)?;
     let status = match body.action.as_str() {
         "approve" => "approved",
         "deny" => "denied",
@@ -443,19 +443,22 @@ async fn review(
         }
         (None, Some(ids)) => ids,
         (None, None) => {
-            db::fine_grained_tokens::organization_tokens(&state.pool, org.id, "pending")
-                .await
-                .map_err(Error::unavailable)?
-                .into_iter()
-                .map(|token| token.token_id)
-                .take(100)
-                .collect()
+            return db::fine_grained_tokens::review_all(
+                &state.pool,
+                org.id,
+                reviewer.database_actor(),
+                "pending",
+                status,
+                reason.as_deref(),
+            )
+            .await
+            .map_err(Error::unavailable)
         }
     };
     db::fine_grained_tokens::review(
         &state.pool,
         org.id,
-        reviewer.id,
+        reviewer.database_actor(),
         &ids,
         "pending",
         status,
@@ -499,7 +502,7 @@ async fn revoke(
 ) -> Result<u64> {
     let (reviewer, org) = context(state, headers, name, true).await?;
     let invalid = |field: &str| Error::validation("PersonalAccessToken", field, "invalid");
-    let Json(body) = body.map_err(|_| invalid("body"))?;
+    let Json(body) = body.map_err(super::super::json_error)?;
     if body.action != "revoke" {
         return Err(invalid("action"));
     }
@@ -513,7 +516,7 @@ async fn revoke(
     db::fine_grained_tokens::review(
         &state.pool,
         org.id,
-        reviewer.id,
+        reviewer.database_actor(),
         &ids,
         "approved",
         "revoked",

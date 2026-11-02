@@ -134,7 +134,7 @@ async fn save(
     let restriction = match db::interactions::set_restriction(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         scope,
         input,
     )

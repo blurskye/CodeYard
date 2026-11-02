@@ -8,7 +8,7 @@ use crate::backend::{
     webhooks::payloads,
 };
 use axum::{
-    body::{to_bytes, Body},
+    body::to_bytes,
     extract::{Path, Query, Request, State},
     http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
@@ -16,8 +16,12 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
-use std::{io::Cursor, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 use tokio_util::io::ReaderStream;
+
+/// The most entries a CodeQL database archive may hold; a large project's database has tens
+/// of thousands.
+const MAX_DATABASE_ENTRIES: usize = 200_000;
 
 pub(crate) const UPLOAD_ROUTE: &str =
     "/api/uploads/repos/:owner/:repo/code-scanning/codeql/databases/:language";
@@ -54,10 +58,15 @@ async fn document(
     )
 }
 
-async fn readable(state: &AppState, headers: &HeaderMap, owner: &str, name: &str) -> Result<i64> {
+async fn readable(
+    state: &AppState,
+    headers: &HeaderMap,
+    owner: &str,
+    name: &str,
+) -> Result<(i64, db::credentials::Actor)> {
     let (repo, auth) = repository(state, headers, owner, name, false).await?;
-    auth.ok_or_else(auth::required)?;
-    Ok(repo.id)
+    let auth = auth.ok_or_else(auth::required)?;
+    Ok((repo.id, auth.database_actor()))
 }
 
 pub(super) async fn list(
@@ -65,8 +74,10 @@ pub(super) async fn list(
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
 ) -> Result<axum::Json<Value>> {
-    let repo = readable(&state, &headers, &owner, &name).await?;
-    let rows = codeql::list(&state.pool, repo).await.map_err(failure)?;
+    let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
+    let rows = codeql::list(&state.pool, actor, repo)
+        .await
+        .map_err(failure)?;
     let mut values = Vec::new();
     for row in rows {
         values.push(document(&state, &row, &owner, &name).await?);
@@ -78,9 +89,10 @@ pub(super) async fn get(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name, language)): Path<(String, String, String)>,
+    method: axum::http::Method,
 ) -> Result<Response> {
-    let repo = readable(&state, &headers, &owner, &name).await?;
-    let row = codeql::get(&state.pool, repo, &language)
+    let (repo, actor) = readable(&state, &headers, &owner, &name).await?;
+    let row = codeql::get(&state.pool, actor, repo, &language)
         .await
         .map_err(failure)?
         .ok_or_else(Error::missing)?;
@@ -94,6 +106,21 @@ pub(super) async fn get(
         })
     {
         return Ok(axum::Json(document(&state, &row, &owner, &name).await?).into_response());
+    }
+    if method == axum::http::Method::HEAD {
+        return Ok((
+            [
+                (header::CONTENT_TYPE, "application/zip".to_owned()),
+                (header::CONTENT_LENGTH, row.size.to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    attachment_disposition(&row.name),
+                ),
+                (header::CACHE_CONTROL, "private, no-store".to_owned()),
+            ],
+            axum::body::Body::empty(),
+        )
+            .into_response());
     }
     let permit = state
         .storage
@@ -125,7 +152,7 @@ pub(super) async fn get(
                         attachment_disposition(&row.name),
                     ),
                 ],
-                Body::from_stream(stream),
+                crate::backend::api::http::middleware::download_body(stream),
             )
                 .into_response()
         }
@@ -170,11 +197,7 @@ pub(in crate::backend::api::github) async fn upload(
     let filename = query
         .name
         .ok_or_else(|| Error::validation("CodeqlDatabase", "name", "missing_field"))?;
-    if filename.is_empty()
-        || filename.len() > 255
-        || filename.chars().any(char::is_control)
-        || filename.contains(['/', '\\'])
-    {
+    if !crate::backend::storage::valid_basename(&filename, 255) {
         return Err(Error::validation("CodeqlDatabase", "name", "invalid"));
     }
     if headers
@@ -193,7 +216,7 @@ pub(in crate::backend::api::github) async fn upload(
         .clone()
         .try_acquire_owned()
         .map_err(Error::unavailable)?;
-    let _io = state.storage.try_acquire_io().map_err(Error::unavailable)?;
+    let io = Arc::new(state.storage.try_acquire_io().map_err(Error::unavailable)?);
     let bytes = tokio::time::timeout(
         Duration::from_secs(30),
         to_bytes(request.into_body(), MAX_OBJECT_BYTES as usize),
@@ -207,16 +230,30 @@ pub(in crate::backend::api::github) async fn upload(
         )
     })?;
     let bytes = tokio::task::spawn_blocking(move || {
-        zip::ZipArchive::new(Cursor::new(&bytes)).map_err(|_| ())?;
+        crate::backend::zip_archives::open(&bytes, MAX_DATABASE_ENTRIES).map_err(|_| ())?;
         Ok::<_, ()>(bytes.to_vec())
     })
     .await
     .map_err(Error::unavailable)?
     .map_err(|_| Error::validation("CodeqlDatabase", "file", "invalid"))?;
+    auth.require_live(&state.pool).await?;
+    let actor = auth.database_actor();
     let size = bytes.len() as i64;
+    // Every upload counts, including one that replaces an earlier database.
+    let charge = db::files::charge_upload(&state.pool, auth.user.id, codeql::UPLOAD_QUOTA, size)
+        .await
+        .map_err(|error| match error {
+            db::files::AdmissionError::Quota => {
+                Error::new(StatusCode::TOO_MANY_REQUESTS, "Upload quota exhausted")
+            }
+            db::files::AdmissionError::Invalid => {
+                Error::validation("CodeqlDatabase", "file", "invalid")
+            }
+            other => Error::unavailable(other),
+        })?;
     let sha256 = format!("{:x}", Sha256::digest(&bytes));
     let key = format!("codeql/{}", uuid::Uuid::new_v4());
-    codeql::stage(&state.pool, auth.user.id, repo.id, &key)
+    codeql::stage(&state.pool, actor.clone(), repo.id, &key)
         .await
         .map_err(failure)?;
     state
@@ -229,14 +266,16 @@ pub(in crate::backend::api::github) async fn upload(
                 sha256_hex: &sha256,
             },
             bytes,
+            io,
         )
         .await
         .map_err(Error::unavailable)?;
     let row = codeql::publish(
         &state.pool,
         &codeql::NewDatabase {
+            charge,
             repo: repo.id,
-            actor: auth.user.id,
+            actor,
             language: &language,
             name: &filename,
             key: &key,
@@ -258,7 +297,7 @@ pub(super) async fn delete(
     Path((owner, name, language)): Path<(String, String, String)>,
 ) -> Result<StatusCode> {
     let (repo, auth) = scope(&state, &headers, &owner, &name, true, false).await?;
-    codeql::delete(&state.pool, auth.user.id, repo.id, &language)
+    codeql::delete(&state.pool, auth.database_actor(), repo.id, &language)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

@@ -282,20 +282,21 @@ fn fixed_choices_are_selects_with_human_labels() {
     );
     let access = selects(&page, "permission");
     assert_eq!(access.len(), 2, "one grant row and the grant form");
-    for block in &access {
-        assert_labels(
-            block,
-            &[
-                ("1", "Read"),
-                ("2", "Triage"),
-                ("3", "Write"),
-                ("4", "Maintain"),
-                ("5", "Admin"),
-            ],
-        );
-    }
-    // A grant row starts at the level it already has, and the edit form at the stored privacy.
-    assert!(selected(access[0], "3"));
+    let levels = [
+        ("1", "Read"),
+        ("2", "Triage"),
+        ("3", "Write"),
+        ("4", "Maintain"),
+        ("5", "Admin"),
+    ];
+    // A grant row asks for a deliberate direct grant, since its effective level may be
+    // inherited. The edit form starts at the stored privacy.
+    let row: Vec<_> = std::iter::once(("", "Choose an explicit direct grant"))
+        .chain(levels)
+        .collect();
+    assert_labels(access[0], &row);
+    assert!(selected(access[0], ""));
+    assert_labels(access[1], &levels);
     assert!(selected(privacy[1], "visible"));
 }
 
@@ -544,8 +545,9 @@ fn rejected_submission_reselects_its_choices() {
     ));
     assert!(selected(selects(&granted, "repo_id")[0], "15"));
     let access = selects(&granted, "permission");
-    // The row for repository 7 keeps its own level; the grant form shows the draft.
-    assert!(selected(access[0], "3"));
+    // The row for repository 7 asks for a deliberate direct grant rather than showing its
+    // effective level; the grant form shows the draft.
+    assert!(selected(access[0], ""));
     assert!(selected(access[1], "4"));
 }
 
@@ -1160,9 +1162,11 @@ fn admins_change_plain_members_but_not_owners() {
     page.can_manage = true;
     page.is_owner = false;
     let output = html(page);
-    // The DAO refuses an admin's change to an owner, so the owner row shows no controls.
+    // The DAO refuses an admin's change to an owner, so the owner row shows no controls. An
+    // admin may assign only the member role, which a plain member already has, so no row offers
+    // a role change.
     assert_eq!(output.matches("value=\"remove-member\"").count(), 1);
-    assert_eq!(output.matches("value=\"member-role\"").count(), 1);
+    assert_eq!(output.matches("value=\"member-role\"").count(), 0);
     assert!(output.contains("Send invitation"));
 }
 

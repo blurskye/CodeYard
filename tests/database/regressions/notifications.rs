@@ -7,13 +7,29 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
         let actor = f.actor("follower").await;
         let target = f.actor("recipient").await;
         let broadcaster = notifications::NotificationBroadcaster::new(f.pool());
+        let session = crate::support::live_session(f.pool(), actor).await;
+        let credential = db::users::accounts::AccountCredential::Session(&session);
         for _ in 0..5 {
-            identity::following::change(f.pool(), &broadcaster, actor, "recipient", true)
-                .await
-                .unwrap();
-            identity::following::change(f.pool(), &broadcaster, actor, "recipient", false)
-                .await
-                .unwrap();
+            identity::following::change(
+                f.pool(),
+                &broadcaster,
+                actor,
+                &credential,
+                "recipient",
+                true,
+            )
+            .await
+            .unwrap();
+            identity::following::change(
+                f.pool(),
+                &broadcaster,
+                actor,
+                &credential,
+                "recipient",
+                false,
+            )
+            .await
+            .unwrap();
         }
         let rows =
             db::notifications::records::list_notifications_for_user(f.pool(), target, 100, false)
@@ -25,9 +41,16 @@ async fn refollows_keep_a_durable_per_actor_notification_cooldown() {
             &[target],
         )
         .await;
-        identity::following::change(f.pool(), &broadcaster, actor, "recipient", true)
-            .await
-            .unwrap();
+        identity::following::change(
+            f.pool(),
+            &broadcaster,
+            actor,
+            &credential,
+            "recipient",
+            true,
+        )
+        .await
+        .unwrap();
         assert_eq!(
             db::notifications::records::list_notifications_for_user(f.pool(), target, 100, false)
                 .await

@@ -15,6 +15,53 @@ use super::{
 use crate::backend::repositories::{access, pull_requests::merge, store::repo_store};
 use serde_json::json;
 
+async fn mergeable(
+    repo: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    request: &RequestContext,
+) -> Result<Option<(bool, String)>> {
+    use crate::backend::repositories::store::{ErrorKind, MergeMethod, MergeRequest};
+    let store = repo_store(repo, request.state.cluster.as_ref());
+    let base = match store
+        .commit_from_primary(&format!("refs/heads/{}", pull.base_branch))
+        .await
+    {
+        Ok(base) => base,
+        Err(error) if error.kind == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unavailable(error)),
+    };
+    git::charge_commit(&base, request)?;
+    let key = (repo.id, base.sha.clone(), pull.head_sha.clone());
+    let mut cache = request.mergeability.lock().await;
+    if let Some(value) = cache.get(&key) {
+        return Ok(Some((*value, base.sha)));
+    }
+    let value = match store
+        .prepare_merge(&MergeRequest {
+            head_branch: pull.head_branch.clone(),
+            base_branch: pull.base_branch.clone(),
+            head: pull.head_sha.clone(),
+            base: base.sha.clone(),
+            message: "Check pull request mergeability".into(),
+            squash_body: None,
+            name: "Codeyard".into(),
+            email: "noreply@localhost".into(),
+            method: MergeMethod::Merge,
+            author_name: None,
+            author_email: None,
+        })
+        .await
+    {
+        Ok(_) => true,
+        Err(error) if error.is_response_too_large() => return Err(unavailable(error)),
+        Err(error) if matches!(error.kind, ErrorKind::Conflict | ErrorKind::Invalid) => false,
+        Err(error) if error.kind == ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(unavailable(error)),
+    };
+    cache.insert(key, value);
+    Ok(Some((value, base.sha)))
+}
+
 pub(super) async fn resolve(
     field: &str,
     args: &Arguments,
@@ -22,7 +69,7 @@ pub(super) async fn resolve(
     parent: &Value,
     repo: &db::models::Repository,
 ) -> Result<Value> {
-    let pull = db::pull_requests::records::get_pull_request_by_id(
+    let mut pull = db::pull_requests::records::get_pull_request_by_id(
         &request.state.pool,
         parent["databaseId"].as_i64().ok_or_else(missing)?,
     )
@@ -30,6 +77,15 @@ pub(super) async fn resolve(
     .map_err(unavailable)?
     .ok_or_else(missing)?;
     let store = repo_store(repo, request.state.cluster.as_ref());
+    if matches!(field, "mergeable" | "mergeStateStatus")
+        && pull.state == "open"
+        && (field == "mergeable" || !pull.is_draft)
+    {
+        if let Some((value, base)) = mergeable(repo, &pull, request).await? {
+            pull.mergeable = Some(value);
+            pull.base_sha = base;
+        }
+    }
     match field {
         "viewerMergeHeadlineText" | "viewerMergeBodyText" => {
             let method = args
@@ -51,46 +107,64 @@ pub(super) async fn resolve(
             }))
         }
         "files" | "additions" | "deletions" | "changedFiles" => {
-            let diff = store
-                .diff_stats(pull.diff_base(), &pull.head_sha)
-                .await
-                .map_err(unavailable)?;
+            let mut diffs = request.diffs.lock().await;
+            let key = (repo.id, pull.diff_base().to_owned(), pull.head_sha.clone());
+            if !diffs.contains_key(&key) {
+                let diff = store
+                    .diff_stats(&key.1, &key.2)
+                    .await
+                    .map_err(unavailable)?;
+                request.charge(
+                    diff.files
+                        .iter()
+                        .map(|file| file.filename.len() + 128)
+                        .sum(),
+                )?;
+                diffs.insert(key.clone(), std::sync::Arc::new(diff));
+            }
+            let diff = diffs[&key].clone();
+            drop(diffs);
             Ok(match field {
                 "additions"=>json!(diff.additions),"deletions"=>json!(diff.deletions),"changedFiles"=>json!(diff.changed_files),
-                _=>connection::slice(args,diff.files.into_iter().map(|f|json!({"path":f.filename,"additions":f.additions,"deletions":f.deletions,"changeType":match f.status.as_str() {"added"=>"ADDED","removed"|"deleted"=>"DELETED","renamed"=>"RENAMED","copied"=>"COPIED",_=>"MODIFIED"}})).collect())?,
+                _=>connection::slice(args,diff.files.iter().map(|f|json!({"path":f.filename,"additions":f.additions,"deletions":f.deletions,"changeType":match f.status.as_str() {"added"=>"ADDED","removed"|"deleted"=>"DELETED","renamed"=>"RENAMED","copied"=>"COPIED","type_changed"=>"CHANGED",_=>"MODIFIED"}})).collect())?,
             })
         }
         "commits" => {
-            let (count, rows) = store
-                .pull_request_commits(pull.diff_base(), &pull.head_sha)
+            let (count, _) = store
+                .pull_request_commits(pull.diff_base(), &pull.head_sha, 0, 0)
                 .await
                 .map_err(unavailable)?;
             let page = connection::Page::new(args, count as i64)?;
             let (offset, limit) = (page.offset as usize, page.limit as usize);
-            // The store lists the oldest 250 commits. A page past them, such as `last: 1` for
-            // the head commit, reads from the newest end of the range instead.
-            let window: Vec<_> = if offset + limit <= rows.len() {
-                rows.into_iter().skip(offset).take(limit).collect()
-            } else {
-                let newest = (count as usize).saturating_sub(offset);
-                if newest > 250 {
-                    return Err(async_graphql::Error::new(
-                        "Read commits past the first 250 from the end of the list",
-                    ));
+            // The store pages within the oldest 250 commits. A page past them, such as
+            // `last: 1` for the head commit, reads from the newest end instead.
+            let window: Vec<_> = if offset.saturating_add(limit) <= 250 {
+                let rows = store
+                    .pull_request_commits(pull.diff_base(), &pull.head_sha, offset, limit)
+                    .await
+                    .map_err(unavailable)?
+                    .1;
+                for row in &rows {
+                    git::charge_commit(row, request)?;
                 }
-                // Newest first, from the head back to the page's offset.
+                rows
+            } else {
+                let newest_offset = (count as usize).saturating_sub(offset.saturating_add(limit));
                 let mut rows = store
-                    .commits_between(pull.diff_base(), &pull.head_sha, newest)
+                    .commits_between_page(pull.diff_base(), &pull.head_sha, newest_offset, limit)
                     .await
                     .map_err(unavailable)?;
+                for row in &rows {
+                    git::charge_commit(row, request)?;
+                }
                 rows.reverse();
-                rows.truncate(limit);
                 rows
             };
             let nodes = window
                 .iter()
                 .map(|c| {
-                    git::commit(repo.id, c, "pull-requests").map(|commit| json!({"commit":commit}))
+                    git::commit(repo.id, c, "pull-requests", request)
+                        .map(|commit| json!({"commit":commit}))
                 })
                 .collect::<Result<Vec<_>>>()?;
             Ok(page.finish(nodes))
@@ -109,7 +183,7 @@ pub(super) async fn resolve(
                 .collect();
             let query = db::pull_requests::reviews::ReviewQuery {
                 pull_id: pull.id,
-                viewer: Some(request.auth.user.id),
+                viewer: request.private_viewer(repo.id, "pull-requests").await?,
                 author: args
                     .args
                     .get("author")
@@ -225,12 +299,14 @@ pub(super) async fn resolve(
         "baseRefOid" => Ok(json!(pull.base_sha)),
         "headRefOid" => Ok(json!(pull.head_sha)),
         "fullDatabaseId" => Ok(json!(pull.id.to_string())),
-        "isCrossRepository" => Ok(json!(pull.head_repo_id.is_some_and(|id| id != repo.id))),
+        "isCrossRepository" => Ok(json!(pull.head_repo_id != Some(repo.id))),
         "headRepository" | "headRepositoryOwner" => {
             let Some(head_id) = pull.head_repo_id else {
                 return Ok(Value::Null);
             };
-            request.authorize(head_id, "metadata", false).await?;
+            if !super::repository::optional_authority(head_id, "metadata", request).await? {
+                return Ok(Value::Null);
+            }
             let Some(head) =
                 db::repositories::records::get_repository_by_id(&request.state.pool, head_id)
                     .await
@@ -270,6 +346,7 @@ pub(super) async fn resolve(
             else {
                 return Ok(Value::Null);
             };
+            let entry = entry.request;
             Ok(
                 json!({"__typename":"AutoMergeRequest","_repo":pull.repo_id,"_scope":"pull-requests",
                 "authorEmail":entry.author_email,"commitBody":entry.commit_message,

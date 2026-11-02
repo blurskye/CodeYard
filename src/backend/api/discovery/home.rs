@@ -1,6 +1,5 @@
 use super::{dashboard_cards, unavailable};
 use crate::backend::db::models::AccessLevel;
-use crate::backend::db::repositories::records::RepositorySort;
 use crate::backend::{api::http::context::PageContext, app::AppState, db};
 use crate::webui::app::Page as AppPage;
 use crate::webui::pages::discovery::{self as view, HomeModel, SharedRepositoryCard};
@@ -46,8 +45,9 @@ pub(super) async fn home(
     let (own, repository_count) = match db::repositories::records::list_user_repository_page(
         &ctx.state.pool,
         user.id,
-        true,
+        ctx.session_id.as_deref(),
         &find,
+        true,
         PAGE_SIZE,
         offset,
     )
@@ -60,6 +60,7 @@ pub(super) async fn home(
         &ctx.state.pool,
         user.id,
         &find,
+        true,
         PAGE_SIZE,
         offset,
     )
@@ -68,31 +69,19 @@ pub(super) async fn home(
         Ok(rows) => rows,
         Err(_) => return unavailable(&ctx, "home_shared_repositories"),
     };
-    let public = match db::repositories::records::list_public_repositories(
+    // Trending is for other people's repositories, so the viewer's own are left out. The filter
+    // narrows every repository list on the dashboard, Trending included.
+    let public = match db::repositories::records::list_trending_repositories(
         &ctx.state.pool,
-        RepositorySort::Stars,
-        100,
+        user.id,
+        &find,
+        5,
     )
     .await
     {
         Ok(repos) => repos,
         Err(_) => return unavailable(&ctx, "home_trending"),
     };
-    // Trending is for other people's repositories, so the viewer's own are left out.
-    // The filter narrows every repository list on the dashboard, Trending included.
-    let needle = find.to_lowercase();
-    let matches = |repo: &db::models::Repository| {
-        repo.name.to_lowercase().contains(&needle)
-            || repo
-                .description
-                .as_deref()
-                .is_some_and(|text| text.to_lowercase().contains(&needle))
-    };
-    let public: Vec<_> = public
-        .into_iter()
-        .filter(|repo| !repo.is_personal_owner(user.id) && matches(repo))
-        .take(5)
-        .collect();
     let repositories = match dashboard_cards(&ctx.state, own).await {
         Ok(cards) => cards,
         Err(_) => return unavailable(&ctx, "home_repository_owners"),

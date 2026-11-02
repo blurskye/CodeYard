@@ -47,7 +47,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
     }
     let mut payload = json!({"clientMutationId":input["clientMutationId"],"actor":super::user::actor_object(&request.auth.user,request.auth.user.id)});
     let pool = &request.state.pool;
-    let actor = request.auth.user.id;
+    let actor = request.actor.clone();
     if matches!(field, "createLabel" | "updateLabel" | "deleteLabel") {
         let existing = if field == "createLabel" {
             None
@@ -93,7 +93,7 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 old.id,
                 input["name"].as_str(),
                 color.as_deref(),
-                input["description"].as_str(),
+                input["description"].as_str().map(Some),
             )
             .await
         } else {
@@ -166,104 +166,107 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
             None => None,
             _ => return Err(missing()),
         };
-        db::discussions::set_lock(pool, actor, repo.id, item, field == "lockLockable", reason)
-            .await
-            .map_err(|e| github::locking::error(e).graphql())?;
+        db::discussions::set_lock(
+            pool,
+            request.actor.clone(),
+            repo.id,
+            item,
+            field == "lockLockable",
+            reason,
+        )
+        .await
+        .map_err(|e| github::locking::error(e).graphql())?;
     } else {
         let label = field.contains("Labelable");
         let input_key = if label { "labelIds" } else { "assigneeIds" };
         let prefix = if label { "L" } else { "U" };
-        let changes = metadata_mutations::ids(&input[input_key], prefix)?;
+        let mut changes = metadata_mutations::ids(&input[input_key], prefix)?;
+        changes.sort_unstable();
+        changes.dedup();
+        if changes.len()
+            > if label {
+                db::labels::MAX_ISSUE_LABELS
+            } else {
+                db::assignees::MAX_ASSIGNEES as usize
+            }
+        {
+            return Err(async_graphql::Error::new("Too many metadata IDs"));
+        }
         let remove = field.starts_with("remove");
-        let actor = request.auth.user.id;
+        let authority = request.actor.clone();
         // Preparing checks triage authority, that labels belong to this repository and that new
         // assignees can be assigned. A removed assignee may since have lost access, so removals
         // rely on the write's own triage check instead.
         if label || !remove {
             metadata_mutations::prepare(input, &repo, request).await?;
         }
-        // Each ID is written on its own, so concurrent edits to other labels or assignees
-        // survive. The timeline and notifications follow each change, as REST records them.
+        // Additions use native atomic batches; removals leave unrelated assignments intact.
         if label && !remove {
-            github::labels::save_labels(pool, actor, repo.id, item, &changes, false)
+            github::labels::save_labels(pool, authority, repo.id, item, &changes, false)
                 .await
                 .map_err(github::Error::graphql)?;
         } else if label {
             for label_id in changes {
-                let name = db::labels::get_label_by_id(pool, label_id)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .name;
-                let removed = match item {
+                match item {
                     AssignedItem::Issue(id) => {
-                        db::labels::remove_issue_label(pool, actor, repo.id, id, label_id).await
+                        db::labels::remove_issue_label(
+                            pool,
+                            authority.clone(),
+                            repo.id,
+                            id,
+                            label_id,
+                        )
+                        .await
                     }
                     AssignedItem::PullRequest(id) => {
-                        db::labels::remove_pull_request_label(pool, actor, repo.id, id, label_id)
-                            .await
+                        db::labels::remove_pull_request_label(
+                            pool,
+                            authority.clone(),
+                            repo.id,
+                            id,
+                            label_id,
+                        )
+                        .await
                     }
                 }
                 .map_err(|e| github::labels::write_error(e).graphql())?;
-                if removed {
-                    db::timeline::record_for(pool, repo.id, item, actor, "unlabeled", &name).await;
-                }
             }
-        } else if !remove {
-            let mut added = Vec::new();
-            for user in changes {
-                let username = db::users::accounts::get_user_by_id(pool, user)
-                    .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .username;
-                if db::assignees::assign_user(pool, actor, repo.id, item, user)
-                    .await
-                    .map_err(|e| github::issues::assignment_error(e).graphql())?
-                {
-                    added.push(user);
-                    db::timeline::record_for(pool, repo.id, item, actor, "assigned", &username)
-                        .await;
-                }
+        } else {
+            use crate::backend::issues::assignments;
+            let mut ids = changes;
+            ids.sort_unstable();
+            ids.dedup();
+            let users = db::users::accounts::get_users_by_ids(pool, &ids)
+                .await
+                .map_err(unavailable)?;
+            if users.len() != ids.len() {
+                return Err(missing());
             }
             let owner = repository::owner(&repo, request).await?;
-            let number = value["number"].as_i64().ok_or_else(missing)?;
-            let pull_request = matches!(item, AssignedItem::PullRequest(_));
-            let link = format!(
-                "/{owner}/{}/{}/{number}",
-                repo.name,
-                if pull_request { "pulls" } else { "issues" }
-            );
-            crate::backend::notifications::assignments::notify_assignees(
-                pool,
-                &request.state.notification_broadcaster,
-                &crate::backend::notifications::assignments::Assignment {
-                    actor: &request.auth.user,
-                    repository: &repo,
-                    owner: &owner,
-                    repo: &repo.name,
-                    number: i32::try_from(number).map_err(|_| missing())?,
-                    pull_request,
-                    title: value["title"].as_str().ok_or_else(missing)?,
-                    link: &link,
-                },
-                &added,
-            )
-            .await;
-        } else {
-            for user in changes {
-                let username = db::users::accounts::get_user_by_id(pool, user)
+            let target = assignments::Target {
+                actor: &request.auth.user,
+                repository: &repo,
+                owner: &owner,
+                item,
+                number: i32::try_from(value["number"].as_i64().ok_or_else(missing)?)
+                    .map_err(|_| missing())?,
+                title: value["title"].as_str().ok_or_else(missing)?,
+            };
+            if remove {
+                let names: Vec<_> = users.into_iter().map(|user| user.username).collect();
+                assignments::unassign(pool, &target, authority, &names)
                     .await
-                    .map_err(unavailable)?
-                    .ok_or_else(missing)?
-                    .username;
-                if db::assignees::unassign_user(pool, actor, repo.id, item, &username)
-                    .await
-                    .map_err(|e| github::issues::assignment_error(e).graphql())?
-                {
-                    db::timeline::record_for(pool, repo.id, item, actor, "unassigned", &username)
-                        .await;
-                }
+                    .map_err(|e| github::issues::assignment_error(e).graphql())?;
+            } else {
+                assignments::assign(
+                    pool,
+                    &request.state.notification_broadcaster,
+                    &target,
+                    authority,
+                    &users,
+                )
+                .await
+                .map_err(|e| github::issues::assignment_error(e).graphql())?;
             }
         }
     }

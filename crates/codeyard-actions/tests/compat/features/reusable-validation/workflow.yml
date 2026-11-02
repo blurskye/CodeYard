@@ -1,5 +1,9 @@
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   wrong_type:
     uses: ./.github/workflows/called.yml

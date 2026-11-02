@@ -805,11 +805,12 @@ async fn assert_rejected_forms_return_to_get_pages(alice: &Client, repository_id
         ("delete-branch", "branches"),
         ("create-tag", "tags"),
         ("delete-tag", "tags"),
-        ("settings", "settings"),
-        ("rename", "settings"),
-        ("delete", "settings"),
-        ("collaborator", "settings"),
-        ("remove-collaborator", "settings"),
+        // A settings form returns to its own section.
+        ("settings", "settings?tab=general"),
+        ("rename", "settings?tab=general"),
+        ("delete", "settings?tab=danger"),
+        ("collaborator", "settings?tab=collaborators"),
+        ("remove-collaborator", "settings?tab=collaborators"),
         ("label", "labels"),
         ("delete-label", "labels"),
     ] {

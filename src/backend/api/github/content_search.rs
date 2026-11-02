@@ -1,7 +1,6 @@
 use super::{auth, pagination::Pagination, Error, Result};
 use crate::backend::{
     app::AppState,
-    db,
     repositories::content_search::{self, Entry, KindOfSearch, Query as SearchQuery, Sort},
 };
 use axum::{
@@ -12,10 +11,7 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 async fn content(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -28,7 +24,7 @@ async fn content(
     } else {
         KindOfSearch::Commits
     };
-    let authentication = auth::authenticate(&state, &headers, false).await?;
+    let authentication = auth::identity(&state, &headers, false).await?;
     let viewer = authentication.as_ref().map(|a| a.user.id);
     if kind == KindOfSearch::Code && viewer.is_none() {
         return Err(auth::required());
@@ -59,6 +55,7 @@ async fn content(
                     "Search is busy. Try again shortly.",
                 )
             })?;
+    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let mut results = content_search::search(
         &state.pool,
         state.cluster.as_ref(),
@@ -76,15 +73,8 @@ async fn content(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    // The access helper takes at most 100 IDs per call, and a search can match more repositories.
-    let mut readable = HashSet::new();
-    for chunk in ids.chunks(100) {
-        readable.extend(
-            db::repositories::access::readable_repository_ids(&state.pool, viewer, chunk)
-                .await
-                .map_err(Error::unavailable)?,
-        );
-    }
+    let readable =
+        auth::readable_repositories(&state, authentication.as_ref(), &ids, "contents").await?;
     let previous = results.items.len();
     results
         .items
@@ -106,7 +96,9 @@ async fn content(
                 super::repos::search_document(
                     &state,
                     repo,
-                    authentication.as_ref().map(|a| &a.user),
+                    authentication.as_ref(),
+                    deadline,
+                    None,
                 )
                 .await?,
             );
@@ -124,7 +116,7 @@ async fn content(
                 let path = super::contents::path_url(&code.path);
                 let url = format!("{repo_api}/contents/{path}?ref={}", code.revision);
                 let fragments=code.fragments.iter().map(|fragment|json!({"object_url":url,"object_type":"FileContent","property":"content","fragment":fragment.text,"matches":query.text_matches(&fragment.text)})).collect::<Vec<_>>();
-                json!({"name":code.path.rsplit('/').next().unwrap_or(&code.path),"path":code.path,"sha":code.sha,"url":url,"git_url":format!("{repo_api}/git/blobs/{}",code.sha),"html_url":format!("{}/{}/{}/blob/{}/{path}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(&repo.name),code.revision),"file_size":code.size,"language":code.language,"line_numbers":code.fragments.iter().map(|fragment|fragment.line.to_string()).collect::<Vec<_>>(),"text_matches":fragments})
+                json!({"name":code.path.rsplit('/').next().unwrap_or(&code.path),"path":code.path,"sha":code.sha,"url":url,"git_url":format!("{repo_api}/git/blobs/{}",code.sha),"html_url":crate::webui::pages::repos::ref_path::file_url(&format!("{}/{}/{}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(&repo.name)),"blob",&code.revision,&code.path),"file_size":code.size,"language":code.language,"line_numbers":code.fragments.iter().map(|fragment|fragment.line.to_string()).collect::<Vec<_>>(),"text_matches":fragments})
             }
         };
         value["repository"] = repository;

@@ -1,7 +1,7 @@
 use crate::backend::db::{
     github_app_manifests::Draft,
     github_apps::App,
-    webhooks::{SealedSecret, WebhookFields},
+    webhooks::{SealedSecret, WebhookFields, WebhookPatch},
 };
 use anyhow::Result;
 use sqlx::SqlitePool;
@@ -35,7 +35,10 @@ pub async fn approve(
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
 
-    let changed=sqlx::query("UPDATE github_app_manifests SET conversion_hash=$4,user_id=$2,session_id=$3,expires_at=$5 WHERE hash=$1 AND user_id IS NULL AND expires_at>$6 AND EXISTS(SELECT 1 FROM users u JOIN sessions s ON s.user_id=u.id WHERE u.id=$2 AND s.id=$3 AND s.expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT u.must_change_password)").bind(hash).bind(actor).bind(session).bind(code).bind(chrono::Utc::now().timestamp()+3600).bind(chrono::Utc::now().timestamp()).execute(&mut *tx).await?.rows_affected()==1;
+    if !super::users::transitions::active_session(&mut tx, actor, session).await? {
+        return Ok(false);
+    }
+    let changed=sqlx::query("UPDATE github_app_manifests SET conversion_hash=$4,user_id=$2,session_id=$3,expires_at=$5 WHERE hash=$1 AND user_id IS NULL AND expires_at>$6").bind(hash).bind(actor).bind(session).bind(code).bind(chrono::Utc::now().timestamp()+3600).bind(chrono::Utc::now().timestamp()).execute(&mut *tx).await?.rows_affected()==1;
     tx.commit().await?;
     Ok(changed)
 }
@@ -82,7 +85,14 @@ pub async fn convert(
         .await?;
     }
     if let Some(hook) = hook {
-        super::github_app_hooks::save_in_connection(&mut tx, app.id, hook, secret, false).await?;
+        super::github_app_hooks::save_in_connection(
+            &mut tx,
+            app.id,
+            &WebhookPatch::from(hook),
+            secret,
+            false,
+        )
+        .await?;
     }
     sqlx::query("DELETE FROM github_app_manifests WHERE hash=$1")
         .bind(&draft.hash)

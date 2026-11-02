@@ -35,6 +35,11 @@ pub(super) async fn authenticate(
             "Invalid registry credentials",
         ));
     }
+    // This marker carries no authority: every operation still uses anonymous package policy.
+    // It is deliberately public and requires no per-exchange durable state.
+    if value == "cyp_registry_anonymous" {
+        return super::authenticate(state, &HeaderMap::new(), write).await;
+    }
     let grant = db::packages::registry_token(&state.pool, &token_hash(value))
         .await
         .map_err(Error::db)?
@@ -138,7 +143,7 @@ pub(super) async fn exchange(
                 return Err(Error::invalid());
             }
             if auth.is_none() {
-                let owner = super::owner(state, owner).await?;
+                let owner = super::container_owner(state, owner).await?;
                 super::package(state, &owner, "container", name, None, false).await?;
             }
             // Anonymous tokens can only pull.
@@ -149,6 +154,9 @@ pub(super) async fn exchange(
                 }
             }
         }
+    }
+    if auth.is_none() {
+        return Ok(Json(json!({"token":"cyp_registry_anonymous","access_token":"cyp_registry_anonymous","expires_in":300,"issued_at":chrono::Utc::now().to_rfc3339()})).into_response());
     }
     let write = resources.values().any(|actions| actions.contains("push"));
     let resources = serde_json::to_string(&resources).map_err(|error| Error::db(error.into()))?;

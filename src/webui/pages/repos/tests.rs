@@ -46,6 +46,7 @@ fn fixtures() -> Vec<Page> {
         content: "<script>alert(1)</script>".into(),
         binary: false,
         size: 29,
+        download_limit: Some((32 * 1024 * 1024, "32 MiB".into())),
         offset: 0,
         first_line: Some(1),
         next: Some(256),
@@ -311,6 +312,10 @@ fn fixtures() -> Vec<Page> {
                 saved: false,
                 viewer: String::new(),
                 force_push_suggestions: Vec::new(),
+                immutable_enforced: false,
+                environment_page: 0,
+                environments_more: false,
+                git_unavailable: false,
             }),
         },
         Page::BranchMerge {
@@ -360,6 +365,7 @@ fn fixtures() -> Vec<Page> {
                     body: "Notes".into(),
                     author: "alice".into(),
                     target: "main".into(),
+                    archive_revision: "refs/tags/v1.0".into(),
                     created_at: "2026-10-01T00:00:00Z".into(),
                     published_at: Some("2026-10-02T00:00:00Z".into()),
                     draft: false,
@@ -370,6 +376,39 @@ fn fixtures() -> Vec<Page> {
                 assets: Vec::new(),
                 reactions: Vec::new(),
                 can_write: false,
+            },
+        },
+        Page::Discussions {
+            repo: repo.clone(),
+            page: super::discussions::Page::Index {
+                discussions: vec![super::discussions::Discussion {
+                    number: 1,
+                    title: "<script>alert(1)</script>".into(),
+                    body: "Discussion body".into(),
+                    author: "alice".into(),
+                }],
+                page: 1,
+                more: true,
+            },
+        },
+        Page::Discussions {
+            repo: repo.clone(),
+            page: super::discussions::Page::Detail {
+                discussion: super::discussions::Discussion {
+                    number: 1,
+                    title: "Discussion".into(),
+                    body: "<script>alert(1)</script>".into(),
+                    author: "alice".into(),
+                },
+                comments: vec![super::discussions::Comment {
+                    id: 1,
+                    body: "<script>alert(1)</script>".into(),
+                    author: "alice".into(),
+                    reply_to: None,
+                }],
+                thread: None,
+                page: 1,
+                more: false,
             },
         },
     ];
@@ -385,6 +424,8 @@ fn fixtures() -> Vec<Page> {
             summary: Some("**Summary**".into()),
             text: None,
             details_url: Some("https://example.com/check".into()),
+            images: vec![],
+            actions: vec![],
             annotations: vec![super::checks::Annotation {
                 path: "<script>path</script>".into(),
                 location: "line 1".into(),
@@ -407,6 +448,8 @@ fn fixtures() -> Vec<Page> {
         repo: insights_repo.clone(),
         page: super::dependency_graph::Page {
             sha: "a".repeat(40),
+            previous: None,
+            next: None,
             packages: vec![super::dependency_graph::Dependency {
                 name: "<script>".into(),
                 version: "1.0.0".into(),
@@ -474,6 +517,7 @@ fn fixtures() -> Vec<Page> {
         pages.push(Page::Advisories {
             repo: insights_repo.clone(),
             page: Box::new(super::advisories::Page {
+                can_administer: true,
                 rows: vec![row.clone()],
                 detail: detail.then(|| super::advisories::Detail {
                     row,
@@ -602,6 +646,7 @@ fn insight_pages() -> Vec<InsightsPage> {
             ],
         },
         InsightsPage::Contributors {
+            omitted: 0,
             rows: vec![
                 Contributor {
                     name: hostile.into(),
@@ -742,6 +787,7 @@ fn typed_dispatch_matches_pure_views_and_escapes_all_variants() {
     crate::webui::tests::in_scope(|| {
         for page in fixtures() {
             let expected = match &page {
+                Page::Discussions { repo, page } => super::discussions::render(repo, page),
                 Page::Tree { repo, page } => tree(repo, page),
                 Page::BranchMerge { repo, form } => super::merge::merge(repo, form),
                 Page::Blob { repo, page } => blob(repo, page),
@@ -1378,7 +1424,9 @@ fn rendered_settings_and_ref_deletion_require_confirmation() {
         can_admin: true,
         ..Default::default()
     };
-    let settings_html = dioxus_ssr::render_element(settings(&repo, &Settings::default()));
+    let settings_html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(settings(&repo, &Settings::default()))
+    });
     assert!(settings_html.contains("/_forms/settings"));
     assert!(settings_html.contains("name=\"confirm\""));
     assert!(!settings_html.contains("/_forms/transfer"));
@@ -1403,7 +1451,9 @@ fn rendered_settings_and_ref_deletion_require_confirmation() {
         updated: None,
         pull: None,
     }];
-    let refs_html = dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "", "", 0));
+    let refs_html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "", "", 0))
+    });
     assert!(refs_html.contains("/_forms/delete-branch"));
     assert!(refs_html.contains("name=\"confirm\""));
     assert!(refs_html.contains("<details"));
@@ -1708,6 +1758,7 @@ fn label_colours_reach_a_style_only_when_they_are_valid_hex() {
         name: "project".into(),
         signed_in: true,
         can_write: true,
+        can_triage: false,
         can_admin: true,
         csrf: "csrf-fixture".into(),
         viewer: "alice".into(),
@@ -1851,15 +1902,19 @@ fn releases_are_reachable_from_the_tags_page_and_the_about_column() {
         updated: None,
         pull: None,
     };
-    let tags = dioxus_ssr::render_element(refs(&repo, &[row], true, &[], "", "", 0));
+    let tags = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(refs(&repo, &[row], true, &[], "", "", 0))
+    });
     assert!(tags.contains("href=\"/alice/project/releases\""), "{tags}");
-    let empty = dioxus_ssr::render_element(sidebar(
-        &repo,
-        &ReleasesSummary {
-            count: 0,
-            latest_tag: None,
-        },
-    ));
+    let empty = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(sidebar(
+            &repo,
+            &ReleasesSummary {
+                count: 0,
+                latest_tag: None,
+            },
+        ))
+    });
     assert!(
         empty.contains("href=\"/alice/project/releases\""),
         "{empty}"
@@ -1889,22 +1944,25 @@ fn ref_counts_sit_beside_headings_and_deletes_are_outlined() {
         updated: None,
         pull: None,
     };
-    let branches = dioxus_ssr::render_element(refs(
-        &repo,
-        &[row("main"), row("dev")],
-        false,
-        &[row("main")],
-        "",
-        "",
-        0,
-    ));
+    let branches = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(refs(
+            &repo,
+            &[row("main"), row("dev")],
+            false,
+            &[row("main")],
+            "",
+            "",
+            0,
+        ))
+    });
     assert!(branches.contains("2 branches"));
     assert!(branches.contains("title-with-count"));
     assert!(!branches.contains(" total<"));
     assert!(branches.contains("repo-icon-danger"));
     assert!(!branches.contains("btn-destructive"));
-    let tags =
-        dioxus_ssr::render_element(refs(&repo, &[row("v1")], true, &[row("main")], "", "", 0));
+    let tags = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(refs(&repo, &[row("v1")], true, &[row("main")], "", "", 0))
+    });
     assert!(tags.contains("1 tag<"));
     // The danger zone keeps the filled button.
     let settings_html = settings_tab_html(&repo, "danger");
@@ -1961,7 +2019,9 @@ fn commit_history_groups_by_day_and_pages_with_newer_and_older() {
     assert!(html.contains("name=\"author\""), "{html}");
     // The Author menu lists the people on the page, and the Date menu offers ranges that keep the author.
     assert!(html.contains("Filter by author"), "{html}");
-    assert!(html.contains("/avatars/Ada"), "{html}");
+    // A Git author name is not an account, so the menu shows its first letter, not a picture.
+    assert!(!html.contains("/avatars/Ada"), "{html}");
+    assert!(html.contains(">A</span>"), "{html}");
     assert!(html.contains("since=week"), "{html}");
     assert!(html.contains("Since yesterday"), "{html}");
 }
@@ -2159,15 +2219,21 @@ fn branch_list_searches_by_name_and_shows_divergence_and_delete_icons() {
         row("feature/login", false, Some((2, 1))),
         row("docs", false, Some((0, 0))),
     ];
-    let html = dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "", "", 0));
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "", "", 0))
+    });
     assert!(html.contains("2 ahead, 1 behind main"), "{html}");
     assert!(html.contains("aria-label=\"Delete branch\""), "{html}");
     assert!(html.contains("name=\"q\""), "{html}");
     // A search keeps the rows whose name contains it, in any case.
-    let found = dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "LOGIN", "", 0));
+    let found = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "LOGIN", "", 0))
+    });
     assert!(found.contains("feature/login</a>"), "{found}");
     assert!(!found.contains("docs</a>"), "{found}");
-    let none = dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "zzz", "", 0));
+    let none = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(refs(&repo, &rows, false, &rows, "zzz", "", 0))
+    });
     assert!(none.contains("No matches"), "{none}");
 }
 
@@ -3726,7 +3792,9 @@ fn new_branch_form_starts_from_a_branch_with_the_default_first() {
             pull: None,
         },
     ];
-    let html = dioxus_ssr::render_element(refs(&repo, &branches, false, &branches, "", "", 0));
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(refs(&repo, &branches, false, &branches, "", "", 0))
+    });
     assert!(!html.contains("Source commit"));
     assert!(html.contains("name=\"sha\""));
     assert!(html.contains("main (aaaaaaa)"));
@@ -3801,9 +3869,11 @@ fn blame_page_gives_each_run_one_hunk_cell_and_a_linkable_line_per_row() {
     assert!(html.contains("href=\"/alice/project/commit/abcdef1234567890\""));
     assert!(html.contains(">abcdef1</a>"));
     assert!(html.contains("title=\"Shout the second line\""));
-    // Each run names its author with the author's picture, and its date sits on the second line.
-    assert!(html.contains("src=\"/avatars/Alice\""));
-    assert!(html.contains("src=\"/avatars/Bob\""));
+    // Each run names its author beside the name's first letter, since a Git author name is not
+    // an account and so has no picture, and its date sits on the second line.
+    assert!(!html.contains("src=\"/avatars/"));
+    assert!(html.contains(">A</span>"));
+    assert!(html.contains(">B</span>"));
     assert!(html.contains("class=\"repo-blame-author\">Alice<"));
     assert!(html.contains("class=\"repo-blame-meta\""));
     assert!(html.contains("href=\"/alice/project/blob/refs/heads/main/docs/a.txt\""));
@@ -4005,7 +4075,8 @@ fn go_to_file_filters_the_listing_and_marks_the_first_match() {
     assert!(html.contains("href=\"/alice/project/blob/refs/heads/main/docs/guide.md\""));
     assert!(!html.contains("src/lib.rs"));
     assert!(html.contains("class=\"repo-find-first\""));
-    assert!(html.contains("Showing the first 10000 files."));
+    // A cut listing says that only part of the matching paths is loaded.
+    assert!(html.contains("Only a bounded set of matching paths is loaded."));
     let unfiltered = FindPage {
         query: String::new(),
         truncated: false,
@@ -4014,7 +4085,7 @@ fn go_to_file_filters_the_listing_and_marks_the_first_match() {
     let html = dioxus_ssr::render_element(find(&repo, &unfiltered));
     assert!(html.contains("src/lib.rs"));
     assert!(!html.contains("class=\"repo-find-first\""));
-    assert!(!html.contains("Showing the first"));
+    assert!(!html.contains("Only a bounded set"));
 }
 
 #[test]

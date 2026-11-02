@@ -26,6 +26,7 @@ pub(super) async fn resolve(
     ) {
         return management::mutation(field, &input, request, &repo, target).await;
     }
+    let mut payload = json!({"clientMutationId":input["clientMutationId"]});
     match field {
         "updateIssueIssueType" => {
             let kind = if input["issueTypeId"].is_null() {
@@ -33,9 +34,15 @@ pub(super) async fn resolve(
             } else {
                 Some(id(&input, "issueTypeId", "IT")?)
             };
-            db::issue_attributes::set_type(pool, repo.id, actor, target, kind)
-                .await
-                .map_err(|e| Error::new(e.to_string()))?;
+            db::issue_attributes::set_type(
+                pool,
+                repo.id,
+                request.auth.database_actor(),
+                target,
+                kind,
+            )
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
         }
         "addSubIssue" | "removeSubIssue" | "addBlockedBy" | "removeBlockedBy" => {
             let child = field.ends_with("SubIssue");
@@ -48,6 +55,11 @@ pub(super) async fn resolve(
                 },
                 "I",
             )?;
+            let related = db::issues::get_issue_by_id(pool, other)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            request.authorize(related.repo_id, "issues", true).await?;
             let kind = if child {
                 Kind::Children
             } else {
@@ -62,9 +74,22 @@ pub(super) async fn resolve(
             } else {
                 Mutation::Remove { kind, other }
             };
-            db::relationships::change(pool, actor, repo.id, target, mutation)
+            db::relationships::change_with_token(
+                pool,
+                actor,
+                repo.id,
+                target,
+                mutation,
+                Some(request.auth.token.id),
+            )
+            .await
+            .map_err(|e| Error::new(e.to_string()))?;
+            let related = db::issues::get_issue_by_id(pool, other)
                 .await
-                .map_err(|e| Error::new(e.to_string()))?;
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            request.authorize(related.repo_id, "issues", false).await?;
+            payload[if child { "subIssue" } else { "blockingIssue" }] = object(&related);
         }
         _ => {
             return Err(Error::new(format!(
@@ -72,5 +97,11 @@ pub(super) async fn resolve(
             )))
         }
     }
-    Ok(json!({"clientMutationId":input["clientMutationId"],"issue":object(&issue)}))
+    let updated = db::issues::get_issue_by_id(pool, target)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
+    request.authorize(updated.repo_id, "issues", false).await?;
+    payload["issue"] = object(&updated);
+    Ok(payload)
 }

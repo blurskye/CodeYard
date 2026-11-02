@@ -26,7 +26,8 @@ pub(crate) async fn react(
     let ctx = PageContext::load(state, headers, &uri).await?;
     authorize_post(&ctx, &form)?;
     let user = ctx.require_user()?;
-    let detail = releases::detail_by_id(&ctx.state.pool, Some(user.id), &owner, &name, id)
+    let loaded = super::super::chrome::load_database(&ctx, &owner, &name).await?;
+    let detail = releases::detail_by_id(&ctx.state.pool, Some(user.id), loaded.repository.id, id)
         .await
         .map_err(|error| match error {
             ReleaseError::Access(AccessError::NotFound) | ReleaseError::NotFound => {
@@ -46,6 +47,10 @@ pub(crate) async fn react(
     db::reactions::toggle_reaction(
         &ctx.state.pool,
         user.id,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
         detail.repository.id,
         id,
         db::reactions::Subject::Release,

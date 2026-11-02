@@ -39,6 +39,8 @@ pub struct Settings {
     pub gpg_keys: Vec<Key>,
     pub tokens: Vec<Token>,
     pub sessions: Vec<AccountSession>,
+    #[serde(default)]
+    pub session_pagination: SessionPagination,
     pub new_token: Option<String>,
     pub password_supported: bool,
     pub must_change_password: bool,
@@ -92,6 +94,12 @@ pub struct TwoFactorSetup {
 }
 
 /// One signed-in session of the account. `key` is a digest of the session id, which stays secret.
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct SessionPagination {
+    pub before: i64,
+    pub next_before: Option<i64>,
+}
+
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AccountSession {
     pub key: String,
@@ -360,7 +368,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                     form { id: "profile-picture-upload", method: "post", action: "/settings/avatar", enctype: "multipart/form-data", class: "identity-form identity-avatar-form",
                                         {csrf(token)}
                                         label { r#for: "picture", class: "block text-sm font-semibold", "Upload a new picture" }
-                                        input { id: "picture", r#type: "file", name: "picture", accept: "image/png,image/jpeg,image/gif,image/webp", required: true, class: FIELD }
+                                        input { id: "picture", r#type: "file", name: "picture", accept: crate::media::AVATAR_CONTENT_TYPES.join(","), required: true, class: FIELD }
                                         p { class: "identity-form-hint", "PNG, JPEG, GIF, or WebP. Maximum 2 MB." }
                                     }
                                     div { class: "identity-avatar-buttons",
@@ -536,7 +544,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                     label { class: "identity-expiry-option",
                                         input { r#type: "radio", name: "expiry", value: "date", checked: values.expiry != "never" }
                                         span { "Expires on" }
-                                        input { r#type: "date", name: "expires_at", class: FIELD, value: token_expiry_day(values.expires_at.clone()) }
+                                        crate::webui::components::DraftInput { input_type: "date", name: "expires_at", class: FIELD, initial_value: token_expiry_day(values.expires_at.clone()) }
                                     }
                                     p { class: "identity-form-hint", "A token that expires stops working at the end of the chosen day, in UTC." }
                                 }
@@ -682,7 +690,7 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                     if model.blocked.more { a { href: format!("/settings?tab=blocked&page={}",model.blocked.page+1), "Next" } }
                                 }
                             }
-                            form { method: "post", action: "/settings/blocks", class: "identity-form", {csrf(token)} {text_field("username", "Username to block", String::new(), "text", true, 255)} div { class: "identity-form-actions", button { r#type: "submit", class: "btn btn-danger", "Block user" } } }
+                            form { method: "post", action: "/settings/blocks", class: "identity-form", {csrf(token)} {text_field("username", "Username to block", String::new(), "text", true, 510)} div { class: "identity-form-actions", button { r#type: "submit", class: "btn btn-danger", "Block user" } } }
                         }
                     } else if model.tab == "sessions" {
                         section { class: "identity-settings-section", aria_labelledby: "settings-sessions-title",
@@ -705,11 +713,18 @@ pub fn settings_page(model: Settings, token: &str, message: Option<&str>, error:
                                             {confirm_dialog(None, "Revoke this session", "/settings?tab=sessions", "/settings/sessions/revoke", rsx! {
                                                 {csrf(token)}
                                                 input { r#type: "hidden", name: "session", value: session.key.clone() }
+                                                input { r#type: "hidden", name: "sessions_before", value: model.session_pagination.before.to_string() }
                                                 strong { if session.current { "Revoke this session? You will be signed out here." } else { "Revoke this session?" } }
                                                 p { class: "text-sm", "The browser or device using it is signed out immediately." }
                                             }, "Revoke session")}
                                         }
                                     }
+                                }
+                            }
+                            nav { aria_label: "Session pages",
+                                NavLink { href: "/settings?tab=sessions", "Newest sessions" }
+                                if let Some(before) = model.session_pagination.next_before {
+                                    NavLink { href: format!("/settings?tab=sessions&sessions_before={before}"), "Older sessions" }
                                 }
                             }
                             if model.sessions.iter().any(|session| !session.current) {

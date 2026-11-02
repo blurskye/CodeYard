@@ -11,6 +11,7 @@ pub mod dependabot;
 pub mod dependencies;
 pub mod dependency_graph;
 pub mod disclosure;
+pub mod discussions;
 pub mod editor;
 pub mod find;
 pub mod insights;

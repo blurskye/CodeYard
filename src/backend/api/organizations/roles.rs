@@ -28,10 +28,11 @@ impl Command {
             RoleTarget::User(
                 organization::username(form).map_err(|_| "Enter an existing account username.")?,
             )
-        } else if matches!(
-            action,
-            "assign-team-role" | "revoke-team-role" | "revoke-all-team-roles"
-        ) {
+        } else if matches!(action, "revoke-team-role" | "revoke-all-team-roles") {
+            RoleTarget::TeamId(
+                organization::id(form, "team_id").map_err(|_| "Choose an assigned team.")?,
+            )
+        } else if action == "assign-team-role" {
             let slug = organization::field(form, "team_slug").trim();
             // Team handles allow 255 characters in up to 1024 bytes.
             if slug.is_empty() || slug.len() > 1024 || slug.chars().count() > 255 {
@@ -180,7 +181,7 @@ pub(super) async fn apply(
 ) -> anyhow::Result<OrganizationOutcome<()>> {
     roles::change(
         &ctx.state.pool,
-        actor,
+        ctx.database_actor(actor),
         org,
         &command.target,
         command.role,

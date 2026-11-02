@@ -96,4 +96,5 @@ pub(super) async fn page(
             page: Box::new(page),
         },
     )
+    .await
 }

@@ -114,7 +114,7 @@ fn parse_cursor(value: &str) -> Option<i64> {
     (id > 0 && cursor(id) == value).then_some(id)
 }
 /// Both native insights and REST use the same filters and stable, bidirectional cursor window.
-pub async fn page(pool: &DbPool, repo: i64, input: &Query) -> Result<Page> {
+pub async fn page(pool: &DbPool, repo: i64, input: &Query, viewer: Option<i64>) -> Result<Page> {
     let descending = match input.direction.as_deref().unwrap_or("desc") {
         "desc" => true,
         "asc" => false,
@@ -133,7 +133,10 @@ pub async fn page(pool: &DbPool, repo: i64, input: &Query) -> Result<Page> {
         .reference
         .as_ref()
         .is_some_and(|value| value.len() > 1024)
-        || input.actor.as_ref().is_some_and(|value| value.len() > 255)
+        || input
+            .actor
+            .as_ref()
+            .is_some_and(|value| value.len() > 1024 || value.chars().count() > 255)
     {
         return Err(InvalidQuery("Activity filter is too long").into());
     }
@@ -176,7 +179,7 @@ pub async fn page(pool: &DbPool, repo: i64, input: &Query) -> Result<Page> {
         since,
     };
     let mut rows =
-        db::repositories::activity::list(pool, repo, &filter, (limit + 1) as i64).await?;
+        db::repositories::activity::list(pool, repo, &filter, (limit + 1) as i64, viewer).await?;
     let more = rows.len() > limit;
     rows.truncate(limit);
     if reverse {

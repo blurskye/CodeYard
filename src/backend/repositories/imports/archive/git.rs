@@ -54,7 +54,8 @@ pub async fn prepare(source: &ArchiveSource) -> Result<ArchiveGit> {
         command
             .arg("--git-dir")
             .arg(temporary.path())
-            .args(["index-pack", "--stdin", "--strict"]);
+            // Connectivity is checked by fsck only after every independent pack is indexed.
+            .args(["index-pack", "--stdin"]);
         let (status, _) = process::buffered(command, pack, 65536, process::RPC_TIMEOUT).await?;
         ensure!(status.success(), "Invalid migration pack");
     }

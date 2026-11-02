@@ -29,7 +29,9 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-pub use crate::backend::db::releases::{ReleaseChanges, ReleaseFields, ReleaseRefusal};
+pub use crate::backend::db::releases::{
+    LatestSelection, ReleaseChanges, ReleaseFields, ReleaseRefusal,
+};
 
 pub const MAX_ASSET_BYTES: usize = crate::backend::storage::MAX_OBJECT_BYTES as usize;
 
@@ -102,6 +104,7 @@ pub struct ReleasesPage {
     pub repository: Repository,
     pub can_write: bool,
     pub releases: Vec<ReleaseRow>,
+    pub assets: Vec<ReleaseAsset>,
     pub total: i64,
 }
 
@@ -126,19 +129,6 @@ pub struct ReleaseSummary {
     pub latest: Option<Release>,
 }
 
-async fn readable(
-    pool: &db::DbPool,
-    viewer: Option<i64>,
-    owner: &str,
-    name: &str,
-) -> Result<Repository, ReleaseError> {
-    let repository = db::repositories::records::get_repository(pool, owner, name)
-        .await
-        .map_err(|_| ReleaseError::Unavailable)?
-        .ok_or(AccessError::NotFound)?;
-    Ok(access::check_read(pool, repository.id, viewer).await?)
-}
-
 async fn writable(
     pool: &db::DbPool,
     actor: i64,
@@ -158,11 +148,19 @@ async fn can_write(
     repo_id: i64,
 ) -> Result<bool, ReleaseError> {
     match viewer {
-        Some(actor) => match access::check_write(pool, repo_id, actor).await {
-            Ok(_) => Ok(true),
-            Err(error @ AccessError::Unavailable) => Err(error.into()),
-            Err(_) => Ok(false),
-        },
+        Some(actor) => {
+            let repo = access::current_repository(pool, repo_id).await?;
+            let Some(user) = db::users::accounts::get_user_by_id(pool, actor)
+                .await
+                .map_err(unavailable)?
+            else {
+                return Ok(false);
+            };
+            Ok(access::user_access(pool, &user, &repo)
+                .await
+                .map_err(unavailable)?
+                .can_write())
+        }
         None => Ok(false),
     }
 }
@@ -173,6 +171,9 @@ fn unavailable<E>(_: E) -> ReleaseError {
 
 /// Maps a refusal the database raised inside a write to the error the caller shows.
 fn write_error(error: Error) -> ReleaseError {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return ReleaseError::Access(AccessError::WriteDenied);
+    }
     match error.downcast_ref::<ReleaseRefusal>() {
         Some(ReleaseRefusal::Denied) => ReleaseError::Access(AccessError::WriteDenied),
         Some(ReleaseRefusal::NotFound) => ReleaseError::NotFound,
@@ -254,8 +255,7 @@ fn validate_tag(tag: &str) -> Result<(), ReleaseError> {
 pub async fn list(
     pool: &db::DbPool,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     page: i64,
     per_page: i64,
 ) -> Result<ReleasesPage, ReleaseError> {
@@ -264,19 +264,24 @@ pub async fn list(
         .filter(|_| page > 0 && (1..=100).contains(&per_page))
         .and_then(|page| page.checked_mul(per_page))
         .ok_or(ReleaseError::Invalid("Release pagination is out of range"))?;
-    let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await?;
-    let releases = db::releases::list_releases(pool, repository.id, can_write, per_page, offset)
-        .await
-        .map_err(unavailable)?;
-    let total = db::releases::count_releases(pool, repository.id, can_write)
-        .await
-        .map_err(unavailable)?;
+    let snapshot = db::releases::read_release_snapshot(
+        pool,
+        viewer,
+        repo_id,
+        db::releases::ReleaseSelection::Page {
+            limit: per_page,
+            offset,
+        },
+    )
+    .await
+    .map_err(write_error)?;
+    let can_write = can_write(pool, viewer, repo_id).await?;
     Ok(ReleasesPage {
-        repository,
+        repository: snapshot.repository,
         can_write,
-        releases,
-        total,
+        releases: snapshot.releases,
+        assets: snapshot.assets,
+        total: snapshot.total,
     })
 }
 
@@ -284,52 +289,50 @@ pub async fn list(
 pub async fn detail_by_tag(
     pool: &db::DbPool,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     tag: &str,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await?;
-    let release = db::releases::get_release_by_tag(pool, repository.id, tag)
-        .await
-        .map_err(unavailable)?;
-    visible_detail(pool, repository, can_write, release).await
+    visible_detail(
+        pool,
+        viewer,
+        repo_id,
+        db::releases::ReleaseSelection::Tag(tag),
+    )
+    .await
 }
 
 /// One release by its number, for the JSON API. A draft is hidden from everyone but writers.
 pub async fn detail_by_id(
     pool: &db::DbPool,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     release_id: i64,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    let repository = readable(pool, viewer, owner, name).await?;
-    let can_write = can_write(pool, viewer, repository.id).await?;
-    let release = db::releases::get_release(pool, repository.id, release_id)
-        .await
-        .map_err(unavailable)?;
-    visible_detail(pool, repository, can_write, release).await
+    visible_detail(
+        pool,
+        viewer,
+        repo_id,
+        db::releases::ReleaseSelection::Id(release_id),
+    )
+    .await
 }
 
 async fn visible_detail(
     pool: &db::DbPool,
-    repository: Repository,
-    can_write: bool,
-    release: Option<ReleaseRow>,
+    viewer: Option<i64>,
+    repo_id: i64,
+    selection: db::releases::ReleaseSelection<'_>,
 ) -> Result<ReleaseDetail, ReleaseError> {
-    let release = release.ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write {
-        return Err(ReleaseError::NotFound);
-    }
-    let assets = db::releases::list_release_assets(pool, release.release.id)
+    let mut snapshot = db::releases::read_release_snapshot(pool, viewer, repo_id, selection)
         .await
-        .map_err(unavailable)?;
+        .map_err(write_error)?;
+    let release = snapshot.releases.pop().ok_or(ReleaseError::NotFound)?;
+    let can_write = can_write(pool, viewer, repo_id).await?;
     Ok(ReleaseDetail {
-        repository,
+        repository: snapshot.repository,
         can_write,
         release,
-        assets,
+        assets: snapshot.assets,
     })
 }
 
@@ -368,12 +371,12 @@ pub async fn form_choices(
     let (repository, _) = writable(pool, actor, owner, name).await?;
     let store = repo_store(&repository, cluster);
     let info = store.info().await.map_err(ReleaseError::Git)?;
-    let mut tags: Vec<String> = store
-        .tags()
-        .await
-        .map_err(ReleaseError::Git)?
-        .into_iter()
-        .map(|tag| tag.name)
+    // Only the names are shown, so the ref listing is enough; no tag or commit is read.
+    let refs = store.refs().await.map_err(ReleaseError::Git)?;
+    let mut tags: Vec<String> = refs
+        .keys()
+        .filter_map(|reference| reference.strip_prefix("refs/tags/"))
+        .map(str::to_owned)
         .collect();
     tags.sort();
     Ok(FormChoices {
@@ -499,7 +502,7 @@ pub async fn create(
     } else {
         "published"
     };
-    emit_release(pool, &repository, &release, actor, action, None).await;
+    emit_release(pool, &repository, &release, actor, action, None, None).await;
 
     Ok(release)
 }
@@ -516,7 +519,8 @@ fn target_revision(refs: &HashMap<String, String>, target: &str) -> String {
     }
 }
 
-/// Tells the repository's release webhooks what `actor` did to `release`.
+/// Tells the repository's release webhooks what `actor` did to `release`. `changes` holds the
+/// previous values of an edit.
 async fn emit_release(
     pool: &db::DbPool,
     repository: &Repository,
@@ -524,6 +528,7 @@ async fn emit_release(
     actor: i64,
     action: &'static str,
     assets: Option<Vec<serde_json::Value>>,
+    changes: Option<serde_json::Value>,
 ) {
     let (release, repository_for_hook) = (release.clone(), repository.clone());
     let author_id = release.author_id;
@@ -546,6 +551,9 @@ async fn emit_release(
             );
             if let Some(assets) = assets {
                 payload["release"]["assets"] = assets.into();
+            }
+            if let Some(changes) = changes {
+                payload["changes"] = changes;
             }
             payload
         },
@@ -581,42 +589,79 @@ pub async fn update(
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?
         .release;
+    // A stale form must not create the tag; the write below checks the same revision again.
+    if fields
+        .expected_revision
+        .as_ref()
+        .is_some_and(|expected| *expected != db::releases::release_revision(&current))
+    {
+        return Err(ReleaseError::Conflict);
+    }
+    let mut fields = fields.clone();
+    // Whether this edit publishes, and so which checks run, is decided from this state.
+    fields.expected_draft = Some(current.is_draft);
+    let tag = fields
+        .tag
+        .as_deref()
+        .unwrap_or(&current.tag_name)
+        .to_owned();
+    validate_tag(&tag)?;
+    if current.is_immutable && tag != current.tag_name {
+        return Err(write_error(ReleaseRefusal::Immutable.into()));
+    }
     let publishing = current.is_draft && fields.is_draft == Some(false);
     let store = repo_store(&repository, cluster);
-    if publishing {
-        // A draft that was saved without its tag, or whose tag was deleted, gets it now.
+    if publishing || fields.tag.is_some() || fields.target.is_some() {
+        // Pin the row revision across Git work; a concurrent edit must not change which tag
+        // and target this publication was prepared for.
+        fields
+            .expected_revision
+            .get_or_insert_with(|| db::releases::release_revision(&current));
         let refs = store.refs_from_primary().await.map_err(ReleaseError::Git)?;
-        let reference = format!("refs/tags/{}", current.tag_name);
+        let reference = format!("refs/tags/{tag}");
         if !refs.contains_key(&reference) {
-            if fields.new_tag_denied {
-                return Err(ReleaseError::Ref(RefError::Access(
-                    AccessError::WriteDenied,
-                )));
+            let target = fields
+                .target
+                .as_deref()
+                .unwrap_or(&current.target_commitish);
+            if target.trim().is_empty() || target.len() > 255 {
+                return Err(ReleaseError::TargetRequired);
             }
             let commit = store
-                .commit_from_primary(&target_revision(&refs, &current.target_commitish))
+                .commit_from_primary(&target_revision(&refs, target))
                 .await
                 .map_err(ReleaseError::Git)?;
-            refs::create_tag(
-                pool,
-                cluster,
-                ci,
-                actor,
-                owner,
-                repository.id,
-                &current.tag_name,
-                &commit.sha,
-                None,
-            )
-            .await
-            .map_err(ReleaseError::from)?;
+            fields.target = Some(commit.sha.clone());
+            if !fields.is_draft.unwrap_or(current.is_draft) {
+                if fields.new_tag_denied {
+                    return Err(ReleaseError::Ref(RefError::Access(
+                        AccessError::WriteDenied,
+                    )));
+                }
+                refs::create_tag(
+                    pool,
+                    cluster,
+                    ci,
+                    actor,
+                    owner,
+                    repository.id,
+                    &tag,
+                    &commit.sha,
+                    None,
+                )
+                .await
+                .map_err(ReleaseError::from)?;
+            }
+        } else {
+            // An existing tag, not target_commitish, determines the release revision.
+            fields.target = None;
         }
     }
     let attestation = immutable::candidate(
         pool,
         cluster,
         &repository,
-        &current.tag_name,
+        &tag,
         Some(release_id),
         publishing,
     )
@@ -637,8 +682,18 @@ pub async fn update(
     if published {
         notify_published(pool, broadcaster, &user, &repository, owner, name, &release).await;
     }
-    let action = if published { "published" } else { "edited" };
-    emit_release(pool, &repository, &release, actor, action, None).await;
+    let action = if published {
+        "published"
+    } else if !current.is_draft && release.is_draft {
+        "unpublished"
+    } else if current.is_prerelease && !release.is_prerelease && !release.is_draft {
+        "released"
+    } else {
+        "edited"
+    };
+    // Only an edit carries the earlier values, as on GitHub.
+    let changes = (action == "edited").then(|| payloads::release_changes(&current, &release));
+    emit_release(pool, &repository, &release, actor, action, None, changes).await;
 
     Ok(release)
 }
@@ -646,7 +701,7 @@ pub async fn update(
 /// Deletes a release and its assets. The uploaded files go too, unless something else uses them.
 pub async fn delete(
     pool: &db::DbPool,
-    store: &ObjectStore,
+    _store: &ObjectStore,
     actor: i64,
     owner: &str,
     name: &str,
@@ -662,12 +717,10 @@ pub async fn delete(
         .await
         .inspect_err(|error| tracing::warn!(release_id, %error, "release assets could not be read"))
         .ok();
-    let files = db::releases::delete_release(pool, actor, repository.id, release_id)
+    db::releases::delete_release(pool, actor, repository.id, release_id)
         .await
         .map_err(write_error)?;
-    for file in files {
-        discard_object(store, &file).await;
-    }
+    // The DAL queues asset bytes for deletion after the backup restore window.
     emit_release(
         pool,
         &repository,
@@ -675,6 +728,7 @@ pub async fn delete(
         actor,
         "deleted",
         assets,
+        None,
     )
     .await;
     Ok(())
@@ -690,6 +744,7 @@ pub async fn add_asset(
     pool: &db::DbPool,
     store: &ObjectStore,
     actor: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
@@ -701,10 +756,12 @@ pub async fn add_asset(
         pool,
         store,
         actor,
+        credential,
         owner,
         name,
         release_id,
         AssetUpload {
+            token: None,
             name: filename,
             label,
             content_type: "application/octet-stream",
@@ -715,22 +772,29 @@ pub async fn add_asset(
 }
 
 pub struct AssetUpload<'a> {
+    pub token: Option<i64>,
     pub name: &'a str,
     pub label: Option<&'a str>,
     pub content_type: &'a str,
     pub bytes: Vec<u8>,
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn upload_asset(
     pool: &db::DbPool,
     store: &ObjectStore,
     actor: i64,
+    credential: &db::users::accounts::AccountCredential<'_>,
     owner: &str,
     name: &str,
     release_id: i64,
     input: AssetUpload<'_>,
 ) -> Result<ReleaseAsset, ReleaseError> {
     let AssetUpload {
+        token,
         name: filename,
         label,
         content_type,
@@ -783,9 +847,10 @@ pub async fn upload_asset(
     )
     .await
     .map_err(ReleaseError::Upload)?;
-    let linked = db::releases::add_release_asset(
+    let linked = db::releases::add_release_asset_with_token(
         pool,
         actor,
+        credential,
         repository.id,
         release_id,
         &db::releases::NewReleaseAsset {
@@ -795,6 +860,7 @@ pub async fn upload_asset(
             content_type,
             size,
         },
+        token,
     )
     .await
     .map_err(write_error);
@@ -808,12 +874,7 @@ pub async fn upload_asset(
 }
 
 fn validate_asset_fields(filename: &str, label: Option<&str>) -> Result<(), ReleaseError> {
-    if filename.is_empty()
-        || filename.len() > 255
-        || matches!(filename, "." | "..")
-        || filename.contains(['/', '\\'])
-        || filename.chars().any(char::is_control)
-    {
+    if !crate::backend::storage::valid_basename(filename, 255) {
         return Err(ReleaseError::Invalid("Asset file name is not valid"));
     }
     if label.is_some_and(|label| label.contains('\0')) {
@@ -850,7 +911,7 @@ pub async fn update_asset(
 /// Detaches an asset from its release and removes its file.
 pub async fn delete_asset(
     pool: &db::DbPool,
-    store: &ObjectStore,
+    _store: &ObjectStore,
     actor: i64,
     owner: &str,
     name: &str,
@@ -858,43 +919,28 @@ pub async fn delete_asset(
     asset_id: i64,
 ) -> Result<(), ReleaseError> {
     let (repository, _) = writable(pool, actor, owner, name).await?;
-    let file = db::releases::delete_release_asset(pool, actor, repository.id, release_id, asset_id)
+    db::releases::delete_release_asset(pool, actor, repository.id, release_id, asset_id)
         .await
         .map_err(write_error)?;
-    if let Some(file) = file {
-        discard_object(store, &file).await;
-    }
     Ok(())
 }
 
 /// Opens an asset for a reader of the repository. Drafts stay hidden from everyone but writers.
 /// Only requests that send the body (`count`) add to the download count.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "Explicit actor and resources keep operations HTTP-free."
-)]
 pub async fn download(
     pool: &db::DbPool,
     store: &ObjectStore,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     tag: &str,
     asset_name: &str,
     count: bool,
 ) -> Result<files::AssetDownload, ReleaseError> {
-    let repository = readable(pool, viewer, owner, name).await?;
-    let release = db::releases::get_release_by_tag(pool, repository.id, tag)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write(pool, viewer, repository.id).await? {
-        return Err(ReleaseError::NotFound);
-    }
-    let asset = db::releases::get_release_asset_by_name(pool, release.release.id, asset_name)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
+    let asset =
+        db::releases::download_asset(pool, viewer, repo_id, Some(tag), Some(asset_name), None)
+            .await
+            .map_err(unavailable)?
+            .ok_or(ReleaseError::NotFound)?;
     open_asset(pool, store, asset, count).await
 }
 
@@ -903,23 +949,14 @@ pub async fn download_by_id(
     pool: &db::DbPool,
     store: &ObjectStore,
     viewer: Option<i64>,
-    owner: &str,
-    name: &str,
+    repo_id: i64,
     asset_id: i64,
     count: bool,
 ) -> Result<files::AssetDownload, ReleaseError> {
-    let repository = readable(pool, viewer, owner, name).await?;
-    let asset = db::releases::get_repository_release_asset(pool, repository.id, asset_id)
+    let asset = db::releases::download_asset(pool, viewer, repo_id, None, None, Some(asset_id))
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
-    let release = db::releases::get_release(pool, repository.id, asset.release_id)
-        .await
-        .map_err(unavailable)?
-        .ok_or(ReleaseError::NotFound)?;
-    if release.release.is_draft && !can_write(pool, viewer, repository.id).await? {
-        return Err(ReleaseError::NotFound);
-    }
     open_asset(pool, store, asset, count).await
 }
 
@@ -944,14 +981,6 @@ async fn open_asset(
         }
     }
     Ok(opened)
-}
-
-async fn discard_object(store: &ObjectStore, file: &db::models::File) {
-    if let Ok(_lock) = store.lock_file(&file.object_key).await {
-        if let Err(error) = store.delete(&file.object_key).await {
-            tracing::warn!(file = %file.id, %error, "release object cleanup deferred");
-        }
-    }
 }
 
 /// Removes an uploaded file that no release uses any more, as its uploader.

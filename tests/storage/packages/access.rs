@@ -34,9 +34,11 @@ async fn access(pg: bool) {
         .into_iter()
         .map(|(name, level)| {
             let value = format!("ghs_package_{name}");
+            // Every job token carries metadata read, as workflow permissions always add it.
             let permissions = serde_json::to_string(&Permissions(BTreeMap::from([
                 ("packages".into(), level),
                 ("contents".into(), 2),
+                ("metadata".into(), 1),
             ])))
             .unwrap();
             (name, tokens::token_hash(&value), permissions)

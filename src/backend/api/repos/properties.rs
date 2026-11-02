@@ -104,7 +104,7 @@ pub(super) async fn form(
     }
     let name = form.get("property_name").map(String::as_str).unwrap_or("");
     let raw = form.get("value").map(String::as_str).unwrap_or("");
-    if !data::valid_name(name) || raw.len() > 205000 {
+    if !data::valid_name(name) || raw.len() > data::MAX_FORM_VALUE_BYTES {
         return ctx.repo_error(
             &loaded.chrome,
             StatusCode::BAD_REQUEST,
@@ -174,8 +174,14 @@ pub(super) async fn form(
         property_name: name.to_owned(),
         value,
     };
-    let outcome =
-        data::set_repository_value(&ctx.state.pool, actor, loaded.repository.id, id, &input).await;
+    let outcome = data::set_repository_value(
+        &ctx.state.pool,
+        ctx.database_actor(actor),
+        loaded.repository.id,
+        id,
+        &input,
+    )
+    .await;
     let (status, message) = match outcome {
         Ok(()) => {
             return ctx.redirect(&format!(

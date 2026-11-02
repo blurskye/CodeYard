@@ -33,8 +33,9 @@ async fn catalog(
         Some("topics") => Kind::Topics,
         _ => return Err(Error::missing()),
     };
-    let search =
-        Search::parse(kind, q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?;
+    let search = Search::parse(kind, q.get("q").map_or("", String::as_str))
+        .map_err(Error::invalid)?
+        .with_classic_policy(authentication.as_ref().map(|auth| auth.token.id));
     if search.needs_viewer() && viewer.is_none() {
         return Err(auth::required());
     }
@@ -83,6 +84,7 @@ async fn catalog(
                     "Search is busy. Try again shortly.",
                 )
             })?;
+    let deadline = tokio::time::Instant::now() + state.search_time_budget;
     let (search, git_incomplete) = if search.needs_git() {
         crate::backend::repositories::catalog_search::prepare(
             &state.pool,
@@ -109,12 +111,26 @@ async fn catalog(
     )
     .await
     .map_err(Error::unavailable)?;
+    let mut ids: Vec<i64> = results
+        .items
+        .iter()
+        .filter_map(|hit| hit.repository_id)
+        .collect();
+    ids.sort_unstable();
+    ids.dedup();
+    let readable =
+        auth::readable_repositories(&state, authentication.as_ref(), &ids, "metadata").await?;
     let mut items = Vec::new();
+    let licenses = search.git_licenses();
     let mut incomplete = git_incomplete;
     for hit in results.items {
         let value = match kind {
             Kind::Repositories | Kind::Labels => {
                 let id = hit.repository_id.ok_or_else(|| Error::unavailable(()))?;
+                if !readable.contains(&id) {
+                    incomplete = true;
+                    continue;
+                }
                 let repo = match access::check_read(&state.pool, id, viewer).await {
                     Ok(repo) => repo,
                     Err(AccessError::NotFound) => {
@@ -127,7 +143,9 @@ async fn catalog(
                     super::repos::search_document(
                         &state,
                         &repo,
-                        authentication.as_ref().map(|a| &a.user),
+                        authentication.as_ref(),
+                        deadline,
+                        licenses.get(&repo.id).map(|license| license.as_deref()),
                     )
                     .await?
                 } else {
@@ -183,9 +201,14 @@ async fn catalog(
                 }
             }
             Kind::Topics => {
-                let Some(topic) = db::catalog_search::topic(&state.pool, viewer, &hit.key)
-                    .await
-                    .map_err(Error::unavailable)?
+                let Some(topic) = db::catalog_search::topic(
+                    &state.pool,
+                    viewer,
+                    &hit.key,
+                    authentication.as_ref().map(|auth| auth.token.id),
+                )
+                .await
+                .map_err(Error::unavailable)?
                 else {
                     incomplete = true;
                     continue;

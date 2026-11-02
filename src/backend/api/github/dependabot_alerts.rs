@@ -42,7 +42,7 @@ pub(super) async fn import(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let value = store::import(&state.pool, actor.user.id, &value)
+    let value = store::import(&state.pool, actor.database_actor(), &value)
         .await
         .map_err(failure)?;
     Ok((StatusCode::CREATED, Json(value)).into_response())
@@ -55,13 +55,67 @@ async fn global(
 ) -> Result<Response> {
     auth::authenticate(&state, &headers, false).await?;
     validate(&query, true)?;
-    let rows = store::global(&state.pool)
-        .await
-        .map_err(failure)?
-        .into_iter()
-        .filter(|a| global_matches(a, &query))
-        .collect();
-    page(rows, &query, &uri, true)
+    let sort = query.get("sort").map_or("published", String::as_str);
+    let ascending = query.get("direction").is_some_and(|v| v == "asc");
+    let limit = query
+        .get("per_page")
+        .map(|v| v.parse::<usize>())
+        .transpose()
+        .map_err(|_| Error::invalid("Invalid page size"))?
+        .unwrap_or(30)
+        .clamp(1, 100);
+    let cursor = if let Some(cursor) = query.get("after").or(query.get("before")) {
+        if cursor.len() > 2048 {
+            return Err(Error::invalid("Invalid cursor"));
+        }
+        let bytes = URL_SAFE_NO_PAD
+            .decode(cursor)
+            .map_err(|_| Error::invalid("Invalid cursor"))?;
+        let (field, direction, key): (String, bool, (String, String)) =
+            serde_json::from_slice(&bytes).map_err(|_| Error::invalid("Invalid cursor"))?;
+        if field != sort || direction != ascending {
+            return Err(Error::invalid("Invalid cursor"));
+        }
+        Some(key)
+    } else {
+        None
+    };
+    let offset = if cursor.is_some() {
+        0
+    } else {
+        let page = query
+            .get("page")
+            .map(|v| v.parse::<usize>())
+            .transpose()
+            .map_err(|_| Error::invalid("Invalid page"))?
+            .unwrap_or(1);
+        if !(1..=10000).contains(&page) {
+            return Err(Error::invalid("Invalid page"));
+        }
+        (page - 1) * limit
+    };
+    let selected = store::global_page(
+        &state.pool,
+        &store::CatalogueQuery {
+            filters: query.clone(),
+            sort: sort.to_owned(),
+            ascending,
+            cursor,
+            before: query.contains_key("before"),
+            offset,
+            limit,
+        },
+    )
+    .await
+    .map_err(failure)?;
+    page_response(
+        selected.documents,
+        &query,
+        &uri,
+        true,
+        selected.previous,
+        selected.next,
+    )
 }
 async fn global_detail(
     State(state): State<Arc<AppState>>,
@@ -79,93 +133,6 @@ fn csv(query: &Params, key: &str, value: &str) -> bool {
     query
         .get(key)
         .is_none_or(|s| s.split(',').any(|s| s == value))
-}
-fn global_matches(a: &Value, q: &Params) -> bool {
-    for key in ["ghsa_id", "cve_id", "severity"] {
-        if !csv(q, key, a[key].as_str().unwrap_or("")) {
-            return false;
-        }
-    }
-    if a["type"] != q.get("type").map_or("reviewed", String::as_str) {
-        return false;
-    }
-    if q.get("is_withdrawn")
-        .is_some_and(|v| (v == "true") == a["withdrawn_at"].is_null())
-    {
-        return false;
-    }
-    if let Some(ecosystem) = q.get("ecosystem") {
-        if !a["vulnerabilities"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|v| v["package"]["ecosystem"] == *ecosystem)
-        {
-            return false;
-        }
-    }
-    if let Some(affects) = q.get("affects") {
-        if !affects.split(',').any(|p| {
-            let (name, version) = p
-                .rsplit_once('@')
-                .filter(|(n, _)| !n.is_empty())
-                .map_or((p, None), |(n, v)| (n, Some(v)));
-            a["vulnerabilities"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .any(|v| {
-                    v["package"]["name"] == name
-                        && version.is_none_or(|version| {
-                            store::affected(
-                                version,
-                                v["vulnerable_version_range"].as_str().unwrap_or(""),
-                            )
-                        })
-                })
-        }) {
-            return false;
-        }
-    }
-    if let Some(cwes) = q.get("cwes") {
-        if !a["cwes"].as_array().into_iter().flatten().any(|v| {
-            cwes.split(',')
-                .any(|c| v["cwe_id"] == format!("CWE-{}", c.trim_start_matches("CWE-")))
-        }) {
-            return false;
-        }
-    }
-    for (key, field) in [
-        ("published", "published_at"),
-        ("updated", "updated_at"),
-        ("modified", "updated_at"),
-    ] {
-        if let Some(range) = q.get(key) {
-            if !date_matches(a[field].as_str().unwrap_or(""), range) {
-                return false;
-            }
-        }
-    }
-    true
-}
-fn date_matches(value: &str, range: &str) -> bool {
-    let Some(date) = value.get(..10) else {
-        return false;
-    };
-    if let Some((start, end)) = range.split_once("..") {
-        return (start == "*" || date >= start) && (end == "*" || date <= end);
-    }
-    for op in [">=", "<=", ">", "<"] {
-        if let Some(rhs) = range.strip_prefix(op) {
-            return match op {
-                ">=" => date >= rhs,
-                "<=" => date <= rhs,
-                ">" => date > rhs,
-                _ => date < rhs,
-            };
-        }
-    }
-    date == range
 }
 fn validate(q: &Params, global: bool) -> Result<()> {
     let allowed = if global {
@@ -196,6 +163,7 @@ fn validate(q: &Params, global: bool) -> Result<()> {
             "package",
             "manifest",
             "scope",
+            "has",
             "sort",
             "direction",
             "per_page",
@@ -220,6 +188,9 @@ fn validate(q: &Params, global: bool) -> Result<()> {
     if q.get("sort").is_some_and(|s| !sorts.contains(&s.as_str())) {
         return Err(Error::invalid("Invalid sort"));
     }
+    if q.get("has").is_some_and(|value| value != "patch") {
+        return Err(Error::invalid("Invalid patch availability filter"));
+    }
     if q.get("is_withdrawn")
         .is_some_and(|s| !matches!(s.as_str(), "true" | "false"))
     {
@@ -236,9 +207,22 @@ fn sort_key(v: &Value, sort: &str, global: bool) -> (String, String) {
             _ => "1",
         }
         .into(),
-        "published" => v["published_at"].as_str().unwrap_or("").into(),
-        "updated" => v["updated_at"].as_str().unwrap_or("").into(),
-        _ => v["created_at"].as_str().unwrap_or("").into(),
+        field => {
+            let field = match field {
+                "published" => "published_at",
+                "updated" => "updated_at",
+                _ => "created_at",
+            };
+            v[field]
+                .as_str()
+                .and_then(|value| chrono::DateTime::parse_from_rfc3339(value).ok())
+                .map(|value| {
+                    value
+                        .with_timezone(&chrono::Utc)
+                        .to_rfc3339_opts(chrono::SecondsFormat::Nanos, true)
+                })
+                .unwrap_or_default()
+        }
     };
     let id = if global {
         v["ghsa_id"].as_str().unwrap_or("").to_owned()
@@ -256,13 +240,12 @@ fn page(mut rows: Vec<Value>, q: &Params, uri: &Uri, global: bool) -> Result<Res
         .get("sort")
         .map_or(if global { "published" } else { "created" }, String::as_str);
     let ascending = q.get("direction").is_some_and(|s| s == "asc");
-    let limit = q
-        .get("per_page")
-        .map(|s| s.parse::<usize>())
-        .transpose()
-        .map_err(|_| Error::invalid("Invalid page size"))?
-        .unwrap_or(30)
-        .clamp(1, 100);
+    let limit = super::pagination::page_size(
+        q.get("per_page")
+            .map(|s| s.parse::<usize>())
+            .transpose()
+            .map_err(|_| Error::invalid("Invalid page size"))?,
+    );
     rows.sort_by_cached_key(|v| sort_key(v, sort, global));
     if !ascending {
         rows.reverse();
@@ -312,14 +295,31 @@ fn page(mut rows: Vec<Value>, q: &Params, uri: &Uri, global: bool) -> Result<Res
     };
     let more = offset.saturating_add(limit) < rows.len();
     let selected: Vec<_> = rows.into_iter().skip(offset).take(limit).collect();
+    page_response(
+        selected,
+        q,
+        uri,
+        global,
+        offset > 0 || q.contains_key("after"),
+        more || q.contains_key("before"),
+    )
+}
+fn page_response(
+    selected: Vec<Value>,
+    q: &Params,
+    uri: &Uri,
+    global: bool,
+    previous: bool,
+    next: bool,
+) -> Result<Response> {
+    let sort = q
+        .get("sort")
+        .map_or(if global { "published" } else { "created" }, String::as_str);
+    let ascending = q.get("direction").is_some_and(|s| s == "asc");
     let mut links = Vec::new();
     for (rel, row, include) in [
-        (
-            "prev",
-            selected.first(),
-            offset > 0 || q.contains_key("after"),
-        ),
-        ("next", selected.last(), more || q.contains_key("before")),
+        ("prev", selected.first(), previous),
+        ("next", selected.last(), next),
     ] {
         if !include {
             continue;
@@ -393,6 +393,9 @@ pub(crate) async fn document(
     )
 }
 fn alert_matches(v: &Value, q: &Params) -> bool {
+    if q.contains_key("has") && v["security_vulnerability"]["first_patched_version"].is_null() {
+        return false;
+    }
     [
         ("state", v["state"].as_str()),
         ("severity", v["security_advisory"]["severity"].as_str()),
@@ -434,9 +437,10 @@ async fn list(
             repository(&state, &headers, &params["owner"], &params["repo"], false).await?;
         (vec![repo.id], actor.ok_or_else(auth::required)?)
     };
+    let database_actor = actor.database_actor();
     let mut documents = Vec::new();
     for id in ids {
-        let rows = match store::alerts(&state.pool, actor.user.id, id).await {
+        let rows = match store::alerts(&state.pool, database_actor.clone(), id).await {
             Ok(rows) => rows,
             // A repository with alerts disabled is left out of an organization listing.
             Err(error)
@@ -458,13 +462,17 @@ async fn list(
             .await
             .map_err(Error::unavailable)?
             .ok_or_else(Error::missing)?;
+        let mut repository_document = None;
         for row in rows {
             let mut doc = document(&state, &row, &owner, &repo.name).await?;
             if !alert_matches(&doc, &query) {
                 continue;
             }
             if org.is_some() {
-                doc["repository"] = repos::document(&state, &repo, Some(&actor.user)).await?;
+                if repository_document.is_none() {
+                    repository_document = Some(repos::document(&state, &repo, Some(&actor)).await?);
+                }
+                doc["repository"] = repository_document.as_ref().unwrap().clone();
             }
             documents.push(doc);
         }
@@ -478,7 +486,7 @@ async fn detail(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, false).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let row = store::alerts(&state.pool, actor.user.id, repo.id)
+    let row = store::alerts(&state.pool, actor.database_actor(), repo.id)
         .await
         .map_err(failure)?
         .into_iter()
@@ -494,7 +502,7 @@ async fn update(
 ) -> Result<Json<Value>> {
     let (repo, actor) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let row = store::update(&state.pool, actor.user.id, repo.id, number, &input)
+    let row = store::update(&state.pool, actor.database_actor(), repo.id, number, &input)
         .await
         .map_err(failure)?;
     Ok(Json(document(&state, &row, &owner, &name).await?))

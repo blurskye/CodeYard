@@ -27,18 +27,25 @@ pub(super) async fn panel(
     actor: i64,
     org: i64,
 ) -> std::result::Result<view::PropertyPanel, Response> {
-    let definitions = match data::catalog(&ctx.state.pool, actor, org).await {
+    let definitions = match data::summaries(&ctx.state.pool, actor, org).await {
         Ok(Applied(definitions)) => definitions,
         Ok(_) => return Err(organization::not_found(ctx)),
         Err(_) => return Err(organization::unavailable(ctx)),
     };
     let selected = if let Some(name) = ctx.query.get("property").filter(|name| !name.is_empty()) {
-        let definition = definitions
-            .iter()
-            .find(|definition| definition.fields.property_name.eq_ignore_ascii_case(name))
-            .ok_or_else(|| ctx.error(StatusCode::NOT_FOUND, "Repository property not found."))?;
+        let missing = || ctx.error(StatusCode::NOT_FOUND, "Repository property not found.");
+        if !data::valid_name(name) {
+            return Err(missing());
+        }
+        let definition = match data::definition(&ctx.state.pool, actor, org, name).await {
+            Ok(Applied(Some(definition))) => definition,
+            Ok(Applied(None)) => return Err(missing()),
+            Ok(_) => return Err(organization::not_found(ctx)),
+            Err(_) => return Err(organization::unavailable(ctx)),
+        };
         let input = &definition.fields;
         Some(view::PropertyDefinition {
+            id: definition.id,
             name: input.property_name.clone(),
             value_type: input.value_type.as_str().into(),
             description: input.description.clone().unwrap_or_default(),
@@ -64,10 +71,10 @@ pub(super) async fn panel(
         definitions: definitions
             .into_iter()
             .map(|definition| view::PropertySummary {
-                name: definition.fields.property_name,
-                value_type: definition.fields.value_type.as_str().into(),
-                description: definition.fields.description.unwrap_or_default(),
-                required: definition.fields.required || definition.fields.require_explicit_values,
+                name: definition.property_name,
+                value_type: definition.value_type,
+                description: definition.description.unwrap_or_default(),
+                required: definition.required || definition.require_explicit_values,
             })
             .collect(),
         selected,
@@ -86,7 +93,7 @@ fn allowed(action: &str) -> &'static [&'static str] {
             "default_value",
             "values_editable_by",
         ],
-        "delete-property" => &["property_name", "confirm"],
+        "delete-property" => &["property_name", "definition_id", "confirm"],
         "set-property-value" => &["property_name", "repository_names", "value", "unset"],
         _ => &[],
     }
@@ -175,23 +182,32 @@ async fn apply(
                     organization::optional(form, "values_editable_by").unwrap_or("org_actors"),
                 )?,
             };
-            Ok(data::define(&ctx.state.pool, actor, org, &[input])
-                .await?
-                .map(|_| ()))
+            Ok(
+                data::define(&ctx.state.pool, ctx.database_actor(actor), org, &[input])
+                    .await?
+                    .map(|_| ()),
+            )
         }
         "delete-property" => {
             ensure!(organization::field(form,"confirm")==name,data::invalid("confirm","Type the property name to confirm deleting its definition and every repository value"));
-            data::remove(&ctx.state.pool, actor, org, name).await
+            let definition = organization::id(form, "definition_id").map_err(|()| {
+                data::invalid("definition_id", "Reload the property and try again")
+            })?;
+            data::remove(
+                &ctx.state.pool,
+                ctx.database_actor(actor),
+                org,
+                name,
+                Some(definition),
+            )
+            .await
         }
         "set-property-value" => {
-            let definitions = match data::catalog(&ctx.state.pool, actor, org).await? {
-                Applied(definitions) => definitions,
+            let definition = match data::definition(&ctx.state.pool, actor, org, name).await? {
+                Applied(Some(definition)) => definition,
+                Applied(None) => return Err(data::Refusal::Missing.into()),
                 other => return Ok(other.map(|_| ())),
             };
-            let definition = definitions
-                .iter()
-                .find(|definition| definition.fields.property_name.eq_ignore_ascii_case(name))
-                .ok_or(data::Refusal::Missing)?;
             let repositories = organization::field(form, "repository_names")
                 .lines()
                 .map(str::trim)
@@ -208,7 +224,7 @@ async fn apply(
             };
             data::set_values(
                 &ctx.state.pool,
-                actor,
+                ctx.database_actor(actor),
                 org,
                 &repositories,
                 &[data::ValueInput {
@@ -307,15 +323,13 @@ async fn mutate(
         },
     };
     ctx.query.remove("property");
-    if let Ok(Applied(definitions)) = data::catalog(&ctx.state.pool, actor, org).await {
-        if let Some(definition) = definitions.iter().find(|definition| {
-            definition
-                .fields
-                .property_name
-                .eq_ignore_ascii_case(organization::field(&form, "property_name"))
-        }) {
+    let name = organization::field(&form, "property_name");
+    if data::valid_name(name) {
+        if let Ok(Applied(Some(definition))) =
+            data::definition(&ctx.state.pool, actor, org, name).await
+        {
             ctx.query
-                .insert("property".into(), definition.fields.property_name.clone());
+                .insert("property".into(), definition.fields.property_name);
         }
     }
     organization::respond(&ctx, Some(org), status, Some(message), draft).await

@@ -354,7 +354,7 @@ async fn namespace(pg: bool) {
         guest.page(&format!("/gists/@repos/gists/{id}")).await.0,
         200
     );
-    assert!(db::gists::discard(f.pool(), staged.id)
+    assert!(db::gists::discard(f.pool(), staged.id, false)
         .await
         .unwrap()
         .is_some());
@@ -430,7 +430,7 @@ async fn namespace(pg: bool) {
         .unwrap()
         .unwrap();
     assert!(
-        codeyard::backend::webhooks::payloads::team_organization(&org, 1)["html_url"]
+        codeyard::backend::webhooks::payloads::team_organization(&org, 1, true)["html_url"]
             .as_str()
             .unwrap()
             .ends_with("/gists/@users/gists")

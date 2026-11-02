@@ -66,7 +66,8 @@ pub(super) async fn contract(
         format!("{base}/runs/{run}/logs"),
         format!("{base}/runs/{run}/attempts/1/logs"),
         format!("{base}/jobs/{job}/logs"),
-        format!("{base}/jobs/{job}/steps/1/logs"),
+        // GitHub numbers steps here by their zero-based position in the job.
+        format!("{base}/jobs/{job}/steps/0/logs"),
     ];
     let mut last = String::new();
     for (index, path) in paths.iter().enumerate() {
@@ -102,7 +103,7 @@ pub(super) async fn contract(
         missing(api, &location.replace("/project/", "/other/")).await;
         last = location;
     }
-    missing(api, &last.replace("/steps/1/", "/steps/2/")).await;
+    missing(api, &last.replace("/steps/0/", "/steps/1/")).await;
     f.execute(
         "UPDATE actions_log_downloads SET expires_at=0 WHERE run_id=$1",
         &[run],

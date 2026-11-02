@@ -13,7 +13,6 @@ use axum::{
     routing::{delete, get, patch, post, put, MethodRouter},
     Json, Router,
 };
-use base64::{engine::general_purpose::STANDARD, Engine};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -100,6 +99,12 @@ async fn target(
         (params["owner"].clone(), params["repo"].clone())
     };
     let (repo, auth) = super::repository(state, headers, &owner, &name, false).await?;
+    if params
+        .get("repository_id")
+        .is_some_and(|id| id.parse::<i64>().ok() != Some(repo.id))
+    {
+        return Err(Error::missing());
+    }
     let auth = auth.ok_or_else(auth::required)?;
     if write {
         auth.require_write()?;
@@ -115,12 +120,27 @@ async fn target(
     }
     Ok((repo, auth))
 }
-fn document(kind: Kind, row: &EnvironmentValue) -> Value {
-    let mut body = json!({"name":row.name,"created_at":row.created_at,"updated_at":row.updated_at});
+pub(super) fn base_document(
+    kind: Kind,
+    name: &str,
+    value: &str,
+    created_at: &chrono::DateTime<chrono::Utc>,
+    updated_at: &chrono::DateTime<chrono::Utc>,
+) -> Value {
+    let mut body = json!({"name":name,"created_at":created_at,"updated_at":updated_at});
     if kind == Kind::Variable {
-        body["value"] = json!(row.value);
+        body["value"] = json!(value);
     }
     body
+}
+fn document(kind: Kind, row: &EnvironmentValue) -> Value {
+    base_document(
+        kind,
+        &row.name,
+        &row.value,
+        &row.created_at,
+        &row.updated_at,
+    )
 }
 async fn list(
     State(state): State<Arc<AppState>>,
@@ -209,12 +229,13 @@ async fn public_key(
         encryptor,
         auth.user.id,
         repo.id,
+        &auth.credential(),
     )
     .await
     .map_err(super::action_secrets::error)?;
-    Ok(Json(
-        json!({"key_id":key_id,"key":STANDARD.encode(key.public_key().as_bytes())}),
-    ))
+    Ok(Json(super::action_secrets::public_key_document(
+        &key_id, &key,
+    )))
 }
 
 #[derive(Deserialize)]
@@ -240,6 +261,7 @@ async fn save_secret(
         encryptor,
         auth.user.id,
         repo.id,
+        &auth.credential(),
     )
     .await
     .map_err(super::action_secrets::error)?;
@@ -247,7 +269,7 @@ async fn save_secret(
     let created = values::save(
         &state.pool,
         Some(encryptor),
-        auth.user.id,
+        auth.database_actor(),
         repo.id,
         &params["environment_name"],
         &Save {
@@ -282,7 +304,7 @@ async fn create_variable(
     values::save(
         &state.pool,
         None,
-        auth.user.id,
+        auth.database_actor(),
         repo.id,
         &params["environment_name"],
         &Save {
@@ -320,7 +342,7 @@ async fn update_variable(
     values::save(
         &state.pool,
         None,
-        auth.user.id,
+        auth.database_actor(),
         repo.id,
         &params["environment_name"],
         &Save {
@@ -343,7 +365,7 @@ async fn remove(
     let (repo, auth) = target(&state, &headers, &params, true).await?;
     values::delete(
         &state.pool,
-        auth.user.id,
+        auth.database_actor(),
         repo.id,
         &params["environment_name"],
         kind(&route),

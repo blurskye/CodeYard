@@ -22,7 +22,9 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
     use super::page::{IssueAttribute, IssueAttributes};
     let opaque = "\n</textarea><script>alert(1)</script>";
     let kind = IssueAttribute {
+        revision: String::new(),
         id: 1,
+        updated: String::new(),
         kind: "type".into(),
         name: "Bug".into(),
         description: Some(opaque.into()),
@@ -34,7 +36,9 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
         value: None,
     };
     let number = IssueAttribute {
+        revision: String::new(),
         id: 2,
+        updated: String::new(),
         kind: "field".into(),
         name: "Estimate".into(),
         description: None,
@@ -53,6 +57,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
         ..number.clone()
     };
     let data = IssueAttributes {
+        owner_key: "user:1".into(),
         selected_type: Some(1),
         types: vec![kind],
         fields: vec![number, text],
@@ -64,6 +69,7 @@ fn issue_attribute_controls_preserve_native_values_and_opaque_text() {
             &repository(),
             "/alice/repo/issues/1",
             &data,
+            1,
         ))
     });
     assert!(
@@ -220,6 +226,7 @@ fn repository() -> Repository {
         name: "repo".into(),
         signed_in: true,
         can_write: true,
+        can_triage: false,
         can_admin: true,
         csrf: "csrf-sentinel".into(),
         viewer: String::new(),
@@ -261,6 +268,7 @@ fn item() -> Item {
         updated: "revision-1".into(),
         labels: vec![],
         comment_count: 0,
+        can_edit: true,
         can_tick: false,
         tasks: Default::default(),
         commit_count: None,
@@ -333,6 +341,7 @@ fn page_modes() -> Vec<Page> {
                     about: "</a><script>choose()</script>".into(),
                 }],
                 blank_allowed: true,
+                draft: Default::default(),
             });
         }
         for preview in [false, true] {
@@ -369,6 +378,7 @@ fn page_modes() -> Vec<Page> {
             kind,
             item: entry,
             comments: CommentPage {
+                can_triage: false,
                 issue_management: None,
                 suggestions: None,
                 attributes: None,
@@ -475,6 +485,8 @@ fn page_modes() -> Vec<Page> {
         runs: vec![run_fixture("<script>run</script>", "success")],
         statuses: Vec::new(),
         code_scanning: Vec::new(),
+        check_page: 1,
+        more_checks: false,
     });
     let hostile = "<script>alert(1)</script>";
     modes.push(Page::Milestones {
@@ -517,6 +529,7 @@ fn page_modes() -> Vec<Page> {
         pagination: (1, false),
         draft: MilestoneDraft {
             repository_id: None,
+            original: String::new(),
             title: hostile.into(),
             description: "Ship it".into(),
             due_date: "2026-10-20".into(),
@@ -546,7 +559,8 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     repository,
                     templates,
                     blank_allowed,
-                } => new::chooser(repository, templates, *blank_allowed),
+                    draft,
+                } => new::chooser(repository, templates, *blank_allowed, draft),
                 Page::Milestones {
                     repository,
                     state,
@@ -719,7 +733,16 @@ fn typed_dispatch_matches_pure_views_after_json_roundtrip_and_escapes_text() {
                     runs,
                     statuses,
                     code_scanning,
-                } => checks_page(repository, item, runs, statuses, code_scanning),
+                    check_page,
+                    more_checks,
+                } => checks_page(
+                    repository,
+                    item,
+                    runs,
+                    statuses,
+                    code_scanning,
+                    (*check_page, *more_checks),
+                ),
             };
             let html = dioxus_ssr::render_element(render(decoded));
             assert_eq!(html, dioxus_ssr::render_element(plain));
@@ -742,12 +765,13 @@ fn serialized_repository_contains_only_public_presentation_and_form_fields() {
     })
     .unwrap();
     let repo = json["List"]["repository"].as_object().unwrap();
-    assert_eq!(repo.len(), 8);
+    assert_eq!(repo.len(), 9);
     for name in [
         "owner",
         "name",
         "signed_in",
         "can_write",
+        "can_triage",
         "can_admin",
         "csrf",
         "viewer",
@@ -883,6 +907,7 @@ fn editor_preserves_text_and_has_native_csrf_forms() {
 fn discussion_pages_link_to_the_neighbouring_pages() {
     let render = |page, has_more| {
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -1063,6 +1088,7 @@ fn stack_card_marks_the_current_layer_and_puts_base_on_its_own_line() {
 fn timeline_rail_marks_only_discussion_entries() {
     crate::webui::tests::in_scope(|| {
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -1247,6 +1273,30 @@ fn merge_box_shows_blockers_to_writers_and_a_status_to_everyone_else() {
         assert!(html.contains("This pull request was merged."));
         merged.comparison.as_mut().unwrap().merged_commit = Some("0123456789abcdef".into());
         let html = render(&merged, &writer);
+        assert!(html.contains("This pull request was merged as"));
+        // The branch it landed on comes from the merge event, since a stacked layer keeps its
+        // own base.
+        let landed = CommentPage {
+            events: vec![super::Event {
+                actor: "alice".into(),
+                kind: "merged".into(),
+                detail: "main".into(),
+                previous: String::new(),
+                created: "today".into(),
+            }],
+            ..CommentPage::default()
+        };
+        let html = dioxus_ssr::render_element(detail(
+            &writer,
+            Kind::Pull,
+            &merged,
+            &landed,
+            &[],
+            &DetailDraft::default(),
+            None,
+            &Default::default(),
+            &[],
+        ));
         assert!(html.contains("This pull request was merged into main as"));
         assert!(html.contains("class=\"collaboration-merge-sha\""), "{html}");
         assert!(html.contains("/alice/repo/commit/0123456789abcdef"));
@@ -1352,21 +1402,23 @@ fn files_html(
     review: Option<&ReviewDraft>,
     pending: usize,
 ) -> String {
-    dioxus_ssr::render_element(diff_page(
-        repo,
-        entry,
-        &files_diff(),
-        &[],
-        false,
-        None,
-        review,
-        pending,
-        (pending > 0).then_some(41),
-        None,
-        &Default::default(),
-        false,
-        &[],
-    ))
+    crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(diff_page(
+            repo,
+            entry,
+            &files_diff(),
+            &[],
+            false,
+            None,
+            review,
+            pending,
+            (pending > 0).then_some(41),
+            None,
+            &Default::default(),
+            false,
+            &[],
+        ))
+    })
 }
 
 #[test]
@@ -1662,10 +1714,10 @@ fn compare_page_offers_a_pull_request_only_for_changes_between_different_branche
     let unchanged = render("main", "topic/a", Some(&empty));
     assert!(unchanged.contains("No file changes."));
     assert!(!unchanged.contains("Create pull request"));
-    // A branch name from the address is text in the form, never markup.
+    // A ref name from the address is offered as text in the form, never markup.
     let unknown = render("main", "<b>topic", None);
     assert!(!unknown.contains("<b>topic"));
-    assert!(unknown.contains("(unavailable)"));
+    assert!(unknown.contains("value=\"&#60;b&#62;topic\""), "{unknown}");
 }
 
 #[test]
@@ -1734,17 +1786,19 @@ fn markdown_preview_does_not_execute_html_or_unsafe_links() {
 fn merged_pull_does_not_offer_reopen_or_a_second_merge() {
     let mut merged = item();
     merged.state = "merged".into();
-    let html = dioxus_ssr::render_element(detail(
-        &repository(),
-        Kind::Pull,
-        &merged,
-        &CommentPage::default(),
-        &[],
-        &DetailDraft::default(),
-        None,
-        &Default::default(),
-        &[],
-    ));
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(detail(
+            &repository(),
+            Kind::Pull,
+            &merged,
+            &CommentPage::default(),
+            &[],
+            &DetailDraft::default(),
+            None,
+            &Default::default(),
+            &[],
+        ))
+    });
     assert!(!html.contains("action=\"/alice/repo/pulls/7/state\""));
     assert!(!html.contains("action=\"/alice/repo/pulls/7/merge\""));
     assert!(html.contains("/alice/repo/pulls/7/comments"));
@@ -2397,6 +2451,7 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
     moderated.can_delete = true;
     let other = comment_at(33, "today");
     let comments = CommentPage {
+        can_triage: false,
         issue_management: None,
         suggestions: None,
         attributes: None,
@@ -2424,8 +2479,14 @@ fn comment_controls_show_only_the_rights_the_viewer_has() {
             &[],
         ))
     });
+    // The edit keeps the conversation page and the review comment page it was opened from.
+    let unescaped = html
+        .replace("&#38;", "&")
+        .replace("&#x26;", "&")
+        .replace("&amp;", "&");
     assert!(
-        html.contains("action=\"/alice/repo/issues/7/comments/31/edit?page=1\""),
+        unescaped
+            .contains("action=\"/alice/repo/issues/7/comments/31/edit?page=1&review_comments=0\""),
         "{html}"
     );
     assert!(
@@ -2511,21 +2572,24 @@ fn review_changes_menu_keeps_a_refused_review_and_counts_pending_comments() {
 fn discarding_a_review_from_the_split_view_returns_to_the_split_view() {
     let mut repo = repository_at(Kind::Pull, "/7/diff");
     repo.viewer = "bob".into();
-    let html = dioxus_ssr::render_element(diff_page(
-        &repo,
-        &item(),
-        &files_diff(),
-        &[],
-        false,
-        None,
-        None,
-        2,
-        None,
-        None,
-        &Default::default(),
-        true,
-        &[],
-    ));
+    // Discarding names the pending review it deletes.
+    let html = crate::webui::tests::in_scope(|| {
+        dioxus_ssr::render_element(diff_page(
+            &repo,
+            &item(),
+            &files_diff(),
+            &[],
+            false,
+            None,
+            None,
+            2,
+            Some(41),
+            None,
+            &Default::default(),
+            true,
+            &[],
+        ))
+    });
     assert!(html.contains("action=\"/alice/repo/pulls/7/reviews/pending/discard?view=split\""));
     // Cancel returns to the same view.
     let dialog = &html[html.find("aria-label=\"Discard review\"").unwrap()..];
@@ -2542,6 +2606,7 @@ fn discussion_merges_reviews_by_time_and_marks_stale_and_dismissed_reviews() {
         dismissed.can_dismiss = true;
         dismissed.dismissed_reason = Some("Superseded".into());
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -2788,9 +2853,10 @@ fn diff_places_threads_under_their_line_and_gutters_open_the_composer() {
         html.find(needle)
             .unwrap_or_else(|| panic!("{needle} in the page"))
     };
-    // The composer sits under its row, and the thread under the row it answers.
+    // The composer sits under its row. The thread is outdated, so its line no longer marks a
+    // place in the patch and it shows above the patch.
     assert!(at("keep") < at("draft words"));
-    assert!(at("draft words") < at("id=\"thread-5\""));
+    assert!(at("id=\"thread-5\"") < at("keep"));
     assert!(html.contains("Outdated"));
     assert!(html.contains("Rename this"));
     assert!(html.contains("Reply"));
@@ -3085,6 +3151,28 @@ fn pr_commits_tab_lists_each_commit_with_a_copy_button_and_marks_its_tab() {
 }
 
 #[test]
+fn pr_checks_tab_links_the_neighbouring_pages_of_integration_checks() {
+    crate::webui::tests::in_scope(|| {
+        let page = |check_page, more_checks| {
+            dioxus_ssr::render_element(render(Page::PullChecks {
+                repository: repository_at(Kind::Pull, "/7/checks"),
+                item: item(),
+                runs: Vec::new(),
+                statuses: Vec::new(),
+                code_scanning: Vec::new(),
+                check_page,
+                more_checks,
+            }))
+        };
+        let middle = page(2, true);
+        assert!(middle.contains("checks?checks_page=1"));
+        assert!(middle.contains("checks?checks_page=3"));
+        assert!(!page(1, false).contains("checks_page="));
+        assert!(!page(3, false).contains("checks_page=4"));
+    });
+}
+
+#[test]
 fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
     crate::webui::tests::in_scope(|| {
         let mut shown = item();
@@ -3095,6 +3183,8 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             runs: vec![run_fixture("real-run", "success")],
             statuses: Vec::new(),
             code_scanning: Vec::new(),
+            check_page: 1,
+            more_checks: false,
         }));
         assert_eq!(html.matches("class=\"actions-run-row\"").count(), 1);
         assert!(html.contains("/alice/repo/actions?job=real-run"));
@@ -3105,6 +3195,8 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             runs: Vec::new(),
             statuses: Vec::new(),
             code_scanning: Vec::new(),
+            check_page: 1,
+            more_checks: false,
         }));
         assert!(empty.contains("No workflow runs have started on this commit."));
         assert!(!empty.contains("actions-run-row"));
@@ -3118,6 +3210,8 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             runs: Vec::new(),
             statuses: Vec::new(),
             code_scanning: Vec::new(),
+            check_page: 1,
+            more_checks: false,
         }));
         assert!(read_only.contains("No workflow runs have started on this commit."));
         assert!(!read_only.contains(".github/workflows"));
@@ -3126,6 +3220,8 @@ fn pr_checks_tab_lists_each_run_as_an_actions_row_linked_to_its_logs() {
             item: item(),
             runs: Vec::new(),
             code_scanning: Vec::new(),
+            check_page: 1,
+            more_checks: false,
             statuses: vec![crate::webui::pages::repos::pulls::CheckStatus {
                 context: "external/compiler".into(),
                 state: "failure".into(),
@@ -3383,7 +3479,8 @@ fn files_list_each_file_and_offer_viewed_marks_to_signed_in_viewers() {
         assert!(html.contains("form=\"viewed-form-1\""));
         assert!(html.contains("action=\"/acme/widgets/pulls/7/viewed\""));
         assert!(html.contains("value=\"csrf-sentinel\""));
-        assert!(html.contains("value=\"docs/new.md\""));
+        // The path goes as a JSON string, so the server reads back exactly the name it showed.
+        assert!(html.contains("name=\"path_json\" value=\"&#34;docs/new.md&#34;\""));
         // The viewed file is drawn collapsed and checked; the other one is open and unchecked.
         assert!(!tag_with(&html, "id=\"diff-file-1\"").contains(" open"));
         assert!(tag_with(&html, "id=\"diff-file-0\"").contains(" open"));
@@ -3611,6 +3708,7 @@ fn timeline_events_show_a_badge_for_their_kind_and_threads_link_to_the_files_tab
             commit: "abc".into(),
         });
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             suggestions: None,
             attributes: None,
@@ -3785,6 +3883,7 @@ fn sidebar_lists_each_participant_once_and_skips_deleted_accounts() {
             edit: None,
         };
         let comments = CommentPage {
+            can_triage: false,
             issue_management: None,
             events_next: None,
             comments: vec![
@@ -3939,6 +4038,7 @@ fn milestone_pages_show_progress_rows_and_writer_forms() {
             (2, true),
             &MilestoneDraft {
                 repository_id: None,
+                original: String::new(),
                 title: "Release".into(),
                 description: "Ship it".into(),
                 due_date: "2026-10-20".into(),

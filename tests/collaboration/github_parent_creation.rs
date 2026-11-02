@@ -8,6 +8,9 @@ use codeyard::backend::{
 use db::relationships::{Kind, Mutation};
 use serde_json::{json, Value};
 
+/// The stored hash of the Actions bot's job token in these tests.
+const BOT_TOKEN_HASH: &str = "0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b0b";
+
 async fn parents(pg: bool) {
     crate::support::fake_webui_bundle::install();
     let mut f = Database::new(pg).await;
@@ -94,10 +97,12 @@ async fn parents(pg: bool) {
     .await;
     assert_eq!(linked["id"], parent.id);
     assert_eq!(
-        db::relationships::summary(f.pool(), parent.id)
+        db::relationships::summaries(f.pool(), &[parent.id])
             .await
             .unwrap()
-            .total,
+            .iter()
+            .map(|row| row.total)
+            .sum::<i64>(),
         1
     );
 
@@ -216,7 +221,7 @@ async fn parents(pg: bool) {
         denied.downcast_ref::<db::relationships::Refusal>(),
         Some(db::relationships::Refusal::Missing)
     ));
-    let denied = db::relationships::create_child(
+    let denied = create_child(
         f.pool(),
         bot,
         repos[0].id,
@@ -250,16 +255,9 @@ async fn parents(pg: bool) {
         denied.downcast_ref::<db::relationships::Refusal>(),
         Some(db::relationships::Refusal::Missing)
     ));
-    let same_repo = db::relationships::create_child(
-        f.pool(),
-        bot,
-        repos[0].id,
-        local.id,
-        "Same-job parent",
-        "",
-    )
-    .await
-    .unwrap();
+    let same_repo = create_child(f.pool(), bot, repos[0].id, local.id, "Same-job parent", "")
+        .await
+        .unwrap();
     assert_eq!(
         db::relationships::list(f.pool(), Some(bot), same_repo.id, Kind::Parent, 0, 100)
             .await
@@ -276,9 +274,29 @@ async fn parents(pg: bool) {
         before + 2
     );
 
-    db::suggestions::set_enabled(f.pool(), repos[0].id, alice, true)
-        .await
-        .unwrap();
+    // The bot acts with a job token; it cannot hold a browser session.
+    f.execute(
+        &format!("INSERT INTO personal_access_tokens(user_id,name,token_hash,scope) VALUES ($1,'job','{BOT_TOKEN_HASH}','write')"),
+        &[bot],
+    )
+    .await;
+    let bot_token = f
+        .scalar(
+            "SELECT id FROM personal_access_tokens WHERE user_id=$1",
+            &[bot],
+        )
+        .await;
+    db::suggestions::set_enabled(
+        f.pool(),
+        repos[0].id,
+        alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
+        true,
+    )
+    .await
+    .unwrap();
     let proposal = db::suggestions::Proposal {
         action: db::suggestions::Action::CloseIssue,
         target_id: Some(parent.id),
@@ -286,15 +304,32 @@ async fn parents(pg: bool) {
         rationale: None,
         confidence: None,
     };
-    let suggested = db::suggestions::propose(f.pool(), repos[0].id, alice, child, &proposal)
-        .await
-        .unwrap();
+    let suggested = db::suggestions::propose(
+        f.pool(),
+        repos[0].id,
+        alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
+        child,
+        &proposal,
+        None,
+    )
+    .await
+    .unwrap();
     for approve in [false, true] {
-        let denied =
-            db::suggestions::resolve(f.pool(), repos[0].id, bot, child, suggested.id, approve)
-                .await
-                .err()
-                .unwrap();
+        let denied = db::suggestions::resolve(
+            f.pool(),
+            repos[0].id,
+            bot,
+            &db::users::accounts::AccountCredential::Token(bot_token, BOT_TOKEN_HASH),
+            child,
+            suggested.id,
+            approve,
+        )
+        .await
+        .err()
+        .unwrap();
         assert!(matches!(
             db::suggestions::refusal(&denied),
             Some(db::suggestions::Refusal::Missing)
@@ -314,9 +349,17 @@ async fn parents(pg: bool) {
             .unwrap()
             .is_empty()
     );
-    let denied = db::suggestions::propose(f.pool(), repos[0].id, bot, child, &proposal)
-        .await
-        .unwrap_err();
+    let denied = db::suggestions::propose(
+        f.pool(),
+        repos[0].id,
+        bot,
+        &db::users::accounts::AccountCredential::Token(bot_token, BOT_TOKEN_HASH),
+        child,
+        &proposal,
+        None,
+    )
+    .await
+    .unwrap_err();
     assert!(matches!(
         db::suggestions::refusal(&denied),
         Some(db::suggestions::Refusal::Invalid)
@@ -332,17 +375,10 @@ async fn parents(pg: bool) {
     // Graph limits roll back the newly allocated issue as well as the edge.
     let mut deepest = local.id;
     for _ in 0..7 {
-        deepest = db::relationships::create_child(
-            f.pool(),
-            alice,
-            repos[0].id,
-            deepest,
-            "Deep child",
-            "",
-        )
-        .await
-        .unwrap()
-        .id;
+        deepest = create_child(f.pool(), alice, repos[0].id, deepest, "Deep child", "")
+            .await
+            .unwrap()
+            .id;
     }
     let count = f
         .scalar(
@@ -350,10 +386,9 @@ async fn parents(pg: bool) {
             &[repos[0].id],
         )
         .await;
-    let denied =
-        db::relationships::create_child(f.pool(), alice, repos[0].id, deepest, "Too deep", "")
-            .await
-            .unwrap_err();
+    let denied = create_child(f.pool(), alice, repos[0].id, deepest, "Too deep", "")
+        .await
+        .unwrap_err();
     assert!(matches!(
         denied.downcast_ref::<db::relationships::Refusal>(),
         Some(db::relationships::Refusal::Limit)
@@ -375,4 +410,27 @@ async fn github_parent_creation_sqlite() {
 #[tokio::test]
 async fn github_parent_creation_postgres() {
     parents(true).await;
+}
+
+/// A new issue under `parent`, created the way the API creates one.
+async fn create_child(
+    pool: &db::DbPool,
+    actor: i64,
+    repo: i64,
+    parent: i64,
+    title: &str,
+    body: &str,
+) -> anyhow::Result<db::models::Issue> {
+    db::issues::create_issue_with_metadata(
+        pool,
+        repo,
+        actor,
+        title,
+        body,
+        db::issues::IssueMetadata {
+            parent: Some(parent),
+            ..Default::default()
+        },
+    )
+    .await
 }

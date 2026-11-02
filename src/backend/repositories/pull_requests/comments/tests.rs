@@ -93,9 +93,29 @@ async fn discarded_review_cannot_authorize_comment_publication() {
     )
     .await
     .unwrap();
-    reviews::add_pull_request_review(&pool, pull.id, user.id, "commented", None, Some(&head))
-        .await
-        .unwrap();
+    reviews::add_pull_request_review(
+        &pool,
+        pull.id,
+        user.id,
+        &crate::backend::db::users::accounts::AccountCredential::Session(
+            &crate::backend::db::users::sessions::create_session(
+                &pool,
+                &uuid::Uuid::new_v4().simple().to_string().repeat(2),
+                user.id,
+                None,
+                None,
+                chrono::Utc::now() + chrono::Duration::hours(1),
+            )
+            .await
+            .unwrap()
+            .id,
+        ),
+        "commented",
+        None,
+        Some(&head),
+    )
+    .await
+    .unwrap();
     assert!(!in_pending_review(&pool, &submitted).await.unwrap());
     pool.close().await;
 }

@@ -205,8 +205,19 @@ async fn discovery_and_deletion(pg: bool) {
         .unwrap()
         .is_empty());
     }
+    let deletion_session = db::users::sessions::create_session(
+        f.pool(),
+        &uuid::Uuid::new_v4().simple().to_string().repeat(2),
+        owner,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let credential = db::users::accounts::AccountCredential::Session(&deletion_session.id);
     let initial = applied(
-        list_organization_deletion_repositories(f.pool(), owner, first_org)
+        list_organization_deletion_repositories(f.pool(), (owner, &credential), first_org)
             .await
             .unwrap(),
     );
@@ -220,9 +231,14 @@ async fn discovery_and_deletion(pg: bool) {
     .await
     .unwrap();
     assert!(matches!(
-        delete_organization_repository(f.pool(), owner, first_org, repositories[0].id)
-            .await
-            .unwrap(),
+        delete_organization_repository(
+            f.pool(),
+            (owner, &credential),
+            first_org,
+            repositories[0].id
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Conflict
     ));
     db::repositories::records::set_repository_archived(f.pool(), owner, repositories[1].id, true)
@@ -230,13 +246,13 @@ async fn discovery_and_deletion(pg: bool) {
         .unwrap();
     for id in initial.into_iter().filter(|id| *id != repositories[0].id) {
         applied(
-            delete_organization_repository(f.pool(), owner, first_org, id)
+            delete_organization_repository(f.pool(), (owner, &credential), first_org, id)
                 .await
                 .unwrap(),
         );
     }
     assert!(matches!(
-        delete_organization(f.pool(), owner, first_org)
+        delete_organization(f.pool(), (owner, &credential), first_org)
             .await
             .unwrap(),
         OrganizationOutcome::Conflict
@@ -303,6 +319,9 @@ async fn release_upload_cleanup(pg: bool) {
     db::releases::add_release_asset(
         f.pool(),
         owner,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), owner).await,
+        ),
         repo.id,
         release.id,
         &db::releases::NewReleaseAsset {
@@ -315,10 +334,28 @@ async fn release_upload_cleanup(pg: bool) {
     )
     .await
     .unwrap();
+    let deletion_session = db::users::sessions::create_session(
+        f.pool(),
+        &uuid::Uuid::new_v4().simple().to_string().repeat(2),
+        owner,
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
     applied(
-        delete_organization_repository(f.pool(), owner, org, repo.id)
-            .await
-            .unwrap(),
+        delete_organization_repository(
+            f.pool(),
+            (
+                owner,
+                &db::users::accounts::AccountCredential::Session(&deletion_session.id),
+            ),
+            org,
+            repo.id,
+        )
+        .await
+        .unwrap(),
     );
     let check = "SELECT (SELECT COUNT(*) FROM files WHERE id=$1), (SELECT COUNT(*) FROM pending_object_deletions WHERE object_key=$2)";
     let counts: (i64, i64) = match f.pool() {
@@ -382,7 +419,8 @@ async fn postgres_accept_and_decline_have_one_winner() {
             .await
             .unwrap()
     });
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    // The decline must wait in the lock graph behind the gate, beside the acceptance.
+    wait_until_blocked(raw, blocker, 2).await;
     assert!(!decline.is_finished());
     gate.commit().await.unwrap();
     applied(acceptance.await.unwrap());

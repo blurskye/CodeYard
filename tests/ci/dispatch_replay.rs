@@ -89,6 +89,11 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(runs.len(), 2);
     let again = runs.iter().find(|run| run.id != first.id).unwrap();
+    // The run list leaves out workflow snapshots, so read the whole run.
+    let again = db::ci::get_ci_run(f.pool(), again.id)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(again.workflow_path, first.workflow_path);
     assert_eq!(again.head_sha, first.head_sha);
     assert_eq!(again.workflow_blobs, first.workflow_blobs);
@@ -137,8 +142,12 @@ async fn contract(pg: bool) {
     assert!(values
         .values()
         .all(|value| value.as_str().unwrap().len() == 1700));
-    // Per-value validation still refuses a value over the shared bound.
-    let oversized = text.replacen(&"x".repeat(1700), &"x".repeat(2049), 1);
+    // Per-value validation still refuses a value over the shared bound, GitHub's 65,535 characters.
+    let oversized = text.replacen(
+        &"x".repeat(1700),
+        &"x".repeat(codeyard::backend::ci::dispatch_inputs::MAX_VALUE_BYTES + 1),
+        1,
+    );
     let refused = client
         .form_reply(
             "/ci/dispatch",

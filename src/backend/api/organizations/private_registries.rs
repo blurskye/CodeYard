@@ -22,6 +22,10 @@ use axum::{
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 
+/// Decoded fields are bounded below; URL encoding may triple them, so this route needs more
+/// room than the shared organization form limit.
+pub(super) const BODY_LIMIT: usize = 512 * 1024;
+
 pub(super) fn project(
     registry: db::private_registries::Registry,
 ) -> Result<view::Registry, RegistryError> {
@@ -85,8 +89,6 @@ fn input(form: &Fields) -> Result<Value, RegistryError> {
                     })
                     .collect::<Result<_, _>>()?;
                 body[name] = json!(ids);
-            } else if !value.trim().is_empty() {
-                return Err(RegistryError::Invalid("selected_repository_ids"));
             }
         } else {
             body[name] = if value.is_empty() {
@@ -144,14 +146,24 @@ pub(super) async fn post(
                     | "value"
                     | "replaces_base"
             ) || view::OIDC_FIELDS.iter().any(|(key, _)| name == key);
-            known && value.len() <= if name == "value" { 16384 } else { 4096 }
+            known
+                && value.len()
+                    <= if name == "value" {
+                        16384
+                    } else {
+                        view::field_max(name)
+                    }
         });
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let credential = db::users::accounts::AccountCredential::Session(&session);
     let result = if !bounded {
         Err(RegistryError::Invalid("configuration"))
     } else {
         match organization::field(&form, "action") {
             "registry-delete" => {
-                db::private_registries::delete(&ctx.state.pool, actor, org, &name).await
+                db::private_registries::delete(&ctx.state.pool, actor, &credential, org, &name)
+                    .await
             }
             "registry-save" => match input(&form) {
                 Ok(body) => {
@@ -163,6 +175,7 @@ pub(super) async fn post(
                         &ctx.state.pool,
                         ctx.state.secret_encryptor.as_deref(),
                         actor,
+                        &credential,
                         org,
                         (!name.is_empty()).then_some(name.as_str()),
                         &body,
@@ -196,7 +209,7 @@ pub(super) async fn post(
     let draft = form
         .into_iter()
         .filter(|(key, value)| {
-            !matches!(key.as_str(), "value" | "csrf_token") && value.len() <= 4096
+            !matches!(key.as_str(), "value" | "csrf_token") && value.len() <= view::field_max(key)
         })
         .collect();
     organization::respond(&ctx, Some(org), status, Some("Check the registry URL, authentication fields and repository selection. Re-enter the credential if needed.".into()), draft).await

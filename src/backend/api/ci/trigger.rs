@@ -29,7 +29,12 @@ pub async fn trigger_ci(
     let user = get_current_user(&state.pool, &headers).await?;
     let run = state
         .ci_runs
-        .dispatch_run(user.id, request)
+        .dispatch_run(
+            user.id,
+            request,
+            crate::backend::api::http::session::extract_session_id(&headers)
+                .map(crate::backend::db::ci::CiCredential::Session),
+        )
         .await
         .map_err(super::admission_error)?;
     Ok(Json(TriggerCiResponse {
@@ -86,7 +91,7 @@ fn draft(
         repository: scope
             .map(|(_, repo)| repo.clone())
             .unwrap_or_else(|| value("repo_name")),
-        branch: value("branch"),
+        branch: form.get("branch").cloned().unwrap_or_default(),
         event: if scope.is_some() {
             "workflow_dispatch".into()
         } else {
@@ -152,6 +157,13 @@ async fn refusal_workflows(
     let store =
         crate::backend::repositories::store::repo_store(repository, ctx.state.cluster.as_ref());
     let definitions = crate::backend::ci::list_workflows_for_ref(&store, branch).await?;
+    let user = ctx
+        .user
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("Sign in required"))?;
+    super::jobs::ensure_repo_read_access(&ctx.state, user, repository)
+        .await
+        .map_err(|_| anyhow::anyhow!("Repository read access required"))?;
     Ok(definitions
         .into_iter()
         .map(super::responses::workflow_view)
@@ -207,10 +219,10 @@ async fn dispatch(
     state: Arc<AppState>,
     headers: HeaderMap,
     uri: Uri,
-    form: HashMap<String, String>,
+    mut form: HashMap<String, String>,
     scope: Option<(String, String)>,
 ) -> Response {
-    let ctx = match PageContext::load(state, headers, &uri).await {
+    let mut ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
@@ -220,20 +232,6 @@ async fn dispatch(
     if let Err(response) = ctx.check_csrf(&form) {
         return response;
     }
-    // Allow every individually valid input, including name=value and CRLF overhead.
-    use crate::backend::ci::dispatch_inputs::{MAX_INPUTS, MAX_NAME_BYTES, MAX_VALUE_BYTES};
-    const MAX_INPUT_LINES_BYTES: usize = MAX_INPUTS * (MAX_NAME_BYTES + 1 + MAX_VALUE_BYTES + 2);
-    if form.iter().any(|(key, value)| {
-        value.len()
-            > if key == "inputs" {
-                MAX_INPUT_LINES_BYTES
-            } else {
-                MAX_VALUE_BYTES
-            }
-    }) {
-        return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
-    }
-    let draft = draft(&form, scope.as_ref());
     let base_path = scope
         .as_ref()
         .map(|(owner, repo)| {
@@ -244,6 +242,36 @@ async fn dispatch(
             )
         })
         .unwrap_or_else(|| "/ci".into());
+    ctx.return_to = Some(base_path.clone());
+    // Allow every individually valid input, including name=value and CRLF overhead.
+    use crate::backend::ci::dispatch_inputs::{MAX_INPUTS, MAX_NAME_BYTES, MAX_VALUE_BYTES};
+    const MAX_INPUT_LINES_BYTES: usize = MAX_INPUTS * (MAX_NAME_BYTES + 1 + MAX_VALUE_BYTES + 2);
+    if form.iter().any(|(key, value)| {
+        value.len()
+            > if key == "return_query" {
+                usize::MAX
+            } else if key == "inputs" {
+                MAX_INPUT_LINES_BYTES
+            } else if key.starts_with("input:") {
+                // Browsers send a textarea's line breaks as CRLF.
+                2 * MAX_VALUE_BYTES
+            } else {
+                MAX_VALUE_BYTES
+            }
+    }) {
+        return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
+    }
+    // Workflow files give their defaults LF line breaks, as YAML does, so an unchanged
+    // multiline default reaches the run with its own bytes.
+    for (key, value) in &mut form {
+        if key.starts_with("input:") {
+            *value = value.replace("\r\n", "\n");
+            if value.len() > MAX_VALUE_BYTES {
+                return ctx.error(StatusCode::BAD_REQUEST, "Dispatch form value is too long.");
+            }
+        }
+    }
+    let draft = draft(&form, scope.as_ref());
     if !matches!(draft.pipeline.as_str(), "ci" | "cd" | "full") {
         return dispatch_error(
             &ctx,
@@ -307,7 +335,12 @@ async fn dispatch(
     match ctx
         .state
         .ci_runs
-        .dispatch_run(actor_id, request)
+        .dispatch_run(
+            actor_id,
+            request,
+            crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .map(crate::backend::db::ci::CiCredential::Session),
+        )
         .await
         .map_err(super::admission_error)
     {
@@ -438,13 +471,35 @@ mod tests {
             crate::backend::ci::CiConfig::default(),
             None,
         );
+        // Only a signed-in reader is shown a refused run's workflows; bob may read the public one.
+        // The page reads him from a live session, as metadata is checked against the cookie.
+        let bob = db::users::accounts::create_user(&pool, "bob", None)
+            .await
+            .unwrap();
+        let session = uuid::Uuid::new_v4().simple().to_string().repeat(2);
+        db::users::sessions::create_session(
+            &pool,
+            &session,
+            bob.id,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::hours(1),
+        )
+        .await
+        .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::COOKIE,
+            format!("session_id={session}").parse().unwrap(),
+        );
         let ctx = PageContext::load(
             Arc::new(state),
-            HeaderMap::new(),
+            headers,
             &"/alice/project/actions".parse().unwrap(),
         )
         .await
         .unwrap_or_else(|_| panic!("page context"));
+        assert_eq!(ctx.user.as_ref().map(|user| user.id), Some(bob.id));
         let loaded = crate::backend::api::repos::chrome::load_metadata(&ctx, "alice", "project")
             .await
             .unwrap_or_else(|_| panic!("public metadata"));

@@ -89,48 +89,50 @@ fn users_path(listing: &Listing, saved: &str) -> String {
 
 async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUsers, Response> {
     let admin = require_account(ctx, true)?;
-    let (all, admins, banned) =
-        db::users::accounts::count_matching_users(&ctx.state.pool, listing.search)
-            .await
-            .map_err(|_| {
-                ctx.error(
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    "Unable to load the accounts.",
-                )
-            })?;
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
+    let authority = (admin.id, session).into();
+    let snapshot = db::users::accounts::admin_users_page(
+        &ctx.state.pool,
+        &authority,
+        listing.search,
+        listing.role,
+        USERS_PER_PAGE as i64,
+        listing.page,
+    )
+    .await
+    .map_err(|error| {
+        if error.is::<db::users::accounts::AccountRestricted>() {
+            ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.")
+        } else {
+            ctx.error(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Unable to load the accounts.",
+            )
+        }
+    })?;
+    let (all, admins, banned) = snapshot.counts;
     let total = match listing.role {
         "admins" => admins,
         "banned" => banned,
         _ => all,
     } as usize;
     let pages = total.div_ceil(USERS_PER_PAGE).max(1);
-    let page = listing.page.clamp(1, pages);
-    let accounts: Vec<AccountMetadata> = db::users::accounts::list_admin_users(
-        &ctx.state.pool,
-        listing.search,
-        listing.role,
-        USERS_PER_PAGE as i64,
-        ((page - 1) * USERS_PER_PAGE) as i64,
-    )
-    .await
-    .map_err(|_| {
-        ctx.error(
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Unable to load the accounts.",
-        )
-    })?
-    .into_iter()
-    .map(|user| AccountMetadata {
-        id: user.id,
-        username: user.username,
-        email: user.email.unwrap_or_default(),
-        admin: user.is_admin,
-        banned: user.is_banned,
-        must_change_password: user.must_change_password,
-        two_factor: user.two_factor_enabled,
-        created: user.created_at.format("%b %e, %Y").to_string(),
-    })
-    .collect();
+    let page = snapshot.page;
+    let accounts: Vec<AccountMetadata> = snapshot
+        .users
+        .into_iter()
+        .map(|user| AccountMetadata {
+            id: user.id,
+            username: user.username,
+            email: user.email.unwrap_or_default(),
+            admin: user.is_admin,
+            banned: user.is_banned,
+            must_change_password: user.must_change_password,
+            two_factor: user.two_factor_enabled,
+            created: user.created_at.format("%b %e, %Y").to_string(),
+        })
+        .collect();
     let managed_accounts = db::node_config::get_node_configuration(&ctx.state.pool)
         .await
         .map_err(|_| {
@@ -140,11 +142,8 @@ async fn load_users(ctx: &PageContext, listing: &Listing<'_>) -> Result<AdminUse
             )
         })?
         .is_some_and(|config| config.is_private());
-    let (requests, requests_count, requests_page) = if managed_accounts {
-        load_requests(ctx, listing.requests_page).await?
-    } else {
-        (Vec::new(), 0, 1)
-    };
+    let (requests, requests_count, requests_page) =
+        load_requests(ctx, listing.requests_page).await?;
     Ok(AdminUsers {
         managed_accounts,
         current_user_id: admin.id,

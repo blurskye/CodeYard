@@ -16,7 +16,8 @@ fn secret_scanning_rules_and_locations() {
             alert.end_line,
             alert.end_column
         ),
-        (2, 6, 2, 45)
+        // GitHub counts columns in bytes ("interpreted as 8BIT ASCII"), so π takes two.
+        (2, 7, 2, 46)
     );
     assert!(!found
         .iter()
@@ -53,10 +54,12 @@ fn secret_scanning_own_tokens_and_entropy() {
         ("cy_fgpat_", "codeyard_fine_grained_personal_access_token"),
         ("ghs_", "codeyard_actions_token"),
     ] {
-        let value = format!(
-            "{prefix}{}",
+        let payload = if prefix == "ghs_" {
+            "AUf2Wt_DtOxg3y0mK9sHbR-Zq6pVxN8cLe1jE4aY5f-"
+        } else {
             "3b17a095fdc84e62091adc64b3f5a7e891c246df938b5a017eafc647320bd952"
-        );
+        };
+        let value = format!("{prefix}{payload}");
         let found = scan("tokens.txt", "commit", value.as_bytes()).unwrap();
         assert!(found
             .iter()
@@ -67,7 +70,7 @@ fn secret_scanning_own_tokens_and_entropy() {
             .iter()
             .any(|alert| alert.secret == value
                 && alert.secret_type == kind
-                && alert.start_column == 2));
+                && alert.start_column == 3));
     }
     let found = scan(
         "config.env",
@@ -121,7 +124,8 @@ fn secret_scanning_re2_character_classes() {
     )
     .unwrap();
     assert_eq!(found.len(), 1);
-    assert_eq!((found[0].start_column, found[0].end_column), (1, 18));
+    // Columns count bytes, as GitHub documents, so the two-byte π ends the match at 19.
+    assert_eq!((found[0].start_column, found[0].end_column), (1, 19));
     assert_eq!(
         scan_with_patterns(
             "keys.txt",

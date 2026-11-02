@@ -1,6 +1,10 @@
 # https://github.com/jacobtomlinson/gha-find-replace/tree/2ff30f644d2e0078fc028beb9193f5ff0dcad39e
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

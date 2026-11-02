@@ -199,7 +199,11 @@ async fn contract(pg: bool) {
         notifications: Arc::new(NotificationBroadcaster::new(f.pool())),
     };
     let claimed = queue
-        .claim("slot-1", CiExecutionMode::Local)
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .expect("the dispatched run");
@@ -332,7 +336,7 @@ async fn rest_settings(pg: bool) {
         (
             "fork-pr-contributor-approval-permissions",
             "fork-pr-contributor-approval",
-            json!({"approval_policy":"first_time_contributors"}),
+            json!({"approval_policy":"all_external_contributors"}),
         ),
         (
             "github-actions-default-workflow-permissions",
@@ -727,7 +731,11 @@ async fn rest_settings(pg: bool) {
         )
         .await;
         let claim = queue
-            .claim("settings", CiExecutionMode::Local)
+            .claim(
+                "settings",
+                CiExecutionMode::Local,
+                &codeyard::backend::ci::CiConfig::default().platform_labels(),
+            )
             .await
             .unwrap()
             .unwrap();
@@ -862,7 +870,11 @@ async fn rest_settings(pg: bool) {
         queued + 1
     );
     let claim = queue
-        .claim("settings", CiExecutionMode::Local)
+        .claim(
+            "settings",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1036,7 +1048,7 @@ async fn rest_reviews(pg: bool) {
         let (deployment_run, _) = results::run(&f, repo.id, alice, "main").await;
         f.execute("UPDATE ci_runs SET environment='production',head_sha='aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' WHERE id=$1",&[deployment_run.id]).await;
         f.execute(
-            "INSERT INTO ci_deployments(repo_id,run_id,environment) VALUES($1,$2,'production')",
+            "INSERT INTO ci_deployments(repo_id,run_id,environment,environment_key) VALUES($1,$2,'production','production')",
             &[repo.id, deployment_run.id],
         )
         .await;

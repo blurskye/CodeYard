@@ -1,6 +1,10 @@
 # https://github.com/docker/build-push-action/tree/10e90e3645eae34f1e60eeb005ba3a3d33f178e8
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

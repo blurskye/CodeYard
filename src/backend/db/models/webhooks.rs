@@ -45,3 +45,12 @@ pub struct WebhookDelivery {
     pub response_body: Option<String>,
     pub delivered_at: DateTime<Utc>,
 }
+
+impl WebhookDelivery {
+    /// A delivery succeeded when the receiver answered 2xx, as GitHub counts it. Redirects are
+    /// not followed, so a 3xx answer never reached the receiver; no answer at all is a failure.
+    pub fn succeeded(&self) -> bool {
+        self.status_code
+            .is_some_and(|code| (200..300).contains(&code))
+    }
+}

@@ -46,6 +46,8 @@ pub struct BranchRule {
     pub push_allowances: Vec<String>,
     #[serde(default)]
     pub push_team_allowances: Vec<String>,
+    #[serde(default)]
+    pub push_app_allowances: Vec<String>,
     pub force_push_allowances: Vec<String>,
 }
 /// A new rule starts with the settings the JSON API defaults to.
@@ -68,6 +70,7 @@ impl Default for BranchRule {
             restrict_pushes: false,
             push_allowances: Vec::new(),
             push_team_allowances: Vec::new(),
+            push_app_allowances: Vec::new(),
             force_push_allowances: Vec::new(),
         }
     }
@@ -117,6 +120,8 @@ pub struct Settings {
     #[serde(default)]
     pub immutable_releases: Option<bool>,
     #[serde(default)]
+    pub immutable_enforced: bool,
+    #[serde(default)]
     pub autolinks: Vec<crate::webui::components::references::Autolink>,
     /// Every branch, for the default-branch picker, and the branch the repository opens on.
     pub branches: Vec<String>,
@@ -144,6 +149,12 @@ pub struct Settings {
     pub variables: Vec<super::secrets::Variable>,
     #[serde(default)]
     pub environments: Vec<String>,
+    #[serde(default)]
+    pub environment_page: usize,
+    #[serde(default)]
+    pub environments_more: bool,
+    #[serde(default)]
+    pub git_unavailable: bool,
     pub environment: Option<Box<super::environments::Environment>>,
     pub properties: Option<Box<super::properties::Properties>>,
     #[serde(default)]
@@ -319,7 +330,8 @@ fn immutable_releases_section(repo: &RepoChrome, settings: &Settings) -> Element
         header {class:"repo-section-heading",h3 {"Immutable releases"} p {"Protect the Git tag and uploaded assets of future published releases."}}
         form {method:"post",action:repo.action("immutable-releases"),class:"repo-form-body",
             {csrf(&repo.csrf_token)} {repository_id(repo.id)}
-            label {class:"repo-check-label",DraftCheckbox{name:"enabled",initial_checked:settings.immutable_releases.unwrap_or(false)} "Enable immutable releases"}
+            label {class:"repo-check-label",DraftCheckbox{name:"enabled",initial_checked:settings.immutable_releases.unwrap_or(false)} "Repository opt-in to immutable releases"}
+            if settings.immutable_enforced { p { role: "status", "Organization policy enforces immutable releases regardless of this repository's opt-in. Clearing the checkbox does not disable enforcement." } }
             p {"Only future publications are affected. Save a draft, attach all assets, then publish. A signed DSSE attestation binds the tag, commit and SHA-256 asset digests to this forge node's signing key."}
             p {"Notes, title, pre-release and latest status stay editable. Published immutable releases cannot return to drafts. Disabling this setting never unlocks existing immutable releases."}
             p {"You may delete an immutable release. Its tag can then be deleted, but the tag name stays permanently reserved, including when the repository is recreated."}
@@ -333,6 +345,7 @@ fn security_section(repo: &RepoChrome, settings: &Settings) -> Element {
     rsx! {
         section { class: "repo-settings-section panel",style:"min-width: 0; overflow-wrap: anywhere;",
             header { class: "repo-section-heading", h3 { "Code security" } }
+            NavLink { href: format!("{}/security/secret-scanning", repo.base()), "View secret-scanning alerts" }
             form { method: "post", action: repo.action("code-security"), class: "repo-form-body",
                 {csrf(&repo.csrf_token)}
                 {repository_id(repo.id)}
@@ -441,7 +454,9 @@ fn default_branch_section(repo: &RepoChrome, settings: &Settings) -> Element {
     rsx! {
         section { class: "repo-settings-section panel",
             header { class: "repo-section-heading", div { h3 { "Default branch" } p { "Repository pages and new clones open on this branch." } } }
-            if settings.branches.is_empty() {
+            if settings.git_unavailable {
+                p { class: "repo-list-empty", "Branch choices are temporarily unavailable. Retry when repository storage is available." }
+            } else if settings.branches.is_empty() {
                 p { class: "repo-list-empty", "The repository has no branches yet. Push one to choose a default." }
             } else {
                 form { method: "post", action: repo.action("default-branch"), class: "repo-form-body",
@@ -1099,6 +1114,7 @@ fn rule_summary(rule: &BranchRule) -> Vec<String> {
                 .iter()
                 .map(|team| format!("{team} (team)")),
         );
+        actors.extend(rule.push_app_allowances.iter().cloned());
         let actors = if actors.is_empty() {
             "no one".to_owned()
         } else {
@@ -1153,8 +1169,9 @@ pub fn rejected_form(
                             label { class: "repo-check-label", DraftCheckbox { name: "use_default", initial_checked: checked("use_default") } "Use the default subject" }
                             label { class: "repo-field", span { "Subject claim keys, in order" } DraftInput { name: "include_claim_keys", initial_value: values.get("include_claim_keys").cloned().unwrap_or_default() } }
                         } else if action == "actions-settings" {
-                            // The engine list is not on this page, so the chosen engine is kept as sent.
-                            input { r#type: "hidden", name: "engine", value: values.get("engine").cloned().unwrap_or_default() }
+                            label { class: "repo-field", span { "Execution engine" }
+                                DraftSelect { name: "engine", initial_value: String::new(), options: vec![SelectOption::new("", "Site default")] }
+                            }
                             {actions_fields(checked("enabled"), ["run_timeout_minutes", "job_cpus", "job_memory_gib"].map(|name| values.get(name).map_or("", String::as_str)), Default::default())}
                             {cache_fields(values.get("cache_size_gib").map_or("", String::as_str), values.get("cache_retention_days").map_or("", String::as_str))}
                         } else if action == "watch-level" {
@@ -1172,7 +1189,13 @@ pub fn rejected_form(
                                 }
                             }
                         } else {
-                            for (name, value) in fields { label { key: "{name}", class: "repo-field", span { "{field_label(name)}" } DraftTextarea { name: name.clone(), initial_value: value.clone(), rows: 2 } } }
+                            for (name, value) in fields {
+                                if matches!(name.as_str(), "original_description" | "pattern_id" | "organization") {
+                                    input { key: "{name}", r#type: "hidden", name: name.clone(), value: value.clone() }
+                                } else {
+                                    label { key: "{name}", class: "repo-field", span { "{field_label(name)}" } DraftTextarea { name: name.clone(), initial_value: value.clone(), rows: 2 } }
+                                }
+                            }
                         }
                         label { class: "repo-check-label", input { r#type: "checkbox", name: "confirm", value: "yes", required: true } " Confirm and retry" }
                         div { class: "repo-form-actions",

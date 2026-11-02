@@ -14,14 +14,25 @@ pub async fn create_comment(pool: &PgPool, input: CommentCreate<'_>) -> Result<C
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_contribution_authority(
             &mut tx,
-            input.actor_id,
+            input.actor.user_id,
             input.repo_id
         )
         .await?,
         CommentRefusal::Denied
     );
+    anyhow::ensure!(
+        crate::backend::db::postgres::credentials::writes(
+            &mut tx,
+            &input.actor,
+            Some(input.repo_id),
+            None,
+            "contents"
+        )
+        .await?,
+        CommentRefusal::Denied
+    );
     let comment = sqlx::query_as("INSERT INTO commit_comments(repo_id,author_id,sha,body,path,position,line) VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING *")
-        .bind(input.repo_id).bind(input.actor_id).bind(input.sha.to_ascii_lowercase()).bind(input.body).bind(input.path).bind(input.position).bind(input.line).fetch_one(&mut *tx).await?;
+        .bind(input.repo_id).bind(input.actor.user_id).bind(input.sha.to_ascii_lowercase()).bind(input.body).bind(input.path).bind(input.position).bind(input.line).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(comment)
 }
@@ -32,8 +43,19 @@ pub async fn edit_comment(pool: &PgPool, input: CommentEdit<'_>) -> Result<Optio
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_contribution_authority(
             &mut tx,
-            input.actor_id,
+            input.actor.user_id,
             input.repo_id
+        )
+        .await?,
+        CommentRefusal::Denied
+    );
+    anyhow::ensure!(
+        crate::backend::db::postgres::credentials::writes(
+            &mut tx,
+            &input.actor,
+            Some(input.repo_id),
+            None,
+            "contents"
         )
         .await?,
         CommentRefusal::Denied
@@ -49,7 +71,7 @@ pub async fn edit_comment(pool: &PgPool, input: CommentEdit<'_>) -> Result<Optio
         return Ok(None);
     };
     anyhow::ensure!(
-        previous.author_id == Some(input.actor_id),
+        previous.author_id == Some(input.actor.user_id),
         CommentRefusal::Denied
     );
     anyhow::ensure!(
@@ -68,15 +90,28 @@ pub async fn edit_comment(pool: &PgPool, input: CommentEdit<'_>) -> Result<Optio
 
 pub async fn delete_comment(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     expected_revision: Option<&str>,
 ) -> Result<Option<CommitComment>> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_contribution_authority(
             &mut tx, actor, repo
+        )
+        .await?,
+        CommentRefusal::Denied
+    );
+    anyhow::ensure!(
+        crate::backend::db::postgres::credentials::writes(
+            &mut tx,
+            &credential,
+            Some(repo),
+            None,
+            "contents"
         )
         .await?,
         CommentRefusal::Denied

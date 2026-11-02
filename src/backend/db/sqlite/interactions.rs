@@ -84,14 +84,16 @@ pub async fn set_restriction(
     .bind(scope.id())
     .execute(&mut *tx)
     .await?;
-    match scope {
-        InteractionScope::User(user) => {
-            sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=?1 AND NOT is_private)").bind(user).execute(&mut *tx).await?;
+    if input.is_some() {
+        match scope {
+            InteractionScope::User(user) => {
+                sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=?1 AND NOT is_private)").bind(user).execute(&mut *tx).await?;
+            }
+            InteractionScope::Organization(org) => {
+                sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 AND NOT is_private)").bind(org).execute(&mut *tx).await?;
+            }
+            InteractionScope::Repository(_) => (),
         }
-        InteractionScope::Organization(org) => {
-            sqlx::query("DELETE FROM interaction_limits WHERE repo_id IN (SELECT id FROM repositories WHERE owner_kind='org' AND owner_org_id=?1 AND NOT is_private)").bind(org).execute(&mut *tx).await?;
-        }
-        InteractionScope::Repository(_) => (),
     }
     if let Some(input) = input {
         sqlx::query(&format!("INSERT INTO interaction_limits({},restriction,expires_at) VALUES(?1,?2,strftime('%Y-%m-%dT%H:%M:%f000Z','now',?3))",scope.column())).bind(scope.id()).bind(input.limit.as_str()).bind(format!("+{} seconds",input.expiry.seconds())).execute(&mut *tx).await?;
@@ -150,6 +152,33 @@ pub async fn save_proof(
     Ok(changed)
 }
 
+async fn contribution_exempt(
+    connection: &mut SqliteConnection,
+    actor: i64,
+    repo: i64,
+    restriction: &Restriction,
+) -> Result<bool> {
+    if restriction.origin == "organization" {
+        let member: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=m.org_id WHERE r.id=?1 AND m.user_id=?2 AND m.role IN ('owner','admin','member'))").bind(repo).bind(actor).fetch_one(&mut *connection).await?;
+        if member {
+            return Ok(true);
+        }
+    }
+    if restriction.limit == "existing_users" {
+        return Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND created_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day'))").bind(actor).fetch_one(connection).await?);
+    }
+    Ok(false)
+}
+
+pub async fn proof_required(pool: &SqlitePool, actor: i64, repo: i64) -> Result<bool> {
+    let mut connection = pool.acquire().await?;
+    let Some(restriction) = effective(&mut connection, repo).await? else {
+        return Ok(false);
+    };
+    Ok(restriction.limit != "collaborators_only"
+        && !contribution_exempt(&mut connection, actor, repo, &restriction).await?)
+}
+
 /// BEGIN IMMEDIATE and the normal discussion authority keep this policy live through the effect.
 pub(crate) async fn allows_contribution(
     connection: &mut SqliteConnection,
@@ -163,20 +192,11 @@ pub(crate) async fn allows_contribution(
     let Some(restriction) = effective(&mut *connection, repo).await? else {
         return Ok(true);
     };
-    if restriction.origin == "organization" {
-        let member: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN repositories r ON r.owner_kind='org' AND r.owner_org_id=m.org_id WHERE r.id=?1 AND m.user_id=?2 AND m.role IN ('owner','admin','member'))").bind(repo).bind(actor).fetch_one(&mut *connection).await?;
-        if member {
-            return Ok(true);
-        }
+    if contribution_exempt(connection, actor, repo, &restriction).await? {
+        return Ok(true);
     }
     if restriction.limit == "collaborators_only" {
         return Ok(false);
-    }
-    if restriction.limit == "existing_users" {
-        let old: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=?1 AND created_at<=strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 day'))").bind(actor).fetch_one(&mut *connection).await?;
-        if old {
-            return Ok(true);
-        }
     }
     let source: ContributorSource = sqlx::query_as("SELECT id AS repo_id,default_branch,storage_node_id,contribution_version AS write_version FROM repositories WHERE id=?1").bind(repo).fetch_one(&mut *connection).await?;
     let addresses = emails(&mut *connection, actor).await?;

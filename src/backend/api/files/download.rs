@@ -1,5 +1,5 @@
 use crate::backend::{
-    api::http::session::get_current_user,
+    api::http::session::{extract_session_id, get_current_user},
     app::AppState,
     files::{
         self, AssetDownload, DownloadCapability, DownloadError, DownloadTransport, SignedDownload,
@@ -70,9 +70,14 @@ pub async fn get_download_url(
 ) -> Result<Response, ApiFailure> {
     let user = get_current_user(&state.pool, &headers).await?;
     let file_id = parse_file_id(&file_id)?;
-    let download = files::download_for_user(&state.pool, &state.storage, user.id, file_id)
-        .await
-        .map_err(download_failure)?;
+    let download = files::download_for_user(
+        &state.pool,
+        &state.storage,
+        (user.id, extract_session_id(&headers).unwrap_or_default()),
+        file_id,
+    )
+    .await
+    .map_err(download_failure)?;
     Ok(download_response(download))
 }
 
@@ -81,34 +86,12 @@ pub(crate) fn asset_response(
     method: Method,
 ) -> Result<Response, ApiFailure> {
     if method == Method::HEAD {
-        let inline = download.inline_type.as_deref();
-        let response = Response::builder()
-            .header(
-                header::CONTENT_TYPE,
-                inline.unwrap_or("application/octet-stream"),
-            )
-            .header(
-                header::CONTENT_DISPOSITION,
-                if inline.is_some() {
-                    "inline".into()
-                } else {
-                    attachment_disposition(&download.filename)
-                },
-            )
-            .header(header::CONTENT_LENGTH, download.file_size.to_string())
-            .header(
-                header::CONTENT_SECURITY_POLICY,
-                "default-src 'none'; sandbox",
-            )
-            .body(axum::body::Body::empty())
-            .map_err(|_| {
-                ApiError::failure(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "response_unavailable",
-                    "Object response unavailable",
-                )
-            })?;
-        return Ok(private_response(response));
+        return asset_body(
+            &download.filename,
+            download.inline_type.as_deref(),
+            download.file_size,
+            axum::body::Body::empty(),
+        );
     }
     match download.transport {
         DownloadTransport::RemoteUrl(url) => Ok(private_response(Redirect::temporary(&url))),
@@ -157,36 +140,49 @@ pub(crate) fn asset_response(
                     )))
                 },
             );
-            let inline = download.inline_type.as_deref();
-            let response = Response::builder()
-                .header(
-                    header::CONTENT_TYPE,
-                    inline.unwrap_or("application/octet-stream"),
-                )
-                .header(
-                    header::CONTENT_DISPOSITION,
-                    if inline.is_some() {
-                        "inline".into()
-                    } else {
-                        attachment_disposition(&download.filename)
-                    },
-                )
-                .header(header::CONTENT_LENGTH, bytes.to_string())
-                .header(
-                    header::CONTENT_SECURITY_POLICY,
-                    "default-src 'none'; sandbox",
-                )
-                .body(crate::backend::api::http::middleware::download_body(stream))
-                .map_err(|_| {
-                    ApiError::failure(
-                        StatusCode::INTERNAL_SERVER_ERROR,
-                        "response_unavailable",
-                        "Object response unavailable",
-                    )
-                })?;
-            Ok(private_response(response))
+            asset_body(
+                &download.filename,
+                download.inline_type.as_deref(),
+                bytes,
+                crate::backend::api::http::middleware::download_body(stream),
+            )
         }
     }
+}
+
+fn asset_body(
+    filename: &str,
+    inline: Option<&str>,
+    size: i64,
+    body: axum::body::Body,
+) -> Result<Response, ApiFailure> {
+    let response = Response::builder()
+        .header(
+            header::CONTENT_TYPE,
+            inline.unwrap_or("application/octet-stream"),
+        )
+        .header(
+            header::CONTENT_DISPOSITION,
+            if inline.is_some() {
+                "inline".to_owned()
+            } else {
+                attachment_disposition(filename)
+            },
+        )
+        .header(header::CONTENT_LENGTH, size.to_string())
+        .header(
+            header::CONTENT_SECURITY_POLICY,
+            "default-src 'none'; sandbox",
+        )
+        .body(body)
+        .map_err(|_| {
+            ApiError::failure(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "response_unavailable",
+                "Object response unavailable",
+            )
+        })?;
+    Ok(private_response(response))
 }
 
 struct DownloadRead {
@@ -252,15 +248,9 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[tokio::test]
     async fn dropped_read_keeps_its_io_slot_until_the_read_returns() {
-        use std::os::fd::FromRawFd;
-        let mut descriptors = [-1; 2];
         // A pipe gives a read that blocks until the writer closes.
-        assert_eq!(
-            unsafe { libc::pipe2(descriptors.as_mut_ptr(), libc::O_CLOEXEC) },
-            0
-        );
-        let reader = unsafe { std::fs::File::from_raw_fd(descriptors[0]) };
-        let writer = unsafe { std::fs::File::from_raw_fd(descriptors[1]) };
+        let (reader, writer) = std::io::pipe().unwrap();
+        let reader = std::fs::File::from(std::os::fd::OwnedFd::from(reader));
         let capacity = Arc::new(tokio::sync::Semaphore::new(1));
         let io_guard = Arc::new(capacity.clone().acquire_owned().await.unwrap());
         drop(download_read(reader, 1, io_guard)); // the client went away
@@ -302,11 +292,11 @@ mod tests {
     fn attachment_names_never_become_paths_or_raw_headers() {
         assert_eq!(
             attachment_disposition("../../owned.txt"),
-            "attachment; filename*=UTF-8''owned.txt"
+            "attachment; filename=\"owned.txt\"; filename*=UTF-8''owned.txt"
         );
         assert_eq!(
             attachment_disposition(".."),
-            "attachment; filename*=UTF-8''download"
+            "attachment; filename=\"download\"; filename*=UTF-8''download"
         );
         let header = attachment_disposition("bad\r\n\"é.txt");
         assert!(!header.contains('\r') && !header.contains('\n'));

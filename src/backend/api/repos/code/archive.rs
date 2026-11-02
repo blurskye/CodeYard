@@ -1,6 +1,6 @@
 use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
-use crate::backend::api::repos::chrome::{load_refs_from_repo, repository_default_branch};
+use crate::backend::api::repos::chrome::repository_default_branch;
 use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
 use crate::backend::db;
@@ -27,14 +27,6 @@ pub async fn download_archive(
 ) -> Result<impl IntoResponse, (StatusCode, Json<ApiError>)> {
     let repository = readable_repository(&state.pool, &owner, &repo, &headers).await?;
 
-    let refs = load_refs_from_repo(&state, &repository).await?;
-    if refs.is_empty() {
-        return Err((
-            StatusCode::NOT_FOUND,
-            Json(ApiError::new("not_found", "Repository is empty")),
-        ));
-    }
-
     let git_ref = match query.git_ref {
         Some(git_ref) => git_ref,
         None => repository_default_branch(&state, &repository).await?,
@@ -54,6 +46,7 @@ pub async fn download_archive(
         .archive(&git_ref, &archive_prefix, ArchiveFormat::Zip)
         .await
         .map_err(archive_error)?;
+    check_repo_read_access(&state.pool, &repository, &headers).await?;
 
     Ok(archive_response(
         archive_bytes,
@@ -162,6 +155,11 @@ pub(in crate::backend::api::repos) async fn page(
     let store = repo_store(&repository, ctx.state.cluster.as_ref());
     match store.archive(reference, &prefix, format).await {
         Ok(bytes) => {
+            if let Err((status, _)) =
+                check_repo_read_access(&ctx.state.pool, &repository, &ctx.headers).await
+            {
+                return ctx.error(status, "Unable to download this repository archive.");
+            }
             let extension = match format {
                 ArchiveFormat::Zip => "zip",
                 ArchiveFormat::TarGz => "tar.gz",

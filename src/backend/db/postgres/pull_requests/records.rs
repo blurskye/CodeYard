@@ -16,13 +16,14 @@ pub async fn commit_association_candidates(
     repo: i64,
     before: i64,
     limit: i64,
+    merged_only: bool,
 ) -> Result<Vec<PullRequest>> {
     anyhow::ensure!(
         (1..=512).contains(&limit),
         "Pull request association batch exceeds its limit"
     );
-    Ok(sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=$1 AND id<$2 AND (state='open' OR merged) ORDER BY id DESC LIMIT $3")
-        .bind(repo).bind(before).bind(limit).fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT * FROM pull_requests WHERE repo_id=$1 AND id<$2 AND (state='open' OR merged) AND (NOT $4 OR merged) ORDER BY id DESC LIMIT $3")
+        .bind(repo).bind(before).bind(limit).bind(merged_only).fetch_all(pool).await?)
 }
 
 /// The branches and commits that the open pull requests of a repository record.
@@ -92,6 +93,15 @@ pub async fn merged_above(
         .bind(repo_id).bind(merge_sha).bind(head_branch).fetch_one(pool).await?)
 }
 
+pub async fn merged_trunk(
+    pool: &PgPool,
+    repo_id: i64,
+    merge_sha: &str,
+) -> Result<Option<(String, String)>> {
+    Ok(sqlx::query_as("SELECT base_branch, base_sha FROM pull_requests p WHERE repo_id=$1 AND state='merged' AND merged AND merge_commit_sha=$2 AND NOT EXISTS(SELECT 1 FROM pull_requests q WHERE q.repo_id=$1 AND q.state='merged' AND q.merged AND q.merge_commit_sha=$2 AND q.id<>p.id AND q.head_repo_id=$1 AND q.head_branch=p.base_branch) ORDER BY id LIMIT 1")
+        .bind(repo_id).bind(merge_sha).fetch_optional(pool).await?)
+}
+
 /// Records a new head commit only while the open pull request still has the
 /// expected head. Base movement is independent, so one side cannot starve the other.
 pub async fn move_open_pull_request_head(
@@ -99,16 +109,29 @@ pub async fn move_open_pull_request_head(
     pull_request_id: i64,
     old_head: &str,
     new_head: &str,
+    head_repo: Option<i64>,
+    head_branch: &str,
+    pusher: Option<i64>,
 ) -> Result<bool> {
+    let mut tx = pool.begin().await?;
+    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
     let changed = sqlx::query(
-        "UPDATE pull_requests SET head_sha = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND head_sha = $3",
+        "UPDATE pull_requests SET head_sha = $2, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND head_sha = $3 AND head_repo_id IS NOT DISTINCT FROM $4 AND head_branch=$5",
     )
     .bind(pull_request_id)
     .bind(new_head)
     .bind(old_head)
-    .execute(pool)
+    .bind(head_repo)
+    .bind(head_branch)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    if changed == 1 && old_head != new_head {
+        let access = super::super::repositories::access::USER_REPO_ACCESS_SQL;
+        sqlx::query(&format!("DELETE FROM pull_request_auto_merges WHERE pull_request_id=$1 AND NOT EXISTS(SELECT 1 FROM pull_requests p JOIN repositories r ON r.id=p.repo_id JOIN users u ON u.id=$2 WHERE p.id=$1 AND ({access})>=3)"))
+            .bind(pull_request_id).bind(pusher).execute(&mut *tx).await?;
+    }
+    tx.commit().await?;
     Ok(changed == 1)
 }
 
@@ -134,6 +157,26 @@ pub async fn move_open_pull_request_base(
     Ok(changed == 1)
 }
 
+pub async fn clear_fork_point(
+    pool: &PgPool,
+    pull_request_id: i64,
+    fork: &str,
+    base: &str,
+    head: &str,
+) -> Result<bool> {
+    let changed = sqlx::query(
+        "UPDATE pull_requests SET fork_sha = NULL, updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond') WHERE id = $1 AND state = 'open' AND fork_sha = $2 AND base_sha = $3 AND head_sha = $4",
+    )
+    .bind(pull_request_id)
+    .bind(fork)
+    .bind(base)
+    .bind(head)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(changed == 1)
+}
+
 /// Approves workflow execution for this exact head, while the actor can write.
 pub async fn approve_pull_request_workflows(
     pool: &PgPool,
@@ -150,6 +193,15 @@ pub async fn approve_pull_request_workflows(
     if !crate::backend::db::postgres::discussions::lock_write_authority(&mut tx, actor_id, repo)
         .await?
     {
+        return Ok(false);
+    }
+    let fork: bool = sqlx::query_scalar(
+        "SELECT head_repo_id IS NULL OR head_repo_id<>repo_id FROM pull_requests WHERE id=$1",
+    )
+    .bind(pr_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if fork && !super::super::action_settings::fork_runs_allowed(&mut tx, repo).await? {
         return Ok(false);
     }
     let changed = sqlx::query("UPDATE pull_requests SET workflows_approved_sha = $2 WHERE id = $1 AND head_sha = $2 AND state = 'open' AND NOT is_draft")
@@ -385,6 +437,29 @@ pub async fn get_converted_pull_request(
         .bind(repo_id).bind(number).fetch_optional(pool).await?)
 }
 
+pub async fn get_pull_requests_by_ids(
+    pool: &PgPool,
+    repo_id: i64,
+    ids: &[i64],
+) -> Result<Vec<PullRequest>> {
+    anyhow::ensure!(ids.len() <= 500, "Pull request batch exceeds its limit");
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as(
+        "SELECT * FROM pull_requests WHERE repo_id = $1 AND id IN (SELECT unnest($2::BIGINT[]))",
+    )
+    .bind(repo_id)
+    .bind(ids)
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn retained_revisions(pool: &PgPool, repo: i64) -> Result<Vec<String>> {
+    Ok(sqlx::query_scalar("WITH pulls AS (SELECT id,head_sha,base_sha,fork_sha,merge_commit_sha FROM pull_requests WHERE repo_id=$1), revisions AS (SELECT head_sha AS revision FROM pulls UNION SELECT base_sha FROM pulls UNION SELECT fork_sha FROM pulls UNION SELECT merge_commit_sha FROM pulls UNION SELECT r.commit_sha FROM pr_reviews r JOIN pulls p ON p.id=r.pull_request_id UNION SELECT c.commit_sha FROM pr_comments c JOIN pulls p ON p.id=c.pull_request_id) SELECT revision FROM revisions WHERE revision IS NOT NULL AND revision<>'' ORDER BY revision")
+        .bind(repo).fetch_all(pool).await?)
+}
+
 pub async fn get_pull_request_by_id(pool: &PgPool, id: i64) -> Result<Option<PullRequest>> {
     let pr = sqlx::query_as::<_, PullRequest>("SELECT * FROM pull_requests WHERE id = $1")
         .bind(id)
@@ -489,7 +564,8 @@ pub async fn list_viewer_pull_requests(
     let access = crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
     let relation_sql = viewer_pull_request_sql(relation);
     let prs = sqlx::query_as::<_, ViewerPullRequestEntry>(&format!(
-        r"SELECT p.*, r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
+        r"SELECT p.number, p.title, p.state, p.created_at,
+            r.name AS repo_name, COALESCE(ou.username, og.name) AS repo_owner
         FROM pull_requests p
         JOIN repositories r ON r.id = p.repo_id
         LEFT JOIN users ou ON ou.id = r.owner_user_id
@@ -645,17 +721,45 @@ pub async fn update_pull_request(
     } else {
         None
     };
-    let policy_only = maintainer_can_modify.is_some()
-        && edit.title.is_none()
-        && edit.body.is_none()
-        && edit.state.is_none()
-        && base.is_none();
     let head_owner = head
         .as_ref()
         .is_some_and(|head| head.is_personal_owner(edit.actor_id));
-    let author_edit = author == edit.actor_id && base.is_none() && maintainer_can_modify.is_none();
+    let automatic_reopen = if let Some(base) = base.as_ref().filter(|base| base.automatic_reopen) {
+        if !reopening {
+            return Ok(None);
+        }
+        let current: PullRequest =
+            sqlx::query_as("SELECT * FROM pull_requests WHERE id=$1 AND repo_id=$2 FOR UPDATE")
+                .bind(pr_id)
+                .bind(repo)
+                .fetch_one(&mut *tx)
+                .await?;
+        let members: Vec<PullRequest> = sqlx::query_as(
+            "SELECT * FROM pull_requests WHERE repo_id=$1 AND stack_id=$2 ORDER BY id",
+        )
+        .bind(repo)
+        .bind(current.stack_id)
+        .fetch_all(&mut *tx)
+        .await?;
+        if crate::backend::db::pull_requests::records::reopened_stack_base(&current, &members)
+            .as_deref()
+            != Some(base.branch)
+        {
+            return Ok(None);
+        }
+        true
+    } else {
+        false
+    };
+    let explicit_base = base.is_some() && !automatic_reopen;
+    let ordinary = edit.title.is_some() || edit.body.is_some() || edit.state.is_some();
+    // Without write access the author keeps ordinary edits, close and reopen, and the
+    // maintainer policy; the personal fork owner keeps the policy; only writers move the base.
+    let contributor_edit = !explicit_base
+        && (author == edit.actor_id
+            || (head_owner && !ordinary && maintainer_can_modify.is_some()));
     if !authority
-        && (!((policy_only && (author == edit.actor_id || head_owner)) || author_edit)
+        && (!contributor_edit
             || !crate::backend::db::postgres::discussions::lock_contribution_authority(
                 &mut tx,
                 edit.actor_id,
@@ -673,8 +777,8 @@ pub async fn update_pull_request(
         return Ok(None);
     }
     // Lock the row so the checked update below sees the latest revision.
-    let stored: Option<(String,bool,chrono::DateTime<chrono::Utc>)> = sqlx::query_as("SELECT state,is_draft,updated_at FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE").bind(pr_id).bind(repo).fetch_optional(&mut *tx).await?;
-    let Some((state, draft, updated)) = stored else {
+    let stored: Option<(String,bool,chrono::DateTime<chrono::Utc>,String,String)> = sqlx::query_as("SELECT state,is_draft,updated_at,title,base_branch FROM pull_requests WHERE id = $1 AND repo_id = $2 FOR UPDATE").bind(pr_id).bind(repo).fetch_optional(&mut *tx).await?;
+    let Some((state, draft, updated, old_title, old_branch)) = stored else {
         return Ok(None);
     };
     if state != edit.expected_state || updated != edit.expected_updated {
@@ -705,6 +809,7 @@ pub async fn update_pull_request(
             base_branch = COALESCE($8, base_branch), base_sha = COALESCE($9, base_sha),
             fork_sha = CASE WHEN $8::TEXT IS NULL THEN fork_sha WHEN stack_id IS NOT NULL THEN COALESCE(fork_sha, base_sha) ELSE NULL END,
             closed_at = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN clock_timestamp() ELSE closed_at END,
+            closed_by_id = CASE WHEN $4 = 'open' THEN NULL WHEN $4 = 'closed' AND state <> 'closed' THEN $11 ELSE closed_by_id END,
             stack_version = stack_version + CASE WHEN $4::TEXT IS NULL AND $8::TEXT IS NULL THEN 0 ELSE 1 END,
             updated_at = GREATEST(clock_timestamp(), updated_at + INTERVAL '1 microsecond'),
             maintainer_can_modify = COALESCE($10,maintainer_can_modify),
@@ -718,6 +823,32 @@ pub async fn update_pull_request(
         .bind(base.as_ref().map(|base| base.branch)).bind(base.as_ref().map(|base| base.sha))
         .bind(maintainer_can_modify).bind(edit.actor_id)
         .fetch_optional(&mut *tx).await?;
+    if let Some(pr) = pr.as_ref() {
+        for (kind, detail, previous) in
+            crate::backend::db::timeline::edit_events(&old_title, &state, &pr.title, &pr.state)
+        {
+            super::super::timeline::append(
+                &mut tx,
+                repo,
+                "pull_request",
+                pr_id,
+                edit.actor_id,
+                kind,
+                detail,
+                previous,
+            )
+            .await?;
+        }
+    }
+    if let (Some(pr), Some(base)) = (&pr, base.as_ref().filter(|base| base.branch != old_branch)) {
+        let patterns: Vec<String> = sqlx::query_scalar("SELECT pattern FROM branch_protection_rules WHERE repo_id=$1 AND dismiss_stale_reviews FOR SHARE").bind(repo).fetch_all(&mut *tx).await?;
+        if crate::backend::db::pull_requests::records::retarget_dismisses_reviews(
+            &patterns,
+            base.branch,
+        )? {
+            sqlx::query("UPDATE pr_reviews SET state='dismissed',dismissed_by_id=$2,dismissed_reason='Base branch changed',dismissed_at=clock_timestamp() WHERE pull_request_id=$1 AND state='approved'").bind(pr.id).bind(edit.actor_id).execute(&mut *tx).await?;
+        }
+    }
     tx.commit().await?;
     Ok(pr)
 }
@@ -751,7 +882,7 @@ pub async fn mark_pull_requests_merged(
         }
     }
     for pull in ordered {
-        let changed = sqlx::query("UPDATE pull_requests SET state='merged',merged=TRUE,merged_by_id=$2,merge_commit_sha=$3,merged_at=NOW(),closed_at=NOW(),updated_at=NOW(),head_sha=$4,base_sha=$5,stack_version=stack_version+1 WHERE id=$1 AND state='open' AND NOT merged AND base_branch=$6")
+        let changed = sqlx::query("UPDATE pull_requests SET state='merged',merged=TRUE,merged_by_id=$2,closed_by_id=$2,merge_commit_sha=$3,merged_at=NOW(),closed_at=NOW(),updated_at=NOW(),head_sha=$4,base_sha=$5,stack_version=stack_version+1 WHERE id=$1 AND state='open' AND NOT merged AND base_branch=$6")
             .bind(pull.id)
             .bind(actor_id)
             .bind(merge_sha)
@@ -764,6 +895,17 @@ pub async fn mark_pull_requests_merged(
         if changed != 1 {
             return Ok(false);
         }
+        super::super::timeline::append(
+            &mut tx,
+            pull.repo_id,
+            "pull_request",
+            pull.id,
+            actor_id,
+            "merged",
+            &pull.base_branch,
+            "",
+        )
+        .await?;
         sqlx::query("UPDATE repository_ref_activities SET activity_type='pr_merge' WHERE id=(SELECT id FROM repository_ref_activities WHERE repo_id=$1 AND reference='refs/heads/'||$2 AND after_sha=$3 ORDER BY id DESC LIMIT 1) AND activity_type IN ('push','force_push')")
             .bind(pull.repo_id).bind(&pull.base_branch).bind(merge_sha).execute(&mut *tx).await?;
     }
@@ -1178,17 +1320,6 @@ pub async fn list_stack_versions(
     .fetch_all(pool)
     .await?;
     Ok(rows)
-}
-
-impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for ViewerPullRequestEntry {
-    fn from_row(row: &'r sqlx::postgres::PgRow) -> Result<Self, sqlx::Error> {
-        use sqlx::Row;
-        Ok(Self {
-            pull_request: PullRequest::from_row(row)?,
-            repo_owner: row.try_get("repo_owner")?,
-            repo_name: row.try_get("repo_name")?,
-        })
-    }
 }
 
 impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for PullRequestListEntry {

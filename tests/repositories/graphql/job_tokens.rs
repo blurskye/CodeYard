@@ -44,11 +44,17 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor])
-        .await
-        .unwrap()
-        .filter(|claim| claim.id == run.id)
-        .unwrap();
+    let run = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[actor],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .filter(|claim| claim.id == run.id)
+    .unwrap();
     let definitions = BTreeMap::from([(".github/workflows/ci.yml".into(),b"jobs:\n  contents:\n    permissions: {contents: read}\n  reader:\n    permissions: {issues: read}\n  writer:\n    permissions: {issues: write}\n".to_vec())]);
     let issued = ci::tokens::issue(f.pool(), &run, &definitions, false)
         .await
@@ -68,7 +74,7 @@ async fn contract(pg: bool) {
         let row = db::repositories::commit_comments::create_comment(
             f.pool(),
             db::repositories::commit_comments::CommentCreate {
-                actor_id: actor,
+                actor: actor.into(),
                 repo_id: repo.id,
                 sha: &"b".repeat(40),
                 body: "Scoped commit discussion",

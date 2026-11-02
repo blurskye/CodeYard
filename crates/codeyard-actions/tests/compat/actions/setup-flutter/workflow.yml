@@ -1,6 +1,10 @@
 # https://github.com/subosito/flutter-action/tree/1a449444c387b1966244ae4d4f8c696479add0b2
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

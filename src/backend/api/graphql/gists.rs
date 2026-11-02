@@ -7,16 +7,20 @@ use async_graphql::Error;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde_json::json;
 
+async fn authorize(request: &RequestContext) -> Result<()> {
+    if !request.account_permission("gists", "gist").await? {
+        return Err(super::token_denied());
+    }
+    Ok(())
+}
+
 fn object(gist: &Gist) -> Value {
     json!({"__typename":"Gist","id":node_id::git("GIST",&gist.id),"name":gist.id,"description":gist.description,"isPublic":gist.is_public,"updatedAt":gist.updated_at})
 }
 
 /// The gist a REST `node_id` names. Like the REST read, its ID is enough to read a secret gist.
 pub(super) async fn node(key: &str, request: &RequestContext) -> Result<Value> {
-    if request.bounded() {
-        return Err(missing());
-    }
-    request.require_oauth_scope("gist")?;
+    authorize(request).await?;
     let id = URL_SAFE_NO_PAD
         .decode(key)
         .ok()
@@ -31,10 +35,7 @@ pub(super) async fn node(key: &str, request: &RequestContext) -> Result<Value> {
 }
 
 pub(super) async fn list(ctx: &Arguments, request: &RequestContext, user: &Value) -> Result<Value> {
-    if request.bounded() {
-        return Err(missing());
-    }
-    request.require_oauth_scope("gist")?;
+    authorize(request).await?;
     connection::validate(ctx)?;
     if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
         let order = order.object()?;
@@ -77,9 +78,7 @@ pub(super) async fn files(
     request: &RequestContext,
     gist: &Value,
 ) -> Result<Value> {
-    if request.bounded() {
-        return Err(missing());
-    }
+    authorize(request).await?;
     let id = gist["name"].as_str().ok_or_else(missing)?;
     let revision = ctx
         .args
@@ -90,9 +89,6 @@ pub(super) async fn files(
     let loaded = domain::load(&request.state, id, revision)
         .await
         .map_err(unavailable)?;
-    if !loaded.gist.is_public && loaded.gist.owner_id != request.auth.user.id {
-        return Err(missing());
-    }
     let limit = ctx
         .args
         .get("limit")
@@ -113,24 +109,7 @@ pub(super) async fn files(
 }
 
 pub(super) async fn text(ctx: &Arguments, request: &RequestContext, file: &Value) -> Result<Value> {
-    if request.bounded() {
-        return Err(missing());
-    }
-    let repo = file["repoId"].as_i64().ok_or_else(missing)?;
-    let gist = db::gists::by_repository(&request.state.pool, repo)
-        .await
-        .map_err(unavailable)?
-        .filter(|gist| gist.ready && (gist.is_public || gist.owner_id == request.auth.user.id))
-        .ok_or_else(missing)?;
-    let repository = db::gists::git_repository(&request.state.pool, &gist.id)
-        .await
-        .map_err(unavailable)?
-        .ok_or_else(missing)?;
-    let sha = file["sha"].as_str().ok_or_else(missing)?;
-    let bytes = repo_store(&repository, request.state.cluster.as_ref())
-        .blob_by_id(sha)
-        .await
-        .map_err(unavailable)?;
+    authorize(request).await?;
     let limit = ctx
         .args
         .get("truncate")
@@ -141,5 +120,21 @@ pub(super) async fn text(ctx: &Arguments, request: &RequestContext, file: &Value
     if !(0..=1024 * 1024).contains(&limit) {
         return Err(Error::new("Text limit must be between 0 and 1048576"));
     }
+    let repo = file["repoId"].as_i64().ok_or_else(missing)?;
+    let gist = db::gists::by_repository(&request.state.pool, repo)
+        .await
+        .map_err(unavailable)?
+        .filter(|gist| gist.ready)
+        .ok_or_else(missing)?;
+    let repository = db::gists::git_repository(&request.state.pool, &gist.id)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(missing)?;
+    let sha = file["sha"].as_str().ok_or_else(missing)?;
+    let bytes = repo_store(&repository, request.state.cluster.as_ref())
+        .blob_by_id(sha)
+        .await
+        .map_err(unavailable)?;
+    request.charge(bytes.len())?;
     Ok(json!(domain::text_preview(&bytes, limit as usize)))
 }

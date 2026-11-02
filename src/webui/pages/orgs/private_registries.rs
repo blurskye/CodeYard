@@ -37,6 +37,20 @@ pub const AUTH_TYPES: [&str; 8] = [
     "oidc_gcp",
     "anonymous",
 ];
+/// Byte bound of an ordinary registry field.
+pub const FIELD_MAX: usize = 4096;
+/// Byte bound of the repository selection: 1000 IDs of up to 19 digits joined by ", ".
+pub const SELECTED_REPOSITORY_IDS_MAX: usize = 21_000;
+
+/// The byte bound of a registry form field other than the credential.
+pub fn field_max(name: &str) -> usize {
+    if name == "selected_repository_ids" {
+        SELECTED_REPOSITORY_IDS_MAX
+    } else {
+        FIELD_MAX
+    }
+}
+
 pub const OIDC_FIELDS: [(&str, &str); 16] = [
     ("tenant_id", "Azure tenant ID"),
     ("client_id", "Azure client ID"),
@@ -154,7 +168,7 @@ pub(super) fn panel(page: &OrganizationPage) -> Element {
                     {select("Repository access", "visibility", field("visibility"), ["all", "private", "selected"].iter().map(|v| SelectOption::new(*v, *v)).collect())}
                     {select("Replace the base registry", "replaces_base", field("replaces_base"), vec![SelectOption::new("false", "No"), SelectOption::new("true", "Yes")])}
                     for (name, label) in OIDC_FIELDS {
-                        label { span { "{label}" } DraftInput { class: "org-field", name: name.to_owned(), initial_value: field(name), maxlength: Some(4096) } }
+                        label { span { "{label}" } DraftInput { class: "org-field", name: name.to_owned(), initial_value: field(name), maxlength: Some(field_max(name) as u32) } }
                     }
                     {controls(page, "registry-save", "Save registry")}
                 }

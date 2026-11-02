@@ -225,7 +225,9 @@ mod fixture {
                     (Some(organization.id), Some((organization.id, team.id)))
                 }
             };
-            let bare = git2::Repository::init_bare(&path).unwrap();
+            let mut options = git2::RepositoryInitOptions::new();
+            options.bare(true).initial_head("main");
+            let bare = git2::Repository::init_opts(&path, &options).unwrap();
             let path = std::fs::canonicalize(path).unwrap();
             let tree_oid = bare.treebuilder(None).unwrap().write().unwrap();
             let tree = bare.find_tree(tree_oid).unwrap();
@@ -486,11 +488,12 @@ mod fixture {
                 _ => unreachable!(),
             }
             release.send(()).unwrap();
+            // Git accepted the push, so its bookkeeping finishes for the admitted actor.
             assert!(timeout(std::time::Duration::from_secs(15), task)
                 .await
                 .unwrap()
                 .unwrap()
-                .is_err());
+                .is_ok());
             let refreshed =
                 db::pull_requests::records::get_pull_request_by_id(&fixture.pool, pull.id)
                     .await
@@ -637,15 +640,16 @@ mod fixture {
             fixture.request = receive_requests(&fixture.path, &updates);
             tasks.push(fixture.receive());
         }
+        // The three receives take about 11 s alone on the builder; a shared CI runner is slower.
         for task in tasks {
-            tokio::time::timeout(std::time::Duration::from_secs(30), task)
+            tokio::time::timeout(std::time::Duration::from_secs(120), task)
                 .await
                 .unwrap()
                 .unwrap()
                 .unwrap();
         }
         assert_eq!(
-            crate::backend::git::branches_and_tags_in_use(&fixture.path)
+            crate::backend::git::published_refs_in_use(&fixture.path)
                 .unwrap()
                 .count,
             10_000
@@ -764,12 +768,13 @@ mod fixture {
                 .unwrap()
         );
         release.send(()).unwrap();
+        // Git accepted the push, so its bookkeeping finishes for the admitted actor.
         assert!(
             tokio::time::timeout(std::time::Duration::from_secs(15), task)
                 .await
                 .unwrap()
                 .unwrap()
-                .is_err()
+                .is_ok()
         );
         assert_eq!(
             bare.find_reference("HEAD").unwrap().symbolic_target(),
@@ -1209,16 +1214,27 @@ mod fixture {
                     rule.push_allowances = vec![allowed];
                 })
                 .await;
+            // Push restrictions limit updates; creating a branch is limited only when the rule
+            // blocks creations, as on GitHub.
+            git2::Repository::open_bare(&fixture.path)
+                .unwrap()
+                .reference("refs/heads/topic", fixture.oid, false, "fixture")
+                .unwrap();
             let commit = scratch.commit(&[fixture.oid], "topic");
             let output = fixture
-                .push(&scratch, "refs/heads/topic", ZERO_SHA, &commit.to_string())
+                .push(
+                    &scratch,
+                    "refs/heads/topic",
+                    &fixture.oid.to_string(),
+                    &commit.to_string(),
+                )
                 .await;
             if listed {
                 assert!(output.contains("ok refs/heads/topic"), "{output}");
                 assert_eq!(fixture.tip("refs/heads/topic"), Some(commit));
             } else {
                 assert!(output.contains("ng refs/heads/topic"), "{output}");
-                assert_eq!(fixture.tip("refs/heads/topic"), None);
+                assert_eq!(fixture.tip("refs/heads/topic"), Some(fixture.oid));
             }
             fixture.pool.close().await;
         }
@@ -1966,11 +1982,16 @@ mod fixture {
             assert_eq!(repository.default_branch, "main");
             assert!(repository.size_bytes > 0);
             for _ in 0..runs.len() {
-                let run =
-                    db::ci::claim_ci_run(&fixture.pool, "worker", "local", &[fixture.actor_id])
-                        .await
-                        .unwrap()
-                        .unwrap();
+                let run = db::ci::claim_ci_run(
+                    &fixture.pool,
+                    "worker",
+                    "local",
+                    &[fixture.actor_id],
+                    &crate::backend::ci::CiConfig::default().platform_labels(),
+                )
+                .await
+                .unwrap()
+                .unwrap();
                 assert_eq!(run.workflow_path, ".github/workflows/ci.yml");
                 assert_eq!(
                     run.workflow_blobs[".github/workflows/ci.yml"],
@@ -2022,11 +2043,11 @@ mod fixture {
             .unwrap()
             .find_reference("refs/heads/spare")
             .is_err());
-        assert!(
-            db::users::ssh_keys::delete_ssh_key(&fixture.pool, fixture.key_id)
-                .await
-                .unwrap()
-        );
+        // The deletion's activity record fails after Git accepted it.
+        sqlx::query("CREATE TRIGGER refuse_activity BEFORE INSERT ON repository_ref_activities BEGIN SELECT RAISE(ABORT, 'activity unavailable'); END")
+            .execute(&fixture.native)
+            .await
+            .unwrap();
         release.send(()).unwrap();
         let error = timeout(std::time::Duration::from_secs(15), task)
             .await

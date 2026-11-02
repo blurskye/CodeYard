@@ -11,6 +11,11 @@ use std::ops::Range;
 /// The longest URL an autolink may expand to. Browsers and servers refuse much longer ones.
 const MAX_AUTOLINK_URL_BYTES: usize = 8 * 1024;
 
+/// Admission uses the same raw-spelling policy as Markdown rendering.
+pub fn valid_autolink_template(template: &str) -> bool {
+    template.len() <= 4096 && super::markdown::safe_url(&template.replace("<num>", "1"), false)
+}
+
 /// Distinct usernames a page resolves. Later names stay plain text.
 pub const MAX_USERS: usize = 50;
 /// Distinct other repositories a page resolves. Later ones stay plain text.
@@ -34,9 +39,11 @@ pub struct References {
     /// The repository the page belongs to. `#N` and commit SHAs link into it.
     pub owner: String,
     pub repo: String,
-    /// The highest issue or pull request number. Numbers are never reused and items are never
-    /// deleted, so `#N` is an item exactly when `1 <= N <= last_number`.
+    /// The legacy allocation counter, retained for older page-model consumers.
     pub last_number: i32,
+    /// Explicit bounded native resolutions; absent only in legacy page models.
+    #[serde(default)]
+    pub targets: Option<Vec<Target>>,
     /// Existing usernames, spelled as stored.
     pub users: Vec<String>,
     /// Other repositories the viewer can read. A repository that is missing or unreadable is
@@ -53,6 +60,14 @@ pub struct Repository {
     pub owner: String,
     pub name: String,
     pub last_number: i32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Target {
+    pub owner: String,
+    pub repo: String,
+    pub token: String,
+    pub href: String,
 }
 
 /// A reference as the text spells it.
@@ -96,6 +111,11 @@ impl References {
         budget: usize,
         mut visit: impl FnMut(Range<usize>, Link),
     ) {
+        let definitions = self
+            .autolinks
+            .iter()
+            .map(|definition| (definition, definition.url_template.matches("<num>").count()))
+            .collect::<Vec<_>>();
         let mut remaining = budget;
         let mut done = range.start;
         scan_tokens(text, range.clone(), opaque, |span, token| {
@@ -103,7 +123,14 @@ impl References {
                 return;
             }
             if let Some(link) = self.link(&token) {
-                self.scan_autolinks(text, done..span.start, opaque, &mut remaining, &mut visit);
+                self.scan_autolinks(
+                    &definitions,
+                    text,
+                    done..span.start,
+                    opaque,
+                    &mut remaining,
+                    &mut visit,
+                );
                 if remaining > 0 {
                     visit(span.clone(), link);
                     remaining -= 1;
@@ -111,11 +138,19 @@ impl References {
                 done = span.end;
             }
         });
-        self.scan_autolinks(text, done..range.end, opaque, &mut remaining, &mut visit);
+        self.scan_autolinks(
+            &definitions,
+            text,
+            done..range.end,
+            opaque,
+            &mut remaining,
+            &mut visit,
+        );
     }
 
     fn scan_autolinks(
         &self,
+        definitions: &[(&Autolink, usize)],
         text: &str,
         range: Range<usize>,
         opaque: &[Range<usize>],
@@ -136,7 +171,7 @@ impl References {
                 continue;
             }
             let mut matched = None;
-            for definition in self.autolinks.iter() {
+            for &(definition, placeholders) in definitions {
                 if definition.key_prefix.is_empty() {
                     continue;
                 }
@@ -155,7 +190,7 @@ impl References {
                     .bytes()
                     .take_while(|byte| {
                         if definition.is_alphanumeric {
-                            byte.is_ascii_alphanumeric()
+                            byte.is_ascii_alphanumeric() || *byte == b'-'
                         } else {
                             byte.is_ascii_digit()
                         }
@@ -177,8 +212,8 @@ impl References {
                 }
                 // A long template filled with a long identifier is skipped before it is built,
                 // so the links a page buffers stay within the Markdown output budget.
-                let size = definition.url_template.len()
-                    + definition.url_template.matches("<num>").count() * length;
+                let size = definition.url_template.len() - placeholders * "<num>".len()
+                    + placeholders * length;
                 if size > MAX_AUTOLINK_URL_BYTES {
                     continue;
                 }
@@ -232,22 +267,34 @@ impl References {
                     title: None,
                     text: format!("@{name}"),
                 }),
-            Token::Commit(sha) => Some(commit_link(
+            Token::Commit(sha) => self.commit_link(
                 &self.owner,
                 &self.repo,
                 sha,
                 super::short_sha(sha).to_owned(),
-            )),
+            ),
             Token::RepoCommit { owner, repo, sha } => {
                 self.repository_last_number(owner, repo)?;
-                Some(commit_link(
+                self.commit_link(
                     owner,
                     repo,
                     sha,
                     format!("{owner}/{repo}@{}", super::short_sha(sha)),
-                ))
+                )
             }
         }
+    }
+
+    fn commit_link(&self, owner: &str, repo: &str, sha: &str, text: String) -> Option<Link> {
+        let mut link = commit_link(owner, repo, sha, text);
+        if let Some(targets) = &self.targets {
+            link.href = targets
+                .iter()
+                .find(|target| target.owner == owner && target.repo == repo && target.token == sha)?
+                .href
+                .clone();
+        }
+        Some(link)
     }
 
     /// The link to issue or pull request `number`, when the page may link it. Its text is made only
@@ -259,9 +306,28 @@ impl References {
         number: i64,
         text: impl FnOnce() -> String,
     ) -> Option<Link> {
-        let last = self.repository_last_number(owner, repo)?;
-        (number <= last).then(|| Link {
-            href: format!("/{owner}/{repo}/issues/{number}"),
+        let href = if let Some(targets) = &self.targets {
+            targets
+                .iter()
+                .find(|target| {
+                    target.owner == owner
+                        && target.repo == repo
+                        && target.token == format!("#{number}")
+                })?
+                .href
+                .clone()
+        } else {
+            let last = self.repository_last_number(owner, repo)?;
+            if number > last {
+                return None;
+            }
+            format!(
+                "{}/issues/{number}",
+                crate::webui::repository_path(owner, repo)
+            )
+        };
+        Some(Link {
+            href,
             class: REFERENCE,
             title: None,
             text: text(),
@@ -282,7 +348,10 @@ impl References {
 
 fn commit_link(owner: &str, repo: &str, sha: &str, text: String) -> Link {
     Link {
-        href: format!("/{owner}/{repo}/commit/{sha}"),
+        href: format!(
+            "{}/commit/{sha}",
+            crate::webui::repository_path(owner, repo)
+        ),
         class: COMMIT,
         title: Some(sha.to_owned()),
         text,
@@ -371,7 +440,11 @@ fn classify(word: &str) -> Option<Token<'_>> {
             repo,
             number,
         }),
-        None => commit(tail.strip_prefix('@')?).map(|sha| Token::RepoCommit { owner, repo, sha }),
+        None => {
+            let sha = tail.strip_prefix('@')?;
+            ((7..=40).contains(&sha.len()) && sha.bytes().all(|byte| byte.is_ascii_hexdigit()))
+                .then_some(Token::RepoCommit { owner, repo, sha })
+        }
     }
 }
 
@@ -418,6 +491,8 @@ pub struct Candidates {
     pub users: Vec<String>,
     /// Distinct `(owner, repo)` pairs, as written, other than the page's own repository.
     pub repositories: Vec<(String, String)>,
+    /// At most fifty distinct issue/PR or commit targets, including this repository.
+    pub targets: Vec<(String, String, String)>,
     /// The page's own repository. Its references need no lookup, so they take no place in
     /// `repositories`, which is capped.
     current: (String, String),
@@ -462,8 +537,38 @@ impl Candidates {
     }
 
     fn add(&mut self, token: Token<'_>) {
+        if self.targets.len() < 50 {
+            let target = match &token {
+                Token::Number(number) => Some((
+                    self.current.0.clone(),
+                    self.current.1.clone(),
+                    format!("#{number}"),
+                )),
+                Token::Commit(sha) => Some((
+                    self.current.0.clone(),
+                    self.current.1.clone(),
+                    (*sha).to_owned(),
+                )),
+                Token::RepoNumber {
+                    owner,
+                    repo,
+                    number,
+                } => Some((
+                    (*owner).to_owned(),
+                    (*repo).to_owned(),
+                    format!("#{number}"),
+                )),
+                Token::RepoCommit { owner, repo, sha } => {
+                    Some(((*owner).to_owned(), (*repo).to_owned(), (*sha).to_owned()))
+                }
+                Token::User(_) => None,
+            };
+            if let Some(target) = target.filter(|target| !self.targets.contains(target)) {
+                self.targets.push(target);
+            }
+        }
         match token {
-            // The page's own numbers and commits need no lookup.
+            // Numbers and commits were collected above for bounded native resolution.
             Token::Number(_) | Token::Commit(_) => {}
             Token::User(name) => {
                 if self.users.len() < self.user_limit && self.seen_users.insert(name.to_owned()) {
@@ -610,6 +715,7 @@ mod tests {
             owner: "alice".into(),
             repo: "demo".into(),
             last_number: 5,
+            targets: None,
             users: vec!["alice".into(), "bob".into()],
             autolinks: Default::default(),
             repositories: vec![Repository {
@@ -694,6 +800,7 @@ mod tests {
             owner: "alice".into(),
             repo: "demo".into(),
             last_number: 0,
+            targets: None,
             users: vec!["bob".into()],
             repositories: Vec::new(),
             autolinks: Default::default(),
@@ -822,6 +929,7 @@ mod tests {
             owner: "alice".into(),
             repo: "demo".into(),
             last_number: 0,
+            targets: None,
             users: found.users,
             repositories: Vec::new(),
             autolinks: Default::default(),

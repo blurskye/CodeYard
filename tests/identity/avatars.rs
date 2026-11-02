@@ -85,7 +85,15 @@ async fn set_avatar(
     user: &db::models::User,
     file_id: &str,
 ) -> Result<(), avatars::AvatarError> {
-    avatars::set_user_avatar(pool, user, file_id.parse().unwrap()).await
+    avatars::set_user_avatar(
+        pool,
+        user,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, user.id).await,
+        ),
+        file_id.parse().unwrap(),
+    )
+    .await
 }
 
 async fn avatar_url(client: &Client) -> Option<String> {
@@ -377,7 +385,10 @@ async fn contract(pg: bool) {
         )
         .await;
     assert_eq!(visitor.status, StatusCode::SEE_OTHER);
-    assert_eq!(visitor.location.as_deref(), Some("/login"));
+    assert_eq!(
+        visitor.location.as_deref(),
+        Some("/login?redirect=%2Fsettings%2Favatar")
+    );
 
     // Pictures far larger than a settings form (but within 2 MB) are accepted.
     for (client, size) in [(&bob, 1536 * 1024), (&dave, 2 * 1024 * 1024)] {
@@ -451,7 +462,16 @@ async fn contract(pg: bool) {
         let storage = storage.clone();
         let user = request_user.clone();
         tokio::spawn(async move {
-            avatars::upload_user_avatar(&pool, &storage, &user, PNG.to_vec()).await
+            avatars::upload_user_avatar(
+                &pool,
+                &storage,
+                &user,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(&pool, user.id).await,
+                ),
+                PNG.to_vec(),
+            )
+            .await
         })
     };
     let upload_two = {
@@ -459,9 +479,18 @@ async fn contract(pg: bool) {
         let storage = storage.clone();
         let user = request_user.clone();
         let bytes = changed_png.clone();
-        tokio::spawn(
-            async move { avatars::upload_user_avatar(&pool, &storage, &user, bytes).await },
-        )
+        tokio::spawn(async move {
+            avatars::upload_user_avatar(
+                &pool,
+                &storage,
+                &user,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(&pool, user.id).await,
+                ),
+                bytes,
+            )
+            .await
+        })
     };
     upload_one.await.unwrap().unwrap();
     upload_two.await.unwrap().unwrap();
@@ -774,6 +803,17 @@ async fn contract(pg: bool) {
     assert_eq!(generated.status, StatusCode::OK);
     assert!(generated.text().starts_with("<svg"), "{}", generated.text());
 
+    let deletion_session = db::users::sessions::create_session(
+        f.pool(),
+        &uuid::Uuid::new_v4().simple().to_string().repeat(2),
+        ids[2],
+        None,
+        None,
+        chrono::Utc::now() + chrono::Duration::hours(1),
+    )
+    .await
+    .unwrap();
+    let deletion_credential = db::users::accounts::AccountCredential::Session(&deletion_session.id);
     // Deleting an organization removes its selected picture and queues the bytes.
     let deleted_picture = upload(&carol, "org_avatar", PNG, true).await;
     let file = db::files::get_file_by_id(f.pool(), uuid(&deleted_picture))
@@ -787,7 +827,7 @@ async fn contract(pg: bool) {
         OrganizationOutcome::Applied(_)
     ));
     assert!(matches!(
-        organizations::delete_organization(f.pool(), ids[2], org)
+        organizations::delete_organization(f.pool(), (ids[2], &deletion_credential), org)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(())
@@ -827,14 +867,14 @@ async fn contract(pg: bool) {
         ));
     }
     assert!(matches!(
-        organizations::delete_organization(f.pool(), ids[2], deleted_org)
+        organizations::delete_organization(f.pool(), (ids[2], &deletion_credential), deleted_org)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert_eq!(download(&nobody, &picture).await, StatusCode::OK);
     assert!(matches!(
-        organizations::delete_organization(f.pool(), ids[2], other_org)
+        organizations::delete_organization(f.pool(), (ids[2], &deletion_credential), other_org)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(())
@@ -934,14 +974,21 @@ async fn pending_picture_contract(pg: bool) {
         let pool = f.pool();
         let assign = |id| async move {
             if reason == FileReason::Avatar {
-                db::users::accounts::set_user_avatar(pool, actor, Some(id))
-                    .await
-                    .map(|outcome| {
-                        assert_eq!(
-                            outcome,
-                            db::users::accounts::UserAvatarOutcome::Applied(None)
-                        );
-                    })
+                db::users::accounts::set_user_avatar(
+                    pool,
+                    actor,
+                    &db::users::accounts::AccountCredential::Session(
+                        &crate::support::live_session(pool, actor).await,
+                    ),
+                    Some(id),
+                )
+                .await
+                .map(|outcome| {
+                    assert_eq!(
+                        outcome,
+                        db::users::accounts::UserAvatarOutcome::Applied(None)
+                    );
+                })
             } else {
                 organizations::set_organization_avatar(pool, actor, org, Some(id))
                     .await
@@ -990,9 +1037,16 @@ async fn pending_picture_contract(pg: bool) {
         .await;
         if reason == FileReason::Avatar {
             assert_eq!(
-                db::users::accounts::set_user_avatar(f.pool(), actor, Some(interrupted))
-                    .await
-                    .unwrap(),
+                db::users::accounts::set_user_avatar(
+                    f.pool(),
+                    actor,
+                    &db::users::accounts::AccountCredential::Session(
+                        &crate::support::live_session(f.pool(), actor).await
+                    ),
+                    Some(interrupted)
+                )
+                .await
+                .unwrap(),
                 db::users::accounts::UserAvatarOutcome::NotUsable
             );
         } else {

@@ -28,11 +28,13 @@ pub enum LocalUploadError {
 pub async fn put_local_upload(
     pool: &DbPool,
     store: &ObjectStore,
-    actor_id: i64,
+    actor: impl Into<files_db::FileAuthority>,
     file_id: Uuid,
     content_type: &str,
     reader: impl AsyncRead + Unpin,
 ) -> Result<(), LocalUploadError> {
+    let actor = actor.into();
+    let actor_id = actor.user_id.ok_or(LocalUploadError::NotFound)?;
     let first = files_db::get_owned_file(pool, file_id, actor_id)
         .await
         .map_err(|_| LocalUploadError::MetadataUnavailable)?
@@ -48,9 +50,11 @@ pub async fn put_local_upload(
             .lock_file(&key)
             .await
             .map_err(|_| LocalUploadError::StorageUnavailable)?;
-        let _io = store
-            .try_acquire_io()
-            .map_err(|_| LocalUploadError::StorageUnavailable)?;
+        let io = std::sync::Arc::new(
+            store
+                .try_acquire_io()
+                .map_err(|_| LocalUploadError::StorageUnavailable)?,
+        );
         let file = files_db::get_owned_file(pool, file_id, actor_id)
             .await
             .map_err(|_| LocalUploadError::MetadataUnavailable)?
@@ -61,15 +65,23 @@ pub async fn put_local_upload(
         if file.content_type != content_type {
             return Err(LocalUploadError::Invalid);
         }
-        store
-            .put_local(&upload(&file), reader)
+        let staged = store
+            .stage_local(&upload(&file), reader, io.clone())
             .await
             .map_err(|error| match error {
                 StorageError::Unavailable => LocalUploadError::StorageUnavailable,
-                StorageError::Invalid | StorageError::NotFound | StorageError::Rejected => {
-                    LocalUploadError::Rejected
-                }
-            })
+                _ => LocalUploadError::Rejected,
+            })?;
+        if !files_db::can_publish_upload(pool, file_id, actor)
+            .await
+            .map_err(|_| LocalUploadError::MetadataUnavailable)?
+        {
+            return Err(LocalUploadError::Rejected);
+        }
+        staged
+            .publish()
+            .await
+            .map_err(|_| LocalUploadError::StorageUnavailable)
     })
     .await
     .unwrap_or(Err(LocalUploadError::Rejected))

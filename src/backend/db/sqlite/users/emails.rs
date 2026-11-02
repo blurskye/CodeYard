@@ -1,3 +1,4 @@
+use crate::backend::db::email::secondary_link_condition;
 use crate::backend::db::users::{
     accounts::AccountCredential,
     emails::{EmailAddress, EmailRefusal},
@@ -5,9 +6,28 @@ use crate::backend::db::users::{
 use anyhow::Result;
 use sqlx::SqlitePool;
 
+const LIST_EMAILS: &str = "SELECT e.email,e.verified FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.user_id=?1 AND lower(e.email)<>lower(COALESCE(u.email,'')) ORDER BY e.email";
+
 pub async fn list_emails(pool: &SqlitePool, user: i64) -> Result<Vec<EmailAddress>> {
-    Ok(sqlx::query_as("SELECT e.email,e.verified FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.user_id=?1 AND lower(e.email)<>lower(COALESCE(u.email,'')) ORDER BY e.email")
-        .bind(user).fetch_all(pool).await?)
+    Ok(sqlx::query_as(LIST_EMAILS)
+        .bind(user)
+        .fetch_all(pool)
+        .await?)
+}
+
+pub async fn list_account_emails(
+    pool: &SqlitePool,
+    user: i64,
+    credential: &AccountCredential<'_>,
+) -> Result<Vec<EmailAddress>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    super::transitions::require_account(&mut tx, user, credential).await?;
+    let emails = sqlx::query_as(LIST_EMAILS)
+        .bind(user)
+        .fetch_all(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(emails)
 }
 
 pub async fn change_emails(
@@ -71,22 +91,25 @@ pub async fn save_verification(
     body_text: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::super::email::lock_link_recipient(&mut tx, user).await? {
+        return Ok(false);
+    }
     let saved = sqlx::query("UPDATE user_emails SET verification_hash=?3,verification_expires_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now','+1 day'),last_sent_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE user_id=?1 AND lower(email)=lower(?2) AND NOT verified AND (last_sent_at IS NULL OR last_sent_at<strftime('%Y-%m-%dT%H:%M:%f000Z','now','-60 seconds')) AND EXISTS(SELECT 1 FROM users WHERE id=?1 AND NOT is_banned AND NOT must_change_password)")
         .bind(user).bind(email).bind(hash).execute(&mut *tx).await?.rows_affected()==1;
     if saved {
-        sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text) VALUES (?1,?2,?3)")
-            .bind(email)
-            .bind(subject)
-            .bind(body_text)
-            .execute(&mut *tx)
-            .await?;
+        sqlx::query("DELETE FROM email_outbox WHERE link_user_id=?1 AND link_purpose='secondary' AND lower(to_address)=lower(?2) AND sent_at IS NULL")
+            .bind(user).bind(email).execute(&mut *tx).await?;
+        sqlx::query("INSERT INTO email_outbox(to_address,subject,body_text,link_user_id,link_purpose,link_token_hash) VALUES (?1,?2,?3,?4,'secondary',?5)")
+            .bind(email).bind(subject).bind(body_text).bind(user).bind(hash)
+            .execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(saved)
 }
 
 pub async fn verification_valid(pool: &SqlitePool, hash: &str) -> Result<bool> {
-    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.verification_hash=?1 AND e.verification_expires_at>strftime('%Y-%m-%dT%H:%M:%f000Z','now') AND NOT u.is_banned AND NOT e.verified)").bind(hash).fetch_one(pool).await?)
+    Ok(sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM user_emails e JOIN users u ON u.id=e.user_id WHERE e.verification_hash=?1 AND {})", secondary_link_condition(false)))
+        .bind(hash).fetch_one(pool).await?)
 }
 
 pub async fn verify_email(pool: &SqlitePool, hash: &str) -> Result<bool> {

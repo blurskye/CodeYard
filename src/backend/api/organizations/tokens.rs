@@ -49,64 +49,95 @@ async fn require_owner(ctx: &PageContext, actor: i64, org: i64) -> Result<(), Re
     }
 }
 
-/// The organization's tokens in `status`, newest first, at most 100.
+/// Projects listed tokens with their users and selected repository names.
 async fn grants(
     ctx: &PageContext,
-    org: i64,
-    status: &str,
+    rows: Vec<db::fine_grained_tokens::Token>,
+    repositories: &HashMap<i64, Vec<String>>,
 ) -> anyhow::Result<Vec<view::TokenGrant>> {
-    let pool = &ctx.state.pool;
-    let mut rows = db::fine_grained_tokens::organization_tokens(pool, org, status).await?;
-    rows.truncate(100);
     let mut ids: Vec<_> = rows.iter().map(|token| token.user_id).collect();
     ids.sort_unstable();
     ids.dedup();
-    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(pool, &ids)
+    let users: HashMap<_, _> = db::users::accounts::get_users_by_ids(&ctx.state.pool, &ids)
         .await?
         .into_iter()
         .map(|user| (user.id, user.username))
         .collect();
-    let mut grants = Vec::new();
-    for token in rows {
-        let repositories = if token.repository_access == "selected" {
-            db::fine_grained_tokens::repositories(pool, token.token_id)
-                .await?
-                .into_iter()
-                .map(|(_, name)| name)
-                .collect()
-        } else {
-            Vec::new()
-        };
-        let stored: Map<String, Value> =
-            serde_json::from_str(&token.permissions).unwrap_or_default();
-        let permissions = stored
-            .iter()
-            .filter_map(|(key, level)| Some(format!("{}: {}", catalog(key)?.name, level.as_str()?)))
-            .collect();
-        grants.push(view::TokenGrant {
-            id: token.token_id,
-            user: users.get(&token.user_id).cloned().unwrap_or_default(),
-            name: token.name,
-            description: token.description,
-            access: token.repository_access,
-            repositories,
-            permissions,
-            requested: token.requested_at.to_rfc3339(),
-            expires: token
-                .expires_at
-                .map_or_else(|| "never".to_owned(), |at| at.to_rfc3339()),
-            last_used: token.last_used_at.map(|at| at.to_rfc3339()),
-        });
-    }
-    Ok(grants)
+    Ok(rows
+        .into_iter()
+        .map(|token| {
+            let stored: Map<String, Value> =
+                serde_json::from_str(&token.permissions).unwrap_or_default();
+            let permissions = stored
+                .iter()
+                .filter_map(|(key, level)| {
+                    Some(format!("{}: {}", catalog(key)?.name, level.as_str()?))
+                })
+                .collect();
+            view::TokenGrant {
+                id: token.token_id,
+                user: users.get(&token.user_id).cloned().unwrap_or_default(),
+                name: token.name,
+                description: token.description,
+                repositories: repositories
+                    .get(&token.token_id)
+                    .cloned()
+                    .unwrap_or_default(),
+                access: token.repository_access,
+                permissions,
+                requested: token.requested_at.to_rfc3339(),
+                expires: token
+                    .expires_at
+                    .map_or_else(|| "never".to_owned(), |at| at.to_rfc3339()),
+                last_used: token.last_used_at.map(|at| at.to_rfc3339()),
+            }
+        })
+        .collect())
 }
 
-/// The owners' tab. The organization loader shows it to owners only.
-pub(super) async fn panel(ctx: &PageContext, org: i64) -> Result<view::TokenPanel, Response> {
+/// The owners' tab. The owner check, policy, lists and repository names come from one
+/// snapshot, so a demoted owner sees nothing created after the demotion.
+pub(super) async fn panel(
+    ctx: &PageContext,
+    actor: i64,
+    org: i64,
+) -> Result<view::TokenPanel, Response> {
     let unavailable = |_| organization::unavailable(ctx);
-    let policy = db::fine_grained_tokens::policy(&ctx.state.pool, org)
-        .await
-        .map_err(unavailable)?;
+    let limit = organization::PAGE_LIMIT;
+    let (Some((pending_before, _)), Some((active_before, _))) = (
+        organization::cursor(ctx, "pending_before"),
+        organization::cursor(ctx, "active_before"),
+    ) else {
+        return Err(organization::invalid(ctx));
+    };
+    let loaded = db::fine_grained_tokens::owner_tokens(
+        &ctx.state.pool,
+        actor,
+        ctx.session_id.as_deref().unwrap_or(""),
+        org,
+        (pending_before, active_before),
+        limit + 1,
+    )
+    .await
+    .map_err(unavailable)?
+    .ok_or_else(|| organization::not_found(ctx))?;
+    let mut repositories: HashMap<i64, Vec<String>> = HashMap::new();
+    for (token, name) in loaded.repositories {
+        repositories.entry(token).or_default().push(name);
+    }
+    let base = format!("{}/{org}?tab=personal-access-tokens", super::INDEX);
+    let (mut pending, mut active) = (loaded.pending, loaded.approved);
+    let pending_next = (pending.len() as i64 > limit).then(|| {
+        pending.truncate(limit as usize);
+        let last = pending.last().map_or(0, |token| token.token_id);
+        format!("{base}&pending_before={last}&active_before={active_before}")
+    });
+    let active_next = (active.len() as i64 > limit).then(|| {
+        active.truncate(limit as usize);
+        let last = active.last().map_or(0, |token| token.token_id);
+        format!("{base}&pending_before={pending_before}&active_before={last}")
+    });
+    let policy = loaded.policy;
     Ok(view::TokenPanel {
         fine_grained_allowed: policy.fine_grained_allowed,
         fine_grained_approval: policy.fine_grained_approval,
@@ -115,8 +146,14 @@ pub(super) async fn panel(ctx: &PageContext, org: i64) -> Result<view::TokenPane
             .max_lifetime_days
             .map(|days| days.to_string())
             .unwrap_or_default(),
-        pending: grants(ctx, org, "pending").await.map_err(unavailable)?,
-        active: grants(ctx, org, "approved").await.map_err(unavailable)?,
+        pending: grants(ctx, pending, &repositories)
+            .await
+            .map_err(unavailable)?,
+        active: grants(ctx, active, &repositories)
+            .await
+            .map_err(unavailable)?,
+        pending_next,
+        active_next,
     })
 }
 
@@ -151,6 +188,10 @@ fn policy(form: &Fields) -> Result<Policy, &'static str> {
 }
 
 async fn apply(ctx: &PageContext, actor: i64, org: i64, form: &Fields) -> anyhow::Result<Outcome> {
+    let actor = db::credentials::Actor::from((
+        actor,
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default(),
+    ));
     let pool = &ctx.state.pool;
     let token = organization::field(form, "token_id").parse::<i64>().ok();
     let changed = |done: bool| {

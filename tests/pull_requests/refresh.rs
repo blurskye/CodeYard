@@ -689,12 +689,16 @@ async fn concurrent_refresh_converges(pg: bool) {
             let raw = database.raw.clone();
             tokio::spawn(async move {
                 let mut tx = raw.begin().await.unwrap();
+                let pid: i32 = sqlx::query_scalar("SELECT pg_backend_pid()")
+                    .fetch_one(&mut *tx)
+                    .await
+                    .unwrap();
                 sqlx::query("SELECT id FROM pull_requests WHERE id=$1 FOR UPDATE")
                     .bind(pull_id)
                     .fetch_one(&mut *tx)
                     .await
                     .unwrap();
-                locked_tx.send(()).unwrap();
+                locked_tx.send(Some(pid)).unwrap();
                 release_rx.await.unwrap();
                 sqlx::query("UPDATE pull_requests SET head_sha=$2,base_sha=$3 WHERE id=$1")
                     .bind(pull_id)
@@ -715,7 +719,7 @@ async fn concurrent_refresh_converges(pg: bool) {
                     .fetch_one(&mut *tx)
                     .await
                     .unwrap();
-                locked_tx.send(()).unwrap();
+                locked_tx.send(None).unwrap();
                 release_rx.await.unwrap();
                 sqlx::query("UPDATE pull_requests SET head_sha=?2,base_sha=?3 WHERE id=?1")
                     .bind(pull_id)
@@ -728,7 +732,11 @@ async fn concurrent_refresh_converges(pg: bool) {
             })
         }
     };
-    locked_rx.await.unwrap();
+    let blocker_pid: Option<i32> = locked_rx.await.unwrap();
+    let lock_graph = match (&f, blocker_pid) {
+        (Database::Postgres(database), Some(pid)) => Some((database.raw.clone(), pid)),
+        _ => None,
+    };
     let spawn_refresh = || {
         let pool = f.pool().clone();
         let repository = repository.clone();
@@ -745,42 +753,70 @@ async fn concurrent_refresh_converges(pg: bool) {
             .await
         })
     };
+    let before = refreshes_waiting(&lock_graph).await;
     let first = spawn_refresh();
-    tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+    until_refresh_waits(&lock_graph, before, 500).await;
     assert!(
         !first.is_finished(),
         "first refresh must be waiting on its CAS"
     );
     // A publish writes the database before it moves a ref, and the SQLite blocker holds the whole
-    // database, so there the refs are moved with Git itself, as a push from outside would.
-    for prepared in [&second_head, &second_base] {
+    // database, so there the commits are written and the refs moved with Git itself, as a push
+    // from outside would. A prepared commit's objects stay staged until it is published, so the
+    // repository cannot point a ref at one.
+    let mut moved = Vec::new();
+    for (prepared, parent, path, bytes) in [
+        (&second_head, &first_head.sha, "two.txt", &b"two\n"[..]),
+        (
+            &second_base,
+            &first_base.sha,
+            "base-two.txt",
+            &b"base two\n"[..],
+        ),
+    ] {
         match &f {
             Database::Postgres(_) => {
                 store
                     .publish_file_as(f.pool(), repository.id, actor, prepared)
                     .await
                     .unwrap();
+                moved.push(prepared.commit.sha.clone());
             }
             Database::Sqlite(_) => {
-                let status = std::process::Command::new("git")
-                    .arg("-C")
-                    .arg(&repository.disk_path)
-                    .args(["update-ref", &prepared.reference, &prepared.commit.sha])
-                    .status()
+                let git = git2::Repository::open_bare(&repository.disk_path).unwrap();
+                let parent = git
+                    .find_commit(git2::Oid::from_str(parent).unwrap())
                     .unwrap();
-                assert!(status.success());
+                let blob = git.blob(bytes).unwrap();
+                let mut tree = git.treebuilder(Some(&parent.tree().unwrap())).unwrap();
+                tree.insert(path, blob, 0o100644).unwrap();
+                let tree = git.find_tree(tree.write().unwrap()).unwrap();
+                let author = git2::Signature::now("Refresh", "refresh@example.invalid").unwrap();
+                let commit = git
+                    .commit(
+                        Some(&prepared.reference),
+                        &author,
+                        &author,
+                        &prepared.commit.message,
+                        &tree,
+                        &[&parent],
+                    )
+                    .unwrap();
+                moved.push(commit.to_string());
             }
         }
     }
+    let before = refreshes_waiting(&lock_graph).await;
     let second = spawn_refresh();
-    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    until_refresh_waits(&lock_graph, before, 100).await;
     assert!(
         !second.is_finished(),
         "second refresh must be waiting on its CAS"
     );
     release_tx.send(()).unwrap();
     blocker.await.unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(10), async {
+    // Room for a slow CI runner; a refresh stuck on its CAS still fails here.
+    tokio::time::timeout(std::time::Duration::from_secs(60), async {
         first.await.unwrap().unwrap();
         second.await.unwrap().unwrap();
     })
@@ -791,9 +827,26 @@ async fn concurrent_refresh_converges(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(stored.head_sha, second_head.commit.sha);
-    assert_eq!(stored.base_sha, second_base.commit.sha);
+    assert_eq!(stored.head_sha, moved[0]);
+    assert_eq!(stored.base_sha, moved[1]);
     f.finish().await;
+}
+
+/// How many backends wait behind the blocker on PostgreSQL; SQLite cannot tell.
+async fn refreshes_waiting(lock_graph: &Option<(sqlx::PgPool, i32)>) -> i64 {
+    match lock_graph {
+        Some((raw, pid)) => database::blocked_count(raw, *pid).await,
+        None => 0,
+    }
+}
+
+/// Waits until one more refresh waits on its CAS. PostgreSQL shows it in the lock graph behind
+/// the blocker; SQLite has no such view, so there the refresh gets `pause_ms` to reach its write.
+async fn until_refresh_waits(lock_graph: &Option<(sqlx::PgPool, i32)>, before: i64, pause_ms: u64) {
+    match lock_graph {
+        Some((raw, pid)) => database::wait_until_blocked(raw, *pid, before + 1).await,
+        None => tokio::time::sleep(std::time::Duration::from_millis(pause_ms)).await,
+    }
 }
 
 /// A moved branch refreshes only the open pull requests that use it. A pull request on
@@ -968,6 +1021,75 @@ async fn sqlite_merge_names_the_base_branch_it_read() {
 #[tokio::test]
 async fn postgres_merge_names_the_base_branch_it_read() {
     merge_names_the_base_branch_it_read(true).await;
+}
+
+async fn merge_into_the_default_branch_closes_named_issues(pg: bool) {
+    let mut f = Database::new(pg).await;
+    f.complete_setup().await;
+    let alice_id = f.actor("alice").await;
+    let root = tempfile::tempdir().unwrap();
+    let repository = codeyard::backend::repositories::lifecycle::provision(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(alice_id),
+        "proj",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let router = f.router(root.path()).await;
+    let alice = Client::login(&router, f.pool(), alice_id).await;
+    let trunk = repository.default_branch.as_str();
+    let main0 = alice.save(trunk, "README.md", "unborn").await;
+    alice.branch("topic", &main0).await;
+    alice.save("topic", "topic.txt", &main0).await;
+    let mut issues = Vec::new();
+    for title in ["Named", "Unnamed"] {
+        let issue = alice
+            .expect(
+                "POST",
+                "/api/repos/alice/proj/issues",
+                json!({"title": title, "body": "Body"}),
+                StatusCode::CREATED,
+            )
+            .await;
+        issues.push(issue["number"].as_i64().unwrap());
+    }
+    let pull = alice
+        .expect(
+            "POST",
+            "/api/repos/alice/proj/pulls",
+            json!({"title": "Fix", "body": format!("Fixes #{}", issues[0]), "head_branch": "topic", "base_branch": trunk}),
+            StatusCode::CREATED,
+        )
+        .await;
+    alice.merge_current(pull["number"].as_i64().unwrap()).await;
+    let mut states = Vec::new();
+    for number in &issues {
+        let issue = alice
+            .expect(
+                "GET",
+                &format!("/api/repos/alice/proj/issues/{number}"),
+                Value::Null,
+                StatusCode::OK,
+            )
+            .await;
+        states.push(issue["state"].as_str().unwrap().to_owned());
+    }
+    assert_eq!(states, ["closed", "open"]);
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_merge_into_the_default_branch_closes_named_issues() {
+    merge_into_the_default_branch_closes_named_issues(false).await;
+}
+
+#[tokio::test]
+async fn postgres_merge_into_the_default_branch_closes_named_issues() {
+    merge_into_the_default_branch_closes_named_issues(true).await;
 }
 
 #[tokio::test]

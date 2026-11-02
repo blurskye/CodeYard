@@ -128,7 +128,9 @@ async fn source() -> Source {
                 let transfer = transfer.clone();
                 async move {
                     assert_eq!(headers[header::AUTHORIZATION], "Basic dXBzdHJlYW06c2VjcmV0");
-                    assert!(String::from_utf8_lossy(&body).contains("side-band-64k ofs-delta"));
+                    // Imports ask for sideband only, not offset deltas, since 872d32a69.
+                    let request = String::from_utf8_lossy(&body);
+                    assert!(request.contains(" side-band-64k\n") && !request.contains("ofs-delta"));
                     (
                         [(header::CONTENT_TYPE, "application/x-git-upload-pack-result")],
                         transfer,
@@ -372,13 +374,14 @@ async fn contract(pg: bool, source: &Source) {
     )
     .await;
     wait_status(&router, base, reader, "complete").await;
+    // Commit authors map to accounts only through verified addresses, as on GitHub.
     f.execute(
-        "UPDATE users SET email='original@example.test' WHERE id=$1",
+        "UPDATE users SET email='original@example.test',email_verified=TRUE WHERE id=$1",
         &[alice],
     )
     .await;
     f.execute(
-        "UPDATE users SET email='mapped@example.test' WHERE id=$1",
+        "UPDATE users SET email='mapped@example.test',email_verified=TRUE WHERE id=$1",
         &[bob],
     )
     .await;
@@ -446,7 +449,9 @@ async fn contract(pg: bool, source: &Source) {
     assert_eq!(after, json!([]));
     let store = repo_store(&repo, None);
     let refs = store.mirror_refs().await.unwrap();
-    assert_eq!(refs.len(), 4); // Three imported refs and one locally attested branch proof.
+    // The trunk branch and v1 tag, and one locally attested branch proof. A source's pull
+    // request refs are not imported, since pull refs belong to this repository's own pulls.
+    assert_eq!(refs.len(), 3);
     assert!(!refs.contains_key("refs/codeyard"));
     assert!(!refs.contains_key("refs/codeyard/publications/untrusted"));
     let proof = store
@@ -462,7 +467,7 @@ async fn contract(pg: bool, source: &Source) {
     assert!(refs.values().any(|oid| oid == &proof.object_id));
     assert_eq!(refs["refs/heads/trunk"], source.tip);
     assert_eq!(refs["refs/tags/v1"], source.tag);
-    assert_eq!(refs["refs/pull/7/head"], source.tip);
+    assert!(!refs.contains_key("refs/pull/7/head"));
     assert_eq!(
         store.git_tag(&source.tag).await.unwrap().message,
         "Original tag"
@@ -533,6 +538,9 @@ async fn contract(pg: bool, source: &Source) {
     .await
     .unwrap();
     let base = "/api/v3/repos/import-owner/cancelled/import";
+    // The test runs on one thread, so this log also hears the import worker it starts.
+    let log = crate::support::logs::Log::capture();
+    let logging = tracing::dispatcher::set_default(&log.dispatch);
     source.blocked.store(true, Ordering::SeqCst);
     let seen = source.requests.load(Ordering::SeqCst);
     let input = json!({"vcs_url":source.url, "vcs_username":"upstream", "vcs_password":"secret"});
@@ -546,7 +554,8 @@ async fn contract(pg: bool, source: &Source) {
         StatusCode::CREATED,
     )
     .await;
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    // The cap leaves a loaded runner room to start the import; the wait ends at its request.
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
         while source.requests.load(Ordering::SeqCst) == seen {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
@@ -574,7 +583,15 @@ async fn contract(pg: bool, source: &Source) {
     )
     .await;
     source.blocked.store(false, Ordering::SeqCst);
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // Check the refs only once the cancelled worker has given up, so a late worker cannot
+    // publish after the check.
+    let failed = format!("repo_id={}", empty.id);
+    log.wait_for(
+        |line| line.contains("source import failed") && line.split(' ').any(|word| word == failed),
+        "the cancelled import never failed, so its worker may have published",
+    )
+    .await;
+    drop(logging);
     assert!(repo_store(&empty, None)
         .mirror_refs()
         .await
@@ -628,7 +645,8 @@ async fn contract(pg: bool, source: &Source) {
         StatusCode::CREATED,
     )
     .await;
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+    // The cap leaves a loaded runner room to start the import; the wait ends at its request.
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
         while source.requests.load(Ordering::SeqCst) == seen {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }

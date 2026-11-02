@@ -111,6 +111,8 @@ native_operation!(crate::backend::db::postgres::interactions::set_restriction,cr
     fn set_restriction(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, scope: InteractionScope, input: Option<NewRestriction>) -> Result<Option<Restriction>>);
 native_operation!(crate::backend::db::postgres::interactions::effective_restriction,crate::backend::db::sqlite::interactions::effective_restriction,
     fn effective_restriction(pool: &DbPool, repo: i64) -> Result<Option<Restriction>>);
+native_operation!(crate::backend::db::postgres::interactions::proof_required,crate::backend::db::sqlite::interactions::proof_required,
+    fn proof_required(pool: &DbPool, actor: i64, repo: i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::interactions::verified_emails,crate::backend::db::sqlite::interactions::verified_emails,
     fn verified_emails(pool: &DbPool, actor: i64) -> Result<Vec<String>>);
 native_operation!(crate::backend::db::postgres::interactions::proof_current,crate::backend::db::sqlite::interactions::proof_current,

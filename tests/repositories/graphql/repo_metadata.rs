@@ -105,6 +105,7 @@ async fn contract(pg: bool) {
     let project = db::projects::create(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Session(&session.session),
         db::projects::Owner::User(alice),
         "Roadmap",
         None,
@@ -112,9 +113,16 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::projects::link_repository(f.pool(), alice, project.id, repo.id, true)
-        .await
-        .unwrap();
+    db::projects::link_repository(
+        f.pool(),
+        alice,
+        &db::users::accounts::AccountCredential::Session(&session.session),
+        project.id,
+        repo.id,
+        true,
+    )
+    .await
+    .unwrap();
     db::repositories::engagement::star_repo(f.pool(), alice, repo.id)
         .await
         .unwrap();
@@ -154,7 +162,7 @@ async fn contract(pg: bool) {
         assert!(node["securityPolicyUrl"]
             .as_str()
             .unwrap()
-            .ends_with("/metadata-alice/proj/blob/main/SECURITY.md"));
+            .ends_with("/metadata-alice/proj/blob/refs/heads/main/SECURITY.md"));
         assert!(node["diskUsage"].is_number());
         assert!(node["viewerDefaultCommitEmail"].is_string());
         assert!(node["viewerPossibleCommitEmails"]
@@ -165,8 +173,8 @@ async fn contract(pg: bool) {
         assert_eq!(node["viewerDefaultMergeMethod"], "MERGE");
         assert_eq!(node["viewerHasStarred"], true);
         assert_eq!(node["viewerSubscription"], "SUBSCRIBED");
-        assert_eq!(node["codeOfConduct"]["key"], "contributor_covenant");
-        assert_eq!(node["codeOfConduct"]["name"], "Contributor Covenant");
+        assert_eq!(node["codeOfConduct"]["key"], "other");
+        assert_eq!(node["codeOfConduct"]["name"], "Other");
         assert!(node["codeOfConduct"]["url"].is_string());
         assert_eq!(
             node["licenseInfo"],

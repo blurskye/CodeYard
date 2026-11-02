@@ -4,6 +4,9 @@ use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, HashSet};
 
+pub(crate) const INCLUSION_PROPERTY_SQL: &str = "SELECT id FROM organization_repository_properties WHERE org_id=$1 AND property_name=$2 AND ($3 OR value_type IN ('string','single_select','multi_select','true_false'))";
+pub(crate) const INCLUDED_DEFINITIONS_SQL: &str = "SELECT p.* FROM organization_repository_properties p JOIN actions_oidc_properties o ON o.definition_id=p.id WHERE p.org_id=$1 ORDER BY lower(p.property_name),p.id";
+
 #[derive(Clone, Copy)]
 pub enum Scope {
     Repository(i64),
@@ -111,13 +114,13 @@ native_operation!(crate::backend::db::postgres::oidc_settings::get,
     fn settings(pool: &DbPool, actor: i64, scope: Scope) -> Result<Settings>);
 native_operation!(crate::backend::db::postgres::oidc_settings::save,
     crate::backend::db::sqlite::oidc_settings::save,
-    fn save_settings(pool: &DbPool, actor: i64, scope: Scope, settings: &Settings) -> Result<()>);
+    fn save_settings(pool: &DbPool, actor: impl Into<super::credentials::Actor>, scope: Scope, settings: &Settings) -> Result<()>);
 native_operation!(crate::backend::db::postgres::oidc_settings::inclusions,
     crate::backend::db::sqlite::oidc_settings::inclusions,
     fn inclusions(pool: &DbPool, actor: i64, org: i64) -> Result<Vec<Inclusion>>);
 native_operation!(crate::backend::db::postgres::oidc_settings::change_inclusion,
     crate::backend::db::sqlite::oidc_settings::change_inclusion,
-    fn change_inclusion(pool: &DbPool, actor: i64, org: i64, name: &str, remove: bool) -> Result<()>);
+    fn change_inclusion(pool: &DbPool, actor: impl Into<super::credentials::Actor>, org: i64, name: &str, remove: bool) -> Result<()>);
 native_operation!(crate::backend::db::postgres::oidc_settings::token_settings,
     crate::backend::db::sqlite::oidc_settings::token_settings,
     fn token_settings(pool: &DbPool, repo: i64) -> Result<TokenSettings>);

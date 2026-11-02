@@ -3,6 +3,10 @@ use crate::backend::db::models::{AccessLevel, RepoAccess, Repository, User};
 use crate::backend::db::DbPool;
 use anyhow::Result;
 
+native_operation!(crate::backend::db::postgres::repositories::access::git_access,
+    crate::backend::db::sqlite::repositories::access::git_access,
+    fn git_access(pool: &DbPool, user_id: i64, repo_id: i64, write: bool) -> Result<AccessLevel>);
+
 pub enum CollaboratorChange {
     Applied(Box<User>),
     NotFound,
@@ -14,7 +18,7 @@ native_operation!(crate::backend::db::postgres::repositories::access::change_per
     crate::backend::db::sqlite::repositories::access::change_personal_repository_collaborator,
     fn change_personal_repository_collaborator(
     pool: &DbPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     username: &str,
     permission: Option<AccessLevel>,
@@ -23,6 +27,10 @@ native_operation!(crate::backend::db::postgres::repositories::access::change_per
 native_operation!(crate::backend::db::postgres::repositories::access::readable_repositories_by_ids,
     crate::backend::db::sqlite::repositories::access::readable_repositories_by_ids,
     fn readable_repositories_by_ids(pool: &DbPool, user_id: i64, ids: &[i64]) -> Result<Vec<Repository>>);
+
+native_operation!(crate::backend::db::postgres::repositories::access::author_associations,
+    crate::backend::db::sqlite::repositories::access::author_associations,
+    fn author_associations(pool: &DbPool, repo_id: i64, users: &[i64]) -> Result<Vec<(i64, String)>>);
 
 native_operation!(crate::backend::db::postgres::repositories::access::get_user_repo_access,
     crate::backend::db::sqlite::repositories::access::get_user_repo_access,

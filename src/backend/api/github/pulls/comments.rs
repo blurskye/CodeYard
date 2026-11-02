@@ -73,14 +73,14 @@ pub(super) async fn document(
 /// Diffs a comment list keeps in memory at once, however many revision pairs its page names.
 const MAX_CACHED_DIFFS: usize = 8;
 
-/// Comments are anchored to pairs of revisions. A list reuses each pair's diff while it is held.
+/// Comments retain their original base. A page reuses only the selected file's diff.
 async fn document_cached(
     state: &AppState,
     owner: &str,
     repo: &db::models::Repository,
     pull: &db::models::PullRequest,
     comment: &db::models::PullRequestComment,
-    diffs: &mut HashMap<(String, String), Vec<DiffFileInfo>>,
+    diffs: &mut HashMap<(String, String, String), Vec<DiffFileInfo>>,
 ) -> Result<Value> {
     let user = db::users::accounts::get_user_by_id(&state.pool, comment.author_id)
         .await
@@ -95,91 +95,29 @@ async fn document_cached(
     );
     value["user"] = payloads::user(&user);
     value["author_association"] = json!(association(&state.pool, repo, user.id).await?);
+    let reactions =
+        crate::backend::webhooks::documents::review_comment_reactions(&state.pool, &value)
+            .await
+            .map_err(Error::unavailable)?;
+    value["reactions"] = reactions;
+    let (base, head) = payloads::review_comment_revisions(comment, pull);
     let key = (
-        pull.diff_base().to_owned(),
-        comment
-            .commit_sha
-            .as_deref()
-            .unwrap_or(&pull.head_sha)
-            .to_owned(),
+        base.to_owned(),
+        head.to_owned(),
+        comment.path.clone().unwrap_or_default(),
     );
     if !diffs.contains_key(&key) {
         if diffs.len() >= MAX_CACHED_DIFFS {
             diffs.clear();
         }
         let diff = repo_store(repo, state.cluster.as_ref())
-            .diff(&key.0, &key.1)
+            .diff_file(&key.0, &key.1, &key.2)
             .await
             .map_err(super::store_error)?;
         diffs.insert(key.clone(), diff.files);
     }
-    if let Some(file) = diffs[&key]
-        .iter()
-        .find(|f| Some(f.filename.as_str()) == comment.path.as_deref())
-    {
-        value["diff_hunk"] = json!(file.patch);
-        if let Some(line) = comment.line {
-            if let Some((position, _, _)) =
-                positions(&file.patch).into_iter().find(|(_, left, right)| {
-                    if comment.side.as_deref() == Some("LEFT") {
-                        *left == Some(line)
-                    } else {
-                        *right == Some(line)
-                    }
-                })
-            {
-                value["position"] = json!(position);
-                value["original_position"] = json!(position);
-            }
-        }
-    }
+    payloads::review_comment_diff(&mut value, comment, pull, &diffs[&key]);
     Ok(value)
-}
-
-// Positions count diff rows, not file lines; later hunk headers count too.
-fn positions(patch: &str) -> Vec<(i32, Option<i32>, Option<i32>)> {
-    let (mut old, mut new, mut pos, mut begun) = (0, 0, 0, false);
-    let mut rows = Vec::new();
-    for row in patch.lines() {
-        if row.starts_with("@@ ") {
-            let mut fields = row.split_whitespace();
-            fields.next();
-            old = fields
-                .next()
-                .and_then(|s| s.trim_start_matches('-').split(',').next()?.parse().ok())
-                .unwrap_or(0);
-            new = fields
-                .next()
-                .and_then(|s| s.trim_start_matches('+').split(',').next()?.parse().ok())
-                .unwrap_or(0);
-            if begun {
-                pos += 1;
-            }
-            begun = true;
-            continue;
-        }
-        if !begun {
-            continue;
-        }
-        pos += 1;
-        match row.as_bytes().first() {
-            Some(b'+') => {
-                rows.push((pos, None, Some(new)));
-                new += 1;
-            }
-            Some(b'-') => {
-                rows.push((pos, Some(old), None));
-                old += 1;
-            }
-            Some(b' ') => {
-                rows.push((pos, Some(old), Some(new)));
-                old += 1;
-                new += 1;
-            }
-            _ => {}
-        }
-    }
-    rows
 }
 
 #[derive(Default, Deserialize)]
@@ -203,6 +141,18 @@ pub(super) async fn prepare(
     pull: &db::models::PullRequest,
     input: Create,
     pending: bool,
+) -> Result<domain::CreatePullRequestCommentRequest> {
+    prepare_with_diff(state, headers, repo, pull, input, pending, None).await
+}
+
+pub(super) async fn prepare_with_diff(
+    state: &AppState,
+    headers: &HeaderMap,
+    repo: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    input: Create,
+    pending: bool,
+    cached: Option<&crate::backend::git::DiffInfo>,
 ) -> Result<domain::CreatePullRequestCommentRequest> {
     let mut line = input.line;
     let mut side = input.side;
@@ -243,15 +193,29 @@ pub(super) async fn prepare(
             return Err(Error::invalid("commit_id is required"));
         }
         if let Some(position) = input.position.filter(|_| line.is_none()) {
-            let diff = repo_store(repo, state.cluster.as_ref())
-                .diff(pull.diff_base(), &pull.head_sha)
-                .await
-                .map_err(super::store_error)?;
+            let loaded;
+            let diff = if let Some(diff) = cached {
+                diff
+            } else {
+                loaded = repo_store(repo, state.cluster.as_ref())
+                    .diff_file(
+                        pull.diff_base(),
+                        input.commit_id.as_deref().unwrap_or(&pull.head_sha),
+                        path,
+                    )
+                    .await
+                    .map_err(super::store_error)?;
+                &loaded
+            };
             let row = diff
                 .files
                 .iter()
                 .find(|f| f.filename == path)
-                .and_then(|f| positions(&f.patch).into_iter().find(|r| r.0 == position))
+                .and_then(|f| {
+                    payloads::diff_positions(&f.patch)
+                        .into_iter()
+                        .find(|r| r.0 == position)
+                })
                 .ok_or_else(|| Error::invalid("position is not in the diff"))?;
             if let Some(right) = row.2 {
                 line = Some(right);
@@ -296,7 +260,7 @@ async fn create(
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (_, pull) = target(&state, &headers, &owner, &name, number).await?;
-    let input = serde_json::from_slice(&body).map_err(|_| Error::invalid("Invalid comment"))?;
+    let input = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let request = prepare(&state, &headers, &repo, &pull, input, false).await?;
     let comment = domain::create_pull_request_comment(
         &state.pool,
@@ -327,8 +291,7 @@ async fn reply(
     Path((owner, name, number, id)): Path<(String, String, i32, i64)>,
     body: Bytes,
 ) -> Result<Response> {
-    let input: Body =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("body is required"))?;
+    let input: Body = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     create(
         State(state),
         headers,
@@ -358,8 +321,7 @@ async fn update(
     let (repo, viewer) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = viewer.ok_or_else(auth::required)?.user;
     let (pull, _) = visible(&state, &headers, &repo, id).await?;
-    let input: Body =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("body is required"))?;
+    let input: Body = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     let comment = domain::edit_pull_request_comment(
         &state.pool,
         &state.notification_broadcaster,

@@ -294,12 +294,12 @@ async fn authority_contract(pg: bool) {
         .await
         .is_ok());
 
-    // Cancelling: the person who started the run and repository admins may;
-    // other writers, outsiders and site admins (without repo access) may not.
+    // Cancelling: the person who started the run and anyone with write access may, as on
+    // GitHub; outsiders and site admins (without repo access) may not.
     for (actor, allowed) in [
         (outsider, false),
         (site, false),
-        (direct, false),
+        (direct, true),
         (admin, true),
         (owner, true),
         (member, true),
@@ -612,10 +612,16 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
     let a_running = enqueue(pool, member, repo_a, false, &[member])
         .await
         .unwrap();
-    let claimed = db::ci::claim_ci_run(pool, "team-worker", "local", &[member])
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db::ci::claim_ci_run(
+        pool,
+        "team-worker",
+        "local",
+        &[member],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.id, a_running.id);
     let b_queued = enqueue(pool, member, repo_b, false, &[member])
         .await

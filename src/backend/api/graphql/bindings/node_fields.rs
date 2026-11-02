@@ -91,7 +91,7 @@ impl gql::ReactionResolver for Object {
     fields!("Reaction";id()->ID;database_id()->Option<i32>;created_at()->gql::DateTime;content()->gql::ReactionContent;user()->Option<gql::User>;reactable()->gql::Reactable;);
 }
 impl gql::ReleaseResolver for Object {
-    fields!("Release";immutable()->bool;id()->ID;database_id()->Option<i32>;name()->Option<String>;tag_name()->String;description()->Option<String>;is_draft()->bool;is_latest()->bool;is_prerelease()->bool;created_at()->gql::DateTime;published_at()->Option<gql::DateTime>;author()->Option<gql::User>;url()->gql::URI;repository()->gql::Repository;tag()->Option<gql::Ref>;tag_commit()->Option<gql::Commit>;release_assets(after:Option<String>,before:Option<String>,first:Option<i32>,last:Option<i32>,name:Option<String>)->gql::ReleaseAssetConnection;);
+    fields!("Release";reaction_groups()->Option<Vec<gql::ReactionGroup>>;immutable()->bool;id()->ID;database_id()->Option<i32>;name()->Option<String>;tag_name()->String;description()->Option<String>;is_draft()->bool;is_latest()->bool;is_prerelease()->bool;created_at()->gql::DateTime;published_at()->Option<gql::DateTime>;author()->Option<gql::User>;url()->gql::URI;repository()->gql::Repository;tag()->Option<gql::Ref>;tag_commit()->Option<gql::Commit>;release_assets(after:Option<String>,before:Option<String>,first:Option<i32>,last:Option<i32>,name:Option<String>)->gql::ReleaseAssetConnection;);
 }
 impl gql::ReleaseAssetResolver for Object {
     fields!("ReleaseAsset";id()->ID;name()->String;content_type()->String;size()->i32;download_count()->i32;download_url()->gql::URI;created_at()->gql::DateTime;updated_at()->gql::DateTime;);

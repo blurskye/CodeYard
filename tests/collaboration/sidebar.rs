@@ -12,6 +12,14 @@ use database::Database;
 use pulls::Client;
 use serde_json::json;
 
+/// The repository and item ids a writer's issue or pull request page binds its metadata forms to.
+fn binding(page: &str) -> (String, String) {
+    (
+        pulls::field_value(page, "repository_id").expect("repository binding"),
+        pulls::field_value(page, "item_id").expect("item binding"),
+    )
+}
+
 async fn contract(pg: bool) {
     // The native forms answer with rendered pages, which need the browser bundle.
     bundle::install();
@@ -114,6 +122,9 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(assigned.status, StatusCode::SEE_OTHER);
     let (_, page) = alice.page(&issue_page).await;
+    // A reader's page has no metadata forms. A reader who sends the binding a writer's page
+    // carries is refused by the write itself.
+    let issue_binding = binding(&page);
     assert!(page.contains("collaboration-assignee\""), "{page}");
     assert!(page.contains("assignees/bob/remove"), "{page}");
     let (status, page) = alice
@@ -122,7 +133,14 @@ async fn contract(pg: bool) {
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{page}");
     assert!(page.contains("Only the repository owner and collaborators can be assigned."));
     let (status, _) = bob
-        .form(&format!("{issue_page}/assignees"), &[("username", "bob")])
+        .form(
+            &format!("{issue_page}/assignees"),
+            &[
+                ("username", "bob"),
+                ("repository_id", &issue_binding.0),
+                ("item_id", &issue_binding.1),
+            ],
+        )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN);
     let forged = Client::anonymous(&router);
@@ -362,10 +380,15 @@ async fn contract(pg: bool) {
         .form(&format!("{pull_page}/labels"), &[("label", "999999")])
         .await;
     assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{page}");
+    let pull_binding = binding(&alice.page_ok(&pull_page).await);
     let (status, page) = bob
         .form(
             &format!("{pull_page}/labels"),
-            &[("label", docs_id.as_str())],
+            &[
+                ("label", docs_id.as_str()),
+                ("repository_id", &pull_binding.0),
+                ("item_id", &pull_binding.1),
+            ],
         )
         .await;
     assert_eq!(status, StatusCode::FORBIDDEN, "{page}");

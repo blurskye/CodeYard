@@ -3,6 +3,8 @@ use crate::backend::db::secret_scanning::*;
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
 
+const PROVIDER: &str = "CASE WHEN secret_type LIKE 'custom-pattern-%' THEN 'custom' ELSE split_part(secret_type,'_',1) END";
+
 pub async fn protection(
     pool: &PgPool,
     actor: i64,
@@ -15,7 +17,14 @@ pub async fn protection(
         super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
         Refusal::Denied
     );
-    let protected: bool = sqlx::query_scalar("SELECT COALESCE((SELECT push_protection FROM secret_scanning_settings WHERE repo_id=$1),false)").bind(repo).fetch_one(&mut *tx).await?;
+    // Serialize placeholder lookup and insertion for concurrent retries of a protected push.
+    let protected: bool = sqlx::query_scalar(
+        "SELECT push_protection FROM secret_scanning_settings WHERE repo_id=$1 FOR UPDATE",
+    )
+    .bind(repo)
+    .fetch_optional(&mut *tx)
+    .await?
+    .unwrap_or(false);
     if !protected {
         return Ok(None);
     }
@@ -24,10 +33,20 @@ pub async fn protection(
     if granted {
         return Ok(None);
     }
-    let placeholder = sqlx::query_as("INSERT INTO secret_scanning_bypasses(id,repo_id,actor_id,secret_hash,token_type,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *")
-        .bind(uuid::Uuid::new_v4().to_string()).bind(repo).bind(actor).bind(hash).bind(kind).bind(now + chrono::Duration::hours(3)).fetch_one(&mut *tx).await?;
+    let existing: Option<Bypass> = sqlx::query_as("SELECT * FROM secret_scanning_bypasses WHERE repo_id=$1 AND actor_id=$2 AND secret_hash=$3 AND token_type=$4 AND reason IS NULL AND used_at IS NULL AND expires_at>$5 ORDER BY expires_at DESC,id LIMIT 1 FOR UPDATE")
+        .bind(repo).bind(actor).bind(hash).bind(kind).bind(now).fetch_optional(&mut *tx).await?;
+    let placeholder = match existing {
+        Some(placeholder) => placeholder,
+        None => sqlx::query_as("INSERT INTO secret_scanning_bypasses(id,repo_id,actor_id,secret_hash,token_type,expires_at) VALUES($1,$2,$3,$4,$5,$6) RETURNING *")
+            .bind(uuid::Uuid::new_v4().to_string()).bind(repo).bind(actor).bind(hash).bind(kind).bind(now + chrono::Duration::hours(3)).fetch_one(&mut *tx).await?,
+    };
     tx.commit().await?;
     Ok(Some(placeholder))
+}
+
+pub async fn prune_expired_bypasses(pool: &PgPool) -> Result<u64> {
+    Ok(sqlx::query("DELETE FROM secret_scanning_bypasses WHERE id IN (SELECT id FROM secret_scanning_bypasses WHERE used_at IS NULL AND expires_at<=clock_timestamp() ORDER BY expires_at,id LIMIT 1000 FOR UPDATE SKIP LOCKED) AND used_at IS NULL")
+        .execute(pool).await?.rows_affected())
 }
 
 pub async fn bypass(
@@ -92,8 +111,8 @@ pub async fn org_alerts(
 ) -> Result<Vec<Alert>> {
     let mut tx = pool.begin().await?;
     org_authority(&mut tx, actor, org).await?;
-    let rows = sqlx::query_as("SELECT * FROM secret_scanning_alerts WHERE repo_id IN (SELECT r.id FROM repositories r JOIN secret_scanning_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.enabled) AND ($2 IS NULL OR number=$2) AND ($3 IS NULL OR state=$3) AND ($4 IS NULL OR secret_type=ANY(string_to_array($4,','))) AND ($5 IS NULL OR resolution=ANY(string_to_array($5,','))) AND ($10 IS NULL OR NOT secret_type=ANY(string_to_array($10,','))) AND ($11 IS NULL OR COALESCE(validity,'unknown')=ANY(string_to_array($11,','))) AND ($12 IS NULL OR ($12='*' AND assigned_to IS NOT NULL) OR ($12='none' AND assigned_to IS NULL) OR assigned_to IN (SELECT id FROM users WHERE username=$12)) AND ($13 IS NULL OR EXISTS(SELECT 1 FROM secret_scanning_bypasses b WHERE b.repo_id=secret_scanning_alerts.repo_id AND b.secret_hash=secret_scanning_alerts.secret_hash AND b.used_at IS NOT NULL)=$13) ORDER BY CASE WHEN $6 AND $7 THEN updated_at WHEN $6 THEN created_at END ASC, CASE WHEN NOT $6 AND $7 THEN updated_at WHEN NOT $6 THEN created_at END DESC, repo_id,number DESC LIMIT $8 OFFSET $9")
-        .bind(org).bind(filter.number).bind(filter.state.as_deref()).bind(filter.secret_type.as_deref()).bind(filter.resolution.as_deref()).bind(filter.ascending).bind(filter.updated).bind(filter.limit).bind(filter.offset).bind(filter.exclude_secret_types.as_deref()).bind(filter.validity.as_deref()).bind(filter.assignee.as_deref()).bind(filter.is_bypassed).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query_as(&format!("SELECT * FROM secret_scanning_alerts WHERE repo_id IN (SELECT r.id FROM repositories r JOIN secret_scanning_settings s ON s.repo_id=r.id WHERE r.owner_org_id=$1 AND s.enabled) AND ($2 IS NULL OR number=$2) AND ($3 IS NULL OR state=$3) AND ($4 IS NULL OR secret_type=ANY(string_to_array($4,','))) AND ($5 IS NULL OR resolution=ANY(string_to_array($5,','))) AND ($10 IS NULL OR NOT secret_type=ANY(string_to_array($10,','))) AND ($11 IS NULL OR COALESCE(validity,'unknown')=ANY(string_to_array($11,','))) AND ($12 IS NULL OR ($12='*' AND assigned_to IS NOT NULL) OR ($12='none' AND assigned_to IS NULL) OR assigned_to IN (SELECT id FROM users WHERE username=$12)) AND ($13 IS NULL OR EXISTS(SELECT 1 FROM secret_scanning_bypasses b WHERE b.repo_id=secret_scanning_alerts.repo_id AND b.secret_hash=secret_scanning_alerts.secret_hash AND b.used_at IS NOT NULL)=$13) AND ($14 IS NULL OR {PROVIDER}=ANY(string_to_array($14,','))) AND ($15 IS NULL OR NOT {PROVIDER}=ANY(string_to_array($15,','))) ORDER BY CASE WHEN $6 AND $7 THEN updated_at WHEN $6 THEN created_at END ASC, CASE WHEN NOT $6 AND $7 THEN updated_at WHEN NOT $6 THEN created_at END DESC, repo_id,number DESC LIMIT $8 OFFSET $9"))
+        .bind(org).bind(filter.number).bind(filter.state.as_deref()).bind(filter.secret_type.as_deref()).bind(filter.resolution.as_deref()).bind(filter.ascending).bind(filter.updated).bind(filter.limit).bind(filter.offset).bind(filter.exclude_secret_types.as_deref()).bind(filter.validity.as_deref()).bind(filter.assignee.as_deref()).bind(filter.is_bypassed).bind(filter.providers.as_deref()).bind(filter.exclude_providers.as_deref()).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -122,8 +141,13 @@ pub async fn use_bypass(
     tx.commit().await?;
     Ok(())
 }
-pub async fn alert_bypass(pool: &PgPool, repo: i64, hash: &str) -> Result<Option<Bypass>> {
-    Ok(sqlx::query_as("SELECT * FROM secret_scanning_bypasses WHERE repo_id=$1 AND secret_hash=$2 AND used_at IS NOT NULL ORDER BY used_at DESC LIMIT 1").bind(repo).bind(hash).fetch_optional(pool).await?)
+pub async fn alert_bypasses(pool: &PgPool, keys: &[(i64, String)]) -> Result<Vec<Bypass>> {
+    ensure!(keys.len() <= 100, "Too many alert enrichments");
+    if keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(sqlx::query_as("SELECT ranked.* FROM (SELECT b.*,row_number() OVER (PARTITION BY repo_id,secret_hash ORDER BY used_at DESC,id DESC) AS position FROM secret_scanning_bypasses b WHERE used_at IS NOT NULL AND (repo_id,secret_hash) IN (SELECT (value->>0)::BIGINT,value->>1 FROM jsonb_array_elements($1::jsonb))) ranked WHERE position=1")
+        .bind(serde_json::to_string(keys)?).fetch_all(pool).await?)
 }
 
 pub async fn settings(pool: &PgPool, repo: i64) -> Result<Settings> {
@@ -182,15 +206,8 @@ pub async fn save_settings(
         .fetch_optional(&mut *tx)
         .await?;
     if let Some(configured) = configured {
-        let current: Settings = sqlx::query_as(
-            "SELECT enabled,push_protection FROM secret_scanning_settings WHERE repo_id=$1",
-        )
-        .bind(repo)
-        .fetch_optional(&mut *tx)
-        .await?
-        .unwrap_or_default();
         if let Some(fixed) =
-            crate::backend::db::code_security::enforced_scanning(&configured, current)?
+            crate::backend::db::code_security::enforced_scanning(&configured, (*settings).clone())?
         {
             ensure!(
                 fixed.enabled == settings.enabled
@@ -237,8 +254,8 @@ pub(super) async fn save_settings_on_connection(
 pub async fn alerts(pool: &PgPool, actor: i64, repo: i64, filter: &Filter) -> Result<Vec<Alert>> {
     let mut tx = pool.begin().await?;
     authorize(&mut tx, actor, repo).await?;
-    let rows = sqlx::query_as("SELECT * FROM secret_scanning_alerts WHERE repo_id=$1 AND ($2 IS NULL OR number=$2) AND ($3 IS NULL OR state=$3) AND ($4 IS NULL OR secret_type=ANY(string_to_array($4,','))) AND ($5 IS NULL OR resolution=ANY(string_to_array($5,','))) AND ($10 IS NULL OR NOT secret_type=ANY(string_to_array($10,','))) AND ($11 IS NULL OR COALESCE(validity,'unknown')=ANY(string_to_array($11,','))) AND ($12 IS NULL OR ($12='*' AND assigned_to IS NOT NULL) OR ($12='none' AND assigned_to IS NULL) OR assigned_to IN (SELECT id FROM users WHERE username=$12)) AND ($13 IS NULL OR EXISTS(SELECT 1 FROM secret_scanning_bypasses b WHERE b.repo_id=secret_scanning_alerts.repo_id AND b.secret_hash=secret_scanning_alerts.secret_hash AND b.used_at IS NOT NULL)=$13) ORDER BY CASE WHEN $6 AND $7 THEN updated_at WHEN $6 THEN created_at END ASC, CASE WHEN NOT $6 AND $7 THEN updated_at WHEN NOT $6 THEN created_at END DESC, number DESC LIMIT $8 OFFSET $9")
-        .bind(repo).bind(filter.number).bind(filter.state.as_deref()).bind(filter.secret_type.as_deref()).bind(filter.resolution.as_deref()).bind(filter.ascending).bind(filter.updated).bind(filter.limit).bind(filter.offset).bind(filter.exclude_secret_types.as_deref()).bind(filter.validity.as_deref()).bind(filter.assignee.as_deref()).bind(filter.is_bypassed).fetch_all(&mut *tx).await?;
+    let rows = sqlx::query_as(&format!("SELECT * FROM secret_scanning_alerts WHERE repo_id=$1 AND ($2 IS NULL OR number=$2) AND ($3 IS NULL OR state=$3) AND ($4 IS NULL OR secret_type=ANY(string_to_array($4,','))) AND ($5 IS NULL OR resolution=ANY(string_to_array($5,','))) AND ($10 IS NULL OR NOT secret_type=ANY(string_to_array($10,','))) AND ($11 IS NULL OR COALESCE(validity,'unknown')=ANY(string_to_array($11,','))) AND ($12 IS NULL OR ($12='*' AND assigned_to IS NOT NULL) OR ($12='none' AND assigned_to IS NULL) OR assigned_to IN (SELECT id FROM users WHERE username=$12)) AND ($13 IS NULL OR EXISTS(SELECT 1 FROM secret_scanning_bypasses b WHERE b.repo_id=secret_scanning_alerts.repo_id AND b.secret_hash=secret_scanning_alerts.secret_hash AND b.used_at IS NOT NULL)=$13) AND ($14 IS NULL OR {PROVIDER}=ANY(string_to_array($14,','))) AND ($15 IS NULL OR NOT {PROVIDER}=ANY(string_to_array($15,','))) ORDER BY CASE WHEN $6 AND $7 THEN updated_at WHEN $6 THEN created_at END ASC, CASE WHEN NOT $6 AND $7 THEN updated_at WHEN NOT $6 THEN created_at END DESC, number DESC LIMIT $8 OFFSET $9"))
+        .bind(repo).bind(filter.number).bind(filter.state.as_deref()).bind(filter.secret_type.as_deref()).bind(filter.resolution.as_deref()).bind(filter.ascending).bind(filter.updated).bind(filter.limit).bind(filter.offset).bind(filter.exclude_secret_types.as_deref()).bind(filter.validity.as_deref()).bind(filter.assignee.as_deref()).bind(filter.is_bypassed).bind(filter.providers.as_deref()).bind(filter.exclude_providers.as_deref()).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(rows)
 }
@@ -443,8 +460,8 @@ pub async fn enqueue(pool: &PgPool, repo: i64, head: &str, actor: i64) -> Result
 pub async fn claim(pool: &PgPool) -> Result<Option<ScanJob>> {
     let mut tx = pool.begin().await?;
     let cutoff = chrono::Utc::now() - chrono::Duration::minutes(5);
-    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM secret_scanning_jobs WHERE status='queued' OR (status='running' AND heartbeat_at<$1) ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED")
-        .bind(cutoff).fetch_optional(&mut *tx).await?;
+    let id: Option<i64> = sqlx::query_scalar("SELECT id FROM secret_scanning_jobs WHERE (status='queued' AND (heartbeat_at IS NULL OR heartbeat_at<=$2)) OR (status='running' AND heartbeat_at<$1) ORDER BY id LIMIT 1 FOR UPDATE SKIP LOCKED")
+        .bind(cutoff).bind(chrono::Utc::now()).fetch_optional(&mut *tx).await?;
     let Some(id) = id else { return Ok(None) };
     let job = sqlx::query_as(
         "UPDATE secret_scanning_jobs SET status='running',attempt=attempt+1,started_at=COALESCE(started_at,$2),heartbeat_at=$2 WHERE id=$1 RETURNING *",
@@ -457,12 +474,20 @@ pub async fn claim(pool: &PgPool) -> Result<Option<ScanJob>> {
     Ok(Some(job))
 }
 
-pub async fn finish(pool: &PgPool, id: i64, attempt: i64, succeeded: bool) -> Result<()> {
-    sqlx::query("UPDATE secret_scanning_jobs SET status=$2,completed_at=$3 WHERE id=$1 AND attempt=$4 AND status='running'")
+pub async fn finish(
+    pool: &PgPool,
+    id: i64,
+    attempt: i64,
+    completion: ScanCompletion,
+) -> Result<()> {
+    let retry = matches!(completion, ScanCompletion::Retry);
+    let now = chrono::Utc::now();
+    sqlx::query("UPDATE secret_scanning_jobs SET status=$2,completed_at=$3,heartbeat_at=$5 WHERE id=$1 AND attempt=$4 AND status='running'")
         .bind(id)
-        .bind(if succeeded { "completed" } else { "failed" })
-        .bind(chrono::Utc::now())
+        .bind(completion.status())
+        .bind((!retry).then_some(now))
         .bind(attempt)
+        .bind(if retry { now + chrono::Duration::seconds(60) } else { now })
         .execute(pool)
         .await?;
     Ok(())
@@ -483,7 +508,7 @@ pub async fn history(pool: &PgPool, actor: i64, repo: i64) -> Result<Vec<ScanJob
 
 pub async fn scanned(pool: &PgPool, repo: i64, commit: &str) -> Result<bool> {
     Ok(sqlx::query_scalar(
-        "SELECT EXISTS(SELECT 1 FROM secret_scanning_commits WHERE repo_id=$1 AND commit_sha=$2)",
+        "SELECT EXISTS(SELECT 1 FROM secret_scanning_commits WHERE repo_id=$1 AND commit_sha=$2 AND ancestry_complete)",
     )
     .bind(repo)
     .bind(commit)
@@ -499,9 +524,6 @@ pub async fn heartbeat(
     scanned: Option<&str>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    if let Some(commit) = scanned {
-        sqlx::query("INSERT INTO secret_scanning_commits(repo_id,commit_sha) VALUES($1,$2) ON CONFLICT DO NOTHING").bind(repo).bind(commit).execute(&mut *tx).await?;
-    }
     let held = sqlx::query(
         "UPDATE secret_scanning_jobs SET heartbeat_at=$2 WHERE id=$1 AND attempt=$3 AND status='running'",
     )
@@ -512,6 +534,11 @@ pub async fn heartbeat(
     .await?
     .rows_affected()
         == 1;
+    if held {
+        if let Some(commit) = scanned {
+            sqlx::query("INSERT INTO secret_scanning_commits(repo_id,commit_sha,ancestry_complete) VALUES($1,$2,TRUE) ON CONFLICT(repo_id,commit_sha) DO UPDATE SET ancestry_complete=TRUE").bind(repo).bind(commit).execute(&mut *tx).await?;
+        }
+    }
     tx.commit().await?;
     Ok(held)
 }

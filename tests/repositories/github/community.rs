@@ -8,7 +8,35 @@ async fn community_contract(pg: bool) {
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;
     let writer = credential(&router, &f, alice, "write").await;
-    checked(&router,"repos/create-for-authenticated-user","POST","/api/v3/user/repos",Some(&writer),json!({"name":"health","description":"Project","homepage":"https://docs.example.test","auto_init":true,"license_template":"mit"}),StatusCode::CREATED).await;
+    let (_, health) = checked(&router,"repos/create-for-authenticated-user","POST","/api/v3/user/repos",Some(&writer),json!({"name":"health","description":"Project","homepage":"https://docs.example.test","auto_init":true,"license_template":"mit"}),StatusCode::CREATED).await;
+    {
+        // A template directory holding only config.yml offers no templates and earns no credit.
+        let health = f.repository(health["id"].as_i64().unwrap()).await;
+        let git = git2::Repository::open_bare(&health.disk_path).unwrap();
+        let signature = git2::Signature::now("Fixture", "fixture@example.test").unwrap();
+        let head = git.head().unwrap().peel_to_commit().unwrap();
+        let mut templates = git.treebuilder(None).unwrap();
+        let config = git.blob(b"blank_issues_enabled: false\n").unwrap();
+        templates.insert("config.yml", config, 0o100644).unwrap();
+        let templates = templates.write().unwrap();
+        let mut github = git.treebuilder(None).unwrap();
+        github
+            .insert("ISSUE_TEMPLATE", templates, 0o040000)
+            .unwrap();
+        let github = github.write().unwrap();
+        let mut root = git.treebuilder(Some(&head.tree().unwrap())).unwrap();
+        root.insert(".github", github, 0o040000).unwrap();
+        let tree = git.find_tree(root.write().unwrap()).unwrap();
+        git.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            "Template settings",
+            &tree,
+            &[&head],
+        )
+        .unwrap();
+    }
     let endpoint = "/api/v3/repos/alice/health/community/profile";
     let (_, profile) = checked(
         &router,

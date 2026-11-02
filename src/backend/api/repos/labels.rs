@@ -1,6 +1,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::http::session::get_current_user;
+use crate::backend::api::http::session::{extract_session_id, get_current_user};
 use crate::backend::api::repos::access::{
     check_repo_admin_access, find_repository, readable_repository,
 };
@@ -58,6 +58,11 @@ pub(crate) fn label_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiEr
             "invalid_labels",
             "Invalid label scope or batch",
         ),
+        Some(db::labels::LabelWriteRefusal::Conflict) => (
+            StatusCode::CONFLICT,
+            "label_changed",
+            "The label changed. Your draft is preserved; reload before saving.",
+        ),
         Some(db::labels::LabelWriteRefusal::DuplicateName) => (
             StatusCode::CONFLICT,
             "duplicate_label",
@@ -74,8 +79,7 @@ pub(crate) fn label_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiEr
 
 /// A `#rrggbb` color, given with or without its `#`.
 pub(crate) fn parse_label_color(color: &str) -> Option<String> {
-    let hex = color.trim_start_matches('#');
-    (hex.len() == 6 && hex.bytes().all(|b| b.is_ascii_hexdigit())).then(|| format!("#{hex}"))
+    crate::webui::pages::repos::issues::label_hex(color)
 }
 
 pub async fn list_labels(
@@ -123,7 +127,7 @@ pub async fn create_label(
 
     let label = db::labels::create_label(
         &state.pool,
-        actor.id,
+        (actor.id, extract_session_id(&headers).unwrap_or_default()),
         repository.id,
         &req.name,
         &color,
@@ -144,9 +148,14 @@ pub async fn delete_label(
     let repository = find_repository(&state.pool, &owner, &repo).await?;
     check_repo_admin_access(&state.pool, &repository, &actor).await?;
 
-    db::labels::delete_label(&state.pool, actor.id, repository.id, label_id)
-        .await
-        .map_err(label_write_error)?;
+    db::labels::delete_label(
+        &state.pool,
+        (actor.id, extract_session_id(&headers).unwrap_or_default()),
+        repository.id,
+        label_id,
+    )
+    .await
+    .map_err(label_write_error)?;
 
     Ok(StatusCode::NO_CONTENT)
 }
@@ -191,13 +200,15 @@ pub(crate) async fn native_index(
     let has_next =
         super::paging::has_next_page(page_number, items.len(), limit, super::paging::MAX_PAGE);
     items.truncate(limit);
-    let usage: std::collections::BTreeMap<i64, i64> =
-        db::labels::list_label_usage(&ctx.state.pool, repo.record.id)
-            .await
-            .map_err(|_| unavailable(&ctx))?
-            .into_iter()
-            .filter(|(id, _)| items.iter().any(|item| item.id == *id))
-            .collect();
+    let usage: std::collections::BTreeMap<i64, i64> = db::labels::list_label_usage(
+        &ctx.state.pool,
+        repo.record.id,
+        &items.iter().map(|item| item.id).collect::<Vec<_>>(),
+    )
+    .await
+    .map_err(|_| unavailable(&ctx))?
+    .into_iter()
+    .collect();
     Ok(ctx.page_model(
         "Labels",
         page(view::Page::Labels {

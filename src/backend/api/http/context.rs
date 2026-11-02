@@ -1,6 +1,6 @@
 //! Verified browser request context, setup admission and form protection.
 use super::origin::same_origin_submission;
-use super::render::{public_error, redirect_response};
+use super::render::{public_error, public_error_returning_to, redirect_response};
 use super::session;
 use crate::{
     backend::{
@@ -18,6 +18,17 @@ use std::{collections::HashMap, sync::Arc};
 use subtle::ConstantTimeEq;
 
 const CSRF_TTL_SECONDS: i64 = 2 * 60 * 60;
+
+fn admission_redirect(page: &str, location: &str) -> String {
+    if super::origin::safe_redirect_path(location) {
+        format!(
+            "{page}?redirect={}",
+            crate::webui::encode_component(location)
+        )
+    } else {
+        page.to_owned()
+    }
+}
 
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) enum ExistingCsrfError {
@@ -66,6 +77,9 @@ pub struct PageContext {
     pub state: Arc<AppState>,
     pub headers: HeaderMap,
     pub user: Option<User>,
+    /// The id of the verified browser session the request carried, for operations that must
+    /// check that the same session is still live when they take effect. None without one.
+    pub session_id: Option<String>,
     pub csrf_token: String,
     pub path: String,
     pub query: HashMap<String, String>,
@@ -81,6 +95,14 @@ pub struct PageContext {
 }
 
 impl PageContext {
+    pub(crate) fn database_actor(&self, user_id: i64) -> db::credentials::Actor {
+        (
+            user_id,
+            session::extract_session_id(&self.headers).unwrap_or_default(),
+        )
+            .into()
+    }
+
     pub async fn load(
         state: Arc<AppState>,
         headers: HeaderMap,
@@ -132,7 +154,8 @@ impl PageContext {
             return Err(redirect_response("/setup"));
         }
         if setup_completed && private_mode && user.is_none() && !public_identity_path(&path) {
-            return Err(redirect_response("/enter"));
+            let location = uri.path_and_query().map_or("/", |value| value.as_str());
+            return Err(redirect_response(&admission_redirect("/enter", location)));
         }
         // A temporary password may only reach the settings page, its password form,
         // sign-out and the theme switch.
@@ -153,6 +176,7 @@ impl PageContext {
         }
 
         let had_verified_session = existing_session.is_some();
+        let session_id = existing_session.as_ref().map(|s| s.id.clone());
         // A visitor with no cookie gets a session row only on the sign-in pages, which have
         // a form to protect. Other cookieless pages (crawlers, 404s, public browsing) write
         // nothing and carry an empty token; the theme switch accepts that. A stale cookie
@@ -164,6 +188,21 @@ impl PageContext {
             let (verified_session, pending_session_cookie) = match existing_session {
                 Some(s) => (s, None),
                 None => {
+                    match crate::backend::identity::admission::admit_anonymous_session(
+                        &state.pool,
+                        session::client_address(&headers),
+                    )
+                    .await
+                    {
+                        Ok(()) => {}
+                        Err(crate::backend::identity::admission::AdmissionError::Limited) => {
+                            return Err(public_error(
+                                StatusCode::TOO_MANY_REQUESTS,
+                                "Too many sign-in page requests. Try again later.",
+                            ))
+                        }
+                        Err(_) => return Err(unavailable()),
+                    }
                     // Never adopt an attacker-supplied unknown cookie ID.
                     let id = session::generate_session_id();
                     let agent = session::extract_user_agent(&headers);
@@ -218,6 +257,7 @@ impl PageContext {
             state,
             headers,
             user,
+            session_id,
             unread_notifications,
             csrf_token,
             path,
@@ -238,7 +278,9 @@ impl PageContext {
         reason = "The shared HTML helper contract returns complete Axum responses without boxing."
     )]
     pub fn require_user(&self) -> Result<&User, Response> {
-        self.user.as_ref().ok_or_else(|| self.redirect("/login"))
+        self.user
+            .as_ref()
+            .ok_or_else(|| self.redirect(&admission_redirect("/login", &self.location)))
     }
 
     /// The signed-in account when it may use administrator pages.
@@ -257,9 +299,12 @@ impl PageContext {
             || !csrf_matches(&self.csrf_token, form.get("csrf_token").map(String::as_str))
             || !same_origin_submission(&self.headers)
         {
-            return Err(self.error(
+            // No session cookie or account chrome for a forged form, but the appearance switch
+            // still returns to the page the handler named.
+            return Err(public_error_returning_to(
                 StatusCode::FORBIDDEN,
                 "The form expired or came from another site. Reload the page and try again.",
+                self.return_to.clone().unwrap_or_default(),
             ));
         }
         Ok(())
@@ -367,6 +412,7 @@ mod tests {
             state: Arc::new(crate::backend::api::tests::closed_state().await),
             headers: HeaderMap::new(),
             user: None,
+            session_id: None,
             csrf_token: "a".repeat(64),
             path: "/setup".into(),
             query: HashMap::new(),
@@ -409,6 +455,7 @@ mod tests {
             state: Arc::new(crate::backend::api::tests::closed_state().await),
             headers: HeaderMap::new(),
             user: None,
+            session_id: None,
             csrf_token: String::new(),
             path: "/_forms/theme".into(),
             query: HashMap::new(),
@@ -461,6 +508,7 @@ mod tests {
             state: Arc::new(crate::backend::api::tests::closed_state().await),
             headers,
             user: Some(user),
+            session_id: None,
             csrf_token: "a".repeat(64),
             path: "/search".into(),
             query: HashMap::from([("q".into(), "rust".into())]),

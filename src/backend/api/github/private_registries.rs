@@ -53,20 +53,24 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, false).await?;
-    let configurations = db::private_registries::list(&state.pool, actor.user.id, org)
-        .await
-        .map_err(error)?;
-    let total = configurations.len();
     let (offset, limit) = page.window()?;
+    let (total, configurations) = db::private_registries::list(
+        &state.pool,
+        actor.user.id,
+        org,
+        None,
+        offset as i64,
+        limit as i64,
+    )
+    .await
+    .map_err(error)?;
     let configurations = configurations
         .into_iter()
-        .skip(offset)
-        .take(limit)
         .map(|r| r.document())
         .collect::<std::result::Result<Vec<_>, _>>()
         .map_err(error)?;
     Ok((
-        page.headers(&uri, offset.saturating_add(limit) < total)?,
+        page.headers(&uri, (offset.saturating_add(limit) as i64) < total)?,
         Json(json!({"total_count":total, "configurations":configurations})),
     )
         .into_response())
@@ -78,11 +82,12 @@ async fn registry(
     Path((org, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, false).await?;
-    let registry = db::private_registries::list(&state.pool, actor.user.id, org)
+    let registry = db::private_registries::list(&state.pool, actor.user.id, org, Some(&name), 0, 1)
         .await
         .map_err(error)?
+        .1
         .into_iter()
-        .find(|r| r.name.eq_ignore_ascii_case(&name))
+        .next()
         .ok_or_else(Error::missing)?;
     Ok(Json(registry.document().map_err(error)?))
 }
@@ -129,12 +134,13 @@ async fn create(
     body: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<Response> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid registry input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
     let registry = db::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         org,
         None,
         &body,
@@ -156,12 +162,13 @@ async fn update(
     body: std::result::Result<Json<Value>, JsonRejection>,
 ) -> Result<StatusCode> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    let Json(body) = body.map_err(|_| Error::invalid("Invalid registry input"))?;
+    let Json(body) = body.map_err(super::json_error)?;
     let (body, value) = input(&state, actor.user.id, org, body).await?;
     db::private_registries::save(
         &state.pool,
         state.secret_encryptor.as_deref(),
         actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         org,
         Some(&name.to_ascii_uppercase()),
         &body,
@@ -178,8 +185,14 @@ async fn remove(
     Path((org, name)): Path<(String, String)>,
 ) -> Result<StatusCode> {
     let (org, actor) = dependabot::organization(&state, &headers, &org, true).await?;
-    db::private_registries::delete(&state.pool, actor.user.id, org, &name.to_ascii_uppercase())
-        .await
-        .map_err(error)?;
+    db::private_registries::delete(
+        &state.pool,
+        actor.user.id,
+        &db::users::accounts::AccountCredential::Token(actor.token.id, &actor.token.token_hash),
+        org,
+        &name.to_ascii_uppercase(),
+    )
+    .await
+    .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)
 }

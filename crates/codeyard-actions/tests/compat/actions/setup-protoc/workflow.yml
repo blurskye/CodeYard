@@ -1,6 +1,10 @@
 # https://github.com/arduino/setup-protoc/tree/c65c819552d16ad3c9b72d9dfd5ba5237b9c906b
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

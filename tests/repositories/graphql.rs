@@ -372,6 +372,7 @@ async fn contract(pg: bool) {
     db::reactions::create_reaction(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Token(token_ids[0], &tokens::token_hash(token)),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: stored.id,
@@ -857,11 +858,18 @@ async fn contract(pg: bool) {
     );
     for (id, typename) in [
         (
-            node_id::git("C", changed["commit"]["sha"].as_str().unwrap()),
+            changed["commit"]["node_id"].as_str().unwrap().to_owned(),
             "Commit",
         ),
         (
-            node_id::git("B", changed["content"]["sha"].as_str().unwrap()),
+            node_id::git(
+                "B",
+                &format!(
+                    "{}/{}",
+                    repo.id,
+                    changed["content"]["sha"].as_str().unwrap()
+                ),
+            ),
             "Blob",
         ),
         (
@@ -894,7 +902,7 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{tree}");
-    let tree_id = node_id::git("T", tree["sha"].as_str().unwrap());
+    let tree_id = tree["node_id"].as_str().unwrap().to_owned();
     let object = query(
         &router,
         token,

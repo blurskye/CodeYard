@@ -225,15 +225,22 @@ async fn native_propose(
             }
             Some(a.id)
         }
-        Action::AddLabel => Some(
-            db::labels::list_repo_labels(&ctx.state.pool, repo.id)
+        Action::AddLabel => {
+            let labels = db::labels::list_repo_labels(&ctx.state.pool, repo.id)
                 .await
-                .map_err(|_| unavailable(ctx))?
-                .into_iter()
-                .find(|l| l.name.to_lowercase() == target.to_lowercase())
-                .ok_or_else(invalid)?
-                .id,
-        ),
+                .map_err(|_| unavailable(ctx))?;
+            // The exact name wins; names that differ only in case are distinct labels.
+            let label = labels
+                .iter()
+                .find(|l| l.name == target)
+                .or_else(|| {
+                    labels
+                        .iter()
+                        .find(|l| l.name.to_lowercase() == target.to_lowercase())
+                })
+                .ok_or_else(invalid)?;
+            Some(label.id)
+        }
         Action::AddAssignee => Some(
             db::users::accounts::get_user_by_username(
                 &ctx.state.pool,
@@ -264,12 +271,23 @@ async fn native_propose(
         rationale: Some(field(form, "rationale")).filter(|s| !s.is_empty()),
         confidence: Some(field(form, "confidence")).filter(|s| !s.is_empty()),
     };
-    db::suggestions::propose(&ctx.state.pool, repo.id, actor, issue, &p)
-        .await
-        .map_err(|error| {
-            let (status, message) = failure(&error);
-            ctx.error(status, &message)
-        })?;
+    db::suggestions::propose(
+        &ctx.state.pool,
+        repo.id,
+        actor,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .unwrap_or_default(),
+        ),
+        issue,
+        &p,
+        None,
+    )
+    .await
+    .map_err(|error| {
+        let (status, message) = failure(&error);
+        ctx.error(status, &message)
+    })?;
     Ok(())
 }
 pub(crate) async fn native_change(
@@ -284,11 +302,33 @@ pub(crate) async fn native_change(
     let repo = repository(&ctx, &owner, &name).await?;
     let actor = ctx.require_user()?;
     let shown = discussion::item(&ctx, &repo, Kind::Issue, number).await?;
+    let draft = DetailDraft {
+        suggestion: Some(Box::new(SuggestionDraft {
+            repository_id: field(&form, "repository_id").parse().ok(),
+            issue_id: field(&form, "issue_id").parse().ok(),
+            change: field(&form, "change"),
+            target: field(&form, "target"),
+            value: field(&form, "value"),
+            rationale: field(&form, "rationale"),
+            confidence: field(&form, "confidence"),
+        })),
+        ..Default::default()
+    };
+    if field(&form, "repository_id").parse::<i64>().ok() != Some(repo.record.id)
+        || field(&form, "issue_id").parse::<i64>().ok() != Some(shown.id)
+    {
+        return discussion::render_detail(&ctx, &repo, Kind::Issue, &shown, &draft,
+            Some("The suggestion target changed. Your draft is preserved; return to the original issue before submitting."), StatusCode::CONFLICT).await;
+    }
     match field(&form, "action").as_str() {
         "set_enabled" => db::suggestions::set_enabled(
             &ctx.state.pool,
             repo.record.id,
             actor.id,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                    .unwrap_or_default(),
+            ),
             field(&form, "enabled") == "true",
         )
         .await
@@ -300,16 +340,6 @@ pub(crate) async fn native_change(
             if let Err(error) =
                 native_propose(&ctx, &repo.record, (&owner, &name), shown.id, &form).await
             {
-                let draft = DetailDraft {
-                    suggestion: Some(Box::new(SuggestionDraft {
-                        change: field(&form, "change"),
-                        target: field(&form, "target"),
-                        value: field(&form, "value"),
-                        rationale: field(&form, "rationale"),
-                        confidence: field(&form, "confidence"),
-                    })),
-                    ..Default::default()
-                };
                 return discussion::render_detail(&ctx,&repo,Kind::Issue,&shown,&draft,Some("Suggestion not saved. Review your preserved draft and check the target and value."),error.status()).await;
             }
         }
@@ -321,6 +351,10 @@ pub(crate) async fn native_change(
                 &ctx.state.pool,
                 &ctx.state.notification_broadcaster,
                 actor,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                        .unwrap_or_default(),
+                ),
                 (&repo.record, &owner),
                 (shown.id, id),
                 action == "approve",
@@ -384,29 +418,34 @@ pub async fn agent_propose(
         )
             .into_response()
     };
-    let scoped = if let Some(bounds) =
-        crate::backend::identity::github_apps::authority(&state.pool, auth.token.id)
-            .await
-            .map_err(unavailable)?
-    {
-        Some(
-            bounds
-                .allows(&state.pool, auth.user.id, repo.id, "issues", true)
-                .await
-                .map_err(unavailable)?,
-        )
-    } else {
-        db::oauth_apps::token(&state.pool, auth.token.id)
-            .await
-            .map_err(unavailable)?
-            .map(|token| {
-                crate::backend::identity::oauth_apps::allows(
-                    &token.scopes,
-                    &format!("/repos/{owner}/{name}/issues/{number}/comments"),
-                    true,
-                )
-            })
-    };
+    auth.repository_scope(&state.pool, repo.id, "issues", true)
+        .await
+        .map_err(|error| {
+            use crate::backend::api::github::auth::ScopeError;
+            let status = match error {
+                ScopeError::Missing => StatusCode::NOT_FOUND,
+                ScopeError::Denied => StatusCode::FORBIDDEN,
+                ScopeError::Unavailable => StatusCode::SERVICE_UNAVAILABLE,
+            };
+            (
+                status,
+                Json(ApiError::new(
+                    "token_scope",
+                    "Resource not accessible by token",
+                )),
+            )
+                .into_response()
+        })?;
+    let scoped = db::oauth_apps::token(&state.pool, auth.token.id)
+        .await
+        .map_err(unavailable)?
+        .map(|token| {
+            crate::backend::identity::oauth_apps::allows(
+                &token.scopes,
+                &format!("/repos/{owner}/{name}/issues/{number}/comments"),
+                true,
+            )
+        });
     if scoped == Some(false) {
         return Err((
             StatusCode::FORBIDDEN,
@@ -416,49 +455,6 @@ pub async fn agent_propose(
             )),
         )
             .into_response());
-    }
-    if auth.user.username == db::ci_tokens::BOT {
-        let token = db::ci_tokens::get(&state.pool, auth.token.id)
-            .await
-            .map_err(|_| {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ApiError::new("unavailable", "Token policy unavailable")),
-                )
-                    .into_response()
-            })?
-            .ok_or_else(|| {
-                (
-                    StatusCode::UNAUTHORIZED,
-                    Json(ApiError::new("unauthorized", "Run token inactive")),
-                )
-                    .into_response()
-            })?;
-        if token.repo_id != repo.id {
-            return Err((
-                StatusCode::NOT_FOUND,
-                Json(ApiError::new("not_found", "Repository not found")),
-            )
-                .into_response());
-        }
-        let permissions: crate::backend::ci::tokens::Permissions =
-            serde_json::from_str(&token.permissions).map_err(|_| {
-                (
-                    StatusCode::SERVICE_UNAVAILABLE,
-                    Json(ApiError::new("unavailable", "Token policy unavailable")),
-                )
-                    .into_response()
-            })?;
-        if !permissions.allows("issues", true) {
-            return Err((
-                StatusCode::FORBIDDEN,
-                Json(ApiError::new(
-                    "forbidden",
-                    "Resource not accessible by token",
-                )),
-            )
-                .into_response());
-        }
     }
     let issue = db::issues::get_issue(&state.pool, repo.id, number)
         .await
@@ -486,10 +482,49 @@ pub async fn agent_propose(
         )
             .into_response()
     })?;
+    let target_repository = if action == Action::CloseIssue {
+        if let Some(id) = input.target_id {
+            let missing = || {
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ApiError::new("not_found", "Issue not found")),
+                )
+                    .into_response()
+            };
+            let target = db::issues::get_issue_by_id(&state.pool, id)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(missing)?;
+            auth.repository_scope(&state.pool, target.repo_id, "issues", false)
+                .await
+                .map_err(|error| match error {
+                    crate::backend::api::github::auth::ScopeError::Unavailable => {
+                        unavailable(anyhow::anyhow!("Token policy unavailable"))
+                    }
+                    _ => missing(),
+                })?;
+            let readable = db::repositories::access::readable_repository_ids(
+                &state.pool,
+                Some(auth.user.id),
+                &[target.repo_id],
+            )
+            .await
+            .map_err(unavailable)?;
+            if !readable.contains(&target.repo_id) {
+                return Err(missing());
+            }
+            Some(target.repo_id)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
     let row = db::suggestions::propose(
         &state.pool,
         repo.id,
         auth.user.id,
+        &auth.credential(),
         issue.id,
         &Proposal {
             action,
@@ -498,6 +533,7 @@ pub async fn agent_propose(
             rationale: input.rationale,
             confidence: input.confidence,
         },
+        target_repository,
     )
     .await
     .map_err(|error| {

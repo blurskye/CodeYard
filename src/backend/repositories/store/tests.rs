@@ -290,20 +290,32 @@ async fn cancelling_a_default_branch_request_does_not_cancel_head_synchronizatio
         .reference("refs/heads/topic", f.second, false, "topic")
         .unwrap();
     let lock = crate::backend::git::locks::lock(f.store.local_dir().unwrap()).await;
-    let store = f.store.clone();
-    let pool = a.pool.clone();
-    let (repo_id, actor) = (a.repo_id, a.actor);
-    let request = tokio::spawn(async move {
-        store
-            .set_default_branch_as(&pool, repo_id, actor, "topic")
-            .await
-    });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    request.abort();
-    assert!(request.await.unwrap_err().is_cancelled());
+    let mut request = Box::pin(
+        f.store
+            .set_default_branch_as(&a.pool, a.repo_id, a.actor, "topic"),
+    );
+    // One poll hands the update to its own task, which waits for the held lock. Dropping the
+    // request after that is the client going away.
+    assert!(futures_util::FutureExt::now_or_never(&mut request).is_none());
+    drop(request);
     drop(lock);
+    // The update must still finish. Its task may reach the lock after this test does, so wait
+    // for the row it writes rather than for the lock alone.
+    tokio::time::timeout(std::time::Duration::from_secs(120), async {
+        while db::repositories::records::get_repository_by_id(&a.pool, a.repo_id)
+            .await
+            .unwrap()
+            .unwrap()
+            .default_branch
+            != "topic"
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("cancelling the request cancelled the default branch update");
     let _lock = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
+        std::time::Duration::from_secs(120),
         crate::backend::git::locks::lock(f.store.local_dir().unwrap()),
     )
     .await
@@ -368,11 +380,14 @@ async fn a_store_opened_before_adoption_cannot_publish_after_placement() {
             .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
             .await,
     );
+    // The prepared commit stays staged until it is published, so the branch names a stored
+    // commit: only the placement can refuse it.
     assert_write_denied(
         opened
-            .create_branch_as(&a.pool, a.repo_id, a.actor, "late", &prepared.commit.sha)
+            .create_branch_as(&a.pool, a.repo_id, a.actor, "late", &f.second.to_string())
             .await,
     );
+    assert!(f.repo.find_reference("refs/heads/late").is_err());
     assert!(
         !db::cluster::bump_write_version(&a.pool, a.repo_id, Some(None))
             .await
@@ -467,7 +482,7 @@ async fn editor_publications_and_new_branch_saves_schedule_primary_packing() {
             sample += usize::from(oid.as_bytes()[0] == 0x17);
             count += 1;
         }
-        let prepared = f
+        let mut prepared = f
             .store
             .prepare_file(
                 &FileWrite {
@@ -485,22 +500,15 @@ async fn editor_publications_and_new_branch_saves_schedule_primary_packing() {
             .await
             .unwrap();
         if new_branch {
-            f.store
-                .create_branch_as(
-                    &a.pool,
-                    a.repo_id,
-                    a.actor,
-                    "editor-branch",
-                    &prepared.commit.sha,
-                )
-                .await
-                .unwrap();
-        } else {
-            f.store
-                .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
-                .await
-                .unwrap();
+            prepared.branch = "editor-branch".into();
+            prepared.reference = "refs/heads/editor-branch".into();
+            prepared.expected = None;
+            prepared.new_branch = true;
         }
+        f.store
+            .publish_file_as(&a.pool, a.repo_id, a.actor, &prepared)
+            .await
+            .unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(30), async {
             loop {
                 if !f.repo.path().join("gc.pid").exists()
@@ -532,6 +540,13 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
         .build()
         .unwrap();
     runtime.block_on(async {
+        let root = tempfile::tempdir().unwrap();
+        let destination = root.path().join("checkout");
+        let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
+        let permit = slots.clone().acquire_owned().await.unwrap();
+        // The lock resolves its path on a blocking thread, so take it before the blocker fills
+        // the only one.
+        let lock = crate::backend::git::locks::lock(&destination).await;
         let (release, wait) = std::sync::mpsc::channel();
         let (started, ready) = tokio::sync::oneshot::channel();
         let blocker = tokio::task::spawn_blocking(move || {
@@ -539,29 +554,46 @@ fn cancelled_pack_import_keeps_its_session_permit_and_directory_lock() {
             wait.recv().unwrap();
         });
         ready.await.unwrap();
-        let root = tempfile::tempdir().unwrap();
-        let destination = root.path().join("checkout");
-        let slots = std::sync::Arc::new(tokio::sync::Semaphore::new(1));
-        let permit = slots.clone().acquire_owned().await.unwrap();
-        let lock = crate::backend::git::locks::lock(&destination).await;
         let pack = tempfile::NamedTempFile::new().unwrap();
         let (entered, queued) = tokio::sync::oneshot::channel();
         let path = destination.clone();
         let task = tokio::spawn(async move {
             entered.send(()).unwrap();
-            super::local::LocalStore::checkout_pack(&path, &"1".repeat(40), pack, permit, lock)
-                .await
+            super::local::LocalStore::checkout_pack(
+                &path,
+                &"1".repeat(40),
+                "/repository.git",
+                pack,
+                permit,
+                lock,
+            )
+            .await
         });
         queued.await.unwrap();
         task.abort();
         let _ = task.await;
         assert_eq!(slots.available_permits(), 0);
-        assert!(tokio::time::timeout(
-            std::time::Duration::from_millis(20),
-            crate::backend::git::locks::lock(&destination)
-        )
-        .await
-        .is_err());
+        // Try the lock from another runtime, whose blocking threads are free.
+        let held = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap()
+                        .block_on(async {
+                            tokio::time::timeout(
+                                std::time::Duration::from_secs(1),
+                                crate::backend::git::locks::lock(&destination),
+                            )
+                            .await
+                        })
+                        .is_err()
+                })
+                .join()
+                .unwrap()
+        });
+        assert!(held);
         release.send(()).unwrap();
         blocker.await.unwrap();
         let _permit = tokio::time::timeout(std::time::Duration::from_secs(5), slots.acquire())
@@ -957,8 +989,7 @@ async fn commit_history_filters_by_author_and_committer_time() {
         author: author.map(str::to_owned),
         since,
         until,
-        message: None,
-        author_emails: Vec::new(),
+        ..CommitFilter::default()
     };
     let shas = |commits: &[CommitInfo]| -> Vec<String> {
         commits.iter().map(|commit| commit.sha.clone()).collect()
@@ -1260,7 +1291,8 @@ async fn reads_return_owned_values_that_survive_json() {
     assert!(archive.starts_with(b"PK"));
     let languages = round_trip(&f.store.languages("main").await.unwrap());
     let names: Vec<_> = languages.iter().map(|l| l.language.as_str()).collect();
-    assert!(names.contains(&"Rust") && names.contains(&"Markdown"));
+    // Prose such as Markdown stays out of the language totals, as on GitHub.
+    assert!(names.contains(&"Rust") && !names.contains(&"Markdown"));
     let contributors = round_trip(&f.store.contributors().await.unwrap());
     assert_eq!(contributors[0].email, "tester@example.invalid");
     assert_eq!(contributors[0].commits, 2);
@@ -2280,6 +2312,7 @@ async fn merging_moves_the_base_only_when_nothing_changed_since_approval() {
             &request.base,
             &merged,
             MergeMethod::Merge,
+            None,
         )
         .await
         .unwrap();
@@ -2298,7 +2331,8 @@ async fn merging_moves_the_base_only_when_nothing_changed_since_approval() {
             &request.head,
             &request.base,
             &merged,
-            MergeMethod::Merge
+            MergeMethod::Merge,
+            None,
         )
         .await
         .is_err());
@@ -2554,6 +2588,7 @@ async fn publish_refuses_a_merge_method_turned_off_after_preparation() {
             &base,
             &merged,
             MergeMethod::Squash,
+            None,
         )
         .await
         .unwrap_err();
@@ -2759,7 +2794,8 @@ async fn commit_and_pull_request_diffs_keep_the_json_shape() {
         let patch = &diff.files[0].patch;
         assert!(patch.contains("+pub fn answer() -> u32 { 42 }\n"));
         let mut value = serde_json::to_value(&diff).unwrap();
-        // The file's blob id is the one addition; the rest of the shape is unchanged.
+        // The file's blob id is the addition; a UTF-8 patch carries no second copy of its bytes,
+        // and the rest of the shape is unchanged.
         assert_eq!(value["files"][0]["blob_sha"].as_str().unwrap().len(), 40);
         value["files"][0]
             .as_object_mut()
@@ -2950,6 +2986,7 @@ async fn every_ref_change_moves_the_write_version() {
             &base,
             &merged,
             MergeMethod::Merge,
+            None,
         )
         .await
         .unwrap();
@@ -3039,8 +3076,8 @@ async fn storage_node(pool: &db::DbPool, name: &str) -> i64 {
         .await
         .unwrap()
         .id;
-    // A promotion needs its target to be reporting in.
-    db::cluster::record_node_heartbeat(pool, &key, "test", "{}", None)
+    // A promotion needs its target to be reporting in, free space included.
+    db::cluster::record_node_heartbeat(pool, &key, "test", "{}", Some(1 << 40))
         .await
         .unwrap();
     id
@@ -3152,6 +3189,7 @@ async fn a_store_for_the_old_primary_refuses_writes_after_promotion() {
             &base,
             &merged,
             MergeMethod::Merge,
+            None,
         )
         .await;
     assert_write_denied(result);
@@ -3318,7 +3356,7 @@ async fn a_repository_at_the_ref_limit_refuses_new_branches_and_tags() {
         f.repo.reference(&name, f.first, false, "fill").unwrap();
     }
     let path = std::path::Path::new(f.store.location());
-    let held = crate::backend::git::branches_and_tags_in_use(path).unwrap();
+    let held = crate::backend::git::published_refs_in_use(path).unwrap();
     assert_eq!(held.count, MAX_REPOSITORY_REFS);
 
     let error = f

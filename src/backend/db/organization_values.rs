@@ -1,5 +1,5 @@
 //! Organization Actions values and their repository visibility.
-use super::DbPool;
+use super::{users::accounts::AccountCredential, DbPool};
 use crate::backend::crypto::{SecretEncryptor, SecretError};
 use chrono::{DateTime, Utc};
 
@@ -25,6 +25,27 @@ pub struct OrganizationValue {
     pub visibility: String,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
+}
+
+pub const SETTINGS_PAGE_SIZE: i64 = 30;
+
+#[derive(sqlx::FromRow)]
+pub struct SettingsValue {
+    #[sqlx(flatten)]
+    pub value: OrganizationValue,
+    pub repository_ids: String,
+}
+
+pub struct SettingsPage {
+    pub values: Vec<SettingsValue>,
+    pub more: bool,
+}
+impl SettingsPage {
+    pub(crate) fn from_rows(mut values: Vec<SettingsValue>) -> Self {
+        let more = values.len() > SETTINGS_PAGE_SIZE as usize;
+        values.truncate(SETTINGS_PAGE_SIZE as usize);
+        Self { values, more }
+    }
 }
 
 pub struct Save<'a> {
@@ -68,14 +89,20 @@ pub enum ValueError {
     Repository,
     #[error("An organization can have at most 1000 values of each kind")]
     Limit,
+    #[error("Delivered Actions secrets exceed 1 MiB in total")]
+    SecretsSize,
 }
 
+/// Whether organization value `v` reaches repository `r`. Listing the inherited values and
+/// delivering them to a workflow both use it, so what settings show is what a run receives.
+pub(crate) const REACHES_REPOSITORY: &str = "(v.visibility='all' OR (v.visibility='private' AND r.is_private) OR (v.visibility='selected' AND EXISTS(SELECT 1 FROM org_actions_value_repositories s WHERE s.org_id=v.org_id AND s.kind=v.kind AND s.name=v.name AND s.repo_id=r.id)))";
+
 pub fn validate(name: &str, value: &str) -> Result<(), ValueError> {
-    super::secrets::validate_repository_secret(name, "").map_err(|_| ValueError::InvalidName)?;
-    if value.len() > 48 * 1024 || value.contains('\0') {
-        return Err(ValueError::InvalidValue);
-    }
-    Ok(())
+    use codeyard_actions::values::InvalidValue;
+    codeyard_actions::values::validate(name, value).map_err(|error| match error {
+        InvalidValue::Name | InvalidValue::ReservedName => ValueError::InvalidName,
+        InvalidValue::Nul | InvalidValue::TooLarge => ValueError::InvalidValue,
+    })
 }
 
 native_operation!(crate::backend::db::postgres::organizations::action_values::key,
@@ -84,18 +111,21 @@ native_operation!(crate::backend::db::postgres::organizations::action_values::ke
 native_operation!(crate::backend::db::postgres::organizations::action_values::list,
     crate::backend::db::sqlite::organizations::action_values::list,
     fn list(pool: &DbPool, actor: i64, org: i64, kind: Kind) -> Result<Vec<OrganizationValue>, ValueError>);
+native_operation!(crate::backend::db::postgres::organizations::action_values::settings_page,
+    crate::backend::db::sqlite::organizations::action_values::settings_page,
+    fn settings_page(pool: &DbPool, actor: i64, session: &str, org: i64, page: i64) -> Result<SettingsPage, ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::save,
     crate::backend::db::sqlite::organizations::action_values::save,
-    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, org: i64, input: &Save<'_>) -> Result<bool, ValueError>);
+    fn save(pool: &DbPool, encryptor: Option<&SecretEncryptor>, actor: i64, credential: &AccountCredential<'_>, org: i64, input: &Save<'_>) -> Result<bool, ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::delete,
     crate::backend::db::sqlite::organizations::action_values::delete,
-    fn delete(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str) -> Result<(), ValueError>);
+    fn delete(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, kind: Kind, name: &str) -> Result<(), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::repositories,
     crate::backend::db::sqlite::organizations::action_values::repositories,
-    fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str) -> Result<Vec<super::models::Repository>, ValueError>);
+    fn repositories(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, offset: i64, limit: i64) -> Result<(i64, Vec<super::repository_stats::RepositorySnapshot>), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::select,
     crate::backend::db::sqlite::organizations::action_values::select,
-    fn select(pool: &DbPool, actor: i64, org: i64, kind: Kind, name: &str, change: Selection<'_>) -> Result<(), ValueError>);
+    fn select(pool: &DbPool, actor: i64, credential: &AccountCredential<'_>, org: i64, kind: Kind, name: &str, change: Selection<'_>) -> Result<(), ValueError>);
 native_operation!(crate::backend::db::postgres::organizations::action_values::inherited,
     crate::backend::db::sqlite::organizations::action_values::inherited,
     fn inherited(pool: &DbPool, actor: i64, repo: i64, kind: Kind) -> Result<Vec<OrganizationValue>, ValueError>);

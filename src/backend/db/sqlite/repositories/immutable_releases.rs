@@ -10,18 +10,43 @@ use anyhow::{ensure, Result};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 // Enforced when the repository opts in or its organization enforces it for all or selected
 // repositories. A repository setting never removes an organization's enforcement.
-const ENFORCED_SQL: &str = "(EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=?1) OR EXISTS(SELECT 1 FROM repositories r JOIN organization_immutable_releases o ON o.org_id=r.owner_org_id WHERE r.id=?1 AND (o.enforced_repositories='all' OR (o.enforced_repositories='selected' AND EXISTS(SELECT 1 FROM organization_immutable_release_repositories s WHERE s.org_id=o.org_id AND s.repo_id=r.id)))))";
+const OWNER_ENFORCED_SQL: &str = "EXISTS(SELECT 1 FROM repositories r JOIN organization_immutable_releases o ON o.org_id=r.owner_org_id WHERE r.id=?1 AND (o.enforced_repositories='all' OR (o.enforced_repositories='selected' AND EXISTS(SELECT 1 FROM organization_immutable_release_repositories s WHERE s.org_id=o.org_id AND s.repo_id=r.id))))";
+fn enforced_sql() -> String {
+    format!("(EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=?1) OR {OWNER_ENFORCED_SQL})")
+}
+/// Whether the repository opts in, and whether its owner enforces immutable releases.
+pub async fn policy(pool: &SqlitePool, repo: i64) -> Result<(bool, bool)> {
+    Ok(sqlx::query_as(&format!("SELECT EXISTS(SELECT 1 FROM repository_immutable_releases WHERE repo_id=?1), {OWNER_ENFORCED_SQL}")).bind(repo).fetch_one(pool).await?)
+}
 pub async fn enabled(pool: &SqlitePool, repo: i64) -> Result<bool> {
-    Ok(sqlx::query_scalar(&format!("SELECT {ENFORCED_SQL}"))
+    Ok(sqlx::query_scalar(&format!("SELECT {}", enforced_sql()))
         .bind(repo)
         .fetch_one(pool)
         .await?)
 }
-pub async fn set_enabled(pool: &SqlitePool, actor: i64, repo: i64, enabled: bool) -> Result<()> {
+pub async fn set_enabled(
+    pool: &SqlitePool,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
+    repo: i64,
+    enabled: bool,
+) -> Result<()> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     ensure!(
         crate::backend::db::sqlite::discussions::lock_archive_authority(&mut tx, actor, repo)
             .await?,
+        Refusal::Denied
+    );
+    ensure!(
+        crate::backend::db::sqlite::credentials::writes(
+            &mut tx,
+            &credential,
+            Some(repo),
+            None,
+            "administration"
+        )
+        .await?,
         Refusal::Denied
     );
     let archived: bool = sqlx::query_scalar("SELECT is_archived FROM repositories WHERE id=?1")
@@ -83,7 +108,7 @@ pub(crate) async fn freeze(
     if !was_draft || release.is_draft || release.is_immutable {
         return Ok(());
     }
-    let enabled: bool = sqlx::query_scalar(&format!("SELECT {ENFORCED_SQL}"))
+    let enabled: bool = sqlx::query_scalar(&format!("SELECT {}", enforced_sql()))
         .bind(release.repo_id)
         .fetch_one(&mut **tx)
         .await?;
@@ -91,9 +116,15 @@ pub(crate) async fn freeze(
         return Ok(());
     }
     let publication = publication.ok_or(ReleaseRefusal::Conflict)?;
+    let (owner, name): (String, String) = sqlx::query_as("SELECT COALESCE(u.username,o.name),r.name FROM repositories r LEFT JOIN users u ON u.id=r.owner_user_id LEFT JOIN organizations o ON o.id=r.owner_org_id WHERE r.id=?1").bind(release.repo_id).fetch_one(&mut **tx).await?;
     let mut assets:Vec<Artifact>=sqlx::query_as("SELECT a.name,a.size,f.sha256_hex AS sha256 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=?1 LIMIT 1001").bind(release.id).fetch_all(&mut **tx).await?;
     assets.sort_by(|a, b| a.name.cmp(&b.name));
-    publication.matches(release.repo_id, &release.tag_name, &assets)?;
+    publication.matches(
+        release.repo_id,
+        &release.tag_name,
+        &assets,
+        &crate::backend::repositories::releases::immutable::namespace_url(&owner, &name),
+    )?;
     let inactive:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM release_assets a JOIN files f ON f.id=a.file_id WHERE a.release_id=?1 AND NOT f.is_active)").bind(release.id).fetch_one(&mut **tx).await?;
     ensure!(!inactive, ReleaseRefusal::Conflict);
     sqlx::query("UPDATE releases SET is_immutable=1,target_commitish=?2 WHERE id=?1")

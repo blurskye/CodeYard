@@ -18,9 +18,9 @@ impl NotificationListener {
         }
     }
 
-    /// PostgreSQL reconnects after connection loss. Hints missed during an outage
-    /// are not replayed; recipients reload authoritative rows on reconnect.
-    pub async fn recv(&mut self) -> Result<String, sqlx::Error> {
+    /// `None` when the connection was lost. Hints missed during an outage are not
+    /// replayed, so the caller reconnects and has recipients reload authoritative rows.
+    pub async fn recv(&mut self) -> Result<Option<String>, sqlx::Error> {
         self.native.recv().await
     }
 }

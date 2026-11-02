@@ -195,6 +195,11 @@ async fn pages(pg: bool) {
             .await,
         0
     );
+    // The removed version's objects stay for the backup restore window, then go.
+    assert_eq!(f.scalar("SELECT COUNT(*) FROM package_blobs", &[]).await, 1);
+    f.execute("UPDATE package_blobs SET expires_at=0", &[])
+        .await;
+    packages::collect(f.pool(), &storage).await.unwrap();
     assert_eq!(f.scalar("SELECT COUNT(*) FROM package_blobs", &[]).await, 0);
     f.finish().await;
 }

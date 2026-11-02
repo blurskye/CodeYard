@@ -596,10 +596,21 @@ async fn contract(pg: bool) {
         "production"
     );
     assert_eq!(rerun.workflow_path, ".github/workflows/ci.yml");
-    assert_eq!(
-        rerun.workflow_blobs,
-        runs.iter().find(|run| run.id == id).unwrap().workflow_blobs
-    );
+    // The run list leaves out workflow snapshots, so compare the whole runs.
+    let rerun_blobs = db::ci::get_ci_run(f.pool(), rerun.id)
+        .await
+        .unwrap()
+        .unwrap()
+        .workflow_blobs;
+    let source_blobs = db::ci::get_ci_run(f.pool(), id)
+        .await
+        .unwrap()
+        .unwrap()
+        .workflow_blobs;
+    assert!(rerun_blobs
+        .as_object()
+        .is_some_and(|blobs| !blobs.is_empty()));
+    assert_eq!(rerun_blobs, source_blobs);
 
     // The lookup must filter before first:1, not select a newer unrelated branch.
     let mut matching = None;
@@ -800,10 +811,14 @@ async fn contract(pg: bool) {
         &[rerun.id],
     )
     .await;
-    let runtime = rerun;
+    // Credentials go only to the worker that holds the claim, so issue them for the claimed row.
+    let runtime = db::ci::get_ci_run(f.pool(), rerun.id)
+        .await
+        .unwrap()
+        .unwrap();
     let token = codeyard::backend::ci::runtime::issue(
         f.pool(),
-        runtime,
+        &runtime,
         &db::actions::ActionsSettings::default(),
     )
     .await
@@ -865,7 +880,7 @@ async fn contract(pg: bool) {
     .await;
     let mut zip = vec![0; 22];
     zip[..4].copy_from_slice(b"PK\x05\x06");
-    let artifact = actions_objects::artifact(&router, runtime, &token.token, "dist", &zip).await;
+    let artifact = actions_objects::artifact(&router, &runtime, &token.token, "dist", &zip).await;
     for path in [
         format!("{base}/artifacts?per_page=100"),
         format!("{base}/runs/{id}/artifacts?per_page=100"),

@@ -1,5 +1,6 @@
 use super::{database_error, OperationError};
 use crate::backend::db;
+use crate::backend::db::users::accounts::AccountCredential;
 use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{
@@ -67,30 +68,40 @@ async fn issue_comment(
         })
 }
 
-/// Why a locked thread or an archived repository refuses a comment change, if it does.
-fn refuse_change(
+async fn require_change(
+    pool: &db::DbPool,
+    user: &db::models::User,
     repository: &db::models::Repository,
     issue: &db::models::Issue,
-) -> Option<OperationError> {
+) -> Result<(), OperationError> {
     if repository.is_archived {
-        Some(OperationError::Denied {
+        return Err(OperationError::Denied {
             code: "repository_archived",
             message: "This repository is archived and read-only.".to_owned(),
-        })
-    } else if issue.locked {
-        Some(OperationError::Denied {
+        });
+    }
+    if issue.locked
+        && !crate::backend::repositories::access::can_write(pool, user, repository)
+            .await
+            .map_err(database_error)?
+    {
+        return Err(OperationError::Denied {
             code: "conversation_locked",
             message: "This conversation is locked.".to_owned(),
-        })
-    } else {
-        None
+        });
     }
+    Ok(())
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Explicit actor and resources keep operations HTTP-free."
+)]
 pub async fn create_issue_comment(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
+    credential: &AccountCredential<'_>,
     owner: String,
     repo: String,
     number: i32,
@@ -98,9 +109,7 @@ pub async fn create_issue_comment(
 ) -> Result<db::models::IssueComment, OperationError> {
     let user = super::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
-    if let Some(refusal) = refuse_change(&repository, &issue) {
-        return Err(refusal);
-    }
+    require_change(pool, &user, &repository, &issue).await?;
 
     if let Err(message) = super::validate_body(&req.body, true) {
         return Err(OperationError::Invalid {
@@ -117,9 +126,16 @@ pub async fn create_issue_comment(
             message: "The comment target changed. Reload before submitting.".into(),
         });
     }
-    let comment = db::issues::add_issue_comment(pool, issue.id, user.id, &req.body)
-        .await
-        .map_err(super::write_error)?;
+    let comment = db::issues::add_issue_comment(
+        pool,
+        repository.id,
+        issue.id,
+        user.id,
+        &req.body,
+        credential,
+    )
+    .await
+    .map_err(super::write_error)?;
 
     let base = format!("/{}/{}/issues/{}", owner, repo, issue.number);
     let link = format!("{base}?comment={}#comment-{}", comment.id, comment.id);
@@ -142,15 +158,8 @@ pub async fn create_issue_comment(
     {
         notified.push(issue.author_id);
     }
-    let subscribers = crate::backend::notifications::create::notify_subscribers(
-        pool,
-        broadcaster,
-        notice,
-        &notified,
-    )
-    .await;
-    notified.extend(subscribers);
-    notify_mentions(
+    // A mention comes before the subscriber notice, so a mentioned subscriber hears it as one.
+    let mentioned = notify_mentions(
         pool,
         broadcaster,
         MentionSource {
@@ -168,14 +177,46 @@ pub async fn create_issue_comment(
         },
     )
     .await;
+    notified.extend(mentioned);
+    crate::backend::notifications::create::notify_subscribers(pool, broadcaster, notice, &notified)
+        .await;
 
-    let (issue_for_hook, comment_for_hook) = (issue.clone(), comment.clone());
-    let repository_for_hook = repository.clone();
-    let (issue_author_id, comment_author_id, sender_id) =
-        (issue.author_id, comment.author_id, user.id);
-    webhooks::emit(
+    // The comment moved the issue's revision, so the hook names the issue as it is now.
+    let commented = match db::issues::get_issue_by_id(pool, issue.id).await {
+        Ok(Some(current)) if current.repo_id == repository.id => current,
+        Ok(_) => issue,
+        Err(error) => {
+            tracing::warn!(%error, "Commented issue was not read again for its webhook");
+            issue
+        }
+    };
+    emit_comment_webhook(
         pool,
         &repository,
+        &commented,
+        &comment,
+        user.id,
+        ("created", None),
+    )
+    .await;
+    Ok(comment)
+}
+
+/// Sends the issue_comment webhook for a comment change that has committed.
+async fn emit_comment_webhook(
+    pool: &db::DbPool,
+    repository: &db::models::Repository,
+    issue: &db::models::Issue,
+    comment: &db::models::IssueComment,
+    sender_id: i64,
+    (action, previous_body): (&'static str, Option<String>),
+) {
+    let (issue, comment, repository_for_hook) =
+        (issue.clone(), comment.clone(), repository.clone());
+    let (issue_author_id, comment_author_id) = (issue.author_id, comment.author_id);
+    webhooks::emit(
+        pool,
+        repository,
         events::ISSUE_COMMENT,
         vec![issue_author_id, comment_author_id, sender_id],
         move |owner, people| {
@@ -185,9 +226,10 @@ pub async fn create_issue_comment(
                 people.get(sender_id),
             );
             payloads::issue_comment(
-                "created",
-                &comment_for_hook,
-                &issue_for_hook,
+                action,
+                previous_body.as_deref(),
+                &comment,
+                &issue,
                 &issue_author,
                 &comment_author,
                 Scope {
@@ -199,14 +241,14 @@ pub async fn create_issue_comment(
         },
     )
     .await;
-    Ok(comment)
 }
 
-/// Changes the body of a comment. Only its author may, and only while the thread is open.
+/// The author or a repository writer may edit; locked threads remain writable by writers.
 pub async fn edit_issue_comment(
     pool: &db::DbPool,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
+    credential: &AccountCredential<'_>,
     target: CommentTarget,
     req: CreateCommentRequest,
     expected_body: Option<&str>,
@@ -219,14 +261,16 @@ pub async fn edit_issue_comment(
     } = target;
     let user = super::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
-    if let Some(refusal) = refuse_change(&repository, &issue) {
-        return Err(refusal);
-    }
+    require_change(pool, &user, &repository, &issue).await?;
     let previous = issue_comment(pool, &issue, comment_id).await?;
-    if previous.author_id != user.id {
+    if previous.author_id != user.id
+        && !crate::backend::repositories::access::can_write(pool, &user, &repository)
+            .await
+            .map_err(database_error)?
+    {
         return Err(OperationError::Denied {
             code: "comment_forbidden",
-            message: "Only the author can edit this comment.".to_owned(),
+            message: "Only the author or a repository writer can edit this comment.".to_owned(),
         });
     }
     if expected_body.is_some_and(|body| body != previous.body) {
@@ -249,6 +293,7 @@ pub async fn edit_issue_comment(
         comment_id,
         &req.body,
         &previous.body,
+        credential,
     )
     .await
     .map_err(super::write_error)?
@@ -288,44 +333,24 @@ pub async fn edit_issue_comment(
         )
         .await;
     }
-    let (issue_for_hook, comment_for_hook) = (issue.clone(), comment.clone());
-    let repository_for_hook = repository.clone();
-    let (issue_author_id, comment_author_id, sender_id) =
-        (issue.author_id, comment.author_id, user.id);
-    webhooks::emit(
+    emit_comment_webhook(
         pool,
         &repository,
-        events::ISSUE_COMMENT,
-        vec![issue_author_id, comment_author_id, sender_id],
-        move |owner, people| {
-            let (issue_author, comment_author, sender) = (
-                people.get(issue_author_id),
-                people.get(comment_author_id),
-                people.get(sender_id),
-            );
-            payloads::issue_comment(
-                "edited",
-                &comment_for_hook,
-                &issue_for_hook,
-                &issue_author,
-                &comment_author,
-                Scope {
-                    repo: &repository_for_hook,
-                    owner,
-                    sender: &sender,
-                },
-            )
-        },
+        &issue,
+        &comment,
+        user.id,
+        ("edited", Some(previous.body)),
     )
     .await;
     Ok(comment)
 }
 
 /// Deletes a comment and the notifications about it. The author may delete their own comment and
-/// a repository maintainer may delete anyone's.
+/// a repository writer may delete anyone's.
 pub async fn delete_issue_comment(
     pool: &db::DbPool,
     actor_id: i64,
+    credential: &AccountCredential<'_>,
     target: CommentTarget,
 ) -> Result<(), OperationError> {
     let CommentTarget {
@@ -336,50 +361,33 @@ pub async fn delete_issue_comment(
     } = target;
     let user = super::actor(pool, actor_id).await?;
     let (repository, issue) = read_issue(pool, &user, &owner, &repo, number).await?;
-    if let Some(refusal) = refuse_change(&repository, &issue) {
-        return Err(refusal);
-    }
-    let previous = issue_comment(pool, &issue, comment_id).await?;
-    let removed =
-        db::issues::delete_issue_comment(pool, user.id, repository.id, issue.id, comment_id)
-            .await
-            .map_err(super::write_error)?;
-    if removed {
-        let (issue_for_hook, comment_for_hook) = (issue.clone(), previous.clone());
-        let repository_for_hook = repository.clone();
-        let (issue_author_id, comment_author_id, sender_id) =
-            (issue.author_id, previous.author_id, user.id);
-        webhooks::emit(
-            pool,
-            &repository,
-            events::ISSUE_COMMENT,
-            vec![issue_author_id, comment_author_id, sender_id],
-            move |owner, people| {
-                let (issue_author, comment_author, sender) = (
-                    people.get(issue_author_id),
-                    people.get(comment_author_id),
-                    people.get(sender_id),
-                );
-                payloads::issue_comment(
-                    "deleted",
-                    &comment_for_hook,
-                    &issue_for_hook,
-                    &issue_author,
-                    &comment_author,
-                    Scope {
-                        repo: &repository_for_hook,
-                        owner,
-                        sender: &sender,
-                    },
-                )
-            },
-        )
-        .await;
-        Ok(())
-    } else {
-        Err(OperationError::Denied {
+    require_change(pool, &user, &repository, &issue).await?;
+    issue_comment(pool, &issue, comment_id).await?;
+    let removed = db::issues::delete_issue_comment(
+        pool,
+        user.id,
+        repository.id,
+        issue.id,
+        comment_id,
+        credential,
+    )
+    .await
+    .map_err(super::write_error)?;
+    // The hook carries the comment as the delete removed it, not as it was read before.
+    let Some(removed) = removed else {
+        return Err(OperationError::Denied {
             code: "comment_forbidden",
             message: "You cannot delete this comment.".to_owned(),
-        })
-    }
+        });
+    };
+    emit_comment_webhook(
+        pool,
+        &repository,
+        &issue,
+        &removed,
+        user.id,
+        ("deleted", None),
+    )
+    .await;
+    Ok(())
 }

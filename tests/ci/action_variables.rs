@@ -394,7 +394,14 @@ pub(super) async fn gh_empty_value(
         200,
     )
     .await;
-    assert_eq!(cleared["value"], "");
+    // An empty PATCH clears the value for gh's upsert of an empty variable. One that sets the
+    // visibility leaves an omitted value as it is, as GitHub does.
+    let kept = if visibility.is_some() {
+        "before clearing"
+    } else {
+        ""
+    };
+    assert_eq!(cleared["value"], kept);
     assert_eq!(cleared["created_at"], empty["created_at"]);
     if let Some(visibility) = visibility {
         assert_eq!(cleared["visibility"], visibility);

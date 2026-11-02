@@ -110,14 +110,14 @@ impl Changes {
                 "Invalid organization profile",
             )
         })?;
-        let billing_email = text(input, "billing_email", 254)?;
-        let email = text(input, "email", 254)?;
+        let billing_email = text(input, "billing_email", 255)?;
+        let email = text(input, "email", 255)?;
         for (field, value) in [("billing_email", &billing_email), ("email", &email)] {
             if value
                 .as_ref()
                 .and_then(|value| value.as_ref())
                 .is_some_and(|value| {
-                    value.contains(['\r', '\n', '\t']) || value.parse::<lettre::Address>().is_err()
+                    crate::backend::identity::credentials::validate_email(value).is_err()
                 })
             {
                 return Err(invalid(field, "Enter a valid email address"));
@@ -125,7 +125,7 @@ impl Changes {
         }
         let blog = text(input, "blog", 1024)?;
         if let Some(Some(value)) = &blog {
-            if !valid_url(value) {
+            if crate::website::parse(value).is_none() {
                 return Err(invalid("blog", "Enter an absolute HTTP or HTTPS URL"));
             }
         }
@@ -290,16 +290,6 @@ pub fn has_signoff(message: &str, name: &str, email: &str) -> bool {
     }
     signed
 }
-pub fn valid_url(value: &str) -> bool {
-    value.trim() == value
-        && !value.chars().any(char::is_control)
-        && url::Url::parse(value).is_ok_and(|url| {
-            matches!(url.scheme(), "http" | "https")
-                && url.host_str().is_some()
-                && url.username().is_empty()
-                && url.password().is_none()
-        })
-}
 #[derive(Debug)]
 pub struct Updated {
     pub organization: Organization,
@@ -313,7 +303,7 @@ native_operation!(crate::backend::db::postgres::organizations::settings::reposit
 native_operation!(crate::backend::db::postgres::organizations::settings::owned,crate::backend::db::sqlite::organizations::settings::owned,
     fn owned(pool:&DbPool,actor:i64,org:i64)->Result<OrganizationOutcome<Updated>>);
 native_operation!(crate::backend::db::postgres::organizations::settings::change,crate::backend::db::sqlite::organizations::settings::change,
-    fn change(pool:&DbPool,actor:i64,org:i64,input:&Changes)->Result<OrganizationOutcome<Updated>>);
+    fn change(pool:&DbPool,actor:impl Into<crate::backend::db::credentials::Actor>,org:i64,input:&Changes)->Result<OrganizationOutcome<Updated>>);
 
 #[cfg(test)]
 mod tests {

@@ -23,7 +23,11 @@ async fn signed_out_visitors_are_sent_to_sign_in_from_the_work_lists() {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SEE_OTHER, "{path}");
-        assert_eq!(response.headers()["location"], "/login", "{path}");
+        assert_eq!(
+            response.headers()["location"],
+            format!("/login?redirect=%2F{}", &path[1..]).as_str(),
+            "{path}"
+        );
     }
     f.finish().await;
 }

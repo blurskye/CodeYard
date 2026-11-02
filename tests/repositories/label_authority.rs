@@ -39,7 +39,7 @@ const MUTATIONS: [Mutation; 7] = [
 
 async fn mutate(
     pool: &db::DbPool,
-    actor: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo: i64,
     issue: i64,
     label: i64,
@@ -92,11 +92,20 @@ async fn snapshot(pool: &db::DbPool, repos: &[i64]) -> Value {
             .await
             .unwrap()
             .unwrap();
+        // Every listed repository's labels, so a foreign label attached here still shows.
+        let mut associations = Vec::new();
+        for owner in repos {
+            associations.extend(
+                db::labels::get_issue_labels(pool, *owner, issue.id)
+                    .await
+                    .unwrap(),
+            );
+        }
         rows.push(json!({
             "repo": db::repositories::records::get_repository_by_id(pool, *repo).await.unwrap(),
             "issue": &issue,
             "labels": db::labels::list_repo_labels(pool, *repo).await.unwrap(),
-            "associations": db::labels::get_issue_labels(pool, issue.id).await.unwrap(),
+            "associations": associations,
         }));
     }
     json!(rows)
@@ -154,7 +163,7 @@ async fn accepted(f: &Fixture, actor: i64, repo: i64, issue: i64, baseline: i64)
         .await
         .unwrap();
     assert_eq!(
-        db::labels::get_issue_labels(pool, issue)
+        db::labels::get_issue_labels(pool, repo, issue)
             .await
             .unwrap()
             .len(),
@@ -246,7 +255,7 @@ async fn authority_matrix(pg: bool) {
         db::labels::add_issue_label(f.pool(), member, repo, authored.id, label).await,
         LabelWriteRefusal::Denied,
     );
-    assert!(db::labels::get_issue_labels(f.pool(), authored.id)
+    assert!(db::labels::get_issue_labels(f.pool(), repo, authored.id)
         .await
         .unwrap()
         .is_empty());
@@ -514,7 +523,7 @@ async fn scope_and_batches(pg: bool) {
         .await
         .unwrap();
     assert_eq!(
-        db::labels::get_issue_labels(f.pool(), issue)
+        db::labels::get_issue_labels(f.pool(), repo, issue)
             .await
             .unwrap()
             .len(),
@@ -523,7 +532,7 @@ async fn scope_and_batches(pg: bool) {
     db::labels::set_issue_labels(f.pool(), owner, repo, issue, &[])
         .await
         .unwrap();
-    assert!(db::labels::get_issue_labels(f.pool(), issue)
+    assert!(db::labels::get_issue_labels(f.pool(), repo, issue)
         .await
         .unwrap()
         .is_empty());
@@ -534,6 +543,95 @@ async fn scope_and_batches(pg: bool) {
     f.finish().await;
 }
 
+/// A request whose own session ends before its write reaches the database writes nothing,
+/// although the account still has write access.
+async fn revoked_session(pg: bool) {
+    let mut f = Fixture::new(pg).await;
+    let owner = f.actor("label_owner").await;
+    let repo = f.label_repo(owner, None).await;
+    let (issue, label) = seed(f.pool(), owner, repo).await;
+    let session = crate::support::live_session(f.pool(), owner).await;
+    db::labels::create_label(
+        f.pool(),
+        (owner, session.clone()),
+        repo,
+        "live",
+        "#123456",
+        None,
+    )
+    .await
+    .unwrap();
+    db::milestones::create_milestone(f.pool(), (owner, session.clone()), repo, "live", None, None)
+        .await
+        .unwrap();
+    db::users::sessions::delete_session(f.pool(), &session)
+        .await
+        .unwrap();
+    let before = snapshot(f.pool(), &[repo]).await;
+    for mutation in MUTATIONS {
+        refusal(
+            mutate(
+                f.pool(),
+                (owner, session.clone()),
+                repo,
+                issue,
+                label,
+                mutation,
+            )
+            .await,
+            LabelWriteRefusal::Denied,
+        );
+    }
+    for result in [
+        db::milestones::create_milestone(
+            f.pool(),
+            (owner, session.clone()),
+            repo,
+            "late",
+            None,
+            None,
+        )
+        .await
+        .map(|_| ()),
+        db::milestones::set_milestone_state(f.pool(), (owner, session.clone()), repo, 1, "closed")
+            .await
+            .map(|_| ()),
+        db::milestones::set_issue_milestone(
+            f.pool(),
+            (owner, session.clone()),
+            repo,
+            issue,
+            Some(1),
+        )
+        .await,
+    ] {
+        let error = result.expect_err("a revoked session must not write");
+        assert_eq!(
+            error.downcast_ref::<db::milestones::MilestoneWriteRefusal>(),
+            Some(&db::milestones::MilestoneWriteRefusal::Denied)
+        );
+    }
+    assert_eq!(snapshot(f.pool(), &[repo]).await, before);
+    let milestone = db::milestones::get_milestone(f.pool(), repo, 1)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(milestone.milestone.state, "open");
+    assert!(db::milestones::get_milestone(f.pool(), repo, 2)
+        .await
+        .unwrap()
+        .is_none());
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn postgres_label_revoked_session() {
+    revoked_session(true).await;
+}
+#[tokio::test]
+async fn sqlite_label_revoked_session() {
+    revoked_session(false).await;
+}
 #[tokio::test]
 async fn postgres_label_authority_matrix() {
     authority_matrix(true).await;

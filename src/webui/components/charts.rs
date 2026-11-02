@@ -196,9 +196,8 @@ pub fn column_chart(series: Series, dates: &[String]) -> Element {
                         "aria-label": "{summary}",
                         for (index, (column, title)) in bars.into_iter().enumerate() {
                             g { key: "{index}",
-                                title { "{title}" }
-                                rect { x: index as f64, y: 0.0, width: 1.0, height: PLOT_HEIGHT, class: "column-chart-hit" }
-                                rect { x: column.x, y: column.y, width: column.width, height: column.height, class: "column-chart-bar" }
+                                // Parse title in SVG context; Dioxus's title element is HTML-only.
+                                dangerous_inner_html: format!("<title>{}</title><rect x=\"{index}\" y=\"0\" width=\"1\" height=\"{PLOT_HEIGHT}\" class=\"column-chart-hit\"/><rect x=\"{}\" y=\"{}\" width=\"{}\" height=\"{}\" class=\"column-chart-bar\"/>", super::escape_html(&title), column.x, column.y, column.width, column.height)
                             }
                         }
                     }

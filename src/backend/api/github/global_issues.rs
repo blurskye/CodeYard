@@ -14,10 +14,7 @@ use axum::{
     response::Response,
     routing::{get, MethodRouter},
 };
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 fn boolean(q: &HashMap<String, String>, name: &str, default: bool) -> Result<bool> {
     match q.get(name).map(String::as_str) {
@@ -100,6 +97,8 @@ async fn run(
             boolean(&q, "collab", false)?,
             boolean(&q, "orgs", false)?,
         ])
+    } else if q.get("filter").is_some_and(|filter| filter == "repos") {
+        Some([true, true, true])
     } else {
         None
     };
@@ -113,7 +112,8 @@ async fn run(
         scopes,
         pulls,
     })
-    .map_err(Error::invalid)?;
+    .map_err(Error::invalid)?
+    .with_classic_policy(Some(auth.token.id));
     let (offset, limit) = page.window()?;
     let result = db::discussion_search::search(
         &state.pool,
@@ -133,12 +133,7 @@ async fn run(
         .collect::<Vec<_>>();
     ids.sort_unstable();
     ids.dedup();
-    let readable =
-        db::repositories::access::readable_repository_ids(&state.pool, Some(viewer), &ids)
-            .await
-            .map_err(Error::unavailable)?
-            .into_iter()
-            .collect::<HashSet<_>>();
+    let readable = auth::readable_repositories(&state, Some(&auth), &ids, "issues").await?;
     let repos = db::repositories::records::get_repositories_by_ids(&state.pool, &ids)
         .await
         .map_err(Error::unavailable)?
@@ -162,7 +157,14 @@ async fn run(
         } else {
             AssignedItem::Issue(id)
         };
-        let mut value = issues::document(&state.pool, repo, owner, item).await?;
+        let mut value = issues::document(
+            &state.pool,
+            issues::Reader::Request(&state, Some(&auth)),
+            repo,
+            owner,
+            item,
+        )
+        .await?;
         value["repository"] = payloads::repository(repo, owner);
         items.push(value);
     }

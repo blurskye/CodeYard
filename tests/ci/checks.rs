@@ -442,15 +442,27 @@ async fn contract(pg: bool) {
         StatusCode::CREATED,
     )
     .await;
-    let app = db::oauth_apps::register(
+    let app = db::github_apps::register(
         f.pool(),
         alice,
         &owner.session,
-        "checks-client",
+        &db::github_apps::App {
+            id: 0,
+            owner_id: alice,
+            bot_id: 0,
+            is_public: true,
+            client_id: "checks-client".into(),
+            slug: "check-publisher".into(),
+            name: "Check publisher".into(),
+            description: String::new(),
+            homepage: "https://example.com".into(),
+            public_key: String::new(),
+            permissions: "{\"checks\":\"write\"}".into(),
+            events: "[]".into(),
+            access_level: 3,
+            created_at: chrono::Utc::now(),
+        },
         "secret-hash",
-        "Check publisher",
-        "https://example.com",
-        "https://example.com/callback",
     )
     .await
     .unwrap()
@@ -509,7 +521,20 @@ async fn contract(pg: bool) {
         prefs["preferences"]["auto_trigger_checks"][0]["setting"], false,
         "Invalid batches must roll back"
     );
-    // The publisher is derived from the OAuth credential, never a supplied app_id.
+    // The publisher is derived from the OAuth credential, never a supplied app_id. An App's
+    // user token reaches only repositories the App is installed on, as on GitHub.
+    db::github_apps::install(
+        f.pool(),
+        alice,
+        &owner.session,
+        app.id,
+        Some(alice),
+        None,
+        Some(&[repo.id]),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     f.execute(
         &format!(
             "INSERT INTO oauth_app_tokens(token_id,client_id,scopes) VALUES($1,'{}','repo')",

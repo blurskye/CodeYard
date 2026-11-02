@@ -1,6 +1,10 @@
 # https://github.com/pulumi/setup-pulumi/tree/b374ceb6168550de27c6eba92e01c1a774040e11
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

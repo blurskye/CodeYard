@@ -5,6 +5,7 @@ use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     routing::{delete, get, put, MethodRouter},
+    Json,
 };
 use std::sync::Arc;
 
@@ -27,16 +28,12 @@ async fn check(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     Path((owner, name)): Path<(String, String)>,
-) -> Result<StatusCode> {
+) -> Result<Json<serde_json::Value>> {
     let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
-    if security::enabled(&state.pool, repo.id)
+    let enabled = security::enabled(&state.pool, repo.id)
         .await
-        .map_err(failure)?
-    {
-        Ok(StatusCode::NO_CONTENT)
-    } else {
-        Err(Error::missing())
-    }
+        .map_err(failure)?;
+    Ok(Json(serde_json::json!({"enabled": enabled})))
 }
 async fn set(
     state: &AppState,
@@ -47,7 +44,7 @@ async fn set(
 ) -> Result<StatusCode> {
     let (repo, actor) = repository(state, headers, owner, name, true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    security::set_enabled(&state.pool, actor.user.id, repo.id, enabled)
+    security::set_enabled(&state.pool, actor.database_actor(), repo.id, enabled)
         .await
         .map_err(failure)?;
     Ok(StatusCode::NO_CONTENT)

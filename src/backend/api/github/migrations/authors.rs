@@ -94,10 +94,10 @@ async fn list(
         .map_err(super::store_error)?;
     let mut authors = BTreeSet::new();
     let deadline = Instant::now() + crate::backend::git::COMMIT_WALK_TIMEOUT;
-    // Every branch tip is walked, so an author who committed only on a feature branch is recorded.
+    // Walk branch and tag tips; tag-only and older merge-parent authors belong to the import.
     let tips: BTreeSet<&str> = refs
         .iter()
-        .filter(|(name, _)| name.starts_with("refs/heads/"))
+        .filter(|(name, _)| name.starts_with("refs/heads/") || name.starts_with("refs/tags/"))
         .map(|(_, sha)| sha.as_str())
         .collect();
     let mut seen = HashSet::new();
@@ -109,16 +109,13 @@ async fn list(
                 .await
                 .map_err(super::store_error)?;
             let count = commits.len();
-            let mut new = false;
             for commit in commits {
                 if seen.insert(commit.sha) {
-                    new = true;
                     authors.insert((commit.author_name, commit.author_email));
                 }
             }
-            // A page walked entirely from an earlier tip means this branch has joined known
-            // history, so its walk stops there.
-            if count < 100 || !new {
+            // A seen page does not prove that older merge parents have already been visited.
+            if count < 100 {
                 break;
             }
             offset += count;
@@ -149,12 +146,12 @@ async fn map(
     actor.require_write()?;
     let bytes = to_bytes(request.into_body(), 16 * 1024)
         .await
-        .map_err(|_| Error::invalid("Invalid author mapping"))?;
+        .map_err(super::super::json_bytes_error)?;
     let input = if bytes.is_empty() {
         Mapping::default()
     } else {
         serde_json::from_slice::<Option<Mapping>>(&bytes)
-            .map_err(|_| Error::invalid("Invalid author mapping"))?
+            .map_err(super::super::json_parse_error)?
             .unwrap_or_default()
     };
     if input.name.as_ref().is_some_and(|value| {
@@ -165,7 +162,7 @@ async fn map(
     if input
         .email
         .as_ref()
-        .is_some_and(|value| value.len() > 254 || value.parse::<lettre::Address>().is_err())
+        .is_some_and(|value| crate::backend::identity::credentials::validate_email(value).is_err())
     {
         return Err(Error::validation("PorterAuthor", "email", "invalid"));
     }

@@ -10,6 +10,31 @@ use anyhow::Result;
 /// requests cannot flood a mailbox.
 pub(in crate::backend::db) const RESEND_SECONDS: i64 = 60;
 
+pub(in crate::backend::db) fn primary_link_condition(pg: bool) -> String {
+    let now = if pg {
+        "clock_timestamp()"
+    } else {
+        "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
+    };
+    format!("u.email=t.email AND NOT u.is_banned AND t.expires_at>{now}")
+}
+
+pub(in crate::backend::db) fn secondary_link_condition(pg: bool) -> String {
+    let now = if pg {
+        "clock_timestamp()"
+    } else {
+        "strftime('%Y-%m-%dT%H:%M:%f000Z','now')"
+    };
+    format!("NOT u.is_banned AND NOT e.verified AND e.verification_expires_at>{now}")
+}
+
+pub(in crate::backend::db) fn delivery_allowed_sql(pg: bool) -> String {
+    let (id, attempt) = if pg { ("$1", "$2") } else { ("?1", "?2") };
+    let primary = primary_link_condition(pg);
+    let secondary = secondary_link_condition(pg);
+    format!("SELECT EXISTS(SELECT 1 FROM email_outbox o WHERE o.id={id} AND o.attempts={attempt} AND o.sent_at IS NULL AND (o.link_user_id IS NULL OR EXISTS(SELECT 1 FROM users u WHERE u.id=o.link_user_id AND (EXISTS(SELECT 1 FROM email_tokens t WHERE t.user_id=u.id AND t.purpose=o.link_purpose AND t.token_hash=o.link_token_hash AND t.email=o.to_address AND {primary}) OR (o.link_purpose='secondary' AND EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND lower(e.email)=lower(o.to_address) AND e.verification_hash=o.link_token_hash AND {secondary}))))) AND (o.notification_id IS NULL OR EXISTS(SELECT 1 FROM notifications n JOIN users u ON u.id=n.user_id WHERE n.id=o.notification_id AND u.email=o.to_address AND u.email_verified AND u.email_notifications)))")
+}
+
 /// A link mail: the hash of its token and the message that carries the token. Both are saved
 /// in one transaction.
 pub struct EmailLink<'a> {
@@ -60,11 +85,7 @@ native_operation!(crate::backend::db::postgres::email::enqueue_notification_emai
 native_operation!(crate::backend::db::postgres::email::withdraw_email,
     crate::backend::db::sqlite::email::withdraw_email,
     /// Drops an unsent message that must no longer be sent.
-    fn withdraw_email(pool: &DbPool, id: i64) -> Result<()>);
-
-native_operation!(crate::backend::db::postgres::email::enqueue_invitation_email,
-    crate::backend::db::sqlite::email::enqueue_invitation_email,
-    fn enqueue_invitation_email(pool: &DbPool, invitation: i64, to_address: &str, subject: &str, body_text: &str) -> Result<()>);
+    fn withdraw_email(pool: &DbPool, id: i64, attempt: i32) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::email::claim_due_email,
     crate::backend::db::sqlite::email::claim_due_email,
@@ -74,16 +95,23 @@ native_operation!(crate::backend::db::postgres::email::claim_due_email,
     /// different messages.
     fn claim_due_email(pool: &DbPool, max_attempts: i32, lease_seconds: i64) -> Result<Option<OutboxMessage>>);
 
+native_operation!(crate::backend::db::postgres::email::delivery_allowed,
+    crate::backend::db::sqlite::email::delivery_allowed,
+    /// Rechecks a claimed message before SMTP: it is still this claim's attempt and unsent, link
+    /// mail still matches its live issuance, and notification mail still goes to the recipient's
+    /// verified address with mail enabled. Notification readability remains owned by notifications.
+    fn delivery_allowed(pool: &DbPool, id: i64, attempt: i32) -> Result<bool>);
+
 native_operation!(crate::backend::db::postgres::email::mark_email_sent,
     crate::backend::db::sqlite::email::mark_email_sent,
     /// Marks the message sent and empties its body, which may hold a link that still works.
-    fn mark_email_sent(pool: &DbPool, id: i64) -> Result<()>);
+    fn mark_email_sent(pool: &DbPool, id: i64, attempt: i32) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::email::mark_email_failed,
     crate::backend::db::sqlite::email::mark_email_failed,
     /// Records a failed attempt. A message that has used `max_attempts` is given up, and its
     /// body is emptied like a sent one.
-    fn mark_email_failed(pool: &DbPool, id: i64, error: &str, retry_seconds: i64, max_attempts: i32) -> Result<()>);
+    fn mark_email_failed(pool: &DbPool, id: i64, attempt: i32, error: &str, retry_seconds: i64, max_attempts: i32) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::email::remove_old_email,
     crate::backend::db::sqlite::email::remove_old_email,
@@ -92,11 +120,12 @@ native_operation!(crate::backend::db::postgres::email::remove_old_email,
 
 native_operation!(crate::backend::db::postgres::email::get_email_notifications,
     crate::backend::db::sqlite::email::get_email_notifications,
-    fn get_email_notifications(pool: &DbPool, user_id: i64) -> Result<bool>);
+    /// The account's own setting, read while `credential` is still live.
+    fn get_email_notifications(pool: &DbPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::email::set_email_notifications,
     crate::backend::db::sqlite::email::set_email_notifications,
-    fn set_email_notifications(pool: &DbPool, user_id: i64, enabled: bool) -> Result<()>);
+    fn set_email_notifications(pool: &DbPool, user_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, enabled: bool) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::email::notification_email_address,
     crate::backend::db::sqlite::email::notification_email_address,
@@ -107,8 +136,8 @@ native_operation!(crate::backend::db::postgres::email::save_email_token,
     crate::backend::db::sqlite::email::save_email_token,
     /// Stores the hash of a link mailed to the user, for `purpose` 'verify' or 'reset', and queues
     /// the mail in the same transaction. It replaces the user's earlier link of that kind, unless
-    /// that one went to the same address less than `RESEND_SECONDS` ago. False when the earlier
-    /// link stays and nothing is queued.
+    /// that one went to the same address less than `RESEND_SECONDS` ago. Superseded unsent mail
+    /// is withdrawn atomically. False when nothing is queued.
     fn save_email_token(pool: &DbPool, link: &EmailLink<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::email::email_token_is_valid,

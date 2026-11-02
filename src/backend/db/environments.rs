@@ -52,15 +52,11 @@ pub struct Update {
     pub prevent_self_review: Option<bool>,
     pub reviewers: Option<Vec<Reviewer>>,
     /// Omitted leaves the stored policy alone; an explicit null clears it.
-    #[serde(default, deserialize_with = "present_or_null")]
+    #[serde(
+        default,
+        deserialize_with = "super::repositories::records::nullable_change"
+    )]
     pub deployment_branch_policy: Option<Option<BranchPolicy>>,
-}
-
-fn present_or_null<'de, D>(deserializer: D) -> Result<Option<Option<BranchPolicy>>, D::Error>
-where
-    D: serde::Deserializer<'de>,
-{
-    Option::<BranchPolicy>::deserialize(deserializer).map(Some)
 }
 
 impl Update {
@@ -129,10 +125,10 @@ native_operation!(crate::backend::db::postgres::environments::count,
     fn count(pool: &DbPool, repo: i64) -> Result<i64>);
 native_operation!(crate::backend::db::postgres::environments::upsert,
     crate::backend::db::sqlite::environments::upsert,
-    fn upsert(pool: &DbPool, actor: i64, repo: i64, name: &str, input: &Update) -> Result<Environment>);
+    fn upsert(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, name: &str, input: &Update) -> Result<Environment>);
 native_operation!(crate::backend::db::postgres::environments::delete,
     crate::backend::db::sqlite::environments::delete,
-    fn delete(pool: &DbPool, actor: i64, repo: i64, name: &str) -> Result<()>);
+    fn delete(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, name: &str) -> Result<()>);
 native_operation!(crate::backend::db::postgres::environments::branches,
     crate::backend::db::sqlite::environments::branches,
     fn branches(pool: &DbPool, environment: i64, offset: i64, limit: i64) -> Result<Vec<Branch>>);
@@ -144,7 +140,7 @@ native_operation!(crate::backend::db::postgres::environments::branch_count,
     fn branch_count(pool: &DbPool, environment: i64) -> Result<i64>);
 native_operation!(crate::backend::db::postgres::environments::save_branch,
     crate::backend::db::sqlite::environments::save_branch,
-    fn save_branch(pool: &DbPool, actor: i64, repo: i64, environment: i64, id: Option<i64>, name: &str, kind: &str) -> Result<(Branch, bool)>);
+    fn save_branch(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, environment: i64, id: Option<i64>, name: &str, kind: &str) -> Result<(Branch, bool)>);
 native_operation!(crate::backend::db::postgres::environments::delete_branch,
     crate::backend::db::sqlite::environments::delete_branch,
-    fn delete_branch(pool: &DbPool, actor: i64, repo: i64, environment: i64, id: i64) -> Result<()>);
+    fn delete_branch(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, environment: i64, id: i64) -> Result<()>);

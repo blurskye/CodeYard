@@ -3,15 +3,42 @@ use crate::backend::db::DbPool;
 use anyhow::Result;
 
 #[derive(Debug, sqlx::FromRow)]
+pub struct RepositorySnapshot {
+    #[sqlx(flatten)]
+    pub repository: crate::backend::db::models::Repository,
+    #[sqlx(flatten)]
+    pub facts: RepositoryDocumentFacts,
+    pub owner: String,
+}
+
+#[derive(Debug, sqlx::FromRow)]
 pub struct RepositoryDocumentFacts {
     pub open_items: i64,
     pub pushed_at: Option<chrono::DateTime<chrono::Utc>>,
     pub language: Option<String>,
 }
 
+native_operation!(crate::backend::db::postgres::repository_stats::readable_snapshots,
+    crate::backend::db::sqlite::repository_stats::readable_snapshots,
+    fn readable_snapshots(pool: &DbPool, viewer: Option<i64>, ids: &[i64]) -> Result<Vec<RepositorySnapshot>>);
+
 native_operation!(crate::backend::db::postgres::repository_stats::repository_document_facts,
     crate::backend::db::sqlite::repository_stats::repository_document_facts,
     fn repository_document_facts(pool: &DbPool, repo: i64) -> Result<RepositoryDocumentFacts>);
+
+#[derive(sqlx::FromRow)]
+pub struct RepositoryDocumentMetadata {
+    pub repo_id: i64,
+    #[sqlx(flatten)]
+    pub facts: RepositoryDocumentFacts,
+    pub last_pushed_at: chrono::DateTime<chrono::Utc>,
+    pub wiki: bool,
+    pub discussions: bool,
+}
+
+native_operation!(crate::backend::db::postgres::repository_stats::repository_document_metadata,
+    crate::backend::db::sqlite::repository_stats::repository_document_metadata,
+    fn repository_document_metadata(pool: &DbPool, repos: &[i64]) -> Result<Vec<RepositoryDocumentMetadata>>);
 
 #[derive(Debug, sqlx::FromRow)]
 pub struct LanguageSource {

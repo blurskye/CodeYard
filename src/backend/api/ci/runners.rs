@@ -1,6 +1,6 @@
 //! Native runner settings and credential redemption; the REST adapter shares the same DAOs.
 use crate::backend::{
-    api::http::context::PageContext,
+    api::{http::context::PageContext, user::responses::field},
     app::AppState,
     ci::runner_credentials as credentials,
     db::{
@@ -28,7 +28,7 @@ pub fn router() -> Router<Arc<AppState>> {
         .route("/settings/actions/runners", get(show).post(save))
         .route("/api/actions/runners/:id/remove", post(remove))
         .route("/api/actions/runners/download", get(download))
-        .layer(DefaultBodyLimit::max(65536))
+        .layer(DefaultBodyLimit::max(512 * 1024))
 }
 async fn scope(ctx: &PageContext) -> Result<Scope, Response> {
     if ctx.query.contains_key("org") && ctx.query.contains_key("repo") {
@@ -84,25 +84,30 @@ async fn scope(ctx: &PageContext) -> Result<Scope, Response> {
         )),
     }
 }
-fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
-    let (status, message) = match error.downcast_ref::<Refusal>() {
-        Some(Refusal::Denied) => (
+fn refusal_details(refusal: &Refusal) -> (StatusCode, String) {
+    match refusal {
+        Refusal::Denied => (
             StatusCode::FORBIDDEN,
             "Runner administration permission required".to_owned(),
         ),
-        Some(Refusal::Missing) => (
+        Refusal::Missing => (
             StatusCode::NOT_FOUND,
             "Runner resource not found".to_owned(),
         ),
-        Some(Refusal::Invalid(field)) => {
-            (StatusCode::UNPROCESSABLE_ENTITY, format!("Check {field}."))
-        }
-        Some(Refusal::Conflict(message)) => (StatusCode::CONFLICT, (*message).to_owned()),
-        None => (
-            StatusCode::SERVICE_UNAVAILABLE,
-            "Runner settings are unavailable.".to_owned(),
-        ),
-    };
+        Refusal::Invalid(field) => (StatusCode::UNPROCESSABLE_ENTITY, format!("Check {field}.")),
+        Refusal::Conflict(message) => (StatusCode::CONFLICT, (*message).to_owned()),
+    }
+}
+fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
+    let (status, message) = error
+        .downcast_ref::<Refusal>()
+        .map(refusal_details)
+        .unwrap_or_else(|| {
+            (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Runner settings are unavailable.".to_owned(),
+            )
+        });
     ctx.error(status, &message)
 }
 async fn show(State(s): State<Arc<AppState>>, headers: HeaderMap, uri: Uri) -> Response {
@@ -126,7 +131,25 @@ async fn render(
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    let rows = match native::list_runners(&ctx.state.pool, actor, scope).await {
+    let group_window = match page_window(ctx, "group_page", 10) {
+        Ok(page) => page,
+        Err(response) => return response,
+    };
+    let runner_window = match page_window(ctx, "runner_page", 25) {
+        Ok(page) => page,
+        Err(response) => return response,
+    };
+    let rows = match native::list_runners(
+        &ctx.state.pool,
+        actor,
+        scope,
+        &native::RunnerQuery {
+            page: runner_window,
+            ..Default::default()
+        },
+    )
+    .await
+    {
         Ok(rows) => rows,
         Err(error) => return failure(ctx, error),
     };
@@ -138,7 +161,17 @@ async fn render(
                 Ok(Some(org)) => org,
                 _ => return ctx.error(StatusCode::NOT_FOUND, "Organization not found."),
             };
-            let groups = match native::list_groups(&ctx.state.pool, actor, org.id).await {
+            let groups = match native::list_groups(
+                &ctx.state.pool,
+                actor,
+                org.id,
+                &native::GroupQuery {
+                    page: group_window,
+                    ..Default::default()
+                },
+            )
+            .await
+            {
                 Ok(rows) => rows,
                 Err(error) => return failure(ctx, error),
             };
@@ -171,11 +204,17 @@ async fn render(
                     crate::webui::encode_component(&owner),
                     crate::webui::encode_component(&repo.name)
                 ),
-                Vec::new(),
+                native::Listing {
+                    total: 0,
+                    rows: Vec::new(),
+                },
             )
         }
     };
+    let group_navigation = navigation(scope, group_window, runner_window, groups.total, true);
+    let runner_navigation = navigation(scope, group_window, runner_window, rows.total, false);
     let groups = groups
+        .rows
         .into_iter()
         .map(|g| -> anyhow::Result<_> {
             Ok(view::Group {
@@ -196,6 +235,7 @@ async fn render(
         })
         .collect::<anyhow::Result<Vec<_>>>();
     let rows = rows
+        .rows
         .into_iter()
         .map(|r| -> anyhow::Result<_> {
             Ok(view::Runner {
@@ -225,23 +265,75 @@ async fn render(
             csrf_token: ctx.csrf_token.clone(),
             title: title.clone(),
             back,
-            action: destination(scope),
+            action: page_destination(scope, group_window, runner_window),
             organization: matches!(scope, Scope::Organization(_)),
             groups,
             runners,
+            group_navigation,
+            runner_navigation,
             message,
             draft,
         }),
     )
+}
+fn page_window(ctx: &PageContext, key: &str, limit: i64) -> Result<native::Window, Response> {
+    let page = ctx
+        .query
+        .get(key)
+        .map_or(Some(1), |value| value.parse::<i64>().ok());
+    let offset = page
+        .filter(|page| *page > 0)
+        .and_then(|page| (page - 1).checked_mul(limit))
+        .filter(|offset| *offset <= 1_000_000)
+        .ok_or_else(|| ctx.error(StatusCode::BAD_REQUEST, "Invalid runner settings page."))?;
+    Ok(native::Window { offset, limit })
+}
+fn page_destination(scope: Scope, groups: native::Window, runners: native::Window) -> String {
+    format!(
+        "{}&group_page={}&runner_page={}",
+        destination(scope),
+        groups.offset / groups.limit + 1,
+        runners.offset / runners.limit + 1
+    )
+}
+fn navigation(
+    scope: Scope,
+    groups: native::Window,
+    runners: native::Window,
+    total: i64,
+    group: bool,
+) -> Vec<(String, String)> {
+    let current = if group { groups } else { runners };
+    let mut links = Vec::new();
+    for (label, offset) in [
+        (
+            "Previous",
+            (current.offset > 0).then_some(current.offset - current.limit),
+        ),
+        (
+            "Next",
+            (current.offset + current.limit < total).then_some(current.offset + current.limit),
+        ),
+    ] {
+        if let Some(offset) = offset {
+            let page = native::Window { offset, ..current };
+            links.push((
+                label.into(),
+                if group {
+                    page_destination(scope, page, runners)
+                } else {
+                    page_destination(scope, groups, page)
+                },
+            ));
+        }
+    }
+    links
 }
 fn destination(scope: Scope) -> String {
     match scope {
         Scope::Organization(id) => format!("/settings/actions/runners?org={id}"),
         Scope::Repository(id) => format!("/settings/actions/runners?repo={id}"),
     }
-}
-fn field<'a>(form: &'a Fields, key: &str) -> &'a str {
-    form.get(key).map(String::as_str).unwrap_or("")
 }
 fn id(form: &Fields, key: &str) -> anyhow::Result<i64> {
     field(form, key)
@@ -292,7 +384,11 @@ async fn save(
         Ok(scope) => scope,
         Err(response) => return response,
     };
-    if form.len() > 12 || form.values().any(|v| v.len() > 49152) {
+    if form.len() > 12
+        || form
+            .iter()
+            .any(|(key, value)| value.len() > if key == "workflows" { 110_000 } else { 49152 })
+    {
         return ctx.error(StatusCode::BAD_REQUEST, "Runner form is too large.");
     }
     let result = mutate(&ctx, actor, scope, &form).await;
@@ -312,10 +408,9 @@ async fn save(
         Ok(None) => ctx.redirect(&destination(scope)),
         Err(error) => {
             let (status, message) = match error.downcast_ref::<Refusal>() {
-                Some(Refusal::Invalid(field)) => {
-                    (StatusCode::UNPROCESSABLE_ENTITY, format!("Check {field}."))
+                Some(refusal @ (Refusal::Invalid(_) | Refusal::Conflict(_))) => {
+                    refusal_details(refusal)
                 }
-                Some(Refusal::Conflict(message)) => (StatusCode::CONFLICT, (*message).to_owned()),
                 _ => return failure(&ctx, error),
             };
             let mut draft = form;
@@ -413,7 +508,7 @@ async fn mutate(
             .await?;
         }
         "registration-token" | "jit" => {
-            native::list_runners(pool, actor, scope).await?;
+            native::authorize_scope(pool, actor, scope).await?;
             let ticket = credentials::ticket(pool, ctx.state.cluster.as_ref()).await?;
             let expires = chrono::Utc::now() + chrono::Duration::hours(1);
             let jit = field(form, "action") == "jit";
@@ -431,11 +526,14 @@ async fn mutate(
             } else {
                 None
             };
+            let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                .ok_or(Refusal::Denied)?;
             let row = native::registration(
                 pool,
                 actor,
                 scope,
                 Registration {
+                    session: Some(&session),
                     hash: &ticket.secret_hash(),
                     expires,
                     name: jit.then_some(field(form, "name")),
@@ -504,17 +602,32 @@ async fn download() -> Response {
         Err(error) => Err(error),
     };
     match file {
-        Ok(file) => (
-            [
-                ("content-type", "application/octet-stream"),
-                (
-                    "content-disposition",
-                    "attachment; filename=codeyard-runner",
-                ),
-            ],
-            Body::from_stream(tokio_util::io::ReaderStream::new(file)),
-        )
-            .into_response(),
+        Ok(file) => {
+            use futures_util::StreamExt;
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(120);
+            let stream = futures_util::stream::unfold(
+                Some(tokio_util::io::ReaderStream::new(file)),
+                move |reader| async move {
+                    let mut reader = reader?;
+                    match tokio::time::timeout_at(deadline, reader.next()).await {
+                        Ok(Some(bytes)) => Some((bytes, Some(reader))),
+                        Ok(None) => None,
+                        Err(_) => Some((Err(std::io::ErrorKind::TimedOut.into()), None)),
+                    }
+                },
+            );
+            (
+                [
+                    ("content-type", "application/octet-stream"),
+                    (
+                        "content-disposition",
+                        "attachment; filename=codeyard-runner",
+                    ),
+                ],
+                Body::from_stream(stream),
+            )
+                .into_response()
+        }
         Err(_) => StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
 }

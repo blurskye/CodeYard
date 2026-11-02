@@ -119,8 +119,7 @@ async fn change(
     {
         return Err(Error::new(StatusCode::FORBIDDEN, "Stack write denied"));
     }
-    let input: Members =
-        serde_json::from_slice(&body).map_err(|_| Error::invalid("pull_requests is required"))?;
+    let input: Members = serde_json::from_slice(&body).map_err(super::super::json_parse_error)?;
     if input.pull_requests.len() < if number.is_none() { 2 } else { 1 }
         || input.pull_requests.len() > 100
     {

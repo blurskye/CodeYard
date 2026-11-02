@@ -14,12 +14,12 @@ pub struct Workflow {
     pub updated_at: DateTime<Utc>,
 }
 
-native_operation!(crate::backend::db::postgres::action_workflows::register_workflow,
-    crate::backend::db::sqlite::action_workflows::register_workflow,
-    fn register_workflow(pool:&DbPool,repo:i64,path:&str,name:&str,refresh:bool) -> Result<Workflow>);
+native_operation!(crate::backend::db::postgres::action_workflows::register_workflows,
+    crate::backend::db::sqlite::action_workflows::register_workflows,
+    fn register_workflows(pool:&DbPool,repo:i64,definitions:&[(String,String)],refresh:bool) -> Result<Vec<Workflow>>);
 native_operation!(crate::backend::db::postgres::action_workflows::set_workflow_enabled,
     crate::backend::db::sqlite::action_workflows::set_workflow_enabled,
-    fn set_workflow_enabled(pool:&DbPool,actor:i64,repo:i64,id:i64,enabled:bool) -> Result<Option<Workflow>>);
+    fn set_workflow_enabled(pool:&DbPool,actor:impl Into<super::credentials::Actor>,repo:i64,id:i64,enabled:bool) -> Result<Option<Workflow>>);
 native_operation!(crate::backend::db::postgres::action_workflows::workflow_by_id,
     crate::backend::db::sqlite::action_workflows::workflow_by_id,
     fn workflow_by_id(pool: &DbPool, repo: i64, id:i64) -> Result<Option<Workflow>>);

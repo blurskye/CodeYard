@@ -21,11 +21,12 @@
 +			EnvironmentValues:                  environmentValues,
 --- /dev/null
 +++ b/pkg/runner/environment_values.go
-@@ -0,0 +1,132 @@
+@@ -0,0 +1,196 @@
 +package runner
 +
 +import (
 +	"bytes"
++	"context"
 +	"encoding/json"
 +	"errors"
 +	"io"
@@ -94,7 +95,7 @@
 +		return EnvironmentValues{}, errors.New("invalid environment values file")
 +	}
 +	for job, scope := range values.Jobs {
-+		if _, exists := values.Environments[scope]; job == "" || len(job) > 255 || !exists {
++		if _, exists := values.Environments[scope]; job == "" || len(job) > 1024 || !exists {
 +			return EnvironmentValues{}, errors.New("invalid environment value binding")
 +		}
 +	}
@@ -115,11 +116,19 @@
 +}
 +
 +func (rc *RunContext) environmentScope() EnvironmentScope {
-+	// A called workflow cannot borrow a same-named job's scope from its caller.
-+	if rc.Run == nil || rc.caller != nil {
++	owner := rc
++	for owner.Parent != nil {
++		owner = owner.Parent
++	}
++	if owner.Run == nil {
 +		return EnvironmentScope{}
 +	}
-+	return rc.Config.EnvironmentValues.forJob(rc.Run.JobID)
++	job := owner.Run.JobID
++	for caller := owner.caller; caller != nil; caller = owner.caller {
++		owner = caller.runContext
++		job = owner.Run.JobID + "/" + job
++	}
++	return rc.Config.EnvironmentValues.forJob(job)
 +}
 +
 +func overlayEnvironmentValues(base, overlay map[string]string) map[string]string {
@@ -142,29 +151,93 @@
 +}
 +
 +func (config *Config) maskedSecrets() map[string]string {
-+	// Synthetic indices avoid dropping either value when two scopes shadow a name.
 +	result := make(map[string]string)
++	seen := make(map[string]bool)
++	add := func(value string) {
++		for _, part := range append([]string{value}, strings.Split(value, "\n")...) {
++			part = strings.TrimRight(part, "\r\n")
++			if strings.TrimSpace(part) != "" && !seen[part] {
++				seen[part] = true
++				result[strconv.Itoa(len(result))] = part
++			}
++		}
++	}
 +	for _, value := range config.Secrets {
-+		result[strconv.Itoa(len(result))] = value
++		add(value)
 +	}
 +	for _, scope := range config.EnvironmentValues.Environments {
 +		for _, value := range scope.Secrets {
-+			result[strconv.Itoa(len(result))] = value
++			add(value)
 +		}
 +	}
 +	return result
 +}
++
++// Match the original text and redact the union, never matching replacement stars.
++func maskSecretValues(text string, secrets map[string]string, requested []string) string {
++	values := make([]string, 0, len(secrets)+len(requested))
++	for _, value := range secrets {
++		values = append(values, value)
++	}
++	for _, value := range requested {
++		values = append(values, value)
++		values = append(values, strings.Fields(value)...)
++	}
++	covered := make([]bool, len(text))
++	for _, value := range values {
++		if value == "" {
++			continue
++		}
++		for start := 0; start < len(text); {
++			index := strings.Index(text[start:], value)
++			if index < 0 {
++				break
++			}
++			index += start
++			for end := index; end < index+len(value); end++ {
++				covered[end] = true
++			}
++			start = index + 1
++		}
++	}
++	var result strings.Builder
++	for index := 0; index < len(text); {
++		if !covered[index] {
++			result.WriteByte(text[index])
++			index++
++			continue
++		}
++		result.WriteString("***")
++		for index < len(text) && covered[index] {
++			index++
++		}
++	}
++	return result.String()
++}
++
++func (rc *RunContext) outputContainsSecret(ctx context.Context, value string) bool {
++	return maskSecretValues(value, rc.Config.maskedSecrets(), *Masks(ctx)) != value
++}
 --- /dev/null
 +++ b/pkg/runner/environment_values_test.go
-@@ -0,0 +1,78 @@
+@@ -0,0 +1,87 @@
 +package runner
 +
 +import (
++	"context"
 +	"os"
 +	"path/filepath"
 +	"strings"
 +	"testing"
 +)
++
++func TestCompositeSecretsContextIsEmpty(t *testing.T) {
++	parent := &RunContext{Config: &Config{Secrets: map[string]string{"TOKEN": "caller-private"}}}
++	child := &RunContext{Config: parent.Config, Parent: parent}
++	if len(getWorkflowSecrets(context.Background(), child)) != 0 {
++		t.Fatal("composite action acquired its caller's secrets context")
++	}
++}
 +
 +func TestEnvironmentValuesFollowJobBindings(t *testing.T) {
 +	base := map[string]string{"token": "repository-secret", "GITHUB_TOKEN": "job-token"}
@@ -237,12 +310,22 @@
 +}
 --- a/pkg/runner/expression.go
 +++ b/pkg/runner/expression.go
-@@ -569,0 +570,4 @@
+@@ -569,0 +570,7 @@
++	if rc.Parent != nil {
++		return nil
++	}
 +	return overlayEnvironmentValues(getBaseWorkflowSecrets(ctx, rc), rc.environmentScope().Secrets)
 +}
 +
 +func getBaseWorkflowSecrets(ctx context.Context, rc *RunContext) map[string]string {
-@@ -593,2 +597,2 @@
+@@ -575 +582 @@
+-			secrets = rc.caller.runContext.Config.Secrets
++			return getWorkflowSecrets(ctx, rc.caller.runContext)
+@@ -585,0 +593,3 @@
++		if _, ok := secrets["GITHUB_TOKEN"]; !ok {
++			secrets["GITHUB_TOKEN"] = getWorkflowSecrets(ctx, rc.caller.runContext)["GITHUB_TOKEN"]
++		}
+@@ -593,2 +603,2 @@
 -	return rc.Config.Vars
 -}
 +	return overlayEnvironmentValues(rc.Config.Vars, rc.environmentScope().Variables)
@@ -252,6 +335,46 @@
 @@ -101 +101 @@
 -		masker:    valueMasker(config.InsecureSecrets, config.Secrets),
 +		masker:    valueMasker(config.InsecureSecrets, config.maskedSecrets()),
+@@ -147,4 +147,0 @@
+-	ssecrets := []string{}
+-	for _, v := range secrets {
+-		ssecrets = append(ssecrets, v)
+-	}
+@@ -158,12 +154,1 @@
+-		for _, v := range ssecrets {
+-			if v != "" {
+-				entry.Message = strings.ReplaceAll(entry.Message, v, "***")
+-			}
+-		}
+-
+-		for _, v := range *masks {
+-			if v != "" {
+-				entry.Message = strings.ReplaceAll(entry.Message, v, "***")
+-			}
+-		}
+-
++		entry.Message = maskSecretValues(entry.Message, secrets, *masks)
+--- a/pkg/runner/run_context.go
++++ b/pkg/runner/run_context.go
+@@ -93 +93 @@
+-	return createContainerName("act", rc.String())
++	return createContainerName("act", os.Getenv("CODEYARD_ACT_INSTANCE"), rc.String())
+@@ -655,0 +656,5 @@
++			if rc.outputContainsSecret(ctx, interpolated) {
++				delete(rc.Run.Job().Outputs, k)
++				common.Logger(ctx).Warn("Skipped job output containing a secret")
++				continue
++			}
+--- a/pkg/runner/job_executor.go
++++ b/pkg/runner/job_executor.go
+@@ -193 +193,6 @@
+-			callerOutputs[k] = ee.Interpolate(ctx, ee.Interpolate(ctx, v.Value))
++			value := ee.Interpolate(ctx, ee.Interpolate(ctx, v.Value))
++			if rc.outputContainsSecret(ctx, value) {
++				common.Logger(ctx).Warn("Skipped workflow output containing a secret")
++				continue
++			}
++			callerOutputs[k] = value
 --- a/pkg/runner/runner.go
 +++ b/pkg/runner/runner.go
 @@ -23,18 +23,19 @@
@@ -292,3 +415,10 @@
 +	Secrets                            map[string]string // list of secrets
 +	Vars                               map[string]string // list of vars
 +	EnvironmentValues                  EnvironmentValues
+--- a/pkg/container/docker_run.go
++++ b/pkg/container/docker_run.go
+@@ -218,1 +218,4 @@
+ func GetDockerClient(_ context.Context) (cli client.APIClient, err error) {
++	if os.Getenv("CODEYARD_DENY_DOCKER") == "1" {
++		return nil, fmt.Errorf("Docker actions require CI_EXECUTION_MODE=podman")
++	}

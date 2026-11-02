@@ -1,6 +1,10 @@
 # https://github.com/dcarbone/install-yq-action/tree/4075b4dca348d74bd83f2bf82d30f25d7c54539b
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

@@ -22,7 +22,7 @@ pub async fn change_social_accounts(
     add: bool,
 ) -> Result<Vec<SocialAccount>> {
     let mut tx = pool.begin().await?;
-    super::transitions::require_account(&mut tx, user, credential).await?;
+    super::transitions::require_account_exclusive(&mut tx, user, credential).await?;
     for account in accounts {
         if add {
             sqlx::query("INSERT INTO user_social_accounts(user_id,provider,url) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")

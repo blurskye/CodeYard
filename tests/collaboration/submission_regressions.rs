@@ -356,8 +356,9 @@ async fn comment_tasks_check_scope_and_original_body(pg: bool) {
             StatusCode::CREATED,
         )
         .await;
+    // A reader may tick the tasks of an issue they wrote, as they may edit its body.
     let page = bob.page_ok("/alice/proj/issues/1").await;
-    assert!(!page.contains("form=\"task-body\""));
+    assert!(page.contains("form=\"task-body\""), "{page}");
     let tip = alice.save("main", "README.md", "unborn").await;
     alice.branch("topic", &tip).await;
     alice.save("topic", "change.txt", &tip).await;
@@ -505,14 +506,22 @@ async fn later_page_edit_and_deleted_notifications(pg: bool) {
         .await
         .unwrap()
         .unwrap();
+    let repository = db::repositories::records::get_repository(database.pool(), "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
     let mut last = None;
     for _ in 0..31 {
         last = Some(
             db::issues::add_issue_comment(
                 database.pool(),
+                repository.id,
                 issue["id"].as_i64().unwrap(),
                 author.id,
                 "Existing comment",
+                &codeyard::backend::db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(database.pool(), author.id).await,
+                ),
             )
             .await
             .unwrap(),

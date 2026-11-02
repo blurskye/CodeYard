@@ -25,8 +25,18 @@ native_operation!(crate::backend::db::postgres::notifications::records::create_n
     input: NewNotification<'_>,
 ) -> Result<Notification>);
 
+pub(crate) fn redact_fork(notification: &mut Notification) {
+    notification.title = "Repository forked".into();
+    notification.body = None;
+    notification.link = None;
+    notification.metadata = serde_json::json!({});
+}
+
 /// Uses names read inside the native authorization transaction.
 pub(crate) fn refresh_link(notification: &mut Notification, owner: &str, name: &str) {
+    if notification.kind == "repository_forked" {
+        return;
+    }
     if notification.kind == "ci_completed" {
         if let Some(run_id) = notification
             .metadata
@@ -43,12 +53,16 @@ pub(crate) fn refresh_link(notification: &mut Notification, owner: &str, name: &
         return;
     }
     if let Some(link) = notification.link.as_mut() {
-        if let Some(suffix) = link.strip_prefix('/').and_then(|s| s.splitn(3, '/').nth(2)) {
+        if let Some(path) = link.strip_prefix('/') {
+            let suffix = path
+                .splitn(3, '/')
+                .nth(2)
+                .map(|suffix| format!("/{suffix}"))
+                .unwrap_or_default();
             *link = format!(
-                "/{}/{}/{}",
+                "/{}/{}{suffix}",
                 crate::webui::encode_component(owner),
-                crate::webui::encode_component(name),
-                suffix
+                crate::webui::encode_component(name)
             );
         }
     }
@@ -62,6 +76,11 @@ pub struct NotificationDelivery {
     pub notification: Option<Notification>,
     pub unread_count: i64,
 }
+
+native_operation!(crate::backend::db::postgres::notifications::records::get_notification,
+    crate::backend::db::sqlite::notifications::records::get_notification,
+    /// One stored notification of `user_id`, for delivering a row another transaction wrote.
+    fn get_notification(pool: &DbPool, user_id: i64, notification_id: i64) -> Result<Option<Notification>>);
 
 native_operation!(crate::backend::db::postgres::notifications::records::notification_email_allowed,
     crate::backend::db::sqlite::notifications::records::notification_email_allowed,
@@ -84,6 +103,7 @@ pub struct NotificationCursor {
 /// when a query first reaches it, under row locks, and SQLite decides every scope of the
 /// recipient in its first statement.
 pub(crate) struct NotificationScopes {
+    pub classic_token: bool,
     pub high_water: i64,
     pub readable: std::collections::BTreeMap<i64, bool>,
 }
@@ -142,11 +162,11 @@ impl NotificationFilter {
         }
     }
 
-    /// The search text as the queries match it: trimmed and lowercase, or None when empty.
+    /// The literal search text, trimmed, or None when empty.
     pub(crate) fn search_text(&self) -> Option<String> {
         self.query
             .as_deref()
-            .map(|query| query.trim().to_lowercase())
+            .map(|query| query.trim().to_owned())
             .filter(|query| !query.is_empty())
     }
 }

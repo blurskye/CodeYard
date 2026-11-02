@@ -1,8 +1,7 @@
 //! Merge commits, repository creation and CI checkouts from exact revisions.
 //! Ref updates go through `update-ref` transactions that check the old value.
 use super::{
-    find_commit_checked, process, COMMIT_WALK_TIMEOUT, MAX_COMMIT_EMAIL_BYTES,
-    MAX_COMMIT_NAME_BYTES, MAX_COMMIT_WALK_BYTES,
+    find_commit_checked, open_quarantined, process, COMMIT_WALK_TIMEOUT, MAX_COMMIT_WALK_BYTES,
 };
 use anyhow::{anyhow, bail, ensure, Result};
 use std::{
@@ -13,8 +12,7 @@ use std::{
 const MAX_OUTPUT: usize = 1024 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(300);
-/// Longest merge or squash message, title included. A squash body is cut to fit.
-pub(crate) const MAX_MERGE_MESSAGE_BYTES: usize = 8192;
+pub(crate) use crate::git_limits::MAX_MERGE_MESSAGE_BYTES;
 /// Conflicting paths that a refusal names. The rest are counted.
 const LISTED_CONFLICTS: usize = 20;
 
@@ -58,9 +56,6 @@ pub(super) async fn command(
 ) -> Result<(std::process::ExitStatus, Vec<u8>)> {
     let mut command = process::git_command()?;
     command.arg("--git-dir").arg(path).args(args);
-    if args.first() == Some(&"merge-tree") {
-        process::limit_memory(&mut command);
-    }
     if let Some((author, committer)) = people {
         command
             .env("GIT_AUTHOR_NAME", author.name)
@@ -209,37 +204,25 @@ pub(crate) async fn introduced_signatures(
     if let Some(old) = old {
         validate_merge_revision("main", old)?;
     }
-    // The scan takes a Git slot like other object reads, so pushes cannot run unbounded scans.
-    let permit = process::operation_slot(COMMIT_WALK_TIMEOUT).await?;
+    let commits = walk_commits(
+        path,
+        quarantine,
+        &[new.to_owned()],
+        &old.into_iter().map(str::to_owned).collect::<Vec<_>>(),
+        false,
+        MAX_SIGNATURE_CHECKS,
+        COMMIT_WALK_TIMEOUT,
+    )
+    .await?;
     let path = path.to_owned();
     let quarantine = quarantine.map(Path::to_owned);
-    let old = old.map(str::to_owned);
-    let new = new.to_owned();
-    tokio::task::spawn_blocking(move || -> Result<Vec<CommitSignature>> {
-        let _permit = permit;
-        let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
-        let repo = git2::Repository::open_bare(path)?;
-        if let Some(quarantine) = quarantine {
-            repo.odb()?.add_disk_alternate(
-                quarantine
-                    .to_str()
-                    .ok_or_else(|| anyhow::anyhow!("invalid quarantine path"))?,
-            )?;
-        }
-        let mut walk = repo.revwalk()?;
-        walk.push(git2::Oid::from_str(&new)?)?;
-        if let Some(old) = old {
-            walk.hide(git2::Oid::from_str(&old)?)?;
-        }
-        let mut commits = Vec::new();
+    let deadline = Instant::now() + COMMIT_WALK_TIMEOUT;
+    process::blocking_until(deadline, move || -> Result<Vec<CommitSignature>> {
+        let repo = open_quarantined(&path, quarantine.as_deref())?;
+        let mut signatures = Vec::new();
         // The payloads are kept until every signature is checked, so their total is bounded.
         let mut bytes = 0usize;
-        for oid in walk {
-            let oid = oid?;
-            ensure!(
-                commits.len() < MAX_SIGNATURE_CHECKS,
-                "Too many commits to check their signatures"
-            );
+        for oid in commits {
             ensure!(
                 Instant::now() < deadline,
                 "Checking the commit signatures took too long"
@@ -251,7 +234,7 @@ pub(crate) async fn introduced_signatures(
             );
             // Refuses an oversized commit before its payload is copied.
             let commit = find_commit_checked(&repo, oid)?;
-            let (signature, payload) = match repo.extract_signature(&oid, None) {
+            let (signature, payload) = match super::extract_commit_signature(&repo, &commit) {
                 Ok((signature, payload)) => (
                     Some(String::from_utf8_lossy(&signature).into_owned()),
                     Some(payload.to_vec()),
@@ -259,16 +242,52 @@ pub(crate) async fn introduced_signatures(
                 Err(error) if error.code() == git2::ErrorCode::NotFound => (None, None),
                 Err(error) => return Err(error.into()),
             };
-            commits.push(CommitSignature {
+            signatures.push(CommitSignature {
                 signature,
                 payload,
                 committer_email: String::from_utf8_lossy(commit.committer().email_bytes())
                     .into_owned(),
             });
         }
-        Ok(commits)
+        Ok(signatures)
     })
-    .await?
+    .await
+}
+
+/// Enumerate IDs in a memory-limited child; libgit2 revwalk materializes unchecked ancestors.
+pub(crate) async fn walk_commits(
+    path: &Path,
+    quarantine: Option<&Path>,
+    tips: &[String],
+    hidden: &[String],
+    hide_published: bool,
+    limit: usize,
+    timeout: Duration,
+) -> Result<Vec<git2::Oid>> {
+    for id in tips.iter().chain(hidden) {
+        validate_merge_revision("main", id)?;
+    }
+    let mut command = quarantined_command(path, quarantine)?;
+    command
+        .args(["rev-list", &format!("--max-count={}", limit + 1)])
+        .args(tips);
+    if !hidden.is_empty() || hide_published {
+        command.arg("--not").args(hidden);
+        if hide_published {
+            for namespace in crate::backend::git::ref_names::PUBLIC_REF_NAMESPACES {
+                command.arg(format!("--glob={namespace}*"));
+            }
+        }
+    }
+    command.arg("--");
+    let (status, bytes) = process::buffered(command, b"", (limit + 1) * 41, timeout).await?;
+    ensure!(status.success(), "Git could not enumerate commits");
+    let ids = std::str::from_utf8(&bytes)?
+        .lines()
+        .map(git2::Oid::from_str)
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+    ensure!(ids.len() <= limit, "Too many commits to scan");
+    Ok(ids)
 }
 
 /// Builds a two-parent merge commit of `base` and `head` without touching refs, even when `head`
@@ -284,6 +303,9 @@ pub(crate) async fn prepare_merge(
     validate_merge_revision("main", head)?;
     validate_merge_revision("main", base)?;
     check_commit_text(message, &[author, committer])?;
+    if commit_is_ancestor(path, head, base).await? {
+        return Err(UnsupportedMerge(NO_CHANGES.to_owned()).into());
+    }
     let tree = merge_tree(path, base, head).await?;
     commit_tree(
         path,
@@ -328,7 +350,6 @@ pub(crate) async fn prepare_squash(
 /// as fit in the message limit.
 async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Result<String> {
     let range = format!("{base}..{head}");
-    let _permit = process::operation_slot(COMMAND_TIMEOUT).await?;
     let mut command = process::git_command()?;
     command
         .arg("--git-dir")
@@ -343,16 +364,9 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
         ])
         .stdin(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    let mut child = command.spawn()?;
-    let mut group = process::ProcessGroup(child.id());
-    let mut reader = tokio::io::BufReader::new(
-        child
-            .stdout
-            .take()
-            .ok_or_else(|| anyhow!("git log stdout"))?,
-    );
-    let mut listed = String::new();
-    let read = async {
+    let (_, listed) = process::read_stream(command, b"", COMMAND_TIMEOUT, |stdout, _| async move {
+        let mut reader = tokio::io::BufReader::new(stdout);
+        let mut listed = String::new();
         while let Some((subject, _)) = super::read_delimited(&mut reader, 0, 100).await? {
             let subject = String::from_utf8_lossy(&subject);
             let mut end = subject.len().min(100);
@@ -361,18 +375,13 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
             }
             let line = format!("* {}\n", subject[..end].trim_end_matches(['\0', '\n', ' ']));
             if title.len() + 2 + listed.len() + line.len() > MAX_MERGE_MESSAGE_BYTES {
-                return Ok(());
+                return Ok(process::ReadEnd::Prefix(listed));
             }
             listed.push_str(&line);
         }
-        ensure!(
-            child.wait().await?.success(),
-            "Git could not list the commits to squash"
-        );
-        group.0 = None;
-        Ok::<_, anyhow::Error>(())
-    };
-    tokio::time::timeout(COMMAND_TIMEOUT, read).await??;
+        Ok(process::ReadEnd::Complete(listed))
+    })
+    .await?;
     if listed.is_empty() {
         return Ok(title.to_owned());
     }
@@ -385,18 +394,16 @@ async fn squash_message(path: &Path, base: &str, head: &str, title: &str) -> Res
 /// `MAX_COMMIT_OBJECT_BYTES`. Only a replayed commit, which keeps its own message, can outgrow it,
 /// and the replay checks that.
 fn check_commit_text(message: &str, people: &[&Person<'_>]) -> Result<()> {
-    let valid_person = |person: &Person<'_>| {
-        person.name.len() <= MAX_COMMIT_NAME_BYTES
-            && person.email.len() <= MAX_COMMIT_EMAIL_BYTES
-            && !person.name.contains(['\n', '\r', '\0'])
-            && !person.email.contains(['\n', '\r', '\0'])
-    };
-    ensure!(
-        !message.is_empty()
-            && message.len() <= MAX_MERGE_MESSAGE_BYTES
-            && people.iter().all(|person| valid_person(person)),
-        "Invalid merge commit identity or message"
-    );
+    for person in people {
+        crate::backend::git::objects::validate_identity(person.name, person.email)?;
+    }
+    if message.is_empty() || message.contains('\0') || message.len() > MAX_MERGE_MESSAGE_BYTES {
+        return Err(crate::backend::repositories::store::RepoError::new(
+            crate::backend::repositories::store::ErrorKind::Invalid,
+            "Invalid merge commit identity or message",
+        )
+        .into());
+    }
     Ok(())
 }
 
@@ -490,11 +497,51 @@ pub(crate) async fn commit_tree(
     author: &Person<'_>,
     committer: &Person<'_>,
 ) -> Result<String> {
-    let mut args = vec!["commit-tree", tree];
+    commit_tree_bytes(
+        path,
+        tree,
+        parents,
+        message,
+        std::ffi::OsStr::new(author.name),
+        std::ffi::OsStr::new(author.email),
+        author.date,
+        committer,
+    )
+    .await
+}
+
+/// Legacy authors need not be UTF-8; the environment carries their original bytes.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Each argument is one input of git commit-tree."
+)]
+pub(super) async fn commit_tree_bytes(
+    path: &Path,
+    tree: &str,
+    parents: &[&str],
+    message: &[u8],
+    author_name: &std::ffi::OsStr,
+    author_email: &std::ffi::OsStr,
+    author_date: Option<&str>,
+    committer: &Person<'_>,
+) -> Result<String> {
+    let mut command = process::git_command()?;
+    command
+        .arg("--git-dir")
+        .arg(path)
+        .args(["commit-tree", tree]);
     for parent in parents {
-        args.extend(["-p", *parent]);
+        command.args(["-p", *parent]);
     }
-    let (status, output) = command(path, &args, message, Some((author, committer))).await?;
+    command
+        .env("GIT_AUTHOR_NAME", author_name)
+        .env("GIT_AUTHOR_EMAIL", author_email)
+        .env("GIT_COMMITTER_NAME", committer.name)
+        .env("GIT_COMMITTER_EMAIL", committer.email);
+    if let Some(date) = author_date {
+        command.env("GIT_AUTHOR_DATE", date);
+    }
+    let (status, output) = process::buffered(command, message, MAX_OUTPUT, COMMAND_TIMEOUT).await?;
     ensure!(status.success(), "Git failed to construct the commit");
     oid_output(&output)
 }
@@ -506,7 +553,7 @@ pub(crate) async fn initialize_repository(
     source: Option<&Path>,
     default_branch: &str,
 ) -> Result<()> {
-    initialize_repository_copy(path, source, default_branch, false).await
+    initialize_repository_copy(path, source, default_branch, false, false).await
 }
 
 pub(crate) async fn initialize_repository_copy(
@@ -514,6 +561,7 @@ pub(crate) async fn initialize_repository_copy(
     source: Option<&Path>,
     default_branch: &str,
     default_branch_only: bool,
+    template: bool,
 ) -> Result<()> {
     validate_merge_revision(default_branch, "0000000000000000000000000000000000000000")?;
     let branch = format!("--initial-branch={default_branch}");
@@ -526,14 +574,11 @@ pub(crate) async fn initialize_repository_copy(
             .to_str()
             .ok_or_else(|| anyhow!("Invalid source storage path"))?;
         let default_ref = format!("+refs/heads/{default_branch}:refs/heads/{default_branch}");
-        let mut arguments = vec![
-            "fetch",
-            "--quiet",
-            "--no-tags",
-            "--no-write-fetch-head",
-            "--",
-            source,
-        ];
+        let mut arguments = vec!["fetch", "--quiet", "--no-tags", "--no-write-fetch-head"];
+        if template {
+            arguments.push("--depth=1");
+        }
+        arguments.extend(["--", source]);
         if default_branch_only {
             arguments.push(&default_ref);
         } else {
@@ -543,6 +588,22 @@ pub(crate) async fn initialize_repository_copy(
         if !status.success() {
             bail!("Git fork snapshot failed");
         }
+        let (status, heads) = command(
+            path,
+            &["for-each-ref", "--format=%(refname)", "refs/heads/"],
+            b"",
+            None,
+        )
+        .await?;
+        ensure!(status.success(), "Git fork branch listing failed");
+        let expected = format!("refs/heads/{default_branch}");
+        ensure!(
+            heads.is_empty()
+                || heads
+                    .split(|byte| *byte == b'\n')
+                    .any(|name| name == expected.as_bytes()),
+            "The source default branch changed while copying"
+        );
     }
     Ok(())
 }
@@ -560,44 +621,52 @@ pub(crate) async fn rewrite_template_history(
         author.0.to_owned(),
         author.1.to_owned(),
     );
-    let permit = process::operation_slot(process::RPC_TIMEOUT).await?;
-    tokio::task::spawn_blocking(move || -> Result<()> {
-        let _permit = permit;
-        let repo = git2::Repository::open_bare(&path_owned)?;
-        let signature = git2::Signature::now(&name, &email)?;
-        super::peel_to_commit_checked(&repo, &format!("refs/heads/{branch}"))?;
-        let mut names = Vec::new();
-        let mut bytes = 0;
-        for reference in repo.references()? {
-            let reference = reference?;
-            let name = reference
-                .name()
-                .ok_or_else(|| anyhow!("Invalid reference name"))?
-                .to_owned();
-            bytes += name.len();
-            if names.len() >= super::MAX_REPOSITORY_REFS || bytes > super::MAX_REPOSITORY_REF_BYTES
-            {
-                return Err(super::ObjectTooLarge.into());
+    process::blocking_until(
+        Instant::now() + process::RPC_TIMEOUT,
+        move || -> Result<()> {
+            let repo = git2::Repository::open_bare(&path_owned)?;
+            let signature = git2::Signature::now(&name, &email)?;
+            super::peel_to_commit_checked(&repo, &format!("refs/heads/{branch}"))?;
+            let mut names = Vec::new();
+            let mut bytes = 0;
+            for reference in repo.references()? {
+                let reference = reference?;
+                let name = reference
+                    .name()
+                    .ok_or_else(|| anyhow!("Invalid reference name"))?
+                    .to_owned();
+                bytes += name.len();
+                if names.len() >= super::MAX_REPOSITORY_REFS
+                    || bytes > super::MAX_REPOSITORY_REF_BYTES
+                {
+                    return Err(super::ObjectTooLarge.into());
+                }
+                names.push(name);
             }
-            names.push(name);
-        }
-        for name in names {
-            if !name.starts_with("refs/heads/") {
-                repo.find_reference(&name)?.delete()?;
-                continue;
+            for name in names {
+                if !name.starts_with("refs/heads/") {
+                    repo.find_reference(&name)?.delete()?;
+                    continue;
+                }
+                let commit = super::peel_to_commit_checked(&repo, &name)?;
+                let tree = super::directory_tree(&repo, &commit, "")?;
+                let message = format!(
+                    "Initial commit from {}",
+                    name.trim_start_matches("refs/heads/")
+                );
+                let id = repo.commit(None, &signature, &signature, &message, &tree, &[])?;
+                repo.reference(&name, id, true, "Create from template")?;
             }
-            let tree = super::peel_to_commit_checked(&repo, &name)?.tree()?;
-            let message = format!(
-                "Initial commit from {}",
-                name.trim_start_matches("refs/heads/")
-            );
-            let id = repo.commit(None, &signature, &signature, &message, &tree, &[])?;
-            repo.reference(&name, id, true, "Create from template")?;
-        }
-        repo.set_head(&format!("refs/heads/{branch}"))?;
-        Ok(())
-    })
-    .await??;
+            repo.set_head(&format!("refs/heads/{branch}"))?;
+            Ok(())
+        },
+    )
+    .await?;
+    match tokio::fs::remove_file(path.join("shallow")).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
     for arguments in [
         &["reflog", "expire", "--expire=now", "--all"][..],
         &[
@@ -722,25 +791,28 @@ pub(crate) async fn prepare_pull_head(
     head: &str,
 ) -> Result<PreparedPullHead> {
     validate_merge_revision("main", head)?;
-    let source = std::path::absolute(source)?;
-    ensure!(source.is_dir(), "Repository storage is unavailable");
-    let source = source
-        .to_str()
-        .ok_or_else(|| anyhow!("Invalid source storage path"))?;
-    let temporary = tempfile::tempdir()?;
-    initialize_repository(temporary.path(), None, "main").await?;
-    let base = std::fs::canonicalize(base)?;
-    let objects = base.join("objects");
-    let objects = objects
-        .to_str()
-        .ok_or_else(|| anyhow!("Invalid base storage path"))?;
-    ensure!(!objects.contains(['\n', '\r']), "Invalid base storage path");
-    tokio::fs::write(
-        temporary.path().join("objects/info/alternates"),
-        format!("{objects}\n"),
+    let (base, source) = (base.to_owned(), source.to_owned());
+    let (source, temporary, mut alternates, refs) = process::blocking_until(
+        std::time::Instant::now() + process::RPC_TIMEOUT,
+        move || {
+            use std::os::unix::ffi::OsStringExt;
+            let source = std::path::absolute(source)?;
+            ensure!(source.is_dir(), "Repository storage is unavailable");
+            let source = source
+                .to_str()
+                .ok_or_else(|| anyhow!("Invalid source storage path"))?
+                .to_owned();
+            let temporary = tempfile::tempdir()?;
+            let base = std::fs::canonicalize(base)?;
+            let alternates = quote_alternate(&base.join("objects")).into_vec();
+            let refs = super::list_mirror_refs(&base)?;
+            Ok((source, temporary, alternates, refs))
+        },
     )
     .await?;
-    let refs = super::list_mirror_refs(&base)?;
+    initialize_repository(temporary.path(), None, "main").await?;
+    alternates.push(b'\n');
+    tokio::fs::write(temporary.path().join("objects/info/alternates"), alternates).await?;
     let mut script = String::from("start\n");
     for (index, target) in refs.values().enumerate() {
         script.push_str(&format!("update refs/known/{index} {target}\n"));
@@ -765,7 +837,7 @@ pub(crate) async fn prepare_pull_head(
             "--no-tags",
             "--no-write-fetch-head",
             "--",
-            source,
+            &source,
             &refspec,
         ],
         b"",
@@ -876,10 +948,8 @@ fn is_retained_object_ref(reference: &str) -> bool {
     reference
         .strip_prefix("refs/codeyard/objects/")
         .is_some_and(|id| {
-            id.len() == 40
-                && id
-                    .bytes()
-                    .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
+            crate::git_ids::is_full_commit_id(id)
+                && !id.bytes().any(|byte| byte.is_ascii_uppercase())
         })
 }
 
@@ -901,7 +971,9 @@ pub(crate) async fn current_branch_head(path: &Path, branch: &str) -> Result<Opt
 
 async fn current_reference(path: &Path, reference: &str) -> Result<Option<String>> {
     ensure!(
-        crate::backend::git::is_canonical_ref(reference) || is_pull_head_ref(reference),
+        crate::backend::git::is_canonical_ref(reference)
+            || is_pull_head_ref(reference)
+            || is_retained_object_ref(reference),
         "Invalid reference"
     );
     let (status, current) = command(
@@ -1037,15 +1109,7 @@ pub(crate) async fn publish_ref(
         }
         None => format!("start\noption no-deref\ndelete {reference} {old}\nprepare\ncommit\n"),
     };
-    let (status, _) = command(
-        path,
-        &["update-ref", "--stdin", "-m", verb],
-        input.as_bytes(),
-        None,
-    )
-    .await?;
-    ensure!(status.success(), "Reference changed while publishing");
-    Ok(())
+    run_ref_transaction(path, &input, verb, "Reference changed while publishing").await
 }
 
 pub(crate) async fn publish_branch_rename(
@@ -1054,21 +1118,37 @@ pub(crate) async fn publish_branch_rename(
     new: &str,
     target: &str,
 ) -> Result<()> {
-    let old = crate::backend::git::branch_ref(old).ok_or_else(|| anyhow!("Invalid branch"))?;
-    let new = crate::backend::git::branch_ref(new).ok_or_else(|| anyhow!("Invalid branch"))?;
+    let old_ref = crate::backend::git::branch_ref(old).ok_or_else(|| anyhow!("Invalid branch"))?;
+    let new_ref = crate::backend::git::branch_ref(new).ok_or_else(|| anyhow!("Invalid branch"))?;
     validate_merge_revision("main", target)?;
-    let input = format!(
-        "start\noption no-deref\ncreate {new} {target}\ndelete {old} {target}\nprepare\ncommit\n"
-    );
-    let (status, _) = command(
+    // The caller holds the publication lease. Native rename handles file/directory ref
+    // transitions (feature <-> feature/topic), which update-ref cannot lock together.
+    if current_reference(path, &old_ref).await?.as_deref() != Some(target)
+        || current_reference(path, &new_ref).await?.is_some()
+    {
+        return Err(RefConflict("Reference changed while renaming".into()).into());
+    }
+    let outcome = run_ref_command(
         path,
-        &["update-ref", "--stdin", "-m", "rename branch"],
-        input.as_bytes(),
-        None,
+        &["branch", "--move", "--", old, new],
+        b"",
+        "Reference changed while renaming",
+        &[(&old_ref, Some(target)), (&new_ref, None)],
     )
-    .await?;
-    ensure!(status.success(), "Reference changed while renaming");
-    Ok(())
+    .await;
+    if outcome.is_err() {
+        // A timeout or failed exit may still follow an accepted ref move; report it as done so
+        // the caller finishes the metadata. Prefix-related refs cannot coexist, so do not probe
+        // the old name through the new ref's file.
+        let prefix_related = old_ref.starts_with(&format!("{new_ref}/"))
+            || new_ref.starts_with(&format!("{old_ref}/"));
+        if current_reference(path, &new_ref).await?.as_deref() == Some(target)
+            && (prefix_related || current_reference(path, &old_ref).await?.is_none())
+        {
+            return Ok(());
+        }
+    }
+    outcome
 }
 
 pub(crate) async fn publish_ref_create(path: &Path, reference: &str, target: &str) -> Result<()> {
@@ -1132,6 +1212,7 @@ pub(crate) async fn publish_merge(
 
 /// Moves each branch in `moves` from its old commit to its new one, provided `base_branch` is still
 /// at `base`. Each move is `(branch, old, new)` and fails on its own when the branch is not at `old`.
+/// A move with `old` equal to `new` only verifies that branch.
 /// All of them land in one ref transaction, so either every branch moves or none does.
 pub(crate) async fn publish_restack(
     path: &Path,
@@ -1153,7 +1234,12 @@ pub(crate) async fn publish_restack(
         validate_merge_revision(branch, new)?;
         let reference = crate::backend::git::branch_ref(branch)
             .ok_or_else(|| anyhow!("Invalid head branch"))?;
-        input.push_str(&format!("update {reference} {new} {old}\n"));
+        // A branch the rebase built on but did not rewrite must still be where it was read.
+        if old == new {
+            input.push_str(&format!("verify {reference} {old}\n"));
+        } else {
+            input.push_str(&format!("update {reference} {new} {old}\n"));
+        }
     }
     input.push_str("prepare\ncommit\n");
     run_ref_transaction(
@@ -1170,13 +1256,53 @@ pub(crate) async fn publish_restack(
 pub(crate) struct RefConflict(pub(crate) String);
 
 /// Runs one `update-ref --stdin` transaction. A failed check of any line refuses all of them.
-async fn run_ref_transaction(path: &Path, input: &str, message: &str, failure: &str) -> Result<()> {
+pub(crate) async fn run_ref_transaction(
+    path: &Path,
+    input: &str,
+    message: &str,
+    failure: &str,
+) -> Result<()> {
+    let mut expected = Vec::new();
+    for line in input.lines() {
+        let fields = line.split(' ').collect::<Vec<_>>();
+        let pair = match fields.as_slice() {
+            ["create", reference, _] => Some((*reference, None)),
+            ["update", reference, _, old]
+            | ["delete", reference, old]
+            | ["verify", reference, old] => Some((
+                *reference,
+                if old.bytes().all(|byte| byte == b'0') {
+                    None
+                } else {
+                    Some(*old)
+                },
+            )),
+            _ => None,
+        };
+        if let Some(pair) = pair {
+            expected.push(pair);
+        }
+    }
+    run_ref_command(
+        path,
+        &["update-ref", "--stdin", "-m", message],
+        input.as_bytes(),
+        failure,
+        &expected,
+    )
+    .await
+}
+
+async fn run_ref_command(
+    path: &Path,
+    args: &[&str],
+    input: &[u8],
+    failure: &str,
+    expected: &[(&str, Option<&str>)],
+) -> Result<()> {
     let mut command = process::git_command()?;
-    command
-        .arg("--git-dir")
-        .arg(path)
-        .args(["update-ref", "--stdin", "-m", message]);
-    let output = process::run(command, input.as_bytes(), MAX_OUTPUT, COMMAND_TIMEOUT).await?;
+    command.arg("--git-dir").arg(path).args(args);
+    let output = process::run(command, input, MAX_OUTPUT, COMMAND_TIMEOUT).await?;
     if !output.status.success() {
         let diagnostics = String::from_utf8_lossy(&output.stderr);
         if diagnostics.contains("but expected")
@@ -1185,7 +1311,14 @@ async fn run_ref_transaction(path: &Path, input: &str, message: &str, failure: &
         {
             return Err(RefConflict(failure.into()).into());
         }
-        bail!("Git ref transaction failed: {diagnostics}");
+        // Preserve storage failures, but classify lease failures even when Git's wording
+        // differs between versions or ref backends.
+        for (reference, old) in expected {
+            if current_reference(path, reference).await?.as_deref() != *old {
+                return Err(RefConflict(failure.into()).into());
+            }
+        }
+        bail!("Git ref publication failed: {diagnostics}");
     }
     Ok(())
 }
@@ -1198,6 +1331,16 @@ pub(crate) async fn checkout(path: &Path, destination: &Path, sha: &str) -> Resu
     let source = source
         .to_str()
         .ok_or_else(|| anyhow!("Invalid source storage path"))?;
+    materialize_checkout(destination, sha, source, None).await
+}
+
+pub(crate) async fn materialize_checkout(
+    destination: &Path,
+    sha: &str,
+    source: &str,
+    pack: Option<tokio::fs::File>,
+) -> Result<()> {
+    validate_merge_revision("main", sha)?;
     tokio::fs::create_dir(destination).await?;
     let mut init = process::git_command()?;
     init.arg("-C")
@@ -1213,11 +1356,16 @@ pub(crate) async fn checkout(path: &Path, destination: &Path, sha: &str) -> Resu
     let (status, _) = process::buffered(origin, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?;
     ensure!(status.success(), "git remote add failed");
     let mut fetch = process::git_command()?;
-    fetch
-        .arg("-C")
-        .arg(destination)
-        .args(["fetch", "--no-tags", "--", "origin", sha]);
-    let (status, _) = process::buffered(fetch, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT).await?;
+    fetch.arg("-C").arg(destination);
+    let status = if let Some(pack) = pack {
+        fetch.args(["index-pack", "--stdin", "--fix-thin"]);
+        process::stream(fetch, pack, tokio::io::sink(), tokio::io::sink(), false).await?
+    } else {
+        fetch.args(["fetch", "--no-tags", "--", "origin", sha]);
+        process::buffered(fetch, b"", MAX_OUTPUT, CHECKOUT_TIMEOUT)
+            .await?
+            .0
+    };
     ensure!(status.success(), "git fetch of CI commit failed");
     let mut switch = process::git_command()?;
     switch

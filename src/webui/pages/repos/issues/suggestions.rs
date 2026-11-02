@@ -12,6 +12,7 @@ use dioxus::prelude::*;
 fn proposal_form(
     repo: &Repository,
     url: &str,
+    issue_id: i64,
     draft: Option<&SuggestionDraft>,
     disabled: bool,
 ) -> Element {
@@ -26,6 +27,8 @@ fn proposal_form(
             action: format!("{url}/suggestions"),
             class: "collaboration-form-fields",
             {csrf(&repo.csrf)}
+            input { r#type: "hidden", name: "repository_id", value: draft.map(|d| d.repository_id).unwrap_or(Some(repo.chrome.id)).map(|id| id.to_string()).unwrap_or_default() }
+            input { r#type: "hidden", name: "issue_id", value: draft.map(|d| d.issue_id).unwrap_or(Some(issue_id)).map(|id| id.to_string()).unwrap_or_default() }
             input { r#type: "hidden", name: "action", value: "propose" }
             label {
                 "Change"
@@ -98,6 +101,7 @@ fn proposal_form(
 pub(super) fn panel(
     repo: &Repository,
     url: &str,
+    issue_id: i64,
     data: Option<&IssueSuggestions>,
     draft: Option<&SuggestionDraft>,
 ) -> Element {
@@ -110,7 +114,7 @@ pub(super) fn panel(
                 p { class: "collaboration-muted",
                     "Your suggestion was not saved. Its text is preserved below."
                 }
-                {proposal_form(repo, url, draft, true)}
+                {proposal_form(repo, url, issue_id, draft, true)}
             }
         };
     };
@@ -124,6 +128,8 @@ pub(super) fn panel(
             if repo.can_admin && !repo.chrome.is_archived {
                 form { method: "post", action: format!("{url}/suggestions"),
                     {csrf(&repo.csrf)}
+                    input { r#type: "hidden", name: "repository_id", value: repo.chrome.id.to_string() }
+                    input { r#type: "hidden", name: "issue_id", value: issue_id.to_string() }
                     input {
                         r#type: "hidden",
                         name: "action",
@@ -169,7 +175,7 @@ pub(super) fn panel(
                         if let Some(actor) = &row.actor {
                             p {
                                 "Proposed by "
-                                NavLink { href: format!("/{}", crate::webui::encode_component(actor)),
+                                NavLink { href: crate::webui::profile_path(actor),
                                     "{actor}"
                                 }
                             }
@@ -205,6 +211,8 @@ pub(super) fn panel(
                                             method: "post",
                                             action: format!("{url}/suggestions"),
                                             {csrf(&repo.csrf)}
+                                            input { r#type: "hidden", name: "repository_id", value: repo.chrome.id.to_string() }
+                                            input { r#type: "hidden", name: "issue_id", value: issue_id.to_string() }
                                             input {
                                                 r#type: "hidden",
                                                 name: "action",
@@ -261,7 +269,7 @@ pub(super) fn panel(
                             "This issue cannot currently accept proposals. Your text is preserved."
                         }
                     }
-                    {proposal_form(repo, url, draft, !data.can_propose)}
+                    {proposal_form(repo, url, issue_id, draft, !data.can_propose)}
                 }
             }
         }

@@ -116,7 +116,7 @@ pub async fn change_bypass(
 /// The membership lock also serializes live policy and bypass mutations with the eventual effect.
 pub(crate) async fn lock_author(connection: &mut PgConnection, author: i64) -> Result<()> {
     super::users::transitions::lock_membership_shared(&mut *connection).await?;
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema()||'/pull-cap/'||$1::bigint::text,0))").bind(author).execute(connection).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'')||'/pull-cap/'||$1::bigint::text,0))").bind(author).execute(connection).await?;
     Ok(())
 }
 /// A draft leaving draft state already counts toward caps that include drafts, so

@@ -1,6 +1,10 @@
 # https://github.com/goreleaser/goreleaser-action/tree/e435ccd777264be153ace6237001ef4d979d3a7a
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

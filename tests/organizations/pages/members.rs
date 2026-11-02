@@ -296,8 +296,8 @@ pub async fn access_management(f: &Fixture) {
         .iter_mut()
         .find(|(name, _)| name == "permission")
         .unwrap();
-    // The access select posts one of the five levels.
-    assert!(["1", "2", "3", "4", "5"].contains(&access.1.as_str()));
+    // The access select starts on no level, so a direct grant is always chosen on purpose.
+    assert_eq!(access.1, "");
     access.1 = "1".into();
     submit_row(f, &path, &grant).await;
     let grants = f
@@ -749,10 +749,14 @@ pub async fn contracts(f: &Fixture) {
             Some("Organization governance is suspended.")
         );
     }
-    // Banned sessions are anonymous at the shared identity boundary.
+    // Banned sessions are anonymous at the shared identity boundary, and sign-in returns them
+    // to the page they asked for.
     f.get(&f.owner, &format!("{}?tab=members", f.path()))
         .await
-        .redirect("/login");
+        .redirect(&format!(
+            "/login?redirect={}",
+            codeyard::webui::encode_component(&format!("{}?tab=members", f.path()))
+        ));
     f.database
         .execute(
             "UPDATE users SET is_banned=FALSE WHERE id=$1",
@@ -955,7 +959,7 @@ pub async fn recovery(f: &Fixture) {
                 StatusCode::FORBIDDEN
             );
         } else {
-            refused.redirect("/login");
+            refused.redirect("/login?redirect=%2Fadmin%2Forganizations%2Frecovery");
         }
         f.database
             .execute(

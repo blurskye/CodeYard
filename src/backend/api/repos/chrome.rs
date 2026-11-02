@@ -116,6 +116,17 @@ pub(crate) async fn load_database(
         .map_err(|_| unavailable(ctx))?
         .remove(&repository.id)
         .unwrap_or_default();
+    let forks = from_api(
+        ctx,
+        super::responses::repository_fork_counts(
+            &ctx.state.pool,
+            Some(&ctx.headers),
+            &[repository.id],
+        )
+        .await,
+    )?
+    .remove(&repository.id)
+    .unwrap_or_default();
     let mut chrome = RepoChrome {
         id: repository.id,
         owner: owner.to_owned(),
@@ -128,7 +139,7 @@ pub(crate) async fn load_database(
         is_template: repository.is_template,
         stars: repository.stars_count,
         watchers: repository.watchers_count,
-        forks: repository.forks_count,
+        forks,
         csrf_token: ctx.csrf_token.clone(),
         current_path: if owner.eq_ignore_ascii_case("gists")
             && !ctx.path.starts_with("/gists/@repos/")
@@ -186,7 +197,9 @@ pub(crate) async fn load_database(
         let effective_access = access::user_access(&ctx.state.pool, user, &repository)
             .await
             .map_err(|_| unavailable(ctx))?;
-        chrome.can_write = !repository.is_archived && effective_access.can_write();
+        chrome.can_write = access::can_write(&ctx.state.pool, user, &repository)
+            .await
+            .map_err(|_| unavailable(ctx))?;
         chrome.can_admin = effective_access.can_admin();
         chrome.can_view_traffic = effective_access.can_write();
         chrome.can_manage_invitations = chrome.can_admin;
@@ -208,11 +221,7 @@ pub(crate) async fn load_database(
                 .map_err(|_| unavailable(ctx))?
         {
             // Only the actor's own fork is disclosed.
-            chrome.fork_url = Some(format!(
-                "/{}/{}",
-                crate::webui::encode_component(&user.username),
-                crate::webui::encode_component(&fork.name)
-            ));
+            chrome.fork_url = Some(crate::webui::repository_path(&user.username, &fork.name));
         }
     }
     if let Some(parent_id) = repository.forked_from_id {
@@ -231,17 +240,33 @@ pub(crate) async fn load_database(
                     .map_err(|_| unavailable(ctx))?
                     .ok_or_else(|| unavailable(ctx))?;
                     chrome.parent_name = Some(format!("{}/{}", parent_owner, parent.name));
-                    chrome.parent_url = Some(format!(
-                        "/{}/{}",
-                        crate::webui::encode_component(&parent_owner),
-                        crate::webui::encode_component(&parent.name)
-                    ));
+                    chrome.parent_url =
+                        Some(crate::webui::repository_path(&parent_owner, &parent.name));
                 }
                 Err((StatusCode::NOT_FOUND, _)) => {} // Do not disclose inaccessible fork ancestry.
                 Err((status, _)) => return Err(api_failure(ctx, status)),
             }
         }
     }
+    // Actor-scoped metadata (including a private personal fork link) must not outlive
+    // the browser credential that selected it, even when the source remains public.
+    if let Some(expected) = &ctx.user {
+        let current = from_api(
+            ctx,
+            crate::backend::api::http::session::get_optional_user(&ctx.state.pool, &ctx.headers)
+                .await,
+        )?;
+        if !current.is_some_and(|user| user.id == expected.id) {
+            return Err(ctx.error(
+                StatusCode::UNAUTHORIZED,
+                "Session expired; reload the page.",
+            ));
+        }
+    }
+    from_api(
+        ctx,
+        check_repo_read_access(&ctx.state.pool, &repository, &ctx.headers).await,
+    )?;
     let default_branch = repository.default_branch.clone();
     chrome.default_branch = default_branch.clone();
     Ok(Loaded {
@@ -276,7 +301,7 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
 /// Whether `reference` is a branch. Only a branch takes a commit from the file pages, so only a
 /// branch offers edit and delete there.
 pub(crate) fn is_branch(loaded: &Loaded, reference: &str) -> bool {
-    if reference.len() == 40 && hex_revision(reference) {
+    if crate::git_ids::is_full_commit_id(reference) {
         return false;
     }
     if reference.starts_with("refs/") {

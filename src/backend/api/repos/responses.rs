@@ -74,6 +74,33 @@ pub(crate) fn map_commit_status_response(
     }
 }
 
+pub(crate) async fn repository_fork_counts(
+    pool: &db::DbPool,
+    headers: Option<&axum::http::HeaderMap>,
+    ids: &[i64],
+) -> Result<std::collections::HashMap<i64, i32>, (StatusCode, Json<ApiError>)> {
+    let (viewer, session) = match headers {
+        Some(headers) => (
+            crate::backend::api::http::session::get_optional_user(pool, headers)
+                .await?
+                .map(|user| user.id),
+            Some(
+                crate::backend::api::http::session::extract_session_id(headers).unwrap_or_default(),
+            ),
+        ),
+        None => (None, None),
+    };
+    let mut counts = std::collections::HashMap::new();
+    for ids in ids.chunks(100) {
+        counts.extend(
+            db::repositories::discovery::visible_fork_counts(pool, viewer, session.as_deref(), ids)
+                .await
+                .map_err(|_| repository_unavailable())?,
+        );
+    }
+    Ok(counts)
+}
+
 #[derive(Serialize)]
 pub struct RepoResponse {
     pub id: i64,
@@ -105,6 +132,7 @@ impl RepoResponse {
         owner: &str,
         topics: Vec<String>,
         forked_from: Option<ForkParent>,
+        forks_count: i32,
     ) -> Self {
         Self {
             id: repository.id,
@@ -122,7 +150,7 @@ impl RepoResponse {
             allow_rebase_merge: repository.allow_rebase_merge,
             default_branch: repository.default_branch.clone(),
             stars_count: repository.stars_count,
-            forks_count: repository.forks_count,
+            forks_count,
             watchers_count: repository.watchers_count,
             forked_from,
             created_at: repository.created_at.to_rfc3339(),
@@ -208,6 +236,8 @@ pub(crate) fn repo_store_error(
         (
             if missing {
                 StatusCode::NOT_FOUND
+            } else if error.kind == ErrorKind::Conflict {
+                StatusCode::CONFLICT
             } else if error.kind == ErrorKind::Unavailable {
                 // Unreachable storage is a service failure, whatever the caller falls back to.
                 StatusCode::SERVICE_UNAVAILABLE

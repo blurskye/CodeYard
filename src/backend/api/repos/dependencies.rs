@@ -43,6 +43,19 @@ pub fn page_router() -> Router<Arc<AppState>> {
         .layer(DefaultBodyLimit::max(256 * 1024))
 }
 fn failure(error: &anyhow::Error) -> (StatusCode, String) {
+    if let Some(
+        graph @ (db::dependency_graph::GraphError::Limit
+        | db::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+    {
+        return (StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
+    }
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return (
+            StatusCode::FORBIDDEN,
+            "A live unrestricted credential is required".into(),
+        );
+    }
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied | Refusal::Missing) => (
             StatusCode::NOT_FOUND,
@@ -101,15 +114,7 @@ fn domain_failure(error: DependencyError) -> (StatusCode, String) {
     }
 }
 fn page_number(ctx: &PageContext, key: &str) -> Result<usize, Response> {
-    let page = ctx
-        .query
-        .get(key)
-        .map_or(Ok(1), |p| p.parse::<usize>())
-        .map_err(|_| ctx.error(StatusCode::BAD_REQUEST, "Invalid dependency page"))?;
-    if !(1..=100).contains(&page) {
-        return Err(ctx.error(StatusCode::BAD_REQUEST, "Invalid dependency page"));
-    }
-    Ok(page)
+    super::paging::number(ctx, key, 1, 1..=usize::MAX / 20)
 }
 fn state_name(state: &AlertState) -> &'static str {
     match state {
@@ -164,20 +169,15 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
             return ctx.error(s, &m);
         }
     };
-    let snapshot = match records::snapshot(pool, actor, repo).await {
+    let data = match records::page_snapshot(pool, ctx.database_actor(actor), repo).await {
         Ok(v) => v,
         Err(e) => {
             let (s, m) = failure(&e);
             return ctx.error(s, &m);
         }
     };
-    let state = match records::state(pool, repo).await {
-        Ok(v) => v,
-        Err(e) => {
-            let (s, m) = failure(&e);
-            return ctx.error(s, &m);
-        }
-    };
+    let state = data.state;
+    let snapshot = data.snapshot;
     let package_count = snapshot.packages.len();
     let mut packages: Vec<_> = snapshot
         .packages
@@ -200,28 +200,19 @@ async fn model(ctx: &PageContext, loaded: Loaded, error: Option<String>, draft: 
         .skip((page - 1) * 20)
         .take(21)
     {
-        let mut proposal = None;
-        if let Some(id) = alert.update.as_ref().and_then(|u| u.pull_request_id) {
-            match db::pull_requests::records::get_pull_request_by_id(pool, id).await {
-                Ok(Some(pull)) if pull.repo_id == repo => {
-                    proposal = Some(Proposal {
-                        number: pull.number,
-                        state: if pull.merged {
-                            "merged".into()
-                        } else {
-                            pull.state
-                        },
-                    })
-                }
-                Ok(_) => {}
-                Err(_) => {
-                    return ctx.error(
-                        StatusCode::SERVICE_UNAVAILABLE,
-                        "Proposal storage unavailable",
-                    )
-                }
-            }
-        }
+        let proposal = alert
+            .update
+            .as_ref()
+            .and_then(|update| update.pull_request_id)
+            .and_then(|id| data.proposals.get(&id))
+            .map(|(number, state, merged)| Proposal {
+                number: *number,
+                state: if *merged {
+                    "merged".into()
+                } else {
+                    state.clone()
+                },
+            });
         let pending = alert.update.is_some() && proposal.is_none();
         let review_state = state_name(&alert.state).into();
         let f = alert.finding;
@@ -343,6 +334,10 @@ async fn configure(
             &ctx.state.pool,
             ctx.state.cluster.as_ref(),
             ctx.user.as_ref().unwrap().id,
+            db::users::accounts::OwnedAccountCredential::Session(
+                crate::backend::api::http::session::extract_session_id(&ctx.headers)
+                    .unwrap_or_default(),
+            ),
             loaded.repository.id,
             kind,
             enabled,

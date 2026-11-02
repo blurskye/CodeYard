@@ -23,9 +23,24 @@ pub async fn contracts(f: &Fixture) {
     let orgs_repo = f.get(&f.member, "/orgs/repo").await;
     assert_eq!(orgs_repo.status, StatusCode::OK);
     assert!(matches!(orgs_repo.envelope().page, Page::Repositories(_)));
-    f.form(&f.member, "/orgs/repo/_forms/star", &[])
-        .await
-        .redirect("/orgs/repo");
+    // Repository forms name the repository they were rendered for.
+    let repo_id = codeyard::backend::db::repositories::records::get_repository(
+        f.database.pool(),
+        "orgs",
+        "repo",
+    )
+    .await
+    .unwrap()
+    .unwrap()
+    .id
+    .to_string();
+    f.form(
+        &f.member,
+        "/orgs/repo/_forms/star",
+        &[("repository_id", repo_id.as_str())],
+    )
+    .await
+    .redirect("/orgs/repo");
     // Correct :id POST routing, distinct from existing repository roots.
     let created = f
         .form(

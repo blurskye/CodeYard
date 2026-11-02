@@ -1,5 +1,6 @@
 use crate::backend::db;
 use crate::backend::repositories::access;
+pub mod assignments;
 pub mod branches;
 pub mod closing;
 pub mod comments;
@@ -75,15 +76,21 @@ pub fn validate_milestone(title: &str, description: &str) -> Result<(), &'static
     }
 }
 
+/// A calendar day written exactly YYYY-MM-DD; other spellings of the day, such as 2026-1-2,
+/// are refused.
+pub fn calendar_day(value: &str) -> Option<chrono::NaiveDate> {
+    chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
+        .ok()
+        .filter(|day| day.format("%Y-%m-%d").to_string() == value)
+}
+
 /// A due date is a calendar day written YYYY-MM-DD. An empty value means no due date.
 pub fn parse_due_date(value: &str) -> Result<Option<String>, &'static str> {
     if value.is_empty() {
         return Ok(None);
     }
-    let day = chrono::NaiveDate::parse_from_str(value, "%Y-%m-%d")
-        .ok()
-        .filter(|day| day.format("%Y-%m-%d").to_string() == value);
-    day.map(|day| Some(day.format("%Y-%m-%d").to_string()))
+    calendar_day(value)
+        .map(|_| Some(value.to_owned()))
         .ok_or("Due date must be a day written YYYY-MM-DD.")
 }
 
@@ -154,6 +161,23 @@ fn database_error<E>(_: E) -> OperationError {
     }
 }
 
+/// The repository a caller already resolved, read again by ID with its owner's name.
+pub(super) async fn repository(
+    pool: &db::DbPool,
+    id: i64,
+) -> Result<(db::models::Repository, String), OperationError> {
+    use crate::backend::repositories::access::{current_repository_with_owner, AccessError};
+    current_repository_with_owner(pool, id)
+        .await
+        .map_err(|error| match error {
+            AccessError::Unavailable => database_error(()),
+            _ => OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".to_owned(),
+            },
+        })
+}
+
 pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User, OperationError> {
     db::users::accounts::get_user_by_id(pool, id)
         .await
@@ -165,17 +189,29 @@ pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User
         })
 }
 
-async fn can_read(
-    pool: &db::DbPool,
-    user: &db::models::User,
-    repo: &db::models::Repository,
-) -> Result<bool, OperationError> {
-    access::can_read(pool, Some(user), repo)
-        .await
-        .map_err(|_| OperationError::Unavailable {
+/// Repository access decisions belong to `repositories::access`; this only says them in the
+/// terms of these operations. Only someone who can read the repository learns why a write is
+/// refused.
+fn access_error(error: access::AccessError) -> OperationError {
+    match error {
+        access::AccessError::Unavailable => OperationError::Unavailable {
             code: "database_error",
             message: "Repository authority is unavailable".into(),
-        })
+        },
+        access::AccessError::WriteDenied | access::AccessError::PasswordChangeRequired => {
+            OperationError::Denied {
+                code: "write_denied",
+                message: "Archived repositories and password-change-required accounts cannot write"
+                    .into(),
+            }
+        }
+        access::AccessError::NotFound | access::AccessError::InvalidCollaboratorOwner => {
+            OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".into(),
+            }
+        }
+    }
 }
 
 pub(super) async fn require_read(
@@ -183,14 +219,10 @@ pub(super) async fn require_read(
     user: &db::models::User,
     repo: &db::models::Repository,
 ) -> Result<(), OperationError> {
-    if can_read(pool, user, repo).await? {
-        Ok(())
-    } else {
-        Err(OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".into(),
-        })
-    }
+    access::check_read(pool, repo.id, Some(user.id))
+        .await
+        .map(|_| ())
+        .map_err(access_error)
 }
 
 pub(super) async fn require_write(
@@ -198,31 +230,81 @@ pub(super) async fn require_write(
     user: &db::models::User,
     repo: &db::models::Repository,
 ) -> Result<(), OperationError> {
-    if access::can_write(pool, user, repo)
+    access::check_write(pool, repo.id, user.id)
         .await
-        .map_err(|_| OperationError::Unavailable {
-            code: "database_error",
-            message: "Repository authority is unavailable".into(),
-        })?
-    {
-        Ok(())
-    } else if (repo.is_archived || user.must_change_password) && can_read(pool, user, repo).await? {
-        // Only someone who can read the repository learns why a write is refused.
-        Err(OperationError::Denied {
-            code: "write_denied",
-            message: "Archived repositories and password-change-required accounts cannot write"
-                .into(),
-        })
-    } else {
-        Err(OperationError::Missing {
-            code: "not_found",
-            message: "Repository not found".into(),
-        })
-    }
+        .map(|_| ())
+        .map_err(access_error)
 }
 
 pub(super) fn write_error(error: anyhow::Error) -> OperationError {
     use db::discussions::DiscussionWriteRefusal;
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return OperationError::Denied {
+            code: "forbidden",
+            message: "A live unrestricted credential is required.".into(),
+        };
+    }
+    // Initial metadata now shares the create transaction, so preserve its typed refusals.
+    let metadata = error
+        .downcast_ref::<db::assignees::AssignmentRefusal>()
+        .map(|r| {
+            (
+                matches!(r, db::assignees::AssignmentRefusal::Denied),
+                matches!(r, db::assignees::AssignmentRefusal::NotFound),
+                r.to_string(),
+            )
+        })
+        .or_else(|| {
+            error
+                .downcast_ref::<db::labels::LabelWriteRefusal>()
+                .map(|r| {
+                    (
+                        matches!(r, db::labels::LabelWriteRefusal::Denied),
+                        false,
+                        r.to_string(),
+                    )
+                })
+        })
+        .or_else(|| {
+            error
+                .downcast_ref::<db::milestones::MilestoneWriteRefusal>()
+                .map(|r| {
+                    (
+                        matches!(r, db::milestones::MilestoneWriteRefusal::Denied),
+                        matches!(r, db::milestones::MilestoneWriteRefusal::NotFound),
+                        r.to_string(),
+                    )
+                })
+        })
+        .or_else(|| {
+            error
+                .downcast_ref::<db::issue_attributes::Refusal>()
+                .map(|r| {
+                    (
+                        matches!(r, db::issue_attributes::Refusal::Denied),
+                        matches!(r, db::issue_attributes::Refusal::Missing),
+                        r.to_string(),
+                    )
+                })
+        });
+    if let Some((denied, missing, message)) = metadata {
+        return if denied {
+            OperationError::Denied {
+                code: "forbidden",
+                message,
+            }
+        } else if missing {
+            OperationError::Missing {
+                code: "not_found",
+                message,
+            }
+        } else {
+            OperationError::Invalid {
+                code: "validation_error",
+                message,
+            }
+        };
+    }
     if let Some(refusal) = error.downcast_ref::<db::relationships::Refusal>() {
         return match refusal {
             db::relationships::Refusal::Denied => OperationError::Denied {
@@ -259,6 +341,10 @@ pub(super) fn write_error(error: anyhow::Error) -> OperationError {
         Some(DiscussionWriteRefusal::ReviewFull) => OperationError::Invalid {
             code: "validation_error",
             message: "A review holds at most 200 comments.".into(),
+        },
+        Some(DiscussionWriteRefusal::EmptyReview) => OperationError::Invalid {
+            code: "validation_error",
+            message: "A review body is required unless the review is approved".into(),
         },
         None => OperationError::Unavailable {
             code: "database_error",

@@ -89,8 +89,12 @@ async fn stalled_object_cleanup_is_concurrent_bounded_and_keeps_queued_work() {
                 let mut bytes = [0; 4096];
                 let count = socket.read(&mut bytes).await.unwrap();
                 assert!(count > 0);
-                if String::from_utf8_lossy(&bytes[..count]).contains("uploads/healthy") {
-                    healthy.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let request = String::from_utf8_lossy(&bytes[..count]);
+                if request.contains("uploads/healthy") {
+                    // A delete looks the object up first; count only the DELETE itself.
+                    if request.starts_with("DELETE ") {
+                        healthy.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    }
                     socket.write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").await.unwrap();
                 } else {
                     let _ = sent.send(());
@@ -1292,7 +1296,8 @@ async fn paused_http_put_serializes_delete_confirm_and_expiry_per_file() {
     assert!(!sweep.is_finished(), "expiry must wait for this file's PUT");
     writer.write_all(b"ired").await.unwrap();
     writer.shutdown().await.unwrap();
-    put.await.unwrap().unwrap();
+    // The window ended during the PUT, so the checked bytes are not published.
+    assert_eq!(put.await.unwrap(), Err(LocalUploadError::Rejected));
     assert_eq!(sweep.await.unwrap().unwrap(), 1);
     assert!(files_db::get_file_by_id(&fixture.pool, expired.file_id)
         .await
@@ -1562,6 +1567,9 @@ async fn object_names_cannot_leave_the_object_directory() {
     let local = LocalStore::open(&fixture.state_path().join("objects"))
         .await
         .unwrap();
+    let objects = ObjectStore::open(&fixture.state_path(), None)
+        .await
+        .unwrap();
     for key in [
         "../outside",
         "uploads/../../outside",
@@ -1580,8 +1588,12 @@ async fn object_names_cannot_leave_the_object_directory() {
         assert!(local.delete(key).await.is_err(), "delete {key:?}");
         assert!(local.verify(&upload).await.is_err(), "verify {key:?}");
         assert!(
-            local
-                .put(&upload, Cursor::new(b"do not change"))
+            objects
+                .put_bytes(
+                    &upload,
+                    b"do not change".to_vec(),
+                    std::sync::Arc::new(objects.try_acquire_io().unwrap()),
+                )
                 .await
                 .is_err(),
             "put {key:?}"
@@ -1859,13 +1871,20 @@ async fn a_stalled_upload_is_cut_off_when_its_window_ends() {
     .await
     .expect("a stalled upload must not outlast its window");
     assert_eq!(result.unwrap_err(), LocalUploadError::Rejected);
-    assert!(fixture.stored_names().is_empty());
     drop(writer);
-    assert_eq!(
-        free_slots(&fixture.storage),
-        slots,
+    // The partial file is removed off the async workers, and the slot comes back once it is,
+    // so the stored files are checked after the slot.
+    let returned = tokio::time::timeout(Duration::from_secs(5), async {
+        while free_slots(&fixture.storage) != slots {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await;
+    assert!(
+        returned.is_ok(),
         "the upload must give its storage slot back"
     );
+    assert!(fixture.stored_names().is_empty());
 }
 
 #[tokio::test]
@@ -2396,7 +2415,7 @@ async fn uploaded_files_download_as_attachments_except_public_avatar_images() {
     assert_eq!(headers[header::CONTENT_TYPE], "application/octet-stream");
     assert_eq!(
         headers[header::CONTENT_DISPOSITION],
-        "attachment; filename*=UTF-8''evil%22name__.html"
+        "attachment; filename=\"evil_name__.html\"; filename*=UTF-8''evil%22name__.html"
     );
     assert_eq!(headers[header::X_CONTENT_TYPE_OPTIONS], "nosniff");
     assert_eq!(
@@ -2519,9 +2538,12 @@ async fn storage_overview_is_for_admins_and_shows_no_paths_or_secrets() {
         }
         builder.body(Body::empty()).unwrap()
     };
-    for denied in [None, Some(&fixture.login)] {
-        assert_eq!(status_of(&router, get(denied)).await, StatusCode::FORBIDDEN);
-    }
+    // A signed-out visitor is sent to sign in, like every other administrator page.
+    assert_eq!(status_of(&router, get(None)).await, StatusCode::SEE_OTHER);
+    assert_eq!(
+        status_of(&router, get(Some(&fixture.login))).await,
+        StatusCode::FORBIDDEN
+    );
     let response = call(&router, get(Some(&admin_login))).await;
     assert_eq!(response.status(), StatusCode::OK);
     let text = String::from_utf8(body_of(response).await).unwrap();
@@ -2940,9 +2962,16 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .store(PNG, "image/png", FileReason::Avatar, FileVisibility::Public)
         .await;
     assert_eq!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, Some(old))
-            .await
-            .unwrap(),
+        db::users::accounts::set_user_avatar(
+            &fixture.pool,
+            fixture.owner,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&fixture.pool, fixture.owner).await
+            ),
+            Some(old)
+        )
+        .await
+        .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(None)
     );
 
@@ -2951,11 +2980,16 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .execute(&fixture.raw)
         .await
         .unwrap();
-    assert!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, Some(new))
-            .await
-            .is_err()
-    );
+    assert!(db::users::accounts::set_user_avatar(
+        &fixture.pool,
+        fixture.owner,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(&fixture.pool, fixture.owner).await
+        ),
+        Some(new)
+    )
+    .await
+    .is_err());
     let pointer: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=?1")
             .bind(fixture.owner)
@@ -2970,9 +3004,16 @@ async fn a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 
     // Otherwise the old row goes with the change, and its bytes are queued.
     assert_eq!(
-        db::users::accounts::set_user_avatar(&fixture.pool, fixture.owner, Some(new))
-            .await
-            .unwrap(),
+        db::users::accounts::set_user_avatar(
+            &fixture.pool,
+            fixture.owner,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&fixture.pool, fixture.owner).await
+            ),
+            Some(new)
+        )
+        .await
+        .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(Some(old))
     );
     assert!(files_db::get_file_by_id(&fixture.pool, old)
@@ -2999,18 +3040,40 @@ async fn a_banned_account_keeps_its_picture() {
         .await
         .unwrap()
         .unwrap();
-    avatars::set_user_avatar(&fixture.pool, &user, old)
-        .await
-        .unwrap();
+    avatars::set_user_avatar(
+        &fixture.pool,
+        &user,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(&fixture.pool, user.id).await,
+        ),
+        old,
+    )
+    .await
+    .unwrap();
     sqlx::query("UPDATE users SET is_banned=TRUE WHERE id=?1")
         .bind(fixture.owner)
         .execute(&fixture.raw)
         .await
         .unwrap();
 
-    let changed = avatars::set_user_avatar(&fixture.pool, &user, new).await;
+    let changed = avatars::set_user_avatar(
+        &fixture.pool,
+        &user,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(&fixture.pool, user.id).await,
+        ),
+        new,
+    )
+    .await;
     assert_eq!(changed, Err(AvatarError::Denied));
-    let cleared = avatars::remove_user_avatar(&fixture.pool, &user).await;
+    let cleared = avatars::remove_user_avatar(
+        &fixture.pool,
+        &user,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(&fixture.pool, user.id).await,
+        ),
+    )
+    .await;
     assert_eq!(cleared, Err(AvatarError::Denied));
     let pointer: Option<uuid::Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id=?1")

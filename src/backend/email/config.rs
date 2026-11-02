@@ -154,6 +154,11 @@ pub fn from_env() -> Result<Option<SmtpConfig>, String> {
     from_lookup(&|name| std::env::var(name).ok())
 }
 
+/// Whether the environment sets up a mail server. Saved settings take precedence over it.
+pub fn environment_configured() -> bool {
+    matches!(from_env(), Ok(Some(_)))
+}
+
 fn unavailable(error: impl std::fmt::Display) -> String {
     tracing::warn!(%error, "could not read email settings");
     "The email settings are unavailable.".to_owned()
@@ -185,6 +190,7 @@ pub async fn load(
         return Ok(from_env()?.map(|config| (config, Source::Environment)));
     };
     let password = match (&row.encrypted_password, &row.password_nonce) {
+        _ if row.username.is_empty() => None,
         (Some(ciphertext), Some(nonce)) => {
             let secrets =
                 secrets.ok_or("SECRETS_MASTER_KEY is needed to use the saved mail password.")?;
@@ -206,7 +212,7 @@ pub async fn describe(pool: &DbPool) -> Result<Option<(SmtpConfig, Source, bool)
         .map_err(unavailable)?
     {
         Some(row) => {
-            let password_set = row.encrypted_password.is_some();
+            let password_set = !row.username.is_empty() && row.encrypted_password.is_some();
             Ok(Some((from_row(row, None)?, Source::Database, password_set)))
         }
         None => Ok(from_env()?.map(|config| {
@@ -220,7 +226,7 @@ pub async fn describe(pool: &DbPool) -> Result<Option<(SmtpConfig, Source, bool)
 pub async fn is_configured(pool: &DbPool) -> bool {
     match db::email::get_email_settings(pool).await {
         Ok(Some(_)) => true,
-        Ok(None) => matches!(from_env(), Ok(Some(_))),
+        Ok(None) => environment_configured(),
         Err(error) => {
             tracing::warn!(%error, "could not read email settings");
             false

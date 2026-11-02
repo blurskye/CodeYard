@@ -30,7 +30,10 @@ pub async fn create_signup_request(
     Ok(request)
 }
 
-pub async fn count_signup_requests(pool: &SqlitePool, status: &str) -> Result<i64> {
+pub async fn count_signup_requests<'a>(
+    pool: impl sqlx::Executor<'a, Database = sqlx::Sqlite>,
+    status: &str,
+) -> Result<i64> {
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) FROM signup_requests WHERE status=?1")
             .bind(status)
@@ -39,8 +42,8 @@ pub async fn count_signup_requests(pool: &SqlitePool, status: &str) -> Result<i6
     )
 }
 
-pub async fn list_signup_requests(
-    pool: &SqlitePool,
+pub async fn list_signup_requests<'a>(
+    pool: impl sqlx::Executor<'a, Database = sqlx::Sqlite>,
     status: &str,
     limit: i64,
     offset: i64,
@@ -57,6 +60,35 @@ pub async fn list_signup_requests(
     .await?;
 
     Ok(requests)
+}
+
+pub async fn admin_pending_page(
+    pool: &SqlitePool,
+    administrator: &AdministratorActor,
+    limit: i64,
+    requested: usize,
+) -> Result<crate::backend::db::users::signup_requests::AdminSignupPage> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    require_reviewer(&mut tx, administrator).await?;
+    let total = count_signup_requests(&mut *tx, "pending").await?;
+    let limit = limit.clamp(1, 100);
+    let page = requested.clamp(1, (total as usize).div_ceil(limit as usize).max(1));
+    let requests = list_signup_requests(
+        &mut *tx,
+        "pending",
+        limit,
+        ((page - 1) * limit as usize) as i64,
+        0,
+    )
+    .await?;
+    tx.commit().await?;
+    Ok(
+        crate::backend::db::users::signup_requests::AdminSignupPage {
+            requests,
+            total,
+            page,
+        },
+    )
 }
 
 pub async fn get_pending_signup_request_by_identity(
@@ -92,7 +124,7 @@ pub async fn approve_signup_request(
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_private_reviewer(&mut tx, &reviewer).await?;
+    require_reviewer(&mut tx, &reviewer).await?;
 
     let signup_request =
         sqlx::query_as::<_, SignupRequest>("SELECT * FROM signup_requests WHERE id = ?1")
@@ -110,6 +142,9 @@ pub async fn approve_signup_request(
         return Err(ReviewError::Denied.into());
     }
 
+    if super::transitions::email_owned(&mut tx, signup_request.email.as_deref(), -1).await? {
+        return Err(ReviewError::Conflict.into());
+    }
     let user = sqlx::query_as::<_, User>(
         r#"
         INSERT INTO users (username, email, password_hash, is_admin, must_change_password)
@@ -136,6 +171,7 @@ pub async fn approve_signup_request(
     .await?;
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'signup.approve','user',?2,?3)")
         .bind(reviewer_user_id).bind(user.id).bind(serde_json::json!({"username":user.username}).to_string()).execute(&mut *tx).await?;
+    queue_decision_email(&mut tx, user.email.as_deref(), &user.username, true).await?;
 
     tx.commit().await?;
     Ok(user)
@@ -149,7 +185,7 @@ pub async fn reject_signup_request(
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    require_private_reviewer(&mut tx, &reviewer).await?;
+    require_reviewer(&mut tx, &reviewer).await?;
     let rejected = sqlx::query_as::<_, (String, Option<String>)>(
         "UPDATE signup_requests SET status = 'rejected', reviewed_by = ?1, reviewed_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id = ?2 AND status = 'pending' RETURNING username, email",
     )
@@ -163,21 +199,35 @@ pub async fn reject_signup_request(
     };
     sqlx::query("INSERT INTO audit_log(actor_id,action,target_type,target_id,metadata) VALUES(?1,'signup.reject','signup_request',?2,?3)")
         .bind(reviewer_user_id).bind(request_id).bind(serde_json::json!({"username":request.0}).to_string()).execute(&mut *tx).await?;
+    queue_decision_email(&mut tx, request.1.as_deref(), &request.0, false).await?;
     tx.commit().await?;
     Ok(request)
 }
 
-async fn require_private_reviewer(
+/// Queues the decision mail in the review transaction, so a recorded decision always has it.
+async fn queue_decision_email(
+    tx: &mut sqlx::SqliteConnection,
+    email: Option<&str>,
+    username: &str,
+    approved: bool,
+) -> Result<()> {
+    let Some(to) = email.map(str::trim).filter(|email| !email.is_empty()) else {
+        return Ok(());
+    };
+    let mail = crate::backend::email::signup_decision(username, approved);
+    crate::backend::db::sqlite::email::queue_email(tx, to, &mail.subject, &mail.body, None).await
+}
+
+async fn require_reviewer(
     tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
     actor: &AdministratorActor,
 ) -> Result<()> {
-    let private = sqlx::query_scalar::<_, bool>(
-        "SELECT setup_completed AND node_mode='private' FROM node_configuration WHERE id=1",
-    )
-    .fetch_optional(&mut **tx)
-    .await?
-    .unwrap_or(false);
-    if !private || !super::transitions::active_admin_session(tx, actor).await? {
+    let configured =
+        sqlx::query_scalar::<_, bool>("SELECT setup_completed FROM node_configuration WHERE id=1")
+            .fetch_optional(&mut **tx)
+            .await?
+            .unwrap_or(false);
+    if !configured || !super::transitions::active_admin_session(tx, actor).await? {
         return Err(ReviewError::Denied.into());
     }
     Ok(())

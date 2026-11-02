@@ -224,7 +224,7 @@ async fn contract(pg: bool) {
                     name: Some(tag.into()),
                     is_draft: draft,
                     is_prerelease: prerelease,
-                    make_latest: tag == "v1",
+                    make_latest: (tag == "v1").into(),
                     ..Default::default()
                 },
             )

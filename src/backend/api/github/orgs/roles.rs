@@ -180,7 +180,7 @@ async fn change(
     };
     let result = roles::change(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         org.id,
         &target,
         role,

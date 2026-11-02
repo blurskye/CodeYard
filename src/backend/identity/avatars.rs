@@ -12,7 +12,7 @@ use crate::backend::{
         self,
         models::{FileReason, FileVisibility, User},
         organizations::{self, OrganizationOutcome},
-        users::accounts::UserAvatarOutcome,
+        users::accounts::{AccountCredential, AccountRestricted, UserAvatarOutcome},
         DbPool,
     },
     files::{self, UploadDeclaration, UploadError},
@@ -45,7 +45,7 @@ pub enum AvatarError {
 /// The type of a picture, read from its first bytes, if it is one avatars may use.
 /// A name or a type sent by the browser proves nothing.
 pub fn picture_type(bytes: &[u8]) -> Option<&'static str> {
-    ["image/png", "image/jpeg", "image/gif", "image/webp"]
+    crate::media::AVATAR_CONTENT_TYPES
         .into_iter()
         .find(|kind| media_signature_matches(kind, bytes))
 }
@@ -105,9 +105,15 @@ async fn discard(pool: &DbPool, store: &ObjectStore, owner: i64, file: Uuid) {
 
 // ----- Users -----
 
-/// Makes one of the user's confirmed `avatar` uploads their picture.
-pub async fn set_user_avatar(pool: &DbPool, user: &User, file_id: Uuid) -> Result<(), AvatarError> {
-    change_user_avatar(pool, user, Some(file_id)).await
+/// Makes one of the user's confirmed `avatar` uploads their picture, while `credential`
+/// is still live.
+pub async fn set_user_avatar(
+    pool: &DbPool,
+    user: &User,
+    credential: &AccountCredential<'_>,
+    file_id: Uuid,
+) -> Result<(), AvatarError> {
+    change_user_avatar(pool, user, credential, Some(file_id)).await
 }
 
 /// Stores `bytes` as the user's new picture.
@@ -115,10 +121,11 @@ pub async fn upload_user_avatar(
     pool: &DbPool,
     store: &ObjectStore,
     user: &User,
+    credential: &AccountCredential<'_>,
     bytes: Vec<u8>,
 ) -> Result<(), AvatarError> {
     let file = store_picture(pool, store, user.id, FileReason::Avatar, bytes).await?;
-    if let Err(error) = set_user_avatar(pool, user, file).await {
+    if let Err(error) = set_user_avatar(pool, user, credential, file).await {
         discard(pool, store, user.id, file).await;
         return Err(error);
     }
@@ -126,22 +133,25 @@ pub async fn upload_user_avatar(
 }
 
 /// Takes the user's picture away.
-pub async fn remove_user_avatar(pool: &DbPool, user: &User) -> Result<(), AvatarError> {
-    change_user_avatar(pool, user, None).await
+pub async fn remove_user_avatar(
+    pool: &DbPool,
+    user: &User,
+    credential: &AccountCredential<'_>,
+) -> Result<(), AvatarError> {
+    change_user_avatar(pool, user, credential, None).await
 }
 
 async fn change_user_avatar(
     pool: &DbPool,
     user: &User,
+    credential: &AccountCredential<'_>,
     file: Option<Uuid>,
 ) -> Result<(), AvatarError> {
-    match db::users::accounts::set_user_avatar(pool, user.id, file)
-        .await
-        .map_err(unavailable)?
-    {
-        UserAvatarOutcome::Applied(_) => Ok(()),
-        UserAvatarOutcome::NotUsable => Err(AvatarError::NotUsable),
-        UserAvatarOutcome::Banned => Err(AvatarError::Denied),
+    match db::users::accounts::set_user_avatar(pool, user.id, credential, file).await {
+        Ok(UserAvatarOutcome::Applied(_)) => Ok(()),
+        Ok(UserAvatarOutcome::NotUsable) => Err(AvatarError::NotUsable),
+        Err(error) if error.is::<AccountRestricted>() => Err(AvatarError::Denied),
+        Err(_) => Err(AvatarError::Unavailable),
     }
 }
 

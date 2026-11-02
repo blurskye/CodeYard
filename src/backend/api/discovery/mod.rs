@@ -79,6 +79,7 @@ fn repository_card(
     owner: String,
     topics: Vec<String>,
     primary_language: Option<LanguageShare>,
+    forks: i32,
 ) -> RepositoryCard {
     RepositoryCard {
         id: repo.id,
@@ -88,20 +89,27 @@ fn repository_card(
         topics,
         is_private: repo.is_private,
         stars: repo.stars_count,
-        forks: repo.forks_count,
+        forks,
         default_branch: repo.default_branch,
         primary_language,
         updated_at: repo.updated_at.format("%Y-%m-%d").to_string(),
     }
 }
 
-/// The cards of a list, with the owner, topics and primary language of each repository.
+/// The cards of a list, with the owner, topics and primary language of each repository. The
+/// metadata is read after the list, so the repositories are checked against what `viewer` can
+/// read once it is loaded, and one that is no longer readable is left out with its metadata.
+/// Lists hold at most 100 repositories.
 pub(crate) async fn repository_cards(
     state: &AppState,
+    viewer: Option<i64>,
     repos: Vec<db::models::Repository>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let ids = repos.iter().map(|repo| repo.id).collect::<Vec<_>>();
     let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?;
+    let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
     let topics = db::repositories::topics::repository_topics(&state.pool, &ids)
@@ -122,7 +130,16 @@ pub(crate) async fn repository_cards(
             )
         })
         .collect::<HashMap<_, _>>();
-    card_list(repos, &owners, topics, languages)
+    let readable = db::repositories::access::readable_repository_ids(&state.pool, viewer, &ids)
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?
+        .into_iter()
+        .collect::<std::collections::HashSet<_>>();
+    let repos = repos
+        .into_iter()
+        .filter(|repo| readable.contains(&repo.id))
+        .collect();
+    card_list(repos, &owners, topics, languages, forks)
 }
 
 /// The cards of the dashboard lists. The dashboard shows no topics or languages, so they are not
@@ -135,7 +152,10 @@ pub(crate) async fn dashboard_cards(
     let owners = db::repositories::records::repository_owner_names(&state.pool, &ids)
         .await
         .map_err(|_| DiscoveryReadError::Unavailable)?;
-    card_list(repos, &owners, BTreeMap::new(), HashMap::new())
+    let forks = db::repositories::discovery::public_fork_counts(&state.pool, &ids)
+        .await
+        .map_err(|_| DiscoveryReadError::Unavailable)?;
+    card_list(repos, &owners, BTreeMap::new(), HashMap::new(), forks)
 }
 
 fn card_list(
@@ -143,6 +163,7 @@ fn card_list(
     owners: &BTreeMap<i64, String>,
     mut topics: BTreeMap<i64, Vec<String>>,
     mut languages: HashMap<i64, LanguageShare>,
+    mut forks: HashMap<i64, i32>,
 ) -> Result<Vec<RepositoryCard>, DiscoveryReadError> {
     let mut cards = Vec::with_capacity(repos.len());
     for repo in repos {
@@ -154,7 +175,8 @@ fn card_list(
             .take(CARD_TOPICS)
             .collect();
         let language = languages.remove(&repo.id);
-        cards.push(repository_card(repo, owner, shown, language));
+        let count = forks.remove(&repo.id).unwrap_or_default();
+        cards.push(repository_card(repo, owner, shown, language, count));
     }
     Ok(cards)
 }
@@ -208,7 +230,7 @@ mod tests {
         let org_repo = repository(20, "org", None, Some(7));
         assert_eq!(owner_name(&user_repo, &owners).unwrap(), "alice");
         assert_eq!(owner_name(&org_repo, &owners).unwrap(), "team");
-        let card = repository_card(org_repo, "team".into(), Vec::new(), None);
+        let card = repository_card(org_repo, "team".into(), Vec::new(), None, 2);
         assert_eq!(card.owner, "team");
         assert_eq!(card.name, "fixture-repository");
         assert_eq!(card.stars, 3);

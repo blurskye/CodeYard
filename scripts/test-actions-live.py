@@ -17,6 +17,7 @@ from pathlib import Path
 from urllib.parse import parse_qs, quote, urlparse
 
 from playwright.sync_api import expect, sync_playwright
+from actions_smoke import private_output_directory
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--base-url", default="http://localhost:8080")
@@ -24,14 +25,15 @@ parser.add_argument("--owner", required=True)
 parser.add_argument("--repo", required=True)
 parser.add_argument("--username", required=True)
 parser.add_argument("--password-file", type=Path, required=True)
-parser.add_argument("--workflow", default="Live CI smoke test")
+parser.add_argument("--workflow", default="Live CI smoke test", help="Unique workflow display name or repository-relative workflow path")
 parser.add_argument("--branch", default="main")
-parser.add_argument("--output-dir", type=Path, default=Path("/tmp/codeyard-actions-live"))
+parser.add_argument("--output-dir", type=Path)
 args = parser.parse_args()
-args.output_dir.mkdir(parents=True, exist_ok=True)
+args.output_dir = private_output_directory(args.output_dir, "codeyard-actions-live-")
 base = args.base_url.rstrip("/")
-url = f"{base}/{args.owner}/{args.repo}/actions"
+url = f"{base}/{quote(args.owner, safe='')}/{quote(args.repo, safe='')}/actions?ref={quote(args.branch, safe='')}"
 run_id = None
+log_history = {}
 
 
 def wait_for_job(request, job_url, predicate, timeout=180):
@@ -48,15 +50,16 @@ def wait_for_job(request, job_url, predicate, timeout=180):
 
 
 def read_logs(request, logs_url):
-    logs, after = [], 0
+    state = log_history.setdefault(logs_url, {"logs": [], "after": 0})
     while True:
-        response = request.get(f"{logs_url}?after={after}")
+        response = request.get(f"{logs_url}?after={state['after']}")
         assert response.ok, f"Log read failed: {response.status} {response.text()}"
         page = response.json()
-        logs.extend(page["logs"])
+        state["logs"].extend(page["logs"])
+        assert page["next_cursor"] >= state["after"], "Log cursor moved backwards"
+        state["after"] = page["next_cursor"]
         if not page["has_more"]:
-            return logs
-        after = page["next_cursor"]
+            return state["logs"]
 
 
 def wait_for_log(request, logs_url, text, timeout=180):
@@ -100,11 +103,14 @@ with sync_playwright() as playwright:
         assert dispatch.count(), "The signed-in fixture user cannot dispatch this repository"
         dispatch.locator("summary").click()
         workflow = dispatch.locator('select[name="workflow_path"]')
-        available = workflow.locator("option").all_text_contents()
-        assert args.workflow in available, (
-            f"Workflow {args.workflow!r} is not dispatchable on {args.branch!r}; available: {available}"
+        available = workflow.locator("option").evaluate_all("options => options.map(option => ({label: option.textContent, value: option.value}))")
+        matches = [option for option in available if option["value"] == args.workflow]
+        if not matches:
+            matches = [option for option in available if option["label"] == args.workflow]
+        assert len(matches) == 1, (
+            f"Workflow {args.workflow!r} must identify one dispatchable path on {args.branch!r}; available: {available}"
         )
-        workflow.select_option(label=args.workflow)
+        workflow.select_option(value=matches[0]["value"])
         dispatch.get_by_label("Branch or tag", exact=True).fill(args.branch)
         with page.expect_response(
             lambda candidate: candidate.request.method == "POST"
@@ -121,7 +127,7 @@ with sync_playwright() as playwright:
         # The page links the log history only for long runs, so build its address from the page data.
         model = context.request.get(deep_url, headers={"Accept": "application/vnd.codeyard.page+json"})
         assert model.ok, f"Run page data failed: {model.status}"
-        selected = model.json()["page"]["model"]["Actions"]["Actions"]["selected"]["run"]
+        selected = model.json()["page"]["model"]["Actions"]["selected"]["run"]
         logs_url = (
             f"{base}/api/v3/repos/{quote(args.owner, safe='')}/{quote(args.repo, safe='')}"
             f"/actions/runs/{selected['api_id']}/attempts/{selected['api_attempt']}/logs"
@@ -171,6 +177,7 @@ with sync_playwright() as playwright:
         )
         assert final_job["status"] == "success", final_job
         persisted = wait_for_log(context.request, logs_url, "LIVE_CI_PASSED", timeout=30)
+        persisted_count = len(persisted)
         ticks = []
         for line in persisted:
             match = re.search(r"LIVE_TICK (\d+)/15", line["line"])
@@ -193,7 +200,7 @@ with sync_playwright() as playwright:
         page.screenshot(path=str(args.output_dir / "completed.png"), full_page=True)
         after_reload = read_logs(context.request, logs_url)
         assert any("LIVE_CI_PASSED" in line["line"] for line in after_reload)
-        assert len(after_reload) >= len(persisted), "Persisted log history shrank after completion"
+        assert len(after_reload) >= persisted_count, "Persisted log history shrank after completion"
         assert not browser_errors, browser_errors
 
         print(

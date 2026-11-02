@@ -275,6 +275,9 @@ async fn events(pg: bool) {
         f.pool(),
         pull.id,
         alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
         "commented",
         Some("Published review"),
         Some(&pull.head_sha),

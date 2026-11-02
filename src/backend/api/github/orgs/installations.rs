@@ -1,9 +1,13 @@
 //! Organization owners see installations from the same store as app and user discovery.
-use super::owner;
+use super::owner_actor;
 use crate::backend::{
-    api::github::{apps::installations::document, pagination::Pagination, Error, Result},
+    api::github::{
+        apps::installations::{document, installation_page, more},
+        pagination::Pagination,
+        Result,
+    },
     app::AppState,
-    db::github_apps,
+    db::github_apps::InstallationFilter,
 };
 use axum::{
     extract::{OriginalUri, Path, Query, State},
@@ -26,22 +30,20 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let org = owner(&state, &headers, &name).await?;
-    let rows = github_apps::installations(&state.pool, None, None)
-        .await
-        .map_err(Error::unavailable)?;
-    let rows: Vec<_> = rows
-        .into_iter()
-        .filter(|row| row.org_id == Some(org.id))
-        .collect();
-    let total = rows.len();
+    let (org, actor) = owner_actor(&state, &headers, &name).await?;
+    let filter = InstallationFilter {
+        org: Some(org.id),
+        actor: Some(actor.user.id),
+        ..InstallationFilter::default()
+    };
     let (offset, limit) = page.window()?;
+    let (total, rows) = installation_page(&state, &filter, offset, limit).await?;
     let mut values = Vec::new();
-    for row in rows.into_iter().skip(offset).take(limit) {
-        values.push(document(&state, &row).await?);
+    for row in &rows {
+        values.push(document(&state, row).await?);
     }
     Ok((
-        page.headers(&uri, total > offset + limit)?,
+        page.headers(&uri, more(total, offset, limit))?,
         Json(json!({"total_count": total, "installations": values})),
     )
         .into_response())

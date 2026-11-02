@@ -14,6 +14,11 @@ root="${CI_RUNNER_ROOT:-${XDG_CACHE_HOME:-$HOME/.cache}/codeyard-ci/storage}"
 runtime="$XDG_RUNTIME_DIR/codeyard-ci"
 socket="$runtime/podman.sock"
 mkdir -p "$root" "$runtime"
+[[ -d $runtime && ! -L $runtime && -O $runtime && $(stat -c %a "$runtime") == 700 ]] || {
+  echo 'Runner runtime directory must be owned and private (0700).' >&2; exit 1;
+}
+exec 9<"$runtime"
+flock 9
 
 if ! systemctl --user is-active --quiet codeyard-ci-engine.service; then
   systemd-run --user --unit=codeyard-ci-engine --collect \

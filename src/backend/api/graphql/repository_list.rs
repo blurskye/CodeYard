@@ -15,7 +15,7 @@ pub(super) async fn organizations(
     request.require_oauth_scope("read:org")?;
     connection::validate(ctx)?;
     let id = parent["databaseId"].as_i64().ok_or_else(missing)?;
-    let rows = db::organizations::discovery::list_organizations(
+    let mut rows = db::organizations::discovery::list_organizations(
         &request.state.pool,
         Some(id),
         id == request.auth.user.id,
@@ -25,7 +25,36 @@ pub(super) async fn organizations(
     )
     .await
     .map_err(unavailable)?;
-    connection::slice(ctx, rows.iter().map(user::organization).collect())
+    request.charge(
+        rows.iter()
+            .map(|org| {
+                org.name.len()
+                    + org.display_name.as_ref().map_or(0, |text| text.len())
+                    + org.description.as_ref().map_or(0, |text| text.len())
+                    + org.billing_email.as_ref().map_or(0, |text| text.len())
+                    + 128
+            })
+            .sum(),
+    )?;
+    if let Some(order) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
+        let order = order.object()?;
+        match order.try_get("field")?.enum_name()? {
+            "LOGIN" => rows.sort_by_cached_key(|org| (org.name.to_lowercase(), org.id)),
+            "CREATED_AT" => rows.sort_by_key(|org| (org.created_at, org.id)),
+            _ => return Err(async_graphql::Error::new("Unsupported organization order")),
+        }
+        if order.try_get("direction")?.enum_name()? == "DESC" {
+            rows.reverse();
+        }
+    }
+    let page = connection::Page::new(ctx, rows.len() as i64)?;
+    let nodes = rows
+        .iter()
+        .skip(page.offset as usize)
+        .take(page.limit as usize)
+        .map(user::organization)
+        .collect();
+    Ok(page.finish(nodes))
 }
 
 fn query<'a>(
@@ -47,8 +76,11 @@ fn query<'a>(
         }
     }
     if let Some(value) = ctx.args.get("ownerAffiliations").filter(|v| !v.is_null()) {
-        let values: Vec<Option<String>> = value.deserialize()?;
-        if values.iter().any(|v| v.as_deref() != Some("OWNER")) {
+        let values: Value = value.deserialize()?;
+        if super::metadata_mutations::list(&values)
+            .iter()
+            .any(|v| v.as_str() != Some("OWNER"))
+        {
             return Err(async_graphql::Error::new(
                 "Codeyard only supports OWNER ownerAffiliations",
             ));
@@ -72,7 +104,7 @@ fn query<'a>(
             "CREATED_AT" => "created",
             "UPDATED_AT" => "updated",
             "PUSHED_AT" => "pushed",
-            "NAME" => "full_name",
+            "NAME" => "name",
             "STARGAZERS" => "stars",
             _ => return Err(async_graphql::Error::new("Unsupported repository order")),
         };
@@ -176,7 +208,8 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
     }
     let search =
         db::catalog_search::Search::parse(db::catalog_search::Kind::Repositories, &terms.join(" "))
-            .map_err(async_graphql::Error::new)?;
+            .map_err(async_graphql::Error::new)?
+            .with_classic_policy(Some(request.auth.token.id));
     search
         .order(sort.as_deref(), ascending)
         .map_err(async_graphql::Error::new)?;
@@ -206,14 +239,12 @@ pub(super) async fn search(ctx: &Arguments, request: &RequestContext) -> Result<
         offset,
         limit,
     };
-    // The catalog's count pages the window; results past the first 1000 are not offered, as before.
-    // The count does not depend on the window, so the smallest valid one is asked for.
+    // Only the retrievable window is capped; repositoryCount reports all native matches.
     let total = db::catalog_search::search(pool, viewer, &search, &options(0, 1))
         .await
         .map_err(unavailable)?
-        .total
-        .min(1000);
-    let page = connection::Page::new(ctx, total)?;
+        .total;
+    let page = connection::Page::new(ctx, total.min(1000))?;
     let hits = if page.limit > 0 {
         db::catalog_search::search(pool, viewer, &search, &options(page.offset, page.limit))
             .await

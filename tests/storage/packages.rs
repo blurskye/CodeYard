@@ -18,7 +18,6 @@ mod ecosystems;
 mod pages;
 mod rest;
 
-#[allow(clippy::too_many_arguments)]
 async fn request(
     router: &Router,
     method: &str,
@@ -113,6 +112,21 @@ async fn push_blob(router: &Router, writer: &str, name: &str, bytes: &[u8]) -> S
     )
     .await;
     assert_eq!(status, StatusCode::RANGE_NOT_SATISFIABLE);
+    if mid > 0 && mid < bytes.len() {
+        // Only the last chunk may be under the advertised minimum.
+        let (status, _, body) = request(
+            router,
+            "PATCH",
+            location,
+            Some(writer),
+            "application/octet-stream",
+            bytes[mid..mid + 1].to_vec(),
+            Some(&format!("{mid}-{mid}")),
+        )
+        .await;
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert!(String::from_utf8_lossy(&body).contains("SIZE_INVALID"));
+    }
     let (status, _, _) = request(
         router,
         "PUT",
@@ -632,7 +646,9 @@ async fn oci(pg: bool) {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body, index);
-    let (status, _, _) = request(
+    // An anonymous exchange carries no identity, so a push asks the client to sign in,
+    // as Docker Distribution and ghcr.io answer an anonymous push.
+    let (status, headers, _) = request(
         &router,
         "PUT",
         &path,
@@ -642,7 +658,11 @@ async fn oci(pg: bool) {
         None,
     )
     .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(status, StatusCode::UNAUTHORIZED);
+    assert!(headers["www-authenticate"]
+        .to_str()
+        .unwrap()
+        .starts_with("Bearer realm="));
     f.execute("UPDATE package_registry_tokens SET expires_at=1", &[])
         .await;
     let (status, _, _) = request(
@@ -689,6 +709,7 @@ async fn packages_reject_truncated_or_corrupt_chunks() {
                 sha256_hex: &blob.digest[7..],
             },
             bytes.to_vec(),
+            std::sync::Arc::new(storage.try_acquire_io().unwrap()),
         )
         .await
         .unwrap();

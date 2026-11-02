@@ -30,11 +30,11 @@ native_operation!(crate::backend::db::postgres::repositories::engagement::list_w
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::watch_repo,
     crate::backend::db::sqlite::repositories::engagement::watch_repo,
-    fn watch_repo(pool: &DbPool, user_id: i64, repo_id: i64) -> Result<bool>);
+    fn watch_repo(pool: &DbPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::unwatch_repo,
     crate::backend::db::sqlite::repositories::engagement::unwatch_repo,
-    fn unwatch_repo(pool: &DbPool, user_id: i64, repo_id: i64) -> Result<bool>);
+    fn unwatch_repo(pool: &DbPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::is_repo_watched,
     crate::backend::db::sqlite::repositories::engagement::is_repo_watched,
@@ -42,7 +42,7 @@ native_operation!(crate::backend::db::postgres::repositories::engagement::is_rep
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::set_watch_level,
     crate::backend::db::sqlite::repositories::engagement::set_watch_level,
-    fn set_watch_level(pool: &DbPool, user_id: i64, repo_id: i64, level: &str, events: &str) -> Result<()>);
+    fn set_watch_level(pool: &DbPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64, level: &str, events: &str) -> Result<()>);
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::get_watch_level,
     crate::backend::db::sqlite::repositories::engagement::get_watch_level,
@@ -54,11 +54,11 @@ native_operation!(crate::backend::db::postgres::repositories::engagement::list_e
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::star_repo,
     crate::backend::db::sqlite::repositories::engagement::star_repo,
-    fn star_repo(pool: &DbPool, user_id: i64, repo_id: i64) -> Result<bool>);
+    fn star_repo(pool: &DbPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::unstar_repo,
     crate::backend::db::sqlite::repositories::engagement::unstar_repo,
-    fn unstar_repo(pool: &DbPool, user_id: i64, repo_id: i64) -> Result<bool>);
+    fn unstar_repo(pool: &DbPool, user_id: impl Into<crate::backend::db::credentials::Actor>, repo_id: i64) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::repositories::engagement::is_repo_starred,
     crate::backend::db::sqlite::repositories::engagement::is_repo_starred,

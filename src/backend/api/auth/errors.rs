@@ -215,7 +215,7 @@ pub(crate) fn setup_failure(error: SetupError) -> ApiFailure {
     }
 }
 
-fn admin_authority_failure(error: AccountAuthorityError) -> ApiFailure {
+pub(crate) fn admin_authority_failure(error: AccountAuthorityError) -> ApiFailure {
     match error {
         AccountAuthorityError::NotAuthenticated | AccountAuthorityError::SessionExpired => {
             ApiError::failure(
@@ -257,7 +257,7 @@ pub(crate) fn password_change_failure(error: PasswordChangeError) -> ApiFailure 
         PasswordChangeError::InvalidCredentials => invalid_credentials(),
         PasswordChangeError::UnchangedPassword => ApiError::failure(
             StatusCode::BAD_REQUEST,
-            "validation_error",
+            "unchanged_password",
             "Choose a password different from the temporary password",
         ),
         PasswordChangeError::AccountUnavailable => database_failure(),
@@ -296,11 +296,6 @@ pub(crate) fn managed_account_failure(error: ManagedAccountError) -> ApiFailure 
 pub(crate) fn signup_review_failure(error: SignupReviewError) -> ApiFailure {
     match error {
         SignupReviewError::Authority(error) => admin_authority_failure(error),
-        SignupReviewError::PrivateNodeRequired => ApiError::failure(
-            StatusCode::FORBIDDEN,
-            "forbidden",
-            "Signup request review is available only in private node mode",
-        ),
         SignupReviewError::InvalidDecision => ApiError::failure(
             StatusCode::BAD_REQUEST,
             "validation_error",

@@ -1,6 +1,7 @@
 use crate::backend::{
     crypto::SecretEncryptor,
     db::{
+        credentials::Actor,
         dependabot::{OrganizationSecret, OrganizationSecretInput, RepositorySelection},
         models::{OrgRole, Repository},
         organizations::OrganizationOutcome,
@@ -11,15 +12,31 @@ use sqlx::{Sqlite, SqlitePool, Transaction};
 
 pub(super) async fn authorized(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
+    write: bool,
 ) -> Result<Transaction<'_, Sqlite>, SecretsError> {
+    let actor = actor.into();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    match super::organizations::authority::authority(&mut tx, actor, org)
+    match super::organizations::authority::authority(&mut tx, actor.user_id, org)
         .await
         .map_err(SecretsError::authority)?
     {
-        OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(tx),
+        OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {
+            if !super::credentials::organization(
+                &mut tx,
+                &actor,
+                org,
+                "organization_administration",
+                write,
+            )
+            .await
+            .map_err(SecretsError::authority)?
+            {
+                return Err(SecretsError::Denied);
+            }
+            Ok(tx)
+        }
         OrganizationOutcome::Missing => Err(SecretsError::NotFound),
         _ => Err(SecretsError::Denied),
     }
@@ -28,12 +45,11 @@ pub(super) async fn authorized(
 pub async fn organization_key(
     pool: &SqlitePool,
     encryptor: &SecretEncryptor,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
 ) -> Result<(String, crypto_box::SecretKey), SecretsError> {
-    let mut tx = authorized(pool, actor, org).await?;
-    let key = crypto_box::SecretKey::generate(&mut rand::thread_rng());
-    let (encrypted, nonce) = encryptor.encrypt(&key.to_bytes())?;
+    let mut tx = authorized(pool, actor, org, false).await?;
+    let (encrypted, nonce) = encryptor.generate_sealed_box_key()?;
     sqlx::query("INSERT INTO org_dependabot_keys(org_id,key_id,encrypted_key,nonce) VALUES($1,$2,$3,$4) ON CONFLICT(org_id) DO NOTHING")
         .bind(org).bind(uuid::Uuid::new_v4().simple().to_string()).bind(encrypted).bind(nonce.as_slice()).execute(&mut *tx).await?;
     let (id, encrypted, nonce): (String, Vec<u8>, Vec<u8>) = sqlx::query_as(
@@ -42,20 +58,17 @@ pub async fn organization_key(
     .bind(org)
     .fetch_one(&mut *tx)
     .await?;
-    let bytes: [u8; 32] = encryptor
-        .decrypt(&encrypted, &nonce)?
-        .try_into()
-        .map_err(|_| crate::backend::crypto::SecretError::DecryptionFailed)?;
+    let key = encryptor.sealed_box_key(&encrypted, &nonce)?;
     tx.commit().await?;
-    Ok((id, crypto_box::SecretKey::from(bytes)))
+    Ok((id, key))
 }
 
 pub async fn list_organization_secrets(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
 ) -> Result<Vec<OrganizationSecret>, SecretsError> {
-    let mut tx = authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor, org, false).await?;
     let rows = sqlx::query_as("SELECT name,visibility,created_at,updated_at FROM org_dependabot_secrets WHERE org_id=$1 ORDER BY name")
         .bind(org).fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -70,11 +83,11 @@ pub(super) async fn check_repositories(
     if repositories.len() > 1000 {
         return Err(SecretsError::InvalidRepositorySelection);
     }
-    for id in repositories {
-        if !sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM repositories WHERE id=$1 AND owner_kind='org' AND owner_org_id=$2 AND owner_user_id IS NULL)")
-            .bind(id).bind(org).fetch_one(&mut **tx).await? {
-            return Err(SecretsError::InvalidRepositorySelection);
-        }
+    let ids: std::collections::BTreeSet<_> = repositories.iter().copied().collect();
+    let found: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM repositories WHERE id IN (SELECT value FROM json_each(?1)) AND owner_kind='org' AND owner_org_id=?2 AND owner_user_id IS NULL")
+        .bind(serde_json::to_string(&ids).map_err(|error| SecretsError::authority(error.into()))?).bind(org).fetch_one(&mut **tx).await?;
+    if found != ids.len() as i64 {
+        return Err(SecretsError::InvalidRepositorySelection);
     }
     Ok(())
 }
@@ -91,22 +104,20 @@ async fn replace_repositories(
         .bind(name)
         .execute(&mut **tx)
         .await?;
-    for id in repositories {
-        sqlx::query("INSERT INTO org_dependabot_secret_repositories(org_id,name,repo_id) VALUES($1,$2,$3) ON CONFLICT DO NOTHING")
-            .bind(org).bind(name).bind(id).execute(&mut **tx).await?;
-    }
+    sqlx::query("INSERT INTO org_dependabot_secret_repositories(org_id,name,repo_id) SELECT ?1,?2,value FROM json_each(?3) WHERE TRUE ON CONFLICT DO NOTHING")
+        .bind(org).bind(name).bind(serde_json::to_string(repositories).map_err(|error| SecretsError::authority(error.into()))?).execute(&mut **tx).await?;
     Ok(())
 }
 
 pub async fn save_organization_secret(
     pool: &SqlitePool,
     encryptor: &SecretEncryptor,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
     input: &OrganizationSecretInput<'_>,
 ) -> Result<bool, SecretsError> {
     input.validate()?;
-    let mut tx = authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor, org, true).await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM org_dependabot_secrets WHERE org_id=$1 AND name=$2)",
     )
@@ -139,11 +150,11 @@ pub async fn save_organization_secret(
 
 pub async fn delete_organization_secret(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
     name: &str,
 ) -> Result<bool, SecretsError> {
-    let mut tx = authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor, org, true).await?;
     let deleted = sqlx::query("DELETE FROM org_dependabot_secrets WHERE org_id=$1 AND name=$2")
         .bind(org)
         .bind(name)
@@ -157,11 +168,11 @@ pub async fn delete_organization_secret(
 
 pub async fn selected_repositories(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
     name: &str,
 ) -> Result<Vec<Repository>, SecretsError> {
-    let mut tx = authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor, org, false).await?;
     if !sqlx::query_scalar::<_, bool>(
         "SELECT EXISTS(SELECT 1 FROM org_dependabot_secrets WHERE org_id=$1 AND name=$2)",
     )
@@ -181,12 +192,12 @@ pub async fn selected_repositories(
 
 pub async fn select_repositories(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
     name: &str,
     selection: RepositorySelection<'_>,
 ) -> Result<(), SecretsError> {
-    let mut tx = authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor, org, true).await?;
     let visibility: String = sqlx::query_scalar(
         "SELECT visibility FROM org_dependabot_secrets WHERE org_id=$1 AND name=$2",
     )
@@ -217,62 +228,54 @@ pub async fn select_repositories(
 
 pub async fn repository_access(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
+    window: (i64, i64),
 ) -> Result<(String, Vec<Repository>), SecretsError> {
-    let mut tx = authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor, org, false).await?;
     let level =
         sqlx::query_scalar("SELECT default_level FROM org_dependabot_access WHERE org_id=$1")
             .bind(org)
             .fetch_optional(&mut *tx)
             .await?
             .unwrap_or_else(|| "public".to_owned());
-    let repositories = sqlx::query_as("SELECT r.* FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND (NOT r.is_private OR EXISTS(SELECT 1 FROM org_dependabot_access_repositories a WHERE a.org_id=$1 AND a.repo_id=r.id)) ORDER BY r.id")
-        .bind(org).fetch_all(&mut *tx).await?;
+    let repositories = sqlx::query_as("SELECT r.* FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=$1 AND r.owner_user_id IS NULL AND (NOT r.is_private OR EXISTS(SELECT 1 FROM org_dependabot_access_repositories a WHERE a.org_id=$1 AND a.repo_id=r.id)) ORDER BY r.id LIMIT $2 OFFSET $3")
+        .bind(org).bind(window.1).bind(window.0).fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok((level, repositories))
 }
 
 pub async fn update_repository_access(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
     add: &[i64],
     remove: &[i64],
 ) -> Result<(), SecretsError> {
     crate::backend::db::dependabot::validate_repository_access(add, remove)?;
-    let mut tx = authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor, org, true).await?;
     let mut ids: Vec<_> = add.iter().chain(remove).copied().collect();
     ids.sort_unstable();
     ids.dedup();
     check_repositories(&mut tx, org, &ids).await?;
-    for id in add {
-        sqlx::query("INSERT INTO org_dependabot_access_repositories(org_id,repo_id) VALUES($1,$2) ON CONFLICT DO NOTHING")
-            .bind(org).bind(id).execute(&mut *tx).await?;
-    }
-    for id in remove {
-        sqlx::query(
-            "DELETE FROM org_dependabot_access_repositories WHERE org_id=$1 AND repo_id=$2",
-        )
-        .bind(org)
-        .bind(id)
-        .execute(&mut *tx)
-        .await?;
-    }
+    sqlx::query("INSERT INTO org_dependabot_access_repositories(org_id,repo_id) SELECT ?1,value FROM json_each(?2) WHERE TRUE ON CONFLICT DO NOTHING")
+        .bind(org).bind(serde_json::to_string(add).map_err(|error| SecretsError::authority(error.into()))?).execute(&mut *tx).await?;
+    sqlx::query("DELETE FROM org_dependabot_access_repositories WHERE org_id=?1 AND repo_id IN (SELECT value FROM json_each(?2))")
+        .bind(org).bind(serde_json::to_string(remove).map_err(|error| SecretsError::authority(error.into()))?).execute(&mut *tx).await?;
     tx.commit().await?;
     Ok(())
 }
 
 pub async fn set_repository_access_default(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<Actor>,
     org: i64,
     level: &str,
 ) -> Result<(), SecretsError> {
     if !matches!(level, "public" | "internal") {
         return Err(SecretsError::InvalidRepositorySelection);
     }
-    let mut tx = authorized(pool, actor, org).await?;
+    let mut tx = authorized(pool, actor, org, true).await?;
     sqlx::query("INSERT INTO org_dependabot_access(org_id,default_level) VALUES($1,$2) ON CONFLICT(org_id) DO UPDATE SET default_level=EXCLUDED.default_level")
         .bind(org).bind(level).execute(&mut *tx).await?;
     tx.commit().await?;

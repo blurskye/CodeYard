@@ -94,6 +94,87 @@ async fn postgres_concurrent_release_updates_report_one_publication() {
     concurrent_release_updates_report_one_publication(true).await;
 }
 
+/// An edit prepared for a published release skips the tag checks that publishing runs, so it
+/// must not publish a release that became a draft before the edit was written.
+async fn an_edit_prepared_for_a_published_release_does_not_publish_a_draft(pg: bool) {
+    use db::releases::{ReleaseChanges, ReleaseFields, ReleaseRefusal};
+    let mut world = setup(pg).await;
+    let pool = world.database.pool();
+    let repo = db::repositories::records::get_repository(pool, "alice", "proj")
+        .await
+        .unwrap()
+        .unwrap();
+    let actor = repo.owner_user_id.unwrap();
+    let release = db::releases::create_release(
+        pool,
+        actor,
+        repo.id,
+        "published",
+        &world.main,
+        &ReleaseFields::default(),
+    )
+    .await
+    .unwrap();
+    let unpublish = ReleaseChanges {
+        is_draft: Some(true),
+        expected_draft: Some(false),
+        ..Default::default()
+    };
+    let stale = ReleaseChanges {
+        body: Some(Some("Edited while published".into())),
+        is_draft: Some(false),
+        expected_draft: Some(false),
+        ..Default::default()
+    };
+    let (unpublished, edited) = tokio::join!(
+        db::releases::update_release(pool, actor, repo.id, release.id, &unpublish),
+        db::releases::update_release(pool, actor, repo.id, release.id, &stale),
+    );
+    assert!(!unpublished.unwrap().1);
+    if let Ok((_, published)) = edited {
+        assert!(!published);
+    }
+    async fn draft(pool: &db::DbPool, repo: i64, release: i64) -> bool {
+        db::releases::get_release(pool, repo, release)
+            .await
+            .unwrap()
+            .unwrap()
+            .release
+            .is_draft
+    }
+    assert!(draft(pool, repo.id, release.id).await);
+    let refused = db::releases::update_release(pool, actor, repo.id, release.id, &stale)
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        refused.downcast_ref::<ReleaseRefusal>(),
+        Some(ReleaseRefusal::Conflict)
+    ));
+    assert!(draft(pool, repo.id, release.id).await);
+    let publish = ReleaseChanges {
+        is_draft: Some(false),
+        expected_draft: Some(true),
+        ..Default::default()
+    };
+    assert!(
+        db::releases::update_release(pool, actor, repo.id, release.id, &publish)
+            .await
+            .unwrap()
+            .1
+    );
+    world.database.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_an_edit_prepared_for_a_published_release_does_not_publish_a_draft() {
+    an_edit_prepared_for_a_published_release_does_not_publish_a_draft(false).await;
+}
+
+#[tokio::test]
+async fn postgres_an_edit_prepared_for_a_published_release_does_not_publish_a_draft() {
+    an_edit_prepared_for_a_published_release_does_not_publish_a_draft(true).await;
+}
+
 async fn release_asset_file_lookup_has_an_index(pg: bool) {
     let mut database = Database::new(pg).await;
     match database.pool() {

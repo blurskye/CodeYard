@@ -103,9 +103,15 @@ async fn change(
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
-    let result = blocks::change(&state.pool, actor.user.id, org.id, user.id, blocked)
-        .await
-        .map_err(Error::unavailable)?;
+    let result = blocks::change(
+        &state.pool,
+        actor.database_actor(),
+        org.id,
+        user.id,
+        blocked,
+    )
+    .await
+    .map_err(Error::unavailable)?;
     if matches!(result, OrganizationOutcome::Conflict) {
         return Err(Error::new(
             StatusCode::UNPROCESSABLE_ENTITY,

@@ -475,7 +475,9 @@ async fn contract(pg: bool) {
             .await;
         assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
         assert!(
-            body.contains("Filenames containing line breaks cannot be edited"),
+            body.contains(
+                "Filenames containing line breaks cannot be changed through native forms"
+            ),
             "{body}"
         );
         assert!(!body.contains("id=\"repo-editor-form\""));

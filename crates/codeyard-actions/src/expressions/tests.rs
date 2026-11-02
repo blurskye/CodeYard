@@ -99,7 +99,7 @@ fn json_values_round_trip() {
     assert_eq!(Value::from_json(&json).to_json(), json);
     assert_eq!(Value::Number(f64::NAN).to_json(), serde_json::Value::Null);
     assert_eq!(Value::Null.to_text(), "");
-    assert_eq!(Value::from_json(&json!([1, 2])).to_text(), "[1,2]");
+    assert_eq!(Value::from_json(&json!([1, 2])).to_text(), "Array");
 }
 
 #[test]
@@ -318,6 +318,15 @@ fn nested_joins_stop_at_the_memory_limit() {
 
 #[test]
 fn json_functions_and_indentation() {
+    let nested = format!("{}'x'{}", "toJSON(".repeat(30), ")".repeat(30));
+    assert!(evaluate(&nested, &contexts(), Status::default()).is_err());
+    assert!(interpolate_bounded(
+        "${{ 'aaaa' }}${{ 'bbbb' }}",
+        &contexts(),
+        Status::default(),
+        7
+    )
+    .is_err());
     assert_eq!(
         run("toJSON(fromJSON('{\"a\":[1,true,null],\"b\":{}}'))"),
         Value::String("{\n  \"a\": [\n    1,\n    true,\n    null\n  ],\n  \"b\": {}\n}".into())

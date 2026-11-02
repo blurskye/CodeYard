@@ -12,6 +12,7 @@ use crate::{
     },
     webui::{
         app::Page,
+        excerpt,
         pages::repos::{page::Page as RepoPage, security as view},
     },
 };
@@ -43,29 +44,22 @@ async fn open(
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
     let loaded = chrome::load_database(&ctx, owner, name).await?;
-    let allowed = match &ctx.user {
-        Some(user) => crate::backend::repositories::access::user_access(
-            &ctx.state.pool,
-            user,
-            &loaded.repository,
-        )
+    let allowed = current_authority(&ctx, loaded.repository.id)
         .await
-        .map(|level| level.can_write()),
-        None => Ok(false),
-    };
-    let allowed = allowed.map_err(|_| chrome::unavailable(&ctx))?;
+        .map_err(|_| chrome::unavailable(&ctx))?;
     if !allowed {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Security alerts not found."));
     }
     Ok((ctx, loaded))
 }
-pub(super) fn excerpt(text: &str, limit: usize) -> String {
-    let mut chars = text.chars();
-    let mut output: String = chars.by_ref().take(limit).collect();
-    if chars.next().is_some() {
-        output.push('…');
-    }
-    output
+async fn current_authority(ctx: &PageContext, repo: i64) -> anyhow::Result<bool> {
+    let Some(user) = &ctx.user else {
+        return Ok(false);
+    };
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
+        return Ok(false);
+    };
+    db::code_scanning::security_read_allowed(&ctx.state.pool, user.id, &session, repo).await
 }
 
 async fn model(
@@ -81,15 +75,15 @@ async fn model(
         .get("branch")
         .filter(|branch| !branch.is_empty())
         .map(|branch| {
-            if branch.starts_with("refs/") {
+            if ["refs/heads/", "refs/tags/", "refs/pull/"]
+                .iter()
+                .any(|prefix| branch.starts_with(prefix))
+            {
                 branch.clone()
             } else {
                 format!("refs/heads/{branch}")
             }
         });
-    let reference = explicit
-        .clone()
-        .unwrap_or_else(|| format!("refs/heads/{}", loaded.repository.default_branch));
     let filters = db::code_scanning::AlertFilters {
         reference: explicit.as_deref(),
         tool_name: ctx
@@ -109,33 +103,35 @@ async fn model(
             .map(String::as_str),
         ..Default::default()
     };
-    let rows = match number {
-        Some(number) => db::code_scanning::alert(&ctx.state.pool, loaded.repository.id, number)
-            .await?
-            .into_iter()
-            .collect(),
-        None => {
-            db::code_scanning::alert_page(
-                &ctx.state.pool,
-                db::code_scanning::AlertScope::Repository(loaded.repository.id),
-                &filters,
-                offset as i64,
-                (limit + 1) as i64,
-            )
-            .await?
-        }
-    };
+    let actor = ctx
+        .user
+        .as_ref()
+        .ok_or(db::code_scanning::Refusal::Denied)?;
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
+        .ok_or(db::code_scanning::Refusal::Denied)?;
+    let category = ctx.query.get("category").map(String::as_str);
+    let snapshot = db::code_scanning::read_alert_snapshot(
+        &ctx.state.pool,
+        actor.id,
+        &session,
+        &db::code_scanning::AlertSelection {
+            repo: loaded.repository.id,
+            number,
+            filters: &filters,
+            category,
+            offset: offset as i64,
+            limit: (limit + 1) as i64,
+        },
+    )
+    .await?;
+    let rows = snapshot.rows;
+    let mut instances = snapshot.instances;
     let has_next = number.is_none()
         && super::paging::has_next_page(page_number, rows.len(), limit, super::paging::MAX_PAGE);
     let mut alerts = Vec::new();
     let mut selected = None;
     for row in rows.into_iter().take(limit) {
-        let mut instance =
-            db::code_scanning::instance(&ctx.state.pool, row.id, Some(&reference)).await?;
-        if instance.is_none() && number.is_some() && explicit.is_none() {
-            instance = db::code_scanning::instance(&ctx.state.pool, row.id, None).await?;
-        }
-        let Some(instance) = instance else {
+        let Some(instance) = instances.remove(&row.id) else {
             continue;
         };
         let rule: Value = serde_json::from_str(&row.rule)?;
@@ -175,14 +171,13 @@ async fn model(
         if source_path.len() <= 4096 {
             // The code view with the line query reaches lines past the first preview.
             alert.code_url = format!(
-                "{}/blob/{}/{}?view=code&line={line}#L{line}",
-                loaded.chrome.base(),
-                instance.commit_sha,
-                source_path
-                    .split('/')
-                    .map(crate::webui::encode_component)
-                    .collect::<Vec<_>>()
-                    .join("/"),
+                "{}?view=code&line={line}#L{line}",
+                crate::webui::pages::repos::ref_path::file_url(
+                    &loaded.chrome.base(),
+                    "blob",
+                    &instance.commit_sha,
+                    source_path
+                ),
                 line = alert.line
             );
         }
@@ -228,6 +223,10 @@ async fn model(
             alerts.push(alert);
         }
     }
+    anyhow::ensure!(
+        current_authority(ctx, loaded.repository.id).await?,
+        db::code_scanning::Refusal::Denied
+    );
     Ok(view::Page {
         alerts,
         selected,
@@ -312,9 +311,12 @@ async fn dismiss(
             "Choose a dismissal reason and a comment of at most 280 characters.",
         );
     }
+    let Some(session) = crate::backend::api::http::session::extract_session_id(&ctx.headers) else {
+        return ctx.error(StatusCode::FORBIDDEN, "Sign in again to change this alert.");
+    };
     match code_scanning::dismiss(
         &ctx.state.pool,
-        ctx.user.as_ref().expect("authorized user").id,
+        (ctx.user.as_ref().expect("authorized user").id, session),
         loaded.repository.id,
         number,
         &input,

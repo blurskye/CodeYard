@@ -165,5 +165,7 @@ pub async fn list_pull_request_comments(
         responses.push(PullRequestCommentResponse::new(entry.comment, author));
     }
 
+    crate::backend::api::repos::access::check_repo_read_access(&state.pool, &repository, &headers)
+        .await?;
     Ok(Json(responses))
 }

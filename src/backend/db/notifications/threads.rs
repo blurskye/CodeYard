@@ -42,6 +42,7 @@ pub(crate) struct ThreadSummary {
     pub last_read_at: Option<DateTime<Utc>>,
     pub unread: bool,
 }
+#[derive(Clone)]
 pub(crate) enum ThreadTarget {
     Pull {
         number: i32,
@@ -119,6 +120,7 @@ impl ThreadView {
         owner: String,
         summary: ThreadSummary,
         target: ThreadTarget,
+        comment: Option<(i64, bool)>,
     ) -> Self {
         use crate::backend::api::github::repo_url;
         super::records::refresh_link(&mut notification, &owner, &repository.name);
@@ -180,17 +182,13 @@ impl ThreadView {
         {
             let id = crate::backend::webhooks::payloads::conversation_comment_id(id, false);
             format!("{repo}/issues/comments/{id}")
-        } else if notification.metadata["comment_id"].as_i64().is_some()
-            || notification.metadata["pull_request_comment_id"]
-                .as_i64()
-                .is_some()
-        {
-            notification
-                .link
-                .as_deref()
-                .filter(|l| l.starts_with('/'))
-                .map(|l| format!("{}{l}", crate::backend::api::http::config::link_origin()))
-                .unwrap_or_default()
+        } else if let Some((id, inline)) = comment.filter(|_| kind == "PullRequest") {
+            if inline {
+                format!("{repo}/pulls/comments/{id}")
+            } else {
+                let id = crate::backend::webhooks::payloads::conversation_comment_id(id, true);
+                format!("{repo}/issues/comments/{id}")
+            }
         } else if let Some(id) = notification.metadata["commit_comment_id"]
             .as_i64()
             .filter(|_| kind == "Commit")
@@ -230,6 +228,74 @@ impl ThreadView {
         }
     }
 }
+#[derive(FromRow)]
+pub(crate) struct ThreadProjection {
+    pub thread_id: i64,
+    pub owner: Option<String>,
+    pub pull_number: Option<i32>,
+    pub issue_number: Option<i32>,
+    pub release_id: Option<i64>,
+    pub title: Option<String>,
+    pub author: Option<i64>,
+    pub comment_id: Option<i64>,
+    pub inline: Option<bool>,
+}
+
+pub(crate) fn hydrate(
+    summaries: Vec<ThreadSummary>,
+    threads: Vec<NotificationThread>,
+    notifications: Vec<Notification>,
+    repositories: Vec<Repository>,
+    projections: Vec<ThreadProjection>,
+) -> Vec<ThreadView> {
+    use std::collections::HashMap;
+    let mut threads: HashMap<_, _> = threads.into_iter().map(|t| (t.id, t)).collect();
+    let mut notifications: HashMap<_, _> = notifications.into_iter().map(|n| (n.id, n)).collect();
+    let repositories: HashMap<_, _> = repositories.into_iter().map(|r| (r.id, r)).collect();
+    let mut projections: HashMap<_, _> =
+        projections.into_iter().map(|p| (p.thread_id, p)).collect();
+    summaries
+        .into_iter()
+        .filter_map(|summary| {
+            let thread = threads.remove(&summary.thread_id)?;
+            let notification = notifications.remove(&summary.latest_id)?;
+            let repository = repositories.get(&summary.scope_repository_id)?.clone();
+            let p = projections.remove(&thread.id)?;
+            let target = match (p.title, p.author) {
+                (Some(title), Some(author)) => {
+                    if let Some(number) = p.pull_number {
+                        ThreadTarget::Pull {
+                            number,
+                            title,
+                            author,
+                        }
+                    } else if let Some(number) = p.issue_number {
+                        ThreadTarget::Issue {
+                            number,
+                            title,
+                            author,
+                        }
+                    } else if let Some(id) = p.release_id {
+                        ThreadTarget::Release { id, title, author }
+                    } else {
+                        ThreadTarget::Other
+                    }
+                }
+                _ => ThreadTarget::Other,
+            };
+            Some(ThreadView::new(
+                thread,
+                notification,
+                repository,
+                p.owner?,
+                summary,
+                target,
+                p.comment_id.zip(p.inline),
+            ))
+        })
+        .collect()
+}
+
 #[derive(Clone, Debug, FromRow)]
 pub struct ThreadSubscription {
     pub thread_id: i64,

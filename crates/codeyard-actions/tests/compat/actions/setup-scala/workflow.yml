@@ -1,6 +1,10 @@
 # https://github.com/coursier/setup-action/tree/039f736548afa5411c1382f40a5bd9c2d30e0383
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

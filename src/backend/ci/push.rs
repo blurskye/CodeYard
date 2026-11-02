@@ -31,14 +31,44 @@ pub(crate) async fn push_document(
         .await?
         .context("push sender is unavailable")?;
     let sender = payloads::Person::of(&sender);
+    if is_zero_oid(&update.new) {
+        return Ok(payloads::push(
+            &update.reference,
+            update.old.as_deref().unwrap_or(ZERO_OID),
+            ZERO_OID,
+            &payloads::PushedCommits {
+                commits: Vec::new(),
+                head: None,
+                forced: false,
+            },
+            repo,
+            owner,
+            &sender,
+        ));
+    }
     let head = store.commit(&update.new).await?;
-    // The webhook lists at most 20 commits, newest first.
-    let (commits, forced) = match update.old.as_deref().filter(|old| !is_zero_oid(old)) {
+    let previous = match update.old.as_deref().filter(|old| !is_zero_oid(old)) {
+        Some(old) if update.reference.starts_with("refs/tags/") => match store.commit(old).await {
+            Ok(commit) => Some(commit.sha),
+            Err(error)
+                if error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
+            {
+                None
+            }
+            Err(error) => return Err(error.into()),
+        },
+        old => old.map(str::to_owned),
+    };
+    // Commit data remains bounded independently of the published tag object's identity.
+    let (commits, forced) = match previous.as_deref() {
         Some(old) => (
             store.commits_between(old, &head.sha, 20).await?,
             !store.is_ancestor(old, &head.sha).await?,
         ),
-        None => (vec![head.clone()], false),
+        None => (
+            store.commits(&head.sha, 0, 20, &Default::default()).await?,
+            update.old.as_deref().is_some_and(|old| !is_zero_oid(old)),
+        ),
     };
     // Bounded as in the push webhook, so a huge message cannot outgrow the run's claim.
     let pushed = |commit: &CommitInfo| payloads::PushedCommit {
@@ -51,17 +81,23 @@ pub(crate) async fn push_document(
         committer_name: payloads::bounded_text(&commit.committer_name, 256),
         committer_email: payloads::bounded_text(&commit.committer_email, 256),
         committer_time: commit.committer_timestamp,
+        distinct: true,
+        files: None,
+    };
+    let head_commit = payloads::PushedCommit {
+        distinct: commits.iter().any(|commit| commit.sha == head.sha),
+        ..pushed(&head)
     };
     let commits = payloads::PushedCommits {
         commits: commits.iter().map(pushed).collect(),
-        head: Some(pushed(&head)),
+        head: Some(head_commit),
         forced,
     };
     let old = update.old.clone().unwrap_or_else(|| ZERO_OID.to_owned());
     Ok(payloads::push(
         &update.reference,
         &old,
-        &head.sha,
+        &update.new,
         &commits,
         repo,
         owner,
@@ -91,6 +127,9 @@ impl CiRuns {
         actor_id: i64,
         update: RefUpdate,
     ) {
+        if update.old.as_deref() == Some(update.new.as_str()) {
+            return;
+        }
         match self.actor_may_discover_workflows(repo.id, actor_id).await {
             Ok(true) => {}
             Ok(false) => return,
@@ -145,11 +184,7 @@ impl CiRuns {
         if matched.is_empty() {
             return;
         }
-        // A run's github.event is the push document the webhook sends.
-        let update = RefUpdate {
-            new: commit.sha.clone(),
-            ..update
-        };
+        // A run's github.event retains the published object ID, including annotated tags.
         let event = match push_document(&self.pool, &store, repo, owner, actor_id, &update).await {
             Ok(event) => event,
             Err(error) => {
@@ -178,6 +213,7 @@ impl CiRuns {
                     },
                     crate::backend::db::models::AccessLevel::Owner,
                     event.clone(),
+                    None,
                 )
                 .await;
             if let Err(error) = result {
@@ -193,28 +229,31 @@ async fn push_asks_to_skip(
     store: &RepoStore,
     update: &RefUpdate,
     tip_message: Option<&str>,
-) -> bool {
+) -> Result<bool> {
     if tip_message.is_some_and(should_skip_run_from_message) {
-        return true;
+        return Ok(true);
     }
     let Some(old) = update.old.as_deref().filter(|old| !is_zero_oid(old)) else {
-        return false;
+        return Ok(false);
     };
     match store
         .commits_between(old, &update.new, MAX_COMMIT_PAGE_SIZE)
         .await
     {
-        Ok(commits) => commits
+        Ok(commits) => Ok(commits
             .iter()
-            .any(|commit| should_skip_run_from_message(&commit.message)),
-        Err(error) => {
-            tracing::warn!(%error, "push skip check could not read the pushed commits");
-            false
+            .any(|commit| should_skip_run_from_message(&commit.message))),
+        Err(error)
+            if update.reference.starts_with("refs/tags/")
+                && error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
+        {
+            Ok(false)
         }
+        Err(error) => Err(error.into()),
     }
 }
 
-/// Ref filters run first. Missing path information skips only workflows that require it.
+/// Ref filters run first. Unavailable path information conservatively admits their candidates.
 pub(crate) async fn matching_push_workflows(
     store: &RepoStore,
     update: &RefUpdate,
@@ -222,8 +261,7 @@ pub(crate) async fn matching_push_workflows(
     message: Option<&str>,
     budget: &mut WorkflowMatchBudget,
 ) -> Result<Vec<WorkflowDefinition>> {
-    // A skipped push needs neither the ref filters nor the changed paths.
-    if push_asks_to_skip(store, update, message).await {
+    if update.old.as_deref() == Some(update.new.as_str()) {
         return Ok(Vec::new());
     }
     let mut candidates = Vec::new();
@@ -232,9 +270,15 @@ pub(crate) async fn matching_push_workflows(
             candidates.push(workflow);
         }
     }
+    // Deletions have no pushed commit whose message could skip the event.
+    if candidates.is_empty()
+        || (!is_zero_oid(&update.new) && push_asks_to_skip(store, update, message).await?)
+    {
+        return Ok(Vec::new());
+    }
     let needs_paths =
         !update.reference.starts_with("refs/tags/") && candidates.iter().any(filters_paths);
-    let changed = if !needs_paths {
+    let changed = if !needs_paths || is_zero_oid(&update.new) {
         Some(Vec::new())
     } else if update.old.is_some() && update.changed_paths.is_some() {
         update.changed_paths.clone()
@@ -246,14 +290,15 @@ pub(crate) async fn matching_push_workflows(
         match store.push_changed_paths(old, &update.new).await {
             Ok(paths) => Some(paths),
             Err(error) => {
-                tracing::warn!(%error, "push changed paths unavailable; path-filtered workflows skipped");
+                tracing::warn!(%error, "push changed paths unavailable; running ref-matched workflows");
                 None
             }
         }
     };
     let mut matched = Vec::new();
     for workflow in candidates {
-        if changed.is_none() && filters_paths(&workflow) {
+        if changed.is_none() {
+            matched.push(workflow);
             continue;
         }
         if workflow.matches_event_with_context_and_budget(

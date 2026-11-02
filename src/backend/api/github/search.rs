@@ -15,10 +15,7 @@ use axum::{
     Json,
 };
 use serde_json::{json, Value};
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::{collections::HashMap, sync::Arc};
 
 pub(in crate::backend::api) static SEARCHES: tokio::sync::Semaphore =
     tokio::sync::Semaphore::const_new(4);
@@ -32,7 +29,9 @@ async fn search_issues(
 ) -> Result<Response> {
     let auth = auth::authenticate(&state, &headers, false).await?;
     let viewer = auth.as_ref().map(|auth| auth.user.id);
-    let query = Search::parse(q.get("q").map_or("", String::as_str)).map_err(Error::invalid)?;
+    let query = Search::parse(q.get("q").map_or("", String::as_str))
+        .map_err(Error::invalid)?
+        .with_classic_policy(auth.as_ref().map(|auth| auth.token.id));
     if query.needs_viewer() && viewer.is_none() {
         return Err(auth::required());
     }
@@ -82,12 +81,7 @@ async fn search_issues(
     repo_ids.sort_unstable();
     repo_ids.dedup();
     // Reauthorize the page after the search snapshot, before assembling any private documents.
-    let readable =
-        db::repositories::access::readable_repository_ids(&state.pool, viewer, &repo_ids)
-            .await
-            .map_err(Error::unavailable)?
-            .into_iter()
-            .collect::<HashSet<_>>();
+    let readable = auth::readable_repositories(&state, auth.as_ref(), &repo_ids, "issues").await?;
     let repos = db::repositories::records::get_repositories_by_ids(&state.pool, &repo_ids)
         .await
         .map_err(Error::unavailable)?
@@ -97,7 +91,8 @@ async fn search_issues(
     let owners = db::repositories::records::repository_owner_names(&state.pool, &repo_ids)
         .await
         .map_err(Error::unavailable)?;
-    let mut items = Vec::<Value>::new();
+    let mut selected = Vec::new();
+    let mut scores = Vec::new();
     let mut incomplete = false;
     for (id, repo_id, pull_request, score) in results.items {
         if !readable.contains(&repo_id) {
@@ -114,7 +109,23 @@ async fn search_issues(
         } else {
             AssignedItem::Issue(id)
         };
-        let mut value = issues::document(&state.pool, repo, owner, item).await?;
+        selected.push((repo, owner.as_str(), item));
+        scores.push(score);
+    }
+    let mut items = Vec::<Value>::new();
+    for (mut value, score) in issues::documents_across(
+        &state.pool,
+        issues::Reader::Request(&state, auth.as_ref()),
+        &selected,
+    )
+    .await?
+    .into_iter()
+    .zip(scores)
+    {
+        if value.is_null() {
+            incomplete = true;
+            continue;
+        }
         value["score"] = json!(score);
         items.push(value);
     }

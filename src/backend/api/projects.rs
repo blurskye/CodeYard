@@ -63,10 +63,43 @@ pub(crate) async fn sidebar(
     } else {
         Content::PullRequest(id)
     };
-    let mut assigned = projects::item_projects(pool, viewer, &content).await?;
-    for project in projects::repository_projects(pool, viewer, repo).await? {
-        if !assigned.iter().any(|p| p.id == project.id) {
-            assigned.push(project);
+    let mut item_ids = HashMap::new();
+    let mut offset = 0;
+    loop {
+        let (count, items) =
+            projects::content_items(pool, viewer, &content, true, offset, 100, true).await?;
+        for item in items {
+            item_ids.insert(item.project_id, item.id);
+        }
+        offset += 100;
+        if offset >= count {
+            break;
+        }
+    }
+    let mut assigned = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for filter in [
+        projects::ListFilter {
+            content: Some((matches!(content, Content::Issue(_)), id)),
+            ..Default::default()
+        },
+        projects::ListFilter {
+            repo: Some(repo),
+            ..Default::default()
+        },
+    ] {
+        let mut offset = 0;
+        loop {
+            let (count, rows) = projects::list(pool, viewer, &filter, offset, 100).await?;
+            for project in rows {
+                if seen.insert(project.id) {
+                    assigned.push(project);
+                }
+            }
+            offset += 100;
+            if offset >= count {
+                break;
+            }
         }
     }
     let mut result = Vec::new();
@@ -80,15 +113,7 @@ pub(crate) async fn sidebar(
             Some(id) => projects::can_write(pool, id, owner).await?,
             None => false,
         };
-        let item_id = projects::items(pool, viewer, project.id)
-            .await?
-            .into_iter()
-            .find(|i| match content {
-                Content::Issue(id) => i.issue_id == Some(id),
-                Content::PullRequest(id) => i.pull_request_id == Some(id),
-                Content::Draft { .. } => false,
-            })
-            .map(|i| i.id);
+        let item_id = item_ids.get(&project.id).copied();
         if item_id.is_none() && !can_edit {
             continue;
         }
@@ -185,6 +210,11 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         None => false,
     };
     let mut page = view::Page {
+        view_state: view::ViewState {
+            location: ctx.location.clone(),
+            direction: "asc".into(),
+            ..Default::default()
+        },
         owner: name,
         base,
         csrf_token: ctx.csrf_token.clone(),
@@ -203,11 +233,30 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         next: None,
     };
     let Some(number) = params.get("project_number") else {
-        page.projects = projects::list(pool, viewer, owner)
-            .await?
-            .into_iter()
-            .map(summary)
-            .collect();
+        let number = ctx
+            .query
+            .get("page")
+            .map(|value| value.parse::<i64>())
+            .transpose()?
+            .unwrap_or(1);
+        anyhow::ensure!(number > 0, projects::Refusal::Invalid);
+        let offset = (number - 1)
+            .checked_mul(50)
+            .ok_or(projects::Refusal::Invalid)?;
+        let mut filter = projects::ListFilter::search(Some(owner), &page.filter);
+        filter.order = projects::ListOrder::Number;
+        filter.descending = true;
+        let (count, rows) = projects::list(pool, viewer, &filter, offset, 50).await?;
+        page.projects = rows.into_iter().map(summary).collect();
+        let link = |number: i64| {
+            let mut query = url::form_urlencoded::Serializer::new(String::new());
+            query
+                .append_pair("page", &number.to_string())
+                .append_pair("q", &page.filter);
+            format!("{}?{}", ctx.path, query.finish())
+        };
+        page.previous = (number > 1).then(|| link(number - 1));
+        page.next = (count.saturating_sub(offset) > 50).then(|| link(number + 1));
         return Ok(page);
     };
     let number = number.parse().map_err(|_| projects::Refusal::Missing)?;
@@ -241,6 +290,11 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             projects::Refusal::Invalid
         );
         config.sort_by = vec![(id, direction.into())];
+    }
+    page.view_state.visible_fields = config.visible_fields.clone();
+    if let Some((field, direction)) = config.sort_by.first() {
+        page.view_state.sort = field.to_string();
+        page.view_state.direction = direction.clone();
     }
     page.views = views
         .iter()
@@ -285,25 +339,46 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             options,
         });
     }
-    let items = projects::items(pool, viewer, project.id).await?;
+    let items = projects::items(pool, viewer, project.id)
+        .await?
+        .into_iter()
+        .filter(|item| !item.archived)
+        .collect();
     let items =
         crate::backend::projects::filter_items(items, &fields, &page.filter, Some(&config))?;
-    // One page of the filtered, sorted items keeps large drafts within the page model.
     const ITEMS_PAGE: usize = 50;
-    let page_number = ctx
-        .query
-        .get("page")
-        .and_then(|page| page.parse::<usize>().ok())
-        .filter(|page| (1..=10000).contains(page))
-        .unwrap_or(1);
-    let link = |page_number: usize| {
+    // Item identities, rather than fixed row offsets, delimit byte-sized pages in
+    // the current filtered/sorted order. Backward pages are budgeted in reverse.
+    let backwards = ctx.query.contains_key("before");
+    let cursor = ctx.query.get(if backwards { "before" } else { "after" });
+    let position = cursor
+        .map(|cursor| -> anyhow::Result<usize> {
+            let id: i64 = cursor.parse().map_err(|_| projects::Refusal::Invalid)?;
+            items
+                .iter()
+                .position(|item| item.id == id)
+                .ok_or_else(|| projects::Refusal::Missing.into())
+        })
+        .transpose()?;
+    let total = items.len();
+    let start = if backwards {
+        0
+    } else {
+        position.map_or(0, |index| index + 1)
+    };
+    let end = if backwards {
+        position.unwrap_or(total)
+    } else {
+        total
+    };
+    let link = |direction: &str, id: i64| {
         let mut query: Vec<(String, String)> = ctx
             .query
             .iter()
-            .filter(|(key, _)| key.as_str() != "page")
+            .filter(|(key, _)| !matches!(key.as_str(), "page" | "after" | "before"))
             .map(|(key, value)| (key.clone(), value.clone()))
             .collect();
-        query.push(("page".into(), page_number.to_string()));
+        query.push((direction.into(), id.to_string()));
         query.sort();
         format!(
             "{}?{}",
@@ -313,12 +388,30 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
                 .finish()
         )
     };
-    page.previous = (page_number > 1).then(|| link(page_number - 1));
-    page.next = (items.len() > page_number * ITEMS_PAGE).then(|| link(page_number + 1));
-    let items: Vec<_> = items
+    let mut items: Vec<_> = items
         .into_iter()
-        .skip((page_number - 1) * ITEMS_PAGE)
-        .take(ITEMS_PAGE)
+        .enumerate()
+        .skip(start)
+        .take(end.saturating_sub(start))
+        .collect();
+    if backwards {
+        items.reverse();
+    }
+    items.truncate(ITEMS_PAGE);
+    let item_ids: Vec<_> = items.iter().map(|(_, item)| item.id).collect();
+    let links: HashMap<_, _> = projects::item_links(pool, viewer, project.id, &item_ids)
+        .await?
+        .into_iter()
+        .map(|(id, owner, name, kind, number)| {
+            (
+                id,
+                format!(
+                    "/{}/{}/{kind}/{number}",
+                    crate::webui::encode_component(&owner),
+                    crate::webui::encode_component(&name)
+                ),
+            )
+        })
         .collect();
     let group = if config.layout == "board" {
         config
@@ -343,45 +436,22 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             }
         }
     }
-    for item in items {
-        let url = if let Some(repo) = item.repo_id {
-            let owner = db::repositories::records::repository_owner_name(pool, repo)
-                .await?
-                .ok_or(projects::Refusal::Missing)?;
-            let repo = db::repositories::records::get_repository_by_id(pool, repo)
-                .await?
-                .ok_or(projects::Refusal::Missing)?;
-            // Recheck before projecting content links after the item query's snapshot ends.
-            anyhow::ensure!(
-                crate::backend::repositories::access::can_read(pool, ctx.user.as_ref(), &repo)
-                    .await?,
-                projects::Refusal::Missing
-            );
-            let number = if let Some(id) = item.issue_id {
-                db::issues::get_issue_by_id(pool, id)
-                    .await?
-                    .ok_or(projects::Refusal::Missing)?
-                    .number
-            } else {
-                db::pull_requests::records::get_pull_request_by_id(
-                    pool,
-                    item.pull_request_id.ok_or(projects::Refusal::Missing)?,
-                )
-                .await?
-                .ok_or(projects::Refusal::Missing)?
-                .number
-            };
-            Some(format!(
-                "/{}/{}/{}/{}",
-                crate::webui::encode_component(&owner),
-                crate::webui::encode_component(&repo.name),
-                if item.issue_id.is_some() {
-                    "issues"
-                } else {
-                    "pulls"
-                },
-                number
-            ))
+    page.project = Some(summary(project));
+    // Reserve envelope/pager space and count JSON escaping and board duplication.
+    let limit = crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES - 256 * 1024;
+    let mut bytes = serde_json::to_vec(&page)?.len();
+    anyhow::ensure!(bytes < limit, projects::Refusal::Invalid);
+    let mut first = None;
+    let mut last = None;
+    for (index, item) in items {
+        // The batched projection rechecks repository access after loading and sorting items.
+        let url = if item.repo_id.is_some() {
+            Some(
+                links
+                    .get(&item.id)
+                    .cloned()
+                    .ok_or(projects::Refusal::Missing)?,
+            )
         } else {
             None
         };
@@ -408,6 +478,17 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
             body: item.draft_body.clone().unwrap_or_default(),
             values,
         };
+        let cost = serde_json::to_vec(&output)?
+            .len()
+            .saturating_add(16)
+            .saturating_mul(if group.is_some() { 2 } else { 1 });
+        if bytes.saturating_add(cost) > limit {
+            anyhow::ensure!(!page.items.is_empty(), projects::Refusal::Invalid);
+            break;
+        }
+        bytes += cost;
+        first = Some(first.map_or(index, |first: usize| first.min(index)));
+        last = Some(last.map_or(index, |last: usize| last.max(index)));
         if let Some(field) = group {
             let value = item.value(field)?;
             let options = &page
@@ -424,7 +505,20 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
         }
         page.items.push(output);
     }
-    page.project = Some(summary(project));
+    if backwards {
+        page.items.reverse();
+        for column in &mut page.columns {
+            column.items.reverse();
+        }
+    }
+    page.previous = first
+        .filter(|first| *first > 0)
+        .and_then(|_| page.items.first())
+        .map(|item| link("before", item.id));
+    page.next = last
+        .filter(|last| *last + 1 < total)
+        .and_then(|_| page.items.last())
+        .map(|item| link("after", item.id));
     Ok(page)
 }
 
@@ -447,11 +541,15 @@ async fn show(
 async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Result<String> {
     let pool = &ctx.state.pool;
     let actor = ctx.user.as_ref().ok_or(projects::Refusal::Denied)?.id;
+    let session = crate::backend::api::http::session::extract_session_id(&ctx.headers)
+        .ok_or(projects::Refusal::Denied)?;
+    let credential = db::users::accounts::AccountCredential::Session(&session);
     let (owner, _, base) = owner(ctx, params).await?;
     let Some(number) = params.get("project_number") else {
         let project = projects::create(
             pool,
             actor,
+            &credential,
             owner,
             field(form, "title"),
             None,
@@ -478,6 +576,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             projects::save(
                 pool,
                 actor,
+                &credential,
                 project.id,
                 &projects::Settings {
                     title: Some(field(form, "title").into()),
@@ -490,7 +589,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             return Ok(format!("{path}/settings"));
         }
         "delete" => {
-            projects::delete(pool, actor, project.id).await?;
+            projects::delete(pool, actor, &credential, project.id).await?;
             return Ok(base);
         }
         "add-field" => {
@@ -530,6 +629,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             projects::add_field(
                 pool,
                 actor,
+                &credential,
                 project.id,
                 &projects::NewField {
                     name: field(form, "name").into(),
@@ -542,13 +642,15 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
             return Ok(format!("{path}/settings"));
         }
         "delete-field" => {
-            projects::delete_field(pool, actor, project.id, integer("field_id")?).await?;
+            projects::delete_field(pool, actor, &credential, project.id, integer("field_id")?)
+                .await?;
             return Ok(format!("{path}/settings"));
         }
         "draft" => {
             projects::add_item(
                 pool,
                 actor,
+                &credential,
                 project.id,
                 &Content::Draft {
                     title: field(form, "title").into(),
@@ -569,6 +671,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 projects::link_repository(
                     pool,
                     actor,
+                    &credential,
                     project.id,
                     repo.id,
                     !form.contains_key("unlink"),
@@ -599,7 +702,7 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 ),
                 _ => return Err(projects::Refusal::Invalid.into()),
             };
-            projects::add_item(pool, actor, project.id, &content).await?;
+            projects::add_item(pool, actor, &credential, project.id, &content).await?;
         }
         "update-item" => {
             let fields = projects::fields(pool, Some(actor), project.id).await?;
@@ -608,29 +711,47 @@ async fn apply(ctx: &PageContext, params: &Params, form: &Fields) -> anyhow::Res
                 let Some(value) = form.get(&format!("value_{}", f.id)) else {
                     continue;
                 };
+                let original: String = form
+                    .get(&format!("was_{}", f.id))
+                    .and_then(|value| serde_json::from_str(value).ok())
+                    .ok_or(projects::Refusal::Invalid)?;
+                let value = if f.data_type == "text" {
+                    crate::backend::repositories::files::native_text(value.clone(), &original)
+                } else {
+                    value.clone()
+                };
                 // An unchanged field keeps whatever another editor saved meanwhile.
-                if form.get(&format!("was_{}", f.id)) == Some(value) {
+                if value == original {
                     continue;
                 }
                 let value = if value.is_empty() {
                     Value::Null
                 } else if f.data_type == "number" {
-                    serde_json::from_str(value).map_err(|_| projects::Refusal::Invalid)?
+                    serde_json::from_str(&value).map_err(|_| projects::Refusal::Invalid)?
                 } else {
                     json!(value)
                 };
                 updates.push(projects::FieldUpdate { id: f.id, value });
             }
-            projects::update_item(pool, actor, project.id, integer("item_id")?, &updates).await?;
+            projects::update_item(
+                pool,
+                actor,
+                &credential,
+                project.id,
+                integer("item_id")?,
+                &updates,
+            )
+            .await?;
         }
         "delete-item" => {
-            projects::delete_item(pool, actor, project.id, integer("item_id")?).await?
+            projects::delete_item(pool, actor, &credential, project.id, integer("item_id")?).await?
         }
         "view" => {
             let group = field(form, "group");
             let view = projects::create_view(
                 pool,
                 actor,
+                &credential,
                 project.id,
                 &NewView {
                     name: field(form, "name").into(),

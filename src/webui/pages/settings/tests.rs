@@ -10,6 +10,26 @@ fn html(element: Element) -> String {
 }
 
 #[test]
+fn rejected_key_drafts_keep_a_malformed_public_key_but_never_a_private_one() {
+    let draft = |key: &str| {
+        preserved_values(&HashMap::from([("public_key".into(), key.into())])).public_key
+    };
+    assert_eq!(draft("ssh-ed25519 AAAA"), "ssh-ed25519 AAAA");
+    assert_eq!(
+        draft("ecdsa-sha2-nistp256 AAAA"),
+        "ecdsa-sha2-nistp256 AAAA"
+    );
+    assert_eq!(
+        draft("sk-ssh-ed25519@openssh.com AAAA"),
+        "sk-ssh-ed25519@openssh.com AAAA"
+    );
+    assert!(draft("b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ").is_empty());
+    assert!(draft("command=bad ssh-ed25519 AAAA").is_empty());
+    assert!(draft("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA").is_empty());
+    assert!(draft("PuTTY-User-Key-File-3: ssh-ed25519\nPrivate-Lines: 1\nAAAA").is_empty());
+}
+
+#[test]
 fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys() {
     crate::webui::tests::in_scope(|| {
         let form = HashMap::from([
@@ -38,6 +58,7 @@ fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys
                 profile: Profile::default(),
                 email: String::new(),
                 tab: "profile".into(),
+                session_pagination: Default::default(),
                 keys: vec![],
                 tokens: vec![],
                 sessions: vec![],
@@ -78,6 +99,7 @@ fn settings_primary_actions_share_one_class_and_deletes_are_outlined() {
             },
             email: "alice@example.test".into(),
             tab: tab.into(),
+            session_pagination: Default::default(),
             keys,
             tokens: vec![],
             sessions: vec![],
@@ -148,6 +170,7 @@ fn ssh_key_and_token_deletion_ask_in_a_centred_dialog() {
                 last_used: Some("2026-10-20T08:00:00Z".into()),
                 last_ip: Some("192.0.2.4".into()),
             }],
+            session_pagination: Default::default(),
             sessions: vec![],
             new_token: None,
             password_supported: true,
@@ -210,6 +233,7 @@ fn settings_use_a_current_left_nav_and_keep_native_credential_forms() {
                 },
                 email: "alice@example.test".into(),
                 tab: "keys".into(),
+                session_pagination: Default::default(),
                 keys: vec![],
                 tokens: vec![],
                 sessions: vec![],
@@ -239,6 +263,7 @@ fn prerendered_bio_and_public_key_keep_native_escaped_text() {
         let source = "\n</textarea><script>bad</script>&";
         for (tab, name) in [("profile", "bio"), ("keys", "public_key")] {
             let model = Settings {
+                session_pagination: Default::default(),
                 two_factor: Default::default(),
                 signing_keys: vec![],
                 gpg_keys: vec![],
@@ -313,6 +338,7 @@ fn token_expiry_defaults_to_thirty_days_and_takes_a_calendar_day() {
                     },
                     email: "alice@example.test".into(),
                     tab: "tokens".into(),
+                    session_pagination: Default::default(),
                     keys: vec![],
                     tokens: vec![],
                     sessions: vec![],
@@ -377,6 +403,7 @@ fn appearance_tab_sits_after_the_profile_and_marks_the_saved_theme() {
                     },
                     email: "alice@example.test".into(),
                     tab: "appearance".into(),
+                    session_pagination: Default::default(),
                     keys: vec![],
                     tokens: vec![],
                     sessions: vec![],
@@ -446,6 +473,7 @@ fn picture_preview_shows_the_account_picture_or_the_uploaded_file_at_72_pixels()
                     },
                     email: "alice@example.test".into(),
                     tab: "profile".into(),
+                    session_pagination: Default::default(),
                     keys: vec![],
                     tokens: vec![],
                     sessions: vec![],
@@ -486,6 +514,7 @@ fn settings_for(tab: &str, sessions: Vec<AccountSession>) -> Settings {
         keys: vec![],
         tokens: vec![],
         sessions,
+        session_pagination: Default::default(),
         new_token: None,
         password_supported: true,
         email_notifications: true,

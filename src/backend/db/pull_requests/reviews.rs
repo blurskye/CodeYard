@@ -29,6 +29,31 @@ pub struct NewPullRequestComment<'a> {
     pub expected_revisions: Option<(&'a str, &'a str)>,
 }
 
+/// A review and its validated inline comments commit or roll back together.
+pub struct ReviewBatch<'a> {
+    pub pr_id: i64,
+    pub author_id: i64,
+    pub state: Option<&'a str>,
+    pub body: Option<&'a str>,
+    pub commit_sha: Option<&'a str>,
+    /// The pending draft the caller saw: `Some(None)` when it saw none, `None` when it does not say.
+    pub expected_pending: Option<Option<i64>>,
+    pub create_pending: bool,
+    pub comments: &'a [NewPullRequestComment<'a>],
+    pub token: Option<i64>,
+    /// The session or token behind the write, checked live in the write transaction.
+    pub credential: &'a crate::backend::db::users::accounts::AccountCredential<'a>,
+}
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_review_batch,
+    crate::backend::db::sqlite::pull_requests::reviews::save_review_batch,
+    /// The saved review and the ids of the inline comments its submission published, read in the
+    /// submitting transaction; a draft publishes none.
+    fn save_review_batch(pool: &DbPool, input: ReviewBatch<'_>) -> Result<(PullRequestReview, Vec<i64>)>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::insert_comment,
+    crate::backend::db::sqlite::pull_requests::reviews::insert_comment,
+    /// The visibility decision is made in the insertion transaction, never by a post-commit read.
+    fn insert_comment(pool: &DbPool, input: NewPullRequestComment<'_>, pending: bool, expected_review: Option<i64>) -> Result<(PullRequestComment, bool)>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_comment,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_comment,
     fn add_pull_request_comment(
@@ -62,6 +87,30 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pul
 pub const MAX_INLINE_COMMENTS: usize = 500;
 pub const MAX_REVIEW_COMMENTS_PAGE: usize = 100;
 pub const MAX_REVIEW_COMMENT_PAGE_BYTES: usize = 1024 * 1024;
+/// Each comment is costed at 4 KiB plus its text, so 500 short inline comments need about
+/// 2 MiB; the inline listing gets room for all of them.
+pub const MAX_INLINE_COMMENT_BYTES: usize = 4 * 1024 * 1024;
+
+pub(crate) fn budgeted_comment_ids(
+    rows: &[(i64, i64)],
+    limit: usize,
+    budget: usize,
+) -> Result<Vec<i64>> {
+    let mut bytes = 0usize;
+    let mut ids = Vec::new();
+    for &(id, size) in rows.iter().take(limit) {
+        bytes = bytes.saturating_add(usize::try_from(size)?);
+        if bytes > budget {
+            break;
+        }
+        ids.push(id);
+    }
+    anyhow::ensure!(
+        rows.is_empty() || !ids.is_empty(),
+        "Review comment exceeds its page limit"
+    );
+    Ok(ids)
+}
 
 // The comments before this one, and the page bytes through it, within these reviews.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::review_comment_position,
@@ -89,7 +138,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pen
     pool: &DbPool,
     pr_id: i64,
     author_id: i64,
-) -> Result<Vec<PullRequestCommentEntry>>);
+) -> Result<PullRequestInlineComments>);
 
 // The comments filed in any of `review_ids`, oldest first.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_review_comments,
@@ -129,10 +178,16 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::pull_req
     crate::backend::db::sqlite::pull_requests::reviews::pull_request_comment_counts,
     fn pull_request_comment_counts(pool: &DbPool, pr_id: i64) -> Result<(i64, i64)>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_conversation_comments_ordered,
+    crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_conversation_comments_ordered,
+    fn list_pull_request_conversation_comments_ordered(pool: &DbPool, pr_id: i64, limit: i64, offset: i64, updated: bool, descending: bool) -> Result<Vec<PullRequestCommentEntry>>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::list_pull_request_conversation_comments,
     crate::backend::db::sqlite::pull_requests::reviews::list_pull_request_conversation_comments,
     fn list_pull_request_conversation_comments(pool: &DbPool, pr_id: i64, limit: i64, offset: i64) -> Result<Vec<PullRequestCommentEntry>>);
 
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::conversation_comment_position,
+    crate::backend::db::sqlite::pull_requests::reviews::conversation_comment_position,
+    fn conversation_comment_position(pool: &DbPool, comment: i64) -> Result<i64>);
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_conversation_comments,
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_conversation_comments,
     fn count_pull_request_conversation_comments(pool: &DbPool, pr_id: i64) -> Result<i64>);
@@ -140,6 +195,12 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pu
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_comments,
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_comments,
     fn count_pull_request_comments(pool: &DbPool, pr_id: i64) -> Result<i64>);
+
+native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_conversation_comments_for,
+    crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_conversation_comments_for,
+    /// The conversation comments of each pull request in `pr_ids` (at most 500), the count an
+    /// issue document shows. Comments in a pending review do not count.
+    fn count_pull_request_conversation_comments_for(pool: &DbPool, pr_ids: &[i64]) -> Result<Vec<(i64, i64)>>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::count_pull_request_comments_for,
     crate::backend::db::sqlite::pull_requests::reviews::count_pull_request_comments_for,
@@ -189,7 +250,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_pul
     expected_body: &str,
 ) -> Result<Option<PullRequestComment>>);
 
-// Deletes a conversation comment: its author, or a maintainer. False when refused.
+// Deletes a visible comment: its author or a current repository writer. False when refused.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_pull_request_comment,
     crate::backend::db::sqlite::pull_requests::reviews::delete_pull_request_comment,
     fn delete_pull_request_comment(
@@ -209,9 +270,13 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::edit_rev
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::delete_pending_review_by_id,
     crate::backend::db::sqlite::pull_requests::reviews::delete_pending_review_by_id,
     fn delete_pending_review_by_id(pool: &DbPool, pr_id: i64, author_id: i64, review_id: i64) -> Result<Option<PullRequestReview>>);
+// Saves a review, submitting the author's pending review when there is one. Returns the review
+// and the ids of the comments it published, read in the same transaction, so a reply saved after
+// the submission is not published twice. With `expected_pending`, the review may be on the commit
+// that draft was started on instead of the current head.
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::save_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::save_pull_request_review,
-    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<i64>) -> Result<PullRequestReview>);
+    fn save_pull_request_review(pool: &DbPool, pr_id: i64, author_id: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, state: &str, body: Option<&str>, commit_sha: Option<&str>, expected_pending: Option<Option<i64>>) -> Result<PullRequestReview>);
 
 native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull_request_review,
     crate::backend::db::sqlite::pull_requests::reviews::add_pull_request_review,
@@ -219,6 +284,7 @@ native_operation!(crate::backend::db::postgres::pull_requests::reviews::add_pull
     pool: &DbPool,
     pr_id: i64,
     author_id: i64,
+    credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     state: &str,
     body: Option<&str>,
     commit_sha: Option<&str>,
@@ -355,10 +421,12 @@ pub struct PullRequestCommentEntry {
     pub author: crate::backend::db::users::accounts::AuthorDisplay,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct PullRequestInlineComments {
     pub comments: Vec<PullRequestCommentEntry>,
     pub truncated: bool,
+    /// How many comments match, up to the read's cap, when the byte budget lists fewer.
+    pub count: usize,
 }
 
 #[derive(Debug, Clone)]

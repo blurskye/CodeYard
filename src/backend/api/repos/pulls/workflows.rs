@@ -25,12 +25,18 @@ pub async fn run_pull_request_workflows(
     Json(request): Json<RunWorkflowsRequest>,
 ) -> Result<Json<PullRequestDetailResponse>, (StatusCode, Json<ApiError>)> {
     let current_actor = get_current_user(&state.pool, &headers).await?;
+    let repository = crate::backend::api::repos::access::readable_repository(
+        &state.pool,
+        &owner,
+        &repo,
+        &headers,
+    )
+    .await?;
     let pull = crate::backend::repositories::pull_requests::workflows::run_pull_request_workflows(
         &state.pool,
         &state.ci_runs,
         current_actor.id,
-        owner,
-        repo,
+        &repository,
         number,
         request,
     )
@@ -53,8 +59,7 @@ pub(crate) async fn native_run_workflows(
         &ctx.state.pool,
         &ctx.state.ci_runs,
         ctx.require_user()?.id,
-        owner,
-        name,
+        &repo.record,
         number,
         crate::backend::repositories::pull_requests::workflows::RunWorkflowsRequest {
             expected_head: field(&form, "expected_head"),

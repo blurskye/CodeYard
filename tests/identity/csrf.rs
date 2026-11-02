@@ -2,7 +2,6 @@
 //! temporary-password settings. Page navigation admission is tested elsewhere.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
 use crate::support::database;
-#[allow(dead_code)]
 use crate::support::fake_webui_bundle;
 use crate::support::native_database as native;
 
@@ -267,7 +266,9 @@ async fn contract(pg: bool) {
             .is_none()
     );
 
-    // Revoked cookies get a fresh anonymous session, but a live session is not replaced.
+    // A refused form never sets a cookie, so a forged cross-site post cannot replace the
+    // victim's session. A revoked cookie gets a fresh anonymous session from the next page
+    // load, but a live session is not replaced.
     let (stale, old_csrf) = session_with_csrf(fixture.pool(), Some(admin.id)).await;
     fixture
         .execute("DELETE FROM sessions WHERE user_id=$1", &[admin.id])
@@ -283,10 +284,13 @@ async fn contract(pg: bool) {
         )
         .await;
         assert_eq!(status, StatusCode::FORBIDDEN);
-        let cookie = headers[header::SET_COOKIE].to_str().unwrap();
-        assert!(cookie.starts_with("session_id="));
-        assert!(!cookie.contains(&stale));
+        assert!(!headers.contains_key(header::SET_COOKIE), "{path}");
     }
+    let (status, headers, _) = get(&router, "/login", Some(&stale)).await;
+    assert_eq!(status, StatusCode::OK);
+    let cookie = headers[header::SET_COOKIE].to_str().unwrap();
+    assert!(cookie.starts_with("session_id="));
+    assert!(!cookie.contains(&stale));
     let (live, _) = session_with_csrf(fixture.pool(), Some(admin.id)).await;
     let (status, headers, _) = post(
         &router,

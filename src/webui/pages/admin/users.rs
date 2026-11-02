@@ -29,7 +29,7 @@ pub struct AccountMetadata {
 
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct AdminUsers {
-    /// A private node: it creates accounts for people and reviews their signup requests.
+    /// A private node: it also offers direct administrator-created accounts.
     pub managed_accounts: bool,
     pub current_user_id: i64,
     /// The rows on this page.
@@ -230,7 +230,7 @@ pub fn admin_users_page(
         "Every account on this installation. Open a row's menu to change its role or ban it.",
         rsx! {
             {notice(message, error)}
-            if model.managed_accounts && model.requests_count > 0 {
+            if model.requests_count > 0 {
                 section { class: "identity-admin-panel", aria_labelledby: "admin-requests-title",
                     header { class: "identity-admin-panel-header",
                         div { h2 { id: "admin-requests-title", "Pending requests" } p { {count_label(model.requests_count, "request", "requests")} " waiting for a decision." } }

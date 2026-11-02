@@ -1,9 +1,27 @@
-use super::access::readable_condition;
+use super::access::{
+    lock_readable_repository_in_transaction, readable_condition, RepositoryRowLock,
+};
 use crate::backend::db::discussions::contains_pattern;
 use crate::backend::db::models::{Repository, Star, User, Watch};
 use crate::backend::db::repositories::engagement::StarSort;
+use crate::backend::db::users::blocks::InteractionBlocked;
 use anyhow::Result;
 use sqlx::{PgPool, Postgres, Transaction};
+
+/// Locks the repository row and checks, under that lock, that the user can still read it. The
+/// caller's earlier check may be stale by now.
+async fn lock_readable(
+    tx: &mut Transaction<'_, Postgres>,
+    user_id: i64,
+    repo_id: i64,
+) -> Result<()> {
+    anyhow::ensure!(
+        lock_readable_repository_in_transaction(tx, user_id, repo_id, RepositoryRowLock::Exclusive)
+            .await?,
+        InteractionBlocked
+    );
+    Ok(())
+}
 
 /// Locks the repository before any watch or star row. Repository deletion locks the repository
 /// first and then the watch rows it cascades to, so a watch change must not hold a watch
@@ -15,6 +33,38 @@ async fn lock_repository(tx: &mut Transaction<'_, Postgres>, repo_id: i64) -> Re
             .fetch_optional(&mut **tx)
             .await?;
     Ok(locked.is_some())
+}
+
+/// Removing one's own star or watch needs a live credential, not read access or interaction rights.
+async fn begin_removal(
+    pool: &PgPool,
+    actor: crate::backend::db::credentials::Actor,
+    repo_id: i64,
+) -> Result<Option<(Transaction<'_, Postgres>, i64)>> {
+    let mut tx = pool.begin().await?;
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_account(&mut tx, actor.user_id, &credential)
+            .await?;
+    }
+    if !lock_repository(&mut tx, repo_id).await? {
+        return Ok(None);
+    }
+    Ok(Some((tx, actor.user_id)))
+}
+
+async fn begin_change(
+    pool: &PgPool,
+    actor: crate::backend::db::credentials::Actor,
+    repo_id: i64,
+) -> Result<(Transaction<'_, Postgres>, i64)> {
+    let mut tx = pool.begin().await?;
+    let user_id = actor.user_id;
+    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
+    if let Some(credential) = actor.credential() {
+        super::super::users::transitions::require_account(&mut tx, user_id, &credential).await?;
+    }
+    lock_readable(&mut tx, user_id, repo_id).await?;
+    Ok((tx, user_id))
 }
 
 pub async fn list_star_history(
@@ -72,12 +122,12 @@ pub async fn list_watched_repositories(
         .await?)
 }
 
-pub async fn watch_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool> {
-    let mut tx = pool.begin().await?;
-    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
-    if !lock_repository(&mut tx, repo_id).await? {
-        return Ok(false);
-    }
+pub async fn watch_repo(
+    pool: &PgPool,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<bool> {
+    let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     let result = sqlx::query(
         r#"
         INSERT INTO watches (user_id, repo_id, level)
@@ -96,11 +146,14 @@ pub async fn watch_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<boo
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn unwatch_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool> {
-    let mut tx = pool.begin().await?;
-    if !lock_repository(&mut tx, repo_id).await? {
+pub async fn unwatch_repo(
+    pool: &PgPool,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<bool> {
+    let Some((mut tx, user_id)) = begin_removal(pool, user_id.into(), repo_id).await? else {
         return Ok(false);
-    }
+    };
     let result = sqlx::query("DELETE FROM watches WHERE user_id = $1 AND repo_id = $2")
         .bind(user_id)
         .bind(repo_id)
@@ -123,12 +176,12 @@ pub async fn is_repo_watched(pool: &PgPool, user_id: i64, repo_id: i64) -> Resul
     Ok(watch.is_some())
 }
 
-pub async fn star_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool> {
-    let mut tx = pool.begin().await?;
-    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
-    if !lock_repository(&mut tx, repo_id).await? {
-        return Ok(false);
-    }
+pub async fn star_repo(
+    pool: &PgPool,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<bool> {
+    let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     let result =
         sqlx::query("INSERT INTO stars (user_id, repo_id) VALUES ($1, $2) ON CONFLICT DO NOTHING")
             .bind(user_id)
@@ -139,11 +192,14 @@ pub async fn star_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool
     Ok(result.rows_affected() > 0)
 }
 
-pub async fn unstar_repo(pool: &PgPool, user_id: i64, repo_id: i64) -> Result<bool> {
-    let mut tx = pool.begin().await?;
-    if !lock_repository(&mut tx, repo_id).await? {
+pub async fn unstar_repo(
+    pool: &PgPool,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
+    repo_id: i64,
+) -> Result<bool> {
+    let Some((mut tx, user_id)) = begin_removal(pool, user_id.into(), repo_id).await? else {
         return Ok(false);
-    }
+    };
     let result = sqlx::query("DELETE FROM stars WHERE user_id = $1 AND repo_id = $2")
         .bind(user_id)
         .bind(repo_id)
@@ -268,17 +324,13 @@ pub async fn count_starred_repositories(
 /// Saves a watch level. `custom` keeps `events`; the other levels clear them.
 pub async fn set_watch_level(
     pool: &PgPool,
-    user_id: i64,
+    user_id: impl Into<crate::backend::db::credentials::Actor>,
     repo_id: i64,
     level: &str,
     events: &str,
 ) -> Result<()> {
     let events = if level == "custom" { events } else { "" };
-    let mut tx = pool.begin().await?;
-    super::super::users::blocks::require_repository_interaction(&mut tx, user_id, repo_id).await?;
-    if !lock_repository(&mut tx, repo_id).await? {
-        return Ok(());
-    }
+    let (mut tx, user_id) = begin_change(pool, user_id.into(), repo_id).await?;
     sqlx::query(
         r#"
         INSERT INTO watches (user_id, repo_id, level, events)

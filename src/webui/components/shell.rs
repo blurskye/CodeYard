@@ -98,9 +98,7 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
                         }
                         NavLink { href: "/help".to_string(), class: "site-menu-link".to_string(), "Help" }
                         // The theme button is an icon in the header on wider screens. A phone finds it here.
-                        if !token.is_empty() {
-                            ThemeForm { csrf_token: token.clone(), return_to: return_to.clone(), theme: chrome.theme, menu: true }
-                        }
+                        ThemeForm { csrf_token: token.clone(), return_to: return_to.clone(), theme: chrome.theme, menu: true }
                     }
                 }
                 NavLink { href: "/".to_string(), class: "site-brand".to_string(), aria_label: Some("Home".to_string()), mark_current: false,
@@ -196,9 +194,7 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
                             }
                         }
                     }
-                    if !token.is_empty() {
-                        ThemeForm { csrf_token: token.clone(), return_to, theme: chrome.theme }
-                    }
+                    ThemeForm { csrf_token: token.clone(), return_to, theme: chrome.theme }
                     if let Some(username) = chrome.username {
                         details { id: "site-account-menu", class: "native-menu site-account-menu", "name": "site-header-menu",
                             summary { class: "site-profile-button icon-tooltip icon-tooltip-end", "aria-label": format!("Account menu for {username}"),
@@ -222,7 +218,7 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
                                     NavLink { href: "/help".to_string(), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::Help)} "Help" }
                                     if chrome.is_admin { NavLink { href: "/admin".to_string(), class: "site-menu-link".to_string(), {shell_icon(ShellIcon::Shield)} "Administration" } }
                                     form { action: "/logout", method: "post", class: "site-signout-form",
-                                        input { r#type: "hidden", name: "csrf_token", value: token.clone() }
+                                        {crate::webui::pages::fields::csrf(&token)}
                                         button { r#type: "submit", class: "site-menu-link", {shell_icon(ShellIcon::LogOut)} "Sign out" }
                                     }
                                 }
@@ -307,6 +303,14 @@ fn HeaderContext(
         )
     {
         return rsx! {};
+    }
+    if first == "users" {
+        let Some(username) = second.map(decode_component) else {
+            return rsx! {};
+        };
+        return rsx! { nav { class: "site-context", aria_label: "Current location",
+            NavLink { href: crate::webui::profile_path(&username), class: "site-context-link", "{username}" }
+        } };
     }
     if first == "orgs" {
         let (Some(org), Some("teams"), Some(team)) = (second, parts.next(), parts.next()) else {
@@ -505,9 +509,15 @@ impl KeyShortcuts {
                 }
                 // A hidden box takes no focus (phone width, or a collapsed tree), so the key then
                 // reaches the header search.
-                let focused = ["repo-files-filter", "site-search-query"]
+                let mut focused = ["repo-files-filter", "site-search-query"]
                     .into_iter()
                     .any(|id| focus_if_shown(&document, id));
+                if !focused {
+                    if let Ok(Some(sheet)) = document.query_selector(".site-search-disclosure") {
+                        let _ = sheet.set_attribute("open", "");
+                        focused = focus_if_shown(&document, "site-search-sheet-query");
+                    }
+                }
                 if focused {
                     event.prevent_default();
                 }
@@ -1023,7 +1033,8 @@ mod shell_tests {
         assert!(!anonymous.contains("href=\"/pulls\""));
         assert!(!anonymous.contains("href=\"/new\""));
         assert!(!anonymous.contains("action=\"/logout\""));
-        assert!(!anonymous.contains("action=\"/_forms/theme\""));
+        // Signed-out visitors can switch the theme too; a same-origin form keeps it in a cookie.
+        assert!(anonymous.contains("action=\"/_forms/theme\""));
     }
 
     #[test]

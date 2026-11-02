@@ -2,7 +2,10 @@ use super::{auth, events, Error, Result};
 use crate::{
     backend::{
         app::AppState,
-        db::{self, events::EventScope},
+        db::{
+            self,
+            events::{EventScope, EventViewer},
+        },
         identity::tokens,
     },
     webui::{components::escape_html, encode_component},
@@ -64,14 +67,29 @@ async fn discovery(State(state): State<Arc<AppState>>, headers: HeaderMap) -> Re
             value[format!("{key}_url")] = json!(url);
             value["_links"][key] = json!({"href":url,"type":"application/atom+xml"});
         }
-        let organizations = db::organizations::profiles::list_actor_organizations(
-            &state.pool,
-            viewer.user.id,
-            db::organizations::OrganizationPage::new(0, 100).map_err(Error::unavailable)?,
-        )
-        .await
-        .map_err(Error::unavailable)?;
-        if let db::organizations::OrganizationOutcome::Applied(organizations) = organizations {
+        let mut organizations = Vec::new();
+        let mut after = 0;
+        loop {
+            let rows = super::super::orgs::outcome(
+                db::organizations::profiles::list_actor_organizations(
+                    &state.pool,
+                    viewer.user.id,
+                    db::organizations::OrganizationPage::new(after, 100)
+                        .map_err(Error::unavailable)?,
+                )
+                .await
+                .map_err(Error::unavailable)?,
+            )?;
+            let more = rows.len() == 100;
+            if let Some(row) = rows.last() {
+                after = row.id;
+            }
+            organizations.extend(rows);
+            if !more {
+                break;
+            }
+        }
+        {
             let urls: Vec<_> = organizations
                 .into_iter()
                 .map(|org| {
@@ -154,7 +172,7 @@ async fn feed(
     let (viewer, scope, public, title, id) =
         if let Some(kind) = params.get("kind").or_else(|| params.get("org")) {
             let token = query.token.as_deref().ok_or_else(Error::missing)?;
-            let user = tokens::activity_feed_user(&state.pool, token)
+            let feed = tokens::activity_feed_user(&state.pool, token)
                 .await
                 .map_err(|e| {
                     if e == tokens::TokenError::Unavailable {
@@ -163,6 +181,7 @@ async fn feed(
                         Error::missing()
                     }
                 })?;
+            let user = &feed.user;
             if params.get("username") != Some(&user.username) {
                 return Err(Error::missing());
             }
@@ -199,16 +218,24 @@ async fn feed(
                 encode_component(kind)
             };
             (
-                Some(user.id),
+                Some(EventViewer::Feed {
+                    user: user.id,
+                    token: feed.token,
+                    value: token,
+                }),
                 scope,
                 false,
                 format!("{} activity", user.username),
                 format!("{}/api/activity-feeds/private/{username}/{path}", origin()),
             )
         } else {
-            let viewer = auth::authenticate(&state, &headers, false)
-                .await?
-                .map(|v| v.user.id);
+            let viewer =
+                auth::authenticate(&state, &headers, false)
+                    .await?
+                    .map(|v| EventViewer::Token {
+                        user: v.user.id,
+                        token: v.token.id,
+                    });
             if let Some(username) = params.get("username") {
                 let user = db::users::accounts::get_user_by_username(&state.pool, username)
                     .await
@@ -236,7 +263,7 @@ async fn feed(
                 )
             }
         };
-    let (values, _) = events::documents(&state, viewer, scope, public, 0, 100).await?;
+    let (values, _) = events::documents(&state, viewer, None, scope, public, 0, 100).await?;
     let body = atom(&title, &id, &config.updated_at.to_rfc3339(), &values);
     let mut response = body.into_response();
     response.headers_mut().insert(

@@ -3,7 +3,6 @@
 use super::models::{
     ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
 };
-use super::time;
 use crate::backend::db::cluster::{
     Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PrimaryReplicaRow,
     PromoteOutcome,
@@ -27,13 +26,13 @@ fn name_conflict(error: sqlx::Error, name: &str) -> anyhow::Error {
 pub async fn create_join_token(pool: &SqlitePool, token: NewJoinToken<'_>) -> Result<()> {
     sqlx::query(
         "INSERT INTO join_tokens (token_hash, roles, reusable, requires_approval, expires_at)
-         VALUES (?1, ?2, ?3, ?4, ?5)",
+         VALUES (?1, ?2, ?3, ?4, strftime('%Y-%m-%dT%H:%M:%fZ','now',printf('%+d seconds',?5)))",
     )
     .bind(token.token_hash)
     .bind(serde_json::to_string(token.roles)?)
     .bind(token.reusable)
     .bind(token.requires_approval)
-    .bind(time::encode(token.expires_at))
+    .bind(token.lifetime_seconds)
     .execute(pool)
     .await?;
     Ok(())
@@ -142,6 +141,14 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
     } else {
         "active"
     };
+    let ordinary_runner: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM action_runner_tokens WHERE token_hash=?1 AND runner_id IS NULL)")
+        .bind(request.token_hash).fetch_one(&mut *tx).await?;
+    let internal_name = crate::backend::db::runners::runner_node_name(request.public_key);
+    let node_name = if ordinary_runner {
+        internal_name.as_str()
+    } else {
+        request.name
+    };
     // A joined node is not live until it has published itself, so no last_seen here.
     let inserted = sqlx::query_as::<_, ClusterNode>(&format!(
         "INSERT INTO nodes (public_key, name, roles, status, version)
@@ -150,14 +157,14 @@ pub async fn join_with_token(pool: &SqlitePool, request: JoinRequest<'_>) -> Res
          RETURNING *, {NOW} AS observed_at"
     ))
     .bind(request.public_key)
-    .bind(request.name)
+    .bind(node_name)
     .bind(serde_json::to_string(&roles)?)
     .bind(status)
     .bind(request.version)
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(node) = inserted {
-        super::runners::bind_registration(&mut tx, request.token_hash, &node).await?;
+        super::runners::bind_registration(&mut tx, request.token_hash, &node, request.name).await?;
         tx.commit().await?;
         return Ok(JoinOutcome::Joined(node));
     }
@@ -201,6 +208,19 @@ pub async fn upsert_declared_nodes(
 ) -> Result<Vec<ClusterNode>> {
     // BEGIN IMMEDIATE: one writer at a time. Every early return drops the transaction.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    // Names are unique and checked at once, so a swap of two names would fail on the first
+    // update. Every renamed node first moves to a name of its own, and the entries below then
+    // take their final names.
+    for node in nodes {
+        sqlx::query(
+            "UPDATE nodes SET name = 'swap.' || substr(public_key, 1, 40)
+             WHERE public_key = ?1 AND name <> ?2",
+        )
+        .bind(node.public_key.as_str())
+        .bind(node.name.as_str())
+        .execute(&mut *tx)
+        .await?;
+    }
     let mut rows = Vec::with_capacity(nodes.len());
     for node in nodes {
         let row = sqlx::query_as::<_, ClusterNode>(&format!(
@@ -243,6 +263,26 @@ pub async fn get_node_by_name(pool: &SqlitePool, name: &str) -> Result<Option<Cl
     .bind(name)
     .fetch_optional(pool)
     .await?)
+}
+
+pub async fn admin_node_page(
+    pool: &SqlitePool,
+    administrator: &crate::backend::db::users::transitions::AdministratorActor,
+    after: &str,
+) -> Result<Vec<ClusterNode>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    anyhow::ensure!(
+        super::users::transitions::active_admin_session(&mut tx, administrator).await?,
+        crate::backend::db::users::accounts::AccountRestricted
+    );
+    let rows = sqlx::query_as(&format!(
+        "SELECT *,{NOW} AS observed_at FROM nodes WHERE name>?1 ORDER BY name LIMIT 101"
+    ))
+    .bind(after)
+    .fetch_all(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(rows)
 }
 
 pub async fn list_nodes(pool: &SqlitePool) -> Result<Vec<ClusterNode>> {
@@ -302,6 +342,11 @@ pub async fn set_node_status(
     })
 }
 
+pub async fn has_storage_assignments(pool: &SqlitePool, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE storage_node_id=$1) OR EXISTS(SELECT 1 FROM repository_replicas WHERE node_id=$1)")
+        .bind(node).fetch_one(pool).await?)
+}
+
 pub async fn record_node_heartbeat(
     pool: &SqlitePool,
     public_key: &str,
@@ -323,7 +368,7 @@ pub async fn record_node_heartbeat(
 
 pub async fn touch_node(pool: &SqlitePool, public_key: &str) -> Result<()> {
     sqlx::query(&format!(
-        "UPDATE nodes SET last_seen = {NOW} WHERE public_key = ?1 AND status = 'active'"
+        "UPDATE nodes SET last_seen = {NOW} WHERE public_key = ?1 AND status = 'active' AND json_array_length(roles)=1 AND json_extract(roles,'$[0]')='runner'"
     ))
     .bind(public_key)
     .execute(pool)
@@ -344,6 +389,44 @@ pub async fn get_node_by_id(pool: &SqlitePool, id: i64) -> Result<Option<Cluster
         "SELECT *, {NOW} AS observed_at FROM nodes WHERE id = ?1"
     ))
     .bind(id)
+    .fetch_optional(pool)
+    .await?)
+}
+
+pub async fn storage_needed(pool: &SqlitePool, uuid: &str, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories r WHERE substr(r.disk_path,-40)=$1||'.git' AND (r.storage_node_id IS NULL OR r.storage_node_id=$2 OR EXISTS(SELECT 1 FROM repository_replicas rr WHERE rr.repository_id=r.id AND rr.node_id=$2)))").bind(uuid).bind(node).fetch_one(pool).await?)
+}
+
+pub async fn list_primary_paths(pool: &SqlitePool, node: i64) -> Result<Vec<(i64, String)>> {
+    Ok(
+        sqlx::query_as(
+            "SELECT id,disk_path FROM repositories WHERE storage_node_id=$1 ORDER BY id",
+        )
+        .bind(node)
+        .fetch_all(pool)
+        .await?,
+    )
+}
+
+pub async fn read_candidates(
+    pool: &SqlitePool,
+    uuid: &str,
+    previous: i64,
+) -> Result<Vec<(i64, bool)>> {
+    Ok(sqlx::query_as("WITH repository AS (SELECT id,storage_node_id,write_version FROM repositories WHERE substr(disk_path,-40)=$1||'.git'), candidates AS (SELECT storage_node_id AS node_id,1 AS moved,write_version AS applied_version FROM repository UNION ALL SELECT rr.node_id,0,rr.applied_version FROM repository r JOIN repository_replicas rr ON rr.repository_id=r.id WHERE rr.node_id IS NOT r.storage_node_id AND rr.applied_version>=0) SELECT c.node_id,c.moved FROM candidates c JOIN nodes n ON n.id=c.node_id WHERE c.node_id<>$2 AND n.status='active' AND EXISTS(SELECT 1 FROM json_each(n.roles) WHERE value='storage') AND n.disk_free IS NOT NULL AND julianday(n.last_seen) BETWEEN julianday('now','-60 seconds') AND julianday('now') ORDER BY c.moved DESC,c.applied_version DESC,c.node_id")
+        .bind(uuid).bind(previous).fetch_all(pool).await?)
+}
+
+pub async fn replica_applied_version(
+    pool: &SqlitePool,
+    repository: i64,
+    node: i64,
+) -> Result<Option<i64>> {
+    Ok(sqlx::query_scalar(
+        "SELECT applied_version FROM repository_replicas WHERE repository_id=$1 AND node_id=$2",
+    )
+    .bind(repository)
+    .bind(node)
     .fetch_optional(pool)
     .await?)
 }
@@ -461,7 +544,7 @@ pub async fn list_primary_repositories(
     node_id: i64,
 ) -> Result<Vec<PrimaryReplicaRow>> {
     Ok(sqlx::query_as(
-        "SELECT r.id, r.disk_path, rr.node_id, rr.applied_version, r.size_bytes
+        "SELECT r.id, r.disk_path, rr.node_id, rr.applied_version, r.size_bytes, rr.synced_at IS NOT NULL
          FROM repositories r
          LEFT JOIN repository_replicas rr ON rr.repository_id = r.id
          WHERE r.storage_node_id = ?1
@@ -473,8 +556,57 @@ pub async fn list_primary_repositories(
 }
 
 pub async fn pending_replica_bytes(pool: &SqlitePool) -> Result<Vec<(i64, i64)>> {
-    Ok(sqlx::query_as("SELECT rr.node_id, SUM(MAX(r.size_bytes,1)) FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version < 0 GROUP BY rr.node_id")
-        .fetch_all(pool).await?)
+    Ok(sqlx::query_as("SELECT rr.node_id, CASE WHEN SUM(MAX(r.size_bytes,1))<=9223372036854775807/?1 THEN SUM(MAX(r.size_bytes,1))*?1 END FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version < 0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
+        .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(pool).await?)
+}
+
+pub async fn assign_replica_family(
+    pool: &SqlitePool,
+    repository: i64,
+    primary: i64,
+    setting: crate::backend::db::models::ReplicaSetting,
+) -> Result<Vec<i64>> {
+    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+        .bind(repository)
+        .fetch_all(&mut *tx)
+        .await?;
+    let ids: Vec<i64> = members.iter().map(|row| row.0).collect();
+    if members.is_empty() || members.iter().any(|row| row.1 != Some(primary)) {
+        return Ok(ids);
+    }
+    let mut storage: Vec<ClusterNode> = sqlx::query_as(&format!(
+        "SELECT *,{NOW} AS observed_at FROM nodes ORDER BY id"
+    ))
+    .fetch_all(&mut *tx)
+    .await?;
+    storage
+        .retain(|node| node.status == "active" && node.roles.iter().any(|role| role == "storage"));
+    let reservations: Vec<(i64, i64)> = sqlx::query_as("SELECT rr.node_id,CASE WHEN SUM(MAX(r.size_bytes,1))<=9223372036854775807/?1 THEN SUM(MAX(r.size_bytes,1))*?1 END FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.applied_version<0 AND rr.synced_at IS NULL GROUP BY rr.node_id")
+        .bind(crate::backend::db::cluster::REPLICA_STAGING_FACTOR).fetch_all(&mut *tx).await?;
+    let rows: Vec<PrimaryReplicaRow> = sqlx::query_as(&format!("WITH family AS ({FORK_FAMILY}) SELECT r.id,r.disk_path,rr.node_id,rr.applied_version,r.size_bytes,rr.synced_at IS NOT NULL FROM repositories r JOIN family f ON f.id=r.id LEFT JOIN repository_replicas rr ON rr.repository_id=r.id ORDER BY r.id,rr.node_id"))
+        .bind(repository).fetch_all(&mut *tx).await?;
+    for (repository, change) in crate::backend::db::cluster::replicas::family_plan(
+        setting,
+        primary,
+        &mut storage,
+        &rows,
+        &reservations,
+    )? {
+        for node in change.add {
+            sqlx::query("INSERT INTO repository_replicas(repository_id,node_id) VALUES(?1,?2) ON CONFLICT DO NOTHING")
+                .bind(repository).bind(node).execute(&mut *tx).await?;
+        }
+        for node in change.remove {
+            sqlx::query("DELETE FROM repository_replicas WHERE repository_id=?1 AND node_id=?2")
+                .bind(repository)
+                .bind(node)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+    Ok(ids)
 }
 
 pub async fn list_held_replicas(pool: &SqlitePool, node_id: i64) -> Result<Vec<HeldReplica>> {
@@ -573,7 +705,7 @@ pub async fn set_applied_version(
     version: i64,
 ) -> Result<bool> {
     Ok(sqlx::query(&format!(
-        "UPDATE repository_replicas SET applied_version = ?4, synced_at = {NOW}
+        "UPDATE repository_replicas SET applied_version = ?4, synced_at = CASE WHEN ?4 >= 0 THEN {NOW} ELSE synced_at END
          WHERE repository_id = ?1 AND node_id = ?2
            AND EXISTS (SELECT 1 FROM repositories r
                        WHERE r.id = ?1 AND r.storage_node_id = ?3)"
@@ -653,7 +785,7 @@ pub async fn promote_repository(
     }
     // A repository moved to a node that is down would have no primary to serve it.
     let target = node_at_db_time(&mut tx, to).await?;
-    if !target.is_some_and(|node| node.status == "active" && node.is_online()) {
+    if !target.is_some_and(|node| node.is_serving_storage()) {
         return Ok(PromoteOutcome::TargetOffline);
     }
     move_primary(&mut tx, repo_id, from, to, applied_version).await?;
@@ -673,23 +805,44 @@ pub async fn promote_fork_family(
     from: i64,
     to: i64,
 ) -> Result<FamilyOutcome> {
+    promote_family(pool, repo_id, from, to, true).await
+}
+
+pub async fn promote_manual_family(
+    pool: &SqlitePool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+) -> Result<FamilyOutcome> {
+    promote_family(pool, repo_id, from, to, false).await
+}
+
+async fn promote_family(
+    pool: &SqlitePool,
+    repo_id: i64,
+    from: i64,
+    to: i64,
+    automatic: bool,
+) -> Result<FamilyOutcome> {
     // BEGIN IMMEDIATE: one writer at a time, so the family read and the moves see the same
     // state. Every early return drops the transaction, which rolls it back.
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let members: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
+    let family: Vec<(i64, Option<i64>, i64)> = sqlx::query_as(FORK_FAMILY)
         .bind(repo_id)
         .fetch_all(&mut *tx)
         .await?;
-    if members.is_empty() || members.iter().any(|(_, primary, _)| *primary != Some(from)) {
+    let Some(members) =
+        crate::backend::db::cluster::members_to_move(&family, repo_id, from, automatic)
+    else {
         return Ok(FamilyOutcome::Refused);
-    }
+    };
     let primary = node_at_db_time(&mut tx, from).await?;
-    if primary.is_none_or(|node| node.status != "active" || node.is_online()) {
+    if automatic && primary.is_none_or(|node| node.status != "active" || node.is_online()) {
         return Ok(FamilyOutcome::Refused);
     }
     // The taker must be reporting in too, or the family would move onto a node that is down.
     let target = node_at_db_time(&mut tx, to).await?;
-    if !target.is_some_and(|node| node.status == "active" && node.is_online()) {
+    if !target.is_some_and(|node| node.is_serving_storage()) {
         return Ok(FamilyOutcome::Refused);
     }
     for &(member, _, write_version) in &members {
@@ -746,7 +899,7 @@ async fn move_primary(
         .execute(&mut *conn)
         .await?;
     sqlx::query(
-        "INSERT INTO repository_replicas (repository_id, node_id) VALUES (?1, ?2)
+        "INSERT INTO repository_replicas (repository_id, node_id, synced_at) VALUES (?1, ?2, strftime('%Y-%m-%dT%H:%M:%fZ','now'))
          ON CONFLICT DO NOTHING",
     )
     .bind(repo_id)

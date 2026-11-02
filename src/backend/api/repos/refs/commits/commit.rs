@@ -1,6 +1,8 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::http::error::ApiError;
-use crate::backend::api::repos::access::{access_error, readable_repository};
+use crate::backend::api::repos::access::{
+    access_error, check_repo_read_access, readable_repository,
+};
 use crate::backend::api::repos::chrome::{commit, hex_revision, store_error, Loaded};
 use crate::backend::api::repos::pulls::diff::diff_model;
 use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
@@ -56,6 +58,7 @@ pub async fn get_commit(
             .map(|id| format!("/api/files/{}/download", id)),
     });
 
+    check_repo_read_access(&state.pool, &repository, &headers).await?;
     Ok(Json(CommitDetailResponse {
         commit: CommitResponse::from_commit(commit_info, author),
         diff,
@@ -189,6 +192,9 @@ pub(super) async fn commit_page(
     }
     let discussion = super::comments::discussion(ctx, loaded, &info.sha, draft, error).await?;
     let related_pulls = related_pulls(ctx, loaded, &info.sha).await?;
+    check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
+        .await
+        .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     let info = commit(info);
     Ok(ctx.page_model(
         "Commit",

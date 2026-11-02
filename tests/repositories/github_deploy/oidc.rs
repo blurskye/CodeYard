@@ -101,11 +101,17 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[actor])
-        .await
-        .unwrap()
-        .filter(|r| r.id == run.id)
-        .unwrap();
+    let run = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[actor],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .filter(|r| r.id == run.id)
+    .unwrap();
     let definitions = BTreeMap::from([(path.into(), b"name: Identity\npermissions: {id-token: write}\njobs:\n  writer: {}\n  production: {environment: 'Production:EU'}\n  reader: {permissions: {contents: read}}".to_vec())]);
     let credentials = ci::tokens::issue(f.pool(), &run, &definitions, false)
         .await
@@ -140,6 +146,7 @@ async fn contract(pg: bool) {
     assert_eq!(claims["sha"], sha);
     assert_eq!(claims["workflow"], "Identity");
     assert_eq!(claims["workflow_sha"], sha);
+    // An ordinary job names its own workflow file, as GitHub does.
     assert_eq!(claims["job_workflow_sha"], sha);
     assert_eq!(claims["job_workflow_ref"], claims["workflow_ref"]);
     assert_eq!(claims["ref_type"], "branch");
@@ -253,7 +260,7 @@ async fn contract(pg: bool) {
             "/alice/project/_forms/oidc-settings",
             &[
                 ("repository_id", &repo.id.to_string()),
-                ("include_claim_keys", "repo, context, job_workflow_ref"),
+                ("include_claim_keys", "repo, context, workflow_ref"),
             ],
         )
         .await;
@@ -262,7 +269,7 @@ async fn contract(pg: bool) {
         &get(&router, endpoint, Some(&jobs["writer"]), 200).await,
         &jwks,
     );
-    assert_eq!(customized["sub"], format!("repo:alice/project:ref:refs/heads/main:job_workflow_ref:alice/project/{path}@refs/heads/main"));
+    assert_eq!(customized["sub"], format!("repo:alice/project:ref:refs/heads/main:workflow_ref:alice/project/{path}@refs/heads/main"));
     super::checked(
         &router,
         "actions/set-custom-oidc-sub-claim-for-repo",
@@ -541,11 +548,17 @@ async fn organization_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let run = db::ci::claim_ci_run(f.pool(), "worker", "local", &[alice])
-        .await
-        .unwrap()
-        .filter(|r| r.id == run.id)
-        .unwrap();
+    let run = db::ci::claim_ci_run(
+        f.pool(),
+        "worker",
+        "local",
+        &[alice],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .filter(|r| r.id == run.id)
+    .unwrap();
     let definitions = BTreeMap::from([(
         path.into(),
         b"permissions: {id-token: write}\njobs: {deploy: {}}".to_vec(),

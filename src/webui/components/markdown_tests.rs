@@ -420,6 +420,7 @@ fn page_references() -> References {
         owner: "alice".into(),
         repo: "demo".into(),
         last_number: 5,
+        targets: None,
         users: vec!["bob".into()],
         autolinks: Default::default(),
         repositories: vec![references::Repository {
@@ -515,19 +516,20 @@ fn reference_links_stop_at_the_document_budget() {
     );
 }
 
-/// A run of 100,000 references links up to the budget and keeps every other token as text.
+/// A run of 10,000 references links up to the budget and keeps every other token as text, and
+/// the whole comment stays under the output cap.
 #[test]
 fn a_long_run_of_references_links_only_the_budget() {
     let references = References {
         last_number: 1,
         ..page_references()
     };
-    let html = super::parse_markdown(&"#1 ".repeat(100_000), &references);
+    let html = super::parse_markdown(&"#1 ".repeat(10_000), &references);
     assert_eq!(
         html.matches("class=\"markdown-reference\"").count(),
         MAX_REFERENCE_LINKS
     );
-    assert_eq!(html.matches("#1").count(), 100_000);
+    assert_eq!(html.matches("#1").count(), 10_000);
 }
 
 #[test]
@@ -541,13 +543,17 @@ fn references_render_the_same_after_a_round_trip() {
     assert_eq!(first, super::parse_markdown(source, &back));
 }
 
-/// The HTML inside the paragraph that `text` renders as.
-fn parse_inline(text: &str) -> String {
-    let html = parse_markdown(text);
+/// The HTML inside the one paragraph of `html`.
+fn paragraph(html: String) -> String {
     html.strip_prefix("<p class=\"my-3 leading-7 text-foreground\">")
         .and_then(|html| html.strip_suffix("</p>"))
         .unwrap_or_else(|| panic!("not one paragraph: {html}"))
         .to_owned()
+}
+
+/// The HTML inside the paragraph that `text` renders as.
+fn parse_inline(text: &str) -> String {
+    paragraph(parse_markdown(text))
 }
 
 #[test]
@@ -637,10 +643,11 @@ fn dropped_images_and_sources_do_not_reserve_their_ids() {
         }
 }
 
+// A repository document has no output cap, so it keeps the size that would show slow id checks.
 #[test]
 fn many_identical_headings_render_quickly_with_unique_ids() {
     let started = std::time::Instant::now();
-    let html = parse_markdown(&"# x\n".repeat(20_000));
+    let html = parse_document(&"# x\n".repeat(20_000));
     assert!(started.elapsed() < std::time::Duration::from_secs(1));
     assert!(html.contains("<h1 id=\"user-content-x\""));
     assert!(html.contains("<h1 id=\"user-content-x-19999\""));
@@ -765,20 +772,22 @@ fn parse_inner(source: &str, document: bool) -> String {
 
 #[test]
 fn large_unclosed_labels_and_urls_stay_literal() {
+    // These sizes are over a comment's output budget, so they render as a file does.
     for count in [4_096, 65_536, 262_144] {
         for prefix in ["[", "![", "[x]("] {
             let source = prefix.repeat(count);
-            assert_eq!(parse_inline(&source), source);
+            assert_eq!(paragraph(parse_document(&source)), source);
         }
     }
     let started = std::time::Instant::now();
     let source = format!("{} [ok](https://example.invalid)", "![".repeat(65_536));
-    let html = parse_inline(&source);
+    let html = paragraph(parse_document(&source));
     assert!(started.elapsed() < std::time::Duration::from_secs(8));
     assert_eq!(html.matches("<a ").count(), 1);
     assert!(html.contains("href=\"https://example.invalid\""));
 }
 
+// A repository document has no output cap, so it keeps the size that would show a rescan.
 #[test]
 fn overlapping_rejected_urls_do_not_rescan_their_shared_suffix() {
     let prefix = "[label](".repeat(65_536);
@@ -789,12 +798,13 @@ fn overlapping_rejected_urls_do_not_rescan_their_shared_suffix() {
         "java&#115;cript:bad)",
     ] {
         let started = std::time::Instant::now();
-        let html = parse_markdown(&format!("{prefix}{suffix}"));
+        let html = parse_document(&format!("{prefix}{suffix}"));
         assert!(started.elapsed() < std::time::Duration::from_secs(8));
         assert!(!html.contains("href="), "{suffix}");
+        assert!(!html.contains("showing a plain-text preview"), "{suffix}");
     }
     let started = std::time::Instant::now();
-    let html = parse_inline(&format!("{prefix}HtTpS://example.invalid)"));
+    let html = paragraph(parse_document(&format!("{prefix}HtTpS://example.invalid)")));
     assert!(started.elapsed() < std::time::Duration::from_secs(8));
     assert!(html.starts_with(&"[label](".repeat(65_535)));
     assert_eq!(html.matches("<a ").count(), 1);
@@ -1031,8 +1041,13 @@ fn sources_over_the_limit_show_the_preview() {
 
 #[test]
 fn highlighting_stops_at_the_block_and_document_budgets() {
-    // One line of spaces is one token, so the output stays small.
-    let block = |size: usize| format!("```rust\n{}\n```\n\n", " ".repeat(size));
+    // Lines of spaces are one token each, so the output stays small. A line longer than the
+    // highlighter's line limit is never highlighted, so the code is many short lines.
+    let block = |size: usize| {
+        let mut code = format!("{}\n", " ".repeat(1023)).repeat(size / 1024);
+        code.push_str(&" ".repeat(size % 1024));
+        format!("```rust\n{code}\n```\n\n")
+    };
     let count = |html: &str| {
         html.split("<pre ")
             .filter(|b| b.contains("<span style="))
@@ -1047,8 +1062,9 @@ fn highlighting_stops_at_the_block_and_document_budgets() {
         count(&parse_markdown(&block(MAX_HIGHLIGHTED_BLOCK_BYTES + 1))),
         0
     );
+    // The page budget is reached in a file, whose output is not capped like a comment's.
     let many = block(60 * 1024).repeat(5);
-    assert_eq!(count(&parse_markdown(&many)), 4);
+    assert_eq!(count(&parse_document(&many)), 4);
     // A block over budget is still escaped code.
     let html = parse_markdown(&format!(
         "```rust\n{}\n```",
@@ -1208,6 +1224,20 @@ fn every_document_heading_with_an_id_has_one_empty_permalink_to_it() {
     }
     // A heading with no usable text has no id and nothing to link to.
     assert!(html.contains("<h3 class="));
+}
+
+#[test]
+fn prefixed_raw_heading_ids_are_escaped_at_both_attribute_sinks() {
+    let source =
+        "<h1 id=\"user-content-&quot;&gt;&lt;img src=https://attacker.test/pixel&gt;\">Title</h1>";
+    let id = "user-content-&quot;&gt;&lt;img src=https://attacker.test/pixel&gt;";
+    let html = parse_document(source);
+    assert!(html.contains(&format!("id=\"{id}\"")), "{html}");
+    assert!(html.contains(&format!("href=\"#{id}\"")), "{html}");
+    assert!(!html.contains("<img"), "{html}");
+    let comment = parse_markdown(source);
+    assert!(comment.contains(&format!("id=\"{id}\"")), "{comment}");
+    assert!(!comment.contains("<img"), "{comment}");
 }
 
 #[test]
@@ -1768,7 +1798,7 @@ fn html_tables_keep_spans_and_alignment() {
 fn named_anchors_are_targets_for_in_page_links() {
     assert_eq!(
             parse_markdown("<a name=\"top\"></a>\n\n[up](#top)"),
-            "<p class=\"my-3 leading-7 text-foreground\"><a id=\"user-content-top\"></a></p>\n<p class=\"my-3 leading-7 text-foreground\"><a href=\"#user-content-top\" target=\"_blank\" rel=\"noopener noreferrer\" class=\"text-primary hover:underline\">up</a></p>"
+            "<p class=\"my-3 leading-7 text-foreground\"><a id=\"user-content-top\"></a></p>\n<p class=\"my-3 leading-7 text-foreground\"><a href=\"#user-content-top\" class=\"text-primary hover:underline\">up</a></p>"
         );
 }
 
@@ -1777,7 +1807,7 @@ fn raw_ids_with_the_prefix_keep_one_prefix_for_in_page_links() {
     let html = parse_markdown("<a id=\"user-content-top\"></a>\n\n[up](#user-content-top)");
     assert!(html.contains("<a id=\"user-content-top\"></a>"), "{html}");
     assert!(
-        html.contains("<a href=\"#user-content-top\" target=\"_blank\""),
+        html.contains("<a href=\"#user-content-top\" class="),
         "{html}"
     );
     assert!(!html.contains("user-content-user-content-"), "{html}");
@@ -1791,7 +1821,7 @@ fn keyboard_subscript_and_entities_in_raw_html() {
     );
     assert_eq!(
         parse_markdown("<div>a &amp; &eacute; b</div>"),
-        "<div>a &amp; &amp;eacute; b</div>"
+        "<div>a &amp; é b</div>"
     );
 }
 

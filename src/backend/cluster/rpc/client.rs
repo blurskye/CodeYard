@@ -6,6 +6,7 @@ use crate::backend::{
     repositories::store::{ErrorKind, RepoError},
 };
 use anyhow::Result;
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 impl NodeContext {
@@ -49,18 +50,24 @@ impl NodeContext {
                     },
                 )
                 .await;
-            if first.is_ok() || !request.operation.is_read_only() {
+            if !request.operation.is_read_only()
+                || !cannot_serve(first.as_ref().ok().map(|(reply, _)| reply), true)
+            {
                 return first;
             }
-            for (copy, moved) in self.read_copies(request.repository, node_id).await {
+            let mut candidates = self
+                .read_copies(request.repository, node_id)
+                .await
+                .into_iter()
+                .peekable();
+            while let Some((copy, moved)) = candidates.next() {
+                let candidate_deadline = if candidates.peek().is_none() {
+                    deadline
+                } else {
+                    attempt_deadline(deadline)
+                };
                 let answer = self
-                    .exchange(
-                        copy,
-                        &header,
-                        body,
-                        response_body_limit,
-                        attempt_deadline(deadline),
-                    )
+                    .exchange(copy, &header, body, response_body_limit, candidate_deadline)
                     .await;
                 if !cannot_serve(answer.as_ref().ok().map(|(reply, _)| reply), moved) {
                     log_failover(request.repository, node_id, copy);
@@ -95,12 +102,28 @@ impl NodeContext {
             .await
             .map_err(|_| unavailable())??;
         let result = tokio::time::timeout_at(deadline, async {
-            write_frame(&mut link.writer, header, MAX_JSON).await?;
-            write_frame(&mut link.writer, body, MAX_BYTES).await?;
-            link.finish().await?;
-            let reply = serde_json::from_slice(&read_frame(&mut link.reader, MAX_JSON).await?)?;
-            let body = read_frame(&mut link.reader, response_body_limit).await?;
-            Ok::<_, anyhow::Error>((reply, body))
+            let sending = async {
+                write_frame(&mut link.writer, header, MAX_JSON).await?;
+                write_frame(&mut link.writer, body, MAX_BYTES).await?;
+                link.writer.shutdown().await?;
+                Ok::<_, anyhow::Error>(())
+            };
+            let receiving = async {
+                let reply: Reply =
+                    serde_json::from_slice(&read_frame(&mut link.reader, MAX_JSON).await?)?;
+                let body = if reply.result.is_err() {
+                    Vec::new()
+                } else {
+                    read_frame(&mut link.reader, response_body_limit).await?
+                };
+                Ok::<_, anyhow::Error>((reply, body))
+            };
+            tokio::pin!(sending, receiving);
+            tokio::select! {
+                biased;
+                reply = &mut receiving => reply,
+                _ = &mut sending => receiving.await,
+            }
         })
         .await;
         link.close(0, b"RPC complete");
@@ -165,7 +188,8 @@ impl NodeContext {
                     .get(&node_id)
                     .cloned()
                     .ok_or_else(unavailable)?;
-                (peer.node().map_err(|_| unavailable())?, peer.address)
+                let address = peer.resolved_address().await.map_err(|_| unavailable())?;
+                (peer.node().map_err(|_| unavailable())?, address)
             };
             let linked = transport::dial_node(&self.iroh, node, &address, alpn).await;
             self.note_dial(node_id, linked.is_ok());
@@ -192,36 +216,9 @@ impl NodeContext {
                 .map(|id| (id, false))
                 .collect();
         };
-        let Ok(Some(row)) =
-            db::cluster::get_repository_by_uuid(pool, &repository.to_string()).await
-        else {
-            return Vec::new();
-        };
-        let (Ok(replicas), Ok(nodes)) = (
-            db::cluster::list_replicas(pool, row.id).await,
-            db::cluster::list_nodes(pool).await,
-        ) else {
-            return Vec::new();
-        };
-        let mut copies: Vec<(i64, i64)> = replicas
-            .into_iter()
-            .filter(|&(node, applied)| {
-                node != primary
-                    && applied >= 0
-                    && nodes.iter().any(|candidate| {
-                        candidate.id == node
-                            && candidate.is_online()
-                            && candidate.roles.iter().any(|role| role == "storage")
-                    })
-            })
-            .collect();
-        copies.sort_by(|a, b| b.1.cmp(&a.1).then(a.0.cmp(&b.0)));
-        let moved = row.storage_node_id.filter(|node| *node != primary);
-        moved
-            .map(|node| (node, true))
-            .into_iter()
-            .chain(copies.into_iter().map(|(node, _)| (node, false)))
-            .collect()
+        db::cluster::read_candidates(pool, &repository.to_string(), primary)
+            .await
+            .unwrap_or_default()
     }
 }
 
@@ -240,7 +237,9 @@ pub(super) fn cannot_serve(reply: Option<&Reply>, moved_primary: bool) -> bool {
         None => true,
         Some(reply) => match &reply.result {
             Err(Failure::Repository(error)) if moved_primary => error.is_storage_node_unavailable(),
-            Err(Failure::Repository(error)) => error.kind == ErrorKind::Unavailable,
+            Err(Failure::Repository(error)) => {
+                matches!(error.kind, ErrorKind::Unavailable | ErrorKind::NotFound)
+            }
             _ => false,
         },
     }

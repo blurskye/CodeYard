@@ -84,6 +84,9 @@ async fn contract(pg: bool) {
         "BASE_SECRET",
         "must-not-be-delivered",
         Some(alice_id),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice_id).await,
+        ),
     )
     .await
     .unwrap();
@@ -228,12 +231,16 @@ async fn contract(pg: bool) {
         .unwrap();
     assert_eq!(pending.len(), 1);
     assert!(pending[0].approval_required && pending[0].is_fork);
-    assert!(
-        db::ci::claim_ci_run(f.pool(), "not-approved", "local", &[alice_id, bob_id])
-            .await
-            .unwrap()
-            .is_none()
-    );
+    assert!(db::ci::claim_ci_run(
+        f.pool(),
+        "not-approved",
+        "local",
+        &[alice_id, bob_id],
+        &codeyard::backend::ci::CiConfig::default().platform_labels()
+    )
+    .await
+    .unwrap()
+    .is_none());
     bob.expect(
         "POST",
         "/api/repos/alice/proj/pulls/1/workflows",
@@ -1314,10 +1321,12 @@ async fn postgres_private_fork_previews_do_not_publish_objects() {
 }
 
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn sqlite_fork_pull_requests() {
     contract(false).await;
 }
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn postgres_fork_pull_requests() {
     contract(true).await;
 }

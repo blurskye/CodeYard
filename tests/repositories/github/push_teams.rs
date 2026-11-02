@@ -171,7 +171,7 @@ pub(super) async fn run(
         "PUT",
         &path,
         writer,
-        json!({"teams":["WRITERS","writers"]}),
+        json!({"teams":["writers","writers"]}),
         ("repos/set-team-access-restrictions", 200),
     )
     .await;

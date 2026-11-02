@@ -10,6 +10,7 @@ use crate::backend::{
 };
 use chrono::{Datelike, Utc};
 use std::path::Path;
+use tracing::instrument::{Instrument, WithSubscriber};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +39,12 @@ impl std::fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return StorageError {
+            kind: LifecycleFailure::Denied,
+            message: "A live unrestricted account credential is required.",
+        };
+    }
     if let Some(refusal) = error.downcast_ref::<db::organizations::properties::Refusal>() {
         return match refusal {
             db::organizations::properties::Refusal::Invalid { message, .. } => StorageError {
@@ -99,6 +106,19 @@ pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
                         message: "Invalid repository website.",
                     }
                 }
+                None if matches!(
+                    error.downcast_ref::<db::secrets::SecretsError>(),
+                    Some(
+                        db::secrets::SecretsError::TotalTooLarge
+                            | db::secrets::SecretsError::TooManySecrets
+                    )
+                ) =>
+                {
+                    StorageError {
+                        kind: LifecycleFailure::Invalid,
+                        message: "Delivered Actions secrets exceed the CI delivery budget.",
+                    }
+                }
                 None => unavailable(),
             }
         }
@@ -113,17 +133,11 @@ fn unavailable() -> StorageError {
 }
 
 async fn prepare_local_repository_root(path: &Path) -> Result<(), StorageError> {
-    tokio::fs::create_dir_all(path)
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || crate::backend::fs::private_dir(&path))
         .await
-        .map_err(|_| unavailable())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(path, std::fs::Permissions::from_mode(0o700))
-            .await
-            .map_err(|_| unavailable())?;
-    }
-    Ok(())
+        .map_err(|_| unavailable())?
+        .map_err(|_| unavailable())
 }
 
 fn git_storage_error(error: RepoError) -> StorageError {
@@ -146,7 +160,7 @@ async fn cleanup_failed_initialization(
     // Re-read the row because a delete may commit even when its response is lost.
     // A row that has accepted writes is kept, so a failed creation never discards a push.
     let deleted = if repository.is_gist {
-        db::gists::discard(pool, repository.id)
+        db::gists::discard(pool, repository.id, false)
             .await
             .and_then(|row| {
                 row.ok_or_else(|| anyhow::anyhow!("Gist initialization is no longer discardable"))
@@ -188,6 +202,7 @@ async fn cleanup_failed_initialization(
 pub struct CreationInput<'a> {
     pub owner: repo_lifecycle::RepositoryCreationOwner,
     pub properties: &'a [db::organizations::properties::ValueInput],
+    pub admission: repo_lifecycle::CreationAdmission<'a>,
 }
 
 /// UUID directory names never change on a rename or ownership transfer.
@@ -206,6 +221,7 @@ pub async fn provision(
         CreationInput {
             owner,
             properties: &[],
+            admission: Default::default(),
         },
         name,
         description,
@@ -253,6 +269,7 @@ pub async fn provision_gist(
         CreationInput {
             owner,
             properties: &[],
+            admission: Default::default(),
         },
         name,
         None,
@@ -286,6 +303,10 @@ impl<'a> CreationSource<'a> {
     }
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "Provisioning takes the owner, the form's choices and the creating authority separately."
+)]
 async fn provision_from(
     node: (&db::DbPool, Option<&NodeContext>),
     repos_path: &Path,
@@ -294,13 +315,16 @@ async fn provision_from(
     description: Option<&str>,
     options: ProvisionOptions<'_>,
     chosen: &[db::organizations::properties::ValueInput],
+    authority: Option<&db::credentials::Actor>,
 ) -> Result<Repository, StorageError> {
     let mut properties = inherited_properties(node.0, owner, options.creation_source).await?;
     // Values chosen in the creation form replace inherited ones.
     properties.retain(|value| {
-        !chosen
-            .iter()
-            .any(|chosen| chosen.property_name == value.property_name)
+        !chosen.iter().any(|chosen| {
+            chosen
+                .property_name
+                .eq_ignore_ascii_case(&value.property_name)
+        })
     });
     properties.extend_from_slice(chosen);
     provision_stored(
@@ -309,6 +333,10 @@ async fn provision_from(
         CreationInput {
             owner,
             properties: &properties,
+            admission: repo_lifecycle::CreationAdmission {
+                authority,
+                advisory: None,
+            },
         },
         name,
         description,
@@ -374,6 +402,87 @@ async fn provision_stored(
     description: Option<&str>,
     options: ProvisionOptions<'_>,
 ) -> Result<Repository, StorageError> {
+    let (pool, context, repos_path, name, description, properties) = (
+        node.0.clone(),
+        node.1.cloned(),
+        repos_path.to_owned(),
+        name.to_owned(),
+        description.map(str::to_owned),
+        creation.properties.to_vec(),
+    );
+    let owner = creation.owner;
+    let authority = creation.admission.authority.cloned();
+    let advisory = creation.admission.advisory.map(str::to_owned);
+    let (private, gist) = (options.private, options.gist);
+    let source = options
+        .creation_source
+        .map(|source| source.repository().clone());
+    let template = matches!(
+        options.creation_source,
+        Some(CreationSource::Template { .. })
+    );
+    let branch_option = match options.creation_source {
+        Some(CreationSource::Fork {
+            default_branch_only,
+            ..
+        }) => default_branch_only,
+        Some(CreationSource::Template { all_branches, .. }) => all_branches,
+        None => false,
+    };
+    // Once the row is inserted, initialization or conservative cleanup must outlive the
+    // caller. Otherwise cancellation leaves a discoverable but unusable reservation. The task
+    // keeps the request's span and log subscriber, so its errors are logged with the request.
+    tokio::spawn(
+        async move {
+            let creation_source = source.as_ref().map(|repository| {
+                if template {
+                    CreationSource::Template {
+                        repository,
+                        all_branches: branch_option,
+                    }
+                } else {
+                    CreationSource::Fork {
+                        repository,
+                        default_branch_only: branch_option,
+                    }
+                }
+            });
+            provision_stored_owned(
+                (&pool, context.as_ref()),
+                &repos_path,
+                CreationInput {
+                    owner,
+                    properties: &properties,
+                    admission: repo_lifecycle::CreationAdmission {
+                        authority: authority.as_ref(),
+                        advisory: advisory.as_deref(),
+                    },
+                },
+                &name,
+                description.as_deref(),
+                ProvisionOptions {
+                    private,
+                    creation_source,
+                    gist,
+                },
+            )
+            .await
+        }
+        .in_current_span()
+        .with_current_subscriber(),
+    )
+    .await
+    .map_err(|_| unavailable())?
+}
+
+async fn provision_stored_owned(
+    node: (&db::DbPool, Option<&NodeContext>),
+    repos_path: &Path,
+    creation: CreationInput<'_>,
+    name: &str,
+    description: Option<&str>,
+    options: ProvisionOptions<'_>,
+) -> Result<Repository, StorageError> {
     let ProvisionOptions {
         private,
         creation_source,
@@ -388,7 +497,7 @@ async fn provision_stored(
         .await
         .map_err(git_storage_error)?;
     let root = std::path::absolute(repos_path).map_err(|_| unavailable())?;
-    let location = root.join(format!("{}.git", Uuid::new_v4()));
+    let location = super::store::primary_path(&root, Uuid::new_v4());
     let disk_path = location.to_str().ok_or_else(unavailable)?;
     let input = repo_lifecycle::NewRepository {
         owner,
@@ -406,7 +515,13 @@ async fn provision_stored(
     let mut repository = if gist {
         repo_lifecycle::insert_gist_repository(pool, input).await
     } else {
-        repo_lifecycle::insert_repository_with_properties(pool, input, creation.properties).await
+        repo_lifecycle::insert_repository_with_admission(
+            pool,
+            input,
+            creation.properties,
+            creation.admission,
+        )
+        .await
     }
     .map_err(storage_error)?
     .ok_or(StorageError {
@@ -445,7 +560,11 @@ async fn provision_stored(
                     pool,
                     repository.id,
                     source.id,
-                    owner.actor_id,
+                    creation
+                        .admission
+                        .authority
+                        .cloned()
+                        .unwrap_or_else(|| owner.actor_id.into()),
                     &repo_store(source, context),
                     &super::store::CopyOptions {
                         default_branch: repository.default_branch.clone(),
@@ -486,12 +605,7 @@ async fn provision_stored(
     }
     if source.is_some() {
         // The fork is already usable. Accounting failures must not report creation as failed.
-        let accounting = async {
-            let size = store.size_bytes().await?.min(i64::MAX as u64) as i64;
-            db::repositories::records::update_repo_size(pool, repository.id, size).await?;
-            Ok::<_, anyhow::Error>(size)
-        }
-        .await;
+        let accounting = store.refresh_storage_size_now(pool, repository.id).await;
         match accounting {
             Ok(size) => repository.size_bytes = size,
             Err(error) => {
@@ -499,7 +613,7 @@ async fn provision_stored(
             }
         }
     }
-    if source.is_none() {
+    if source.is_none() || template {
         let created = repository.clone();
         let actor = owner.actor_id;
         webhooks::emit(
@@ -552,6 +666,7 @@ pub async fn provision_with_initial_files(
         CreationInput {
             owner,
             properties: &[],
+            admission: Default::default(),
         },
         name,
         description,
@@ -569,7 +684,11 @@ pub async fn provision_with_initial_properties(
     private: bool,
     files: InitialFiles,
 ) -> Result<Repository, StorageError> {
-    let owner = input.owner;
+    let authority = input
+        .admission
+        .authority
+        .cloned()
+        .unwrap_or_else(|| input.owner.actor_id.into());
     let repository =
         provision_with_properties(node, repos_path, input, name, description, private, None)
             .await?;
@@ -580,7 +699,7 @@ pub async fn provision_with_initial_properties(
     commit_initial_files(
         pool,
         context,
-        owner.actor_id,
+        authority,
         &repository,
         description,
         files,
@@ -596,11 +715,12 @@ pub async fn provision_with_initial_properties(
 async fn commit_initial_files(
     pool: &db::DbPool,
     context: Option<&NodeContext>,
-    actor: i64,
+    authority: db::credentials::Actor,
     repository: &Repository,
     description: Option<&str>,
     files: InitialFiles,
 ) -> Result<(), StorageError> {
+    let actor = authority.user_id;
     let user = db::users::accounts::get_user_by_id(pool, actor)
         .await
         .map_err(|_| unavailable())?
@@ -643,10 +763,11 @@ async fn commit_initial_files(
     };
     let content: Vec<u8> = texts.iter().flat_map(|(_, text)| text.bytes()).collect();
     let store = repo_store(repository, context);
-    let prepared = store
+    let mut prepared = store
         .prepare_upload(&write, &content, &user.username, &user.commit_email())
         .await
         .map_err(git_storage_error)?;
+    prepared.authority = Some(authority);
     store
         .publish_file_as(pool, repository.id, actor, &prepared)
         .await
@@ -693,14 +814,7 @@ pub async fn visibility_locked(
 }
 
 pub fn validate_name(name: &str) -> Result<(), StorageError> {
-    if name.is_empty()
-        || name.len() > 100
-        || matches!(name, "." | "..")
-        || name.ends_with(".git")
-        || !name
-            .chars()
-            .all(|c| c.is_alphanumeric() || matches!(c, '-' | '_' | '.'))
-    {
+    if !crate::repository_names::valid(name) {
         return Err(StorageError { kind: LifecycleFailure::Invalid, message: "Repository name must be 1-100 bytes and contain only letters, numbers, hyphens, underscores and dots; not . or .. and not ending in .git" });
     }
     Ok(())
@@ -727,10 +841,11 @@ pub fn validate_description(description: &str) -> Result<(), StorageError> {
 pub async fn delete(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
 ) -> Result<(), StorageError> {
-    super::access::check_admin(pool, repo_id, actor)
+    let actor = actor.into();
+    super::access::check_admin(pool, repo_id, actor.user_id)
         .await
         .map_err(|error| StorageError {
             kind: if error == super::access::AccessError::Unavailable {
@@ -771,7 +886,7 @@ pub(crate) async fn remove_deleted_repository(
 pub async fn transfer(
     pool: &db::DbPool,
     cluster: Option<&NodeContext>,
-    actor: i64,
+    actor: impl Into<db::credentials::Actor>,
     repo_id: i64,
     new_owner: &str,
 ) -> Result<Repository, StorageError> {
@@ -849,10 +964,12 @@ pub async fn fork(
     context: Option<&NodeContext>,
     repos_path: &Path,
     broadcaster: &crate::backend::notifications::NotificationBroadcaster,
-    actor: i64,
+    actor: impl Into<db::credentials::Actor>,
     source_id: i64,
     owner: &str,
 ) -> Result<Repository, StorageError> {
+    let authority = actor.into();
+    let actor = authority.user_id;
     fork_into(
         pool,
         context,
@@ -863,6 +980,7 @@ pub async fn fork(
             name: None,
             default_branch_only: false,
             properties: &[],
+            authority: Some(&authority),
         },
         source_id,
         owner,
@@ -876,6 +994,7 @@ pub struct ForkOptions<'a> {
     pub default_branch_only: bool,
     /// Organization property values chosen for the copy.
     pub properties: &'a [db::organizations::properties::ValueInput],
+    pub authority: Option<&'a db::credentials::Actor>,
 }
 
 pub async fn fork_into(
@@ -888,6 +1007,7 @@ pub async fn fork_into(
     owner: &str,
 ) -> Result<Repository, StorageError> {
     let actor = options.owner.actor_id;
+    live_creation_actor(pool, actor, options.authority).await?;
     repo_lifecycle::check_creation_authority(pool, options.owner)
         .await
         .map_err(storage_error)?;
@@ -912,6 +1032,7 @@ pub async fn fork_into(
         });
     }
     if let Some(existing) = existing_fork(pool, actor, options.owner.target, source.id).await? {
+        live_creation_actor(pool, actor, options.authority).await?;
         return Ok(existing);
     }
     let user = db::users::accounts::get_user_by_id(pool, actor)
@@ -949,6 +1070,7 @@ pub async fn fork_into(
             gist: false,
         },
         options.properties,
+        options.authority,
     )
     .await
     {
@@ -957,6 +1079,7 @@ pub async fn fork_into(
             if let Some(existing) =
                 existing_fork(pool, actor, options.owner.target, source.id).await?
             {
+                live_creation_actor(pool, actor, options.authority).await?;
                 return Ok(existing);
             }
             return Err(error);
@@ -978,13 +1101,17 @@ pub async fn fork_into(
             metadata: serde_json::json!({"source_owner":owner,"source_repo":source.name,"subject":format!("{owner}/{}",source.name),"fork_owner":fork_owner,"fork_repo":fork.name,"fork_repository_id":fork.id}),
         };
         let mut notified = Vec::new();
-        if crate::backend::notifications::create::create_and_broadcast_notification(
-            pool,
-            broadcaster,
-            notice.clone(),
-        )
-        .await
-        .is_ok()
+        // The source owner may not be able to read the fork's destination.
+        if super::access::check_read(pool, fork.id, Some(recipient))
+            .await
+            .is_ok()
+            && crate::backend::notifications::create::create_and_broadcast_notification(
+                pool,
+                broadcaster,
+                notice.clone(),
+            )
+            .await
+            .is_ok()
         {
             notified.push(recipient);
         }
@@ -995,6 +1122,22 @@ pub async fn fork_into(
             &notified,
         )
         .await;
+    }
+    // Even a redacted source-scoped event reveals confidential remediation activity. A
+    // source subscription cannot establish readability of a private destination.
+    if fork.is_private {
+        return Ok(fork);
+    }
+    let public = match db::repositories::records::get_repository_by_id(pool, fork.id).await {
+        Ok(Some(current)) => !current.is_private,
+        Ok(None) => false,
+        Err(error) => {
+            tracing::warn!(repo_id = fork.id, %error, "fork webhook visibility unavailable");
+            false
+        }
+    };
+    if !public {
+        return Ok(fork);
     }
     let (fork_for_hook, source_for_hook) = (fork.clone(), source.clone());
     webhooks::emit(
@@ -1015,6 +1158,22 @@ pub async fn fork_into(
     )
     .await;
     Ok(fork)
+}
+
+async fn live_creation_actor(
+    pool: &db::DbPool,
+    actor: i64,
+    authority: Option<&db::credentials::Actor>,
+) -> Result<(), StorageError> {
+    if let Some(authority) = authority {
+        if authority.user_id != actor {
+            return Err(storage_error(db::users::accounts::AccountRestricted.into()));
+        }
+        super::access::credential_user(pool, authority, true)
+            .await
+            .map_err(storage_error)?;
+    }
+    Ok(())
 }
 
 async fn existing_fork(
@@ -1039,6 +1198,16 @@ async fn existing_fork(
             },
             message: "Fork is unavailable.",
         })?;
+    if !db::interactions::source(pool, repo.id)
+        .await
+        .map_err(|_| unavailable())?
+        .is_some_and(|source| source.write_version > 0)
+    {
+        return Err(StorageError {
+            kind: LifecycleFailure::Conflict,
+            message: "The existing fork is still being initialized. Try again shortly.",
+        });
+    }
     Ok(Some(repo))
 }
 
@@ -1049,6 +1218,7 @@ pub struct TemplateOptions<'a> {
     pub all_branches: bool,
     /// Organization property values chosen for the copy.
     pub properties: &'a [db::organizations::properties::ValueInput],
+    pub authority: Option<&'a db::credentials::Actor>,
 }
 
 pub async fn generate(
@@ -1064,10 +1234,12 @@ pub async fn generate(
         private,
         all_branches,
         properties,
+        authority,
     } = options;
     if let Some(description) = description {
         validate_description(description)?;
     }
+    live_creation_actor(node.0, owner.actor_id, authority).await?;
     repo_lifecycle::check_creation_authority(node.0, owner)
         .await
         .map_err(storage_error)?;
@@ -1105,6 +1277,7 @@ pub async fn generate(
     let name = name.to_owned();
     let description = description.map(str::to_owned);
     let properties = properties.to_vec();
+    let authority = authority.cloned();
     let task = tokio::spawn(async move {
         provision_from(
             (&pool, context.as_ref()),
@@ -1121,6 +1294,7 @@ pub async fn generate(
                 gist: false,
             },
             &properties,
+            authority.as_ref(),
         )
         .await
     });

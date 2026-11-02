@@ -22,7 +22,7 @@ pub fn resolve_repo_ref_path(
     }
     // A full object ID is an immutable address, never a prefix of a named ref.
     let tail = parts.join("/");
-    let commit = parts[0].len() == 40 && parts[0].bytes().all(|byte| byte.is_ascii_hexdigit());
+    let commit = crate::git_ids::is_full_commit_id(&parts[0]);
     let reference = if commit {
         parts[0].as_str()
     } else {
@@ -55,16 +55,13 @@ pub fn split_path(path: &str) -> Vec<String> {
 
 /// Encode each filename/ref segment, keeping only actual path separators.
 pub fn encode_path(path: &str) -> String {
-    path.split('/')
-        .map(crate::webui::encode_component)
-        .collect::<Vec<_>>()
-        .join("/")
+    crate::git_paths::url(path)
 }
 
 /// Whether a file's path names Markdown. The blob view shows such a file as a document, and the
 /// file editor previews it that way too, so both use this rule.
 pub fn is_markdown_path(path: &str) -> bool {
-    let path = path.to_lowercase();
+    let path = crate::git_paths::display(path).to_lowercase();
     [".md", ".markdown", ".mdx"]
         .iter()
         .any(|extension| path.ends_with(*extension))
@@ -99,9 +96,7 @@ pub fn branch_url(base: &str, kind: &str, branch: &str, path: &str) -> String {
 }
 
 fn qualified_ref(reference: &str) -> String {
-    if reference.starts_with("refs/")
-        || (reference.len() == 40 && reference.bytes().all(|byte| byte.is_ascii_hexdigit()))
-    {
+    if reference.starts_with("refs/") || crate::git_ids::is_full_commit_id(reference) {
         reference.to_owned()
     } else {
         format!("refs/heads/{reference}")

@@ -667,7 +667,10 @@ async fn contract(pg: bool) {
     assert!(url.ends_with("/api/v3/repos/alice/proj/contents/docs/hello.txt?ref=main"));
     assert!(html.ends_with("/alice/proj/blob/main/docs/hello.txt"));
     assert!(git.ends_with(&format!("/git/blobs/{blob}")));
-    assert!(download.ends_with("/alice/proj/raw/main/docs/hello.txt"));
+    // A bearer client can follow the download link, pinned to the commit that was read.
+    assert!(download.ends_with(&format!(
+        "/api/v3/repos/alice/proj/contents/docs/hello.txt?ref={commit}&raw=1"
+    )));
     assert_eq!(
         contents,
         json!({
@@ -1430,6 +1433,38 @@ async fn hooks_contract(pg: bool) {
         StatusCode::OK,
     )
     .await;
+    // A full update without `config` keeps the stored secret; one with `config` replaces the
+    // configuration, so an omitted secret is cleared.
+    for (input, path, kept) in [
+        (json!({"secret":"kept"}), &config_path, true),
+        (json!({"active":true}), &hook_path, true),
+        (
+            json!({"config":{"url":"https://hooks.example.test/push"}}),
+            &hook_path,
+            false,
+        ),
+    ] {
+        checked(
+            &router,
+            if path == &config_path {
+                "repos/update-webhook-config-for-repo"
+            } else {
+                "repos/update-webhook"
+            },
+            "PATCH",
+            path,
+            Some(&writer),
+            input,
+            StatusCode::OK,
+        )
+        .await;
+        let stored =
+            db::webhooks::get_webhook(f.pool(), db::webhooks::HookOwner::Repository(repo.id), id)
+                .await
+                .unwrap()
+                .unwrap();
+        assert_eq!(stored.encrypted_secret.is_some(), kept, "{path}");
+    }
     checked(
         &router,
         "repos/create-webhook",
@@ -1722,7 +1757,10 @@ async fn deploy_keys_contract(pg: bool) {
         remove_key(
             f.pool(),
             &actor,
-            db::deploy_keys::Credential::Token(read_id),
+            db::deploy_keys::Credential::Token(
+                read_id,
+                tokens::token_hash(reader.strip_prefix("Bearer ").unwrap())
+            ),
             &repo,
             id
         )
@@ -1738,7 +1776,10 @@ async fn deploy_keys_contract(pg: bool) {
         remove_key(
             f.pool(),
             &actor,
-            db::deploy_keys::Credential::Token(token_id),
+            db::deploy_keys::Credential::Token(
+                token_id,
+                tokens::token_hash(writer.strip_prefix("Bearer ").unwrap())
+            ),
             &repo,
             id
         )
@@ -3358,6 +3399,43 @@ async fn releases_contract(pg: bool) {
         &large,
     );
     assert_eq!(large["size"], 4 * 1024 * 1024 + 1);
+    // A token revoked while its upload body is arriving publishes nothing.
+    let client = Client::login(&router, f.pool(), alice).await;
+    let doomed = tokens::create(
+        f.pool(),
+        alice,
+        Some(&client.session),
+        TokenInput {
+            name: "doomed",
+            scope: "write",
+            expires_at: None,
+        },
+    )
+    .await
+    .unwrap();
+    let (pool, session, token_id) = (f.pool().clone(), client.session.clone(), doomed.token.id);
+    let body = Body::from_stream(futures_util::stream::once(async move {
+        assert!(
+            db::users::tokens::delete_token(&pool, alice, &session, token_id)
+                .await
+                .unwrap()
+        );
+        Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"late\n"))
+    }));
+    let response = router
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("POST")
+                .uri(format!("{base}/{id}/assets?name=late.txt"))
+                .header("authorization", format!("Bearer {}", doomed.value))
+                .header("content-type", "text/plain")
+                .body(body)
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     checked(
         &router,
         "repos/update-release-asset",

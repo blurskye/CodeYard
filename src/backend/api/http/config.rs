@@ -15,7 +15,12 @@ pub struct WebConfig {
     pub cors_origins: Vec<String>,
     /// Reverse proxies whose `X-Forwarded-For` header names the real client.
     pub trusted_proxies: HashSet<IpAddr>,
+    /// Pages that may wait at once for a render slot; more are answered busy at once.
+    pub page_render_waiters: usize,
 }
+
+/// `PAGE_RENDER_WAITERS` when it is unset or not a number.
+pub const DEFAULT_PAGE_RENDER_WAITERS: usize = 64;
 
 impl WebConfig {
     pub fn from_env() -> Self {
@@ -29,8 +34,13 @@ impl WebConfig {
             trusted_proxies: std::env::var("HTTP_TRUSTED_PROXY_IPS")
                 .unwrap_or_default()
                 .split(',')
-                .filter_map(|address| address.trim().parse().ok())
+                .filter_map(|address| address.trim().parse::<IpAddr>().ok())
+                .map(|address| address.to_canonical())
                 .collect(),
+            page_render_waiters: std::env::var("PAGE_RENDER_WAITERS")
+                .ok()
+                .and_then(|value| value.trim().parse().ok())
+                .unwrap_or(DEFAULT_PAGE_RENDER_WAITERS),
         }
     }
 }
@@ -45,10 +55,33 @@ pub fn value_or(value: Option<String>, default: &str) -> String {
 
 /// The scheme and host of `PUBLIC_URL`, with no trailing slash. Empty when the setting is unset or
 /// not a URL, so a link built on it stays a path.
+pub fn parse_public_url(value: &str) -> anyhow::Result<url::Url> {
+    let url = url::Url::parse(value.trim()).map_err(|_| anyhow::anyhow!("Invalid PUBLIC_URL"))?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "http" | "https")
+            && url.host().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.path() == "/"
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "PUBLIC_URL must be an HTTP(S) origin without credentials, path, query or fragment"
+    );
+    Ok(url)
+}
+
+pub fn public_url() -> anyhow::Result<Option<url::Url>> {
+    match std::env::var("PUBLIC_URL") {
+        Ok(value) if !value.trim().is_empty() => parse_public_url(&value).map(Some),
+        Ok(_) | Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(_) => anyhow::bail!("Invalid PUBLIC_URL"),
+    }
+}
+
 pub fn public_origin() -> String {
-    std::env::var("PUBLIC_URL")
+    public_url()
         .ok()
-        .and_then(|value| url::Url::parse(value.trim()).ok())
+        .flatten()
         .map(|url| url.origin().ascii_serialization())
         .unwrap_or_default()
 }
@@ -99,9 +132,14 @@ fn configured_ssh_base(
     if selected.setup_required {
         return String::new();
     }
+    let host = public_url()
+        .ok()
+        .flatten()
+        .and_then(|url| url.host().map(|host| host.to_string()))
+        .unwrap_or_else(|| "localhost".into());
     let fallback = match selected.mode {
-        SshMode::Openssh => format!("ssh://{}@localhost:22", selected.git_user),
-        _ => format!("ssh://git@localhost:{}", selected.builtin_port),
+        SshMode::Openssh => format!("ssh://{}@{host}:22", selected.git_user),
+        _ => format!("ssh://git@{host}:{}", selected.builtin_port),
     };
     value_or(value, &fallback)
 }

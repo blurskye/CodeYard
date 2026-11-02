@@ -151,11 +151,10 @@ async fn define_one(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) =
-        input.map_err(|_| Error::invalid("Invalid repository property definition"))?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let input = definition(input, Some(&property))?;
     let definitions = outcome(
-        properties::define(&state.pool, actor.user.id, org.id, &[input])
+        properties::define(&state.pool, actor.database_actor(), org.id, &[input])
             .await
             .map_err(error)?,
     )?;
@@ -177,15 +176,14 @@ async fn define_many(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) =
-        input.map_err(|_| Error::invalid("Invalid repository property definitions"))?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     let inputs = input
         .properties
         .into_iter()
         .map(|value| definition(value, None))
         .collect::<Result<Vec<_>>>()?;
     let definitions = outcome(
-        properties::define(&state.pool, actor.user.id, org.id, &inputs)
+        properties::define(&state.pool, actor.database_actor(), org.id, &inputs)
             .await
             .map_err(error)?,
     )?;
@@ -207,7 +205,7 @@ async fn remove(
     actor.require_write()?;
     let org = target(&state, &name).await?;
     outcome(
-        properties::remove(&state.pool, actor.user.id, org.id, &property)
+        properties::remove(&state.pool, actor.database_actor(), org.id, &property, None)
             .await
             .map_err(error)?,
     )?;
@@ -265,11 +263,11 @@ async fn set_values(
         .ok_or_else(auth::required)?;
     actor.require_write()?;
     let org = target(&state, &name).await?;
-    let Json(input) = input.map_err(|_| Error::invalid("Invalid repository property values"))?;
+    let Json(input) = input.map_err(super::super::json_error)?;
     outcome(
         properties::set_values(
             &state.pool,
-            actor.user.id,
+            actor.database_actor(),
             org.id,
             &input.repository_names,
             &input.properties,

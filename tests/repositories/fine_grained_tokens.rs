@@ -266,6 +266,46 @@ async fn contract(pg: bool) {
         .is_some_and(|errors| !errors.is_empty()));
     let viewer = graphql(&router, &public, "{ viewer { login } }", json!({})).await;
     assert_eq!(viewer["data"]["viewer"]["login"], "alice", "{viewer}");
+    // Only an explicit contents grant may include unpublished releases. A selected public
+    // repository keeps public read access, as on GitHub, so a metadata-only token still
+    // reads its published releases.
+    db::releases::create_release(
+        f.pool(),
+        alice,
+        repos[2].id,
+        "unpublished",
+        "main",
+        &db::releases::ReleaseFields {
+            is_draft: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let releases = "{ repository(owner:\"alice\",name:\"open\"){ releases(first:0){totalCount} } }";
+    let metadata = token(
+        f.pool(),
+        alice,
+        &session,
+        user,
+        Access::Selected,
+        vec![repos[2].id],
+        json!({}),
+    )
+    .await;
+    for (credential, count) in [(&metadata, 0), (&public, 0), (&selected, 0), (&all_read, 1)] {
+        let result = graphql(&router, credential, releases, json!({})).await;
+        assert!(
+            result["errors"]
+                .as_array()
+                .is_none_or(|errors| errors.is_empty()),
+            "{result}"
+        );
+        assert_eq!(
+            result["data"]["repository"]["releases"]["totalCount"], count,
+            "{result}"
+        );
+    }
     let id = reached["data"]["repository"]["id"].clone();
     let create = "mutation($id:ID!){ createIssue(input:{repositoryId:$id,title:\"From GraphQL\"}){ issue { title } } }";
     let denied = graphql(&router, &all_read, create, json!({"id": id})).await;
@@ -309,6 +349,53 @@ async fn contract(pg: bool) {
             expected,
             "{repo} {service}"
         );
+    }
+    // Merges carry the token to publication: without the workflows permission a merge may
+    // leave the workflow files alone but not change them, even through a detached commit.
+    let base = "/api/v3/repos/alice/private";
+    let (status, _, seed) = call(
+        &router,
+        "PUT",
+        &format!("{base}/contents/README.md"),
+        &selected,
+        json!({"message":"Seed","content":"c2VlZA=="}),
+    )
+    .await;
+    assert_eq!(status, 201, "{seed}");
+    let main = seed["commit"]["sha"].clone();
+    let main_tree = seed["commit"]["tree"]["sha"].clone();
+    let mut heads = Vec::new();
+    for path in [".github/workflows/ci.yml", "docs/notes.md"] {
+        let (status, _, tree) = call(
+            &router,
+            "POST",
+            &format!("{base}/git/trees"),
+            &selected,
+            json!({"base_tree":main_tree,"tree":[{"path":path,"mode":"100644","type":"blob","content":"on: push\n"}]}),
+        )
+        .await;
+        assert_eq!(status, 201, "{tree}");
+        let (status, _, commit) = call(
+            &router,
+            "POST",
+            &format!("{base}/git/commits"),
+            &selected,
+            json!({"message":"Change","tree":tree["sha"],"parents":[main]}),
+        )
+        .await;
+        assert_eq!(status, 201, "{commit}");
+        heads.push(commit["sha"].clone());
+    }
+    for (head, expected) in [(&heads[0], 403), (&heads[1], 201)] {
+        let (status, _, body) = call(
+            &router,
+            "POST",
+            &format!("{base}/merges"),
+            &selected,
+            json!({"base":"main","head":head}),
+        )
+        .await;
+        assert_eq!(status, expected, "{body}");
     }
     // Every use is recorded on the token, as for classic tokens.
     assert_eq!(

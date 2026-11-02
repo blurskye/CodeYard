@@ -1040,12 +1040,24 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(body["permissions"]["admin"], true);
+    // A revoke form for a team that no longer exists is refused, not reported as done.
     let (status, page) = browser
         .form(
             &ui,
             &[
                 ("action", "revoke-all-team-roles"),
-                ("team_slug", "builders"),
+                ("team_id", "999999"),
+                ("confirm", "true"),
+            ],
+        )
+        .await;
+    assert_eq!(status, StatusCode::CONFLICT, "{page}");
+    let (status, page) = browser
+        .form(
+            &ui,
+            &[
+                ("action", "revoke-all-team-roles"),
+                ("team_id", &team.id.to_string()),
                 ("confirm", "true"),
             ],
         )
@@ -1240,6 +1252,39 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(f.scalar("SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND triggered_by_id=$2 AND status='cancelled'",&[first.id,nested]).await,1);
+    // The child team went with its parent; a new team of the same name stands in for it.
+    assert!(
+        organizations::get_public_team(f.pool(), owner, orgs[0].id, "role-child")
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let child = applied(
+        organizations::create_organization_team(
+            f.pool(),
+            owner,
+            orgs[0].id,
+            &NewTeam::new(
+                "role-child",
+                TeamProfile::new("Role child", None, TeamPrivacy::Visible).unwrap(),
+            )
+            .unwrap(),
+        )
+        .await
+        .unwrap(),
+    );
+    applied(
+        organizations::add_organization_team_member(
+            f.pool(),
+            owner,
+            orgs[0].id,
+            child.id,
+            nested,
+            TeamRole::Member,
+        )
+        .await
+        .unwrap(),
+    );
     request(
         &router,
         "orgs/assign-team-to-org-role",

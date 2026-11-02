@@ -1,6 +1,10 @@
 # https://github.com/fjogeleit/yaml-update-action/tree/04ff6ec06568fd21197db746472e36cc425de850
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

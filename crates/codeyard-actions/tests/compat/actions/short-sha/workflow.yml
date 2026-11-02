@@ -1,6 +1,10 @@
 # https://github.com/benjlevesque/short-sha/tree/599815c8ee942a9616c92bcfb4f947a3b670ab0b
 name: compat
-on: workflow_dispatch
+on:
+  workflow_dispatch:
+    inputs:
+      message:
+        description: The input every compatibility run sends
 jobs:
   test:
     runs-on: ubuntu-latest

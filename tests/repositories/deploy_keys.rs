@@ -65,8 +65,13 @@ async fn repo_id(database: &Database) -> i64 {
 }
 
 async fn stale_admin_native_mutations(pg: bool) {
-    let (mut database, _root, _alice, bob_client) = setup(pg).await;
+    let (mut database, _root, alice, bob_client) = setup(pg).await;
     let repo = repo_id(&database).await;
+    let owner = db::users::accounts::get_user_by_username(database.pool(), "alice")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
     let bob = db::users::accounts::get_user_by_username(database.pool(), "bob")
         .await
         .unwrap()
@@ -116,7 +121,7 @@ async fn stale_admin_native_mutations(pg: bool) {
             .is_err()
     );
     assert_eq!(
-        db::deploy_keys::list_deploy_keys(database.pool(), repo)
+        db::deploy_keys::list_deploy_keys(database.pool(), owner, repo, &alice.session, 0, 100)
             .await
             .unwrap()
             .len(),
@@ -136,16 +141,28 @@ async fn postgres_deploy_key_mutations_recheck_administration() {
 async fn keys_api_and_forms(pg: bool) {
     let (database, _root, alice, bob) = setup(pg).await;
     let repo = repo_id(&database).await;
+    let owner = db::users::accounts::get_user_by_username(database.pool(), "alice")
+        .await
+        .unwrap()
+        .unwrap()
+        .id;
     let rid = repo.to_string();
     let path = "/api/repos/alice/proj/keys";
     let (status, _) = alice
         .api("POST", path, json!({"title":"ci\0key", "key": ED25519}))
         .await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
-    assert!(db::deploy_keys::list_deploy_keys(database.pool(), repo)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(db::deploy_keys::list_deploy_keys(
+        database.pool(),
+        owner,
+        repo,
+        &alice.session,
+        0,
+        100
+    )
+    .await
+    .unwrap()
+    .is_empty());
 
     // Only admins manage keys: a reader is refused on every route.
     let (status, _) = bob
@@ -280,9 +297,10 @@ async fn keys_api_and_forms(pg: bool) {
         )
         .await;
     assert!(reply.status.is_redirection(), "{}", reply.text());
-    let rows = db::deploy_keys::list_deploy_keys(database.pool(), repo)
-        .await
-        .unwrap();
+    let rows =
+        db::deploy_keys::list_deploy_keys(database.pool(), owner.id, repo, &alice.session, 0, 100)
+            .await
+            .unwrap();
     assert!(rows.is_empty(), "the form deleted the key");
 
     // An unknown key is not found, and a listed key is deleted.

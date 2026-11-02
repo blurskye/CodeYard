@@ -1,16 +1,16 @@
 //! One webhook request: signed, sent with a timeout and no redirects, retried on server
 //! errors and timeouts, and recorded with what was sent and what came back.
 use super::outbound::{self, Refusal};
+use crate::backend::crypto::hmac_sha256;
 use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{Webhook, WebhookDelivery};
 use crate::backend::db::webhooks::{self as hooks, NewDelivery};
 use crate::backend::db::DbPool;
 use base64::Engine as _;
 use hmac::{Hmac, Mac};
-use sha2::Sha256;
 use std::net::SocketAddr;
 use std::time::{Duration, Instant};
-use url::{Host, Url};
+use url::Url;
 
 const TIMEOUT: Duration = Duration::from_secs(10);
 /// Waits before the first, second and third retry.
@@ -33,6 +33,8 @@ pub struct Outgoing {
     pub body: String,
     /// Automatic events obey the active flag and subscription; manual redelivery does not.
     pub automatic: bool,
+    /// Native manual sends recheck this requester's current management access before delivery.
+    pub manual_actor: Option<i64>,
 }
 
 pub(crate) fn json_payload(outgoing: &Outgoing) -> Option<serde_json::Value> {
@@ -115,6 +117,7 @@ pub fn redelivery(recorded: &WebhookDelivery) -> Outgoing {
         content_type,
         body: recorded.request_body.clone(),
         automatic: false,
+        manual_actor: None,
     }
 }
 
@@ -124,9 +127,19 @@ async fn current_hook(
     outgoing: &Outgoing,
 ) -> Result<bool, &'static str> {
     if let Some(app) = hook.app_id {
-        return super::github_apps::current(pool, app, hook, outgoing)
-            .await
-            .map_err(|_| "Webhook storage is unavailable");
+        let mut retries = RETRY_DELAYS.iter();
+        loop {
+            match super::github_apps::current(pool, app, hook, outgoing).await {
+                Ok(current) => return Ok(current),
+                Err(error) => {
+                    tracing::warn!(webhook_id = hook.id, %error, "could not recheck a queued App webhook");
+                    match retries.next() {
+                        Some(delay) => tokio::time::sleep(*delay).await,
+                        None => return Err("Webhook storage is unavailable"),
+                    }
+                }
+            }
+        }
     }
     let owner = match (hook.repo_id, hook.org_id) {
         (Some(id), None) => hooks::HookOwner::Repository(id),
@@ -135,7 +148,11 @@ async fn current_hook(
     };
     let mut retries = RETRY_DELAYS.iter();
     let current = loop {
-        match hooks::get_webhook(pool, owner, hook.id).await {
+        let snapshot = match outgoing.manual_actor {
+            Some(actor) => hooks::managed_webhook(pool, owner, actor, hook.id).await,
+            None => hooks::get_webhook(pool, owner, hook.id).await,
+        };
+        match snapshot {
             Ok(Some(current)) => break current,
             Ok(None) => return Ok(false),
             Err(error) => {
@@ -171,7 +188,6 @@ async fn current_hook(
         && current.encrypted_password == hook.encrypted_password
         && current.password_nonce == hook.password_nonce
         && current.ssl_verify == hook.ssl_verify
-        && current.updated_at == hook.updated_at
         && (!outgoing.automatic
             || (current.active && super::events::subscribes(&current.events, &outgoing.event))))
 }
@@ -192,7 +208,17 @@ async fn transmit(
         ("User-Agent", user_agent()),
         ("X-GitHub-Event", outgoing.event.clone()),
         ("X-GitHub-Delivery", outgoing.guid.clone()),
+        ("X-GitHub-Hook-ID", hook.id.to_string()),
     ];
+    if let Some((id, kind)) = hook
+        .app_id
+        .map(|id| (id, "integration"))
+        .or_else(|| hook.org_id.map(|id| (id, "organization")))
+        .or_else(|| hook.repo_id.map(|id| (id, "repository")))
+    {
+        headers.push(("X-GitHub-Hook-Installation-Target-ID", id.to_string()));
+        headers.push(("X-GitHub-Hook-Installation-Target-Type", kind.to_owned()));
+    }
     if let Some(username) = &hook.username {
         let password = match (&hook.encrypted_password, &hook.password_nonce) {
             (Some(ciphertext), Some(nonce)) => open(ciphertext, nonce)?,
@@ -291,66 +317,9 @@ async fn transmit(
 }
 
 async fn attempt(url: &Url, ssl_verify: bool, headers: &[(&str, String)], body: &str) -> Attempt {
-    bounded_attempt(attempt_inner(url, ssl_verify, headers, body)).await
-}
-
-async fn bounded_attempt(future: impl std::future::Future<Output = Attempt>) -> Attempt {
-    tokio::time::timeout(TIMEOUT, future)
-        .await
-        .unwrap_or(Attempt::Failed {
-            error: "The request timed out after 10 seconds",
-            retry: true,
-        })
-}
-
-async fn attempt_inner(
-    url: &Url,
-    ssl_verify: bool,
-    headers: &[(&str, String)],
-    body: &str,
-) -> Attempt {
-    let addresses = match outbound::resolve(url, outbound::allow_private()).await {
-        Ok(addresses) => addresses,
-        Err(refusal) => {
-            return Attempt::Failed {
-                error: refusal_text(refusal),
-                retry: false,
-            }
-        }
-    };
-    let client = match client(url, &addresses, ssl_verify) {
-        Ok(client) => client,
-        Err(_) => {
-            return Attempt::Failed {
-                error: "The HTTP client could not start",
-                retry: false,
-            }
-        }
-    };
-    let mut request = client.post(url.as_str()).body(body.to_owned());
-    for (name, value) in headers {
-        request = request.header(*name, value.as_str());
-    }
-    let mut response = match request.send().await {
+    let mut response = match bounded_attempt(attempt_inner(url, ssl_verify, headers, body)).await {
         Ok(response) => response,
-        Err(error) if error.is_timeout() => {
-            return Attempt::Failed {
-                error: "The request timed out after 10 seconds",
-                retry: true,
-            }
-        }
-        Err(error) if error.is_connect() => {
-            return Attempt::Failed {
-                error: "The connection failed",
-                retry: true,
-            }
-        }
-        Err(_) => {
-            return Attempt::Failed {
-                error: "The request failed",
-                retry: false,
-            }
-        }
+        Err(failure) => return failure,
     };
     let status = response.status().as_u16();
     let headers = join_headers(
@@ -359,15 +328,81 @@ async fn attempt_inner(
             .iter()
             .map(|(name, value)| (name.as_str(), value.to_str().unwrap_or(""))),
     );
-    let body = match read_limited(&mut response).await {
-        Ok(bytes) => response_text(&bytes),
-        Err(_) => String::new(),
+    // Response text is diagnostic only: once headers acknowledge the event, a slow body
+    // must not turn that acknowledgement into another POST.
+    let body = match tokio::time::timeout(Duration::from_secs(2), read_limited(&mut response)).await
+    {
+        Ok(Ok(bytes)) => response_text(&bytes),
+        _ => String::new(),
     };
     Attempt::Responded {
         status,
         headers,
         body,
     }
+}
+
+async fn bounded_attempt(
+    future: impl std::future::Future<Output = Result<reqwest::Response, Attempt>>,
+) -> Result<reqwest::Response, Attempt> {
+    tokio::time::timeout(TIMEOUT, future)
+        .await
+        .unwrap_or(Err(Attempt::Failed {
+            error: "The request timed out after 10 seconds",
+            retry: true,
+        }))
+}
+
+async fn attempt_inner(
+    url: &Url,
+    ssl_verify: bool,
+    headers: &[(&str, String)],
+    body: &str,
+) -> Result<reqwest::Response, Attempt> {
+    let addresses = match outbound::resolve(url, outbound::allow_private()).await {
+        Ok(addresses) => addresses,
+        Err(refusal) => {
+            return Err(Attempt::Failed {
+                retry: refusal == Refusal::Unreachable,
+                error: refusal_text(refusal),
+            })
+        }
+    };
+    let client = match client(url, &addresses, ssl_verify) {
+        Ok(client) => client,
+        Err(_) => {
+            return Err(Attempt::Failed {
+                error: "The HTTP client could not start",
+                retry: false,
+            })
+        }
+    };
+    let mut request = client.post(url.as_str()).body(body.to_owned());
+    for (name, value) in headers {
+        request = request.header(*name, value.as_str());
+    }
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(error) if error.is_timeout() => {
+            return Err(Attempt::Failed {
+                error: "The request timed out after 10 seconds",
+                retry: true,
+            })
+        }
+        Err(error) if error.is_connect() => {
+            return Err(Attempt::Failed {
+                error: "The connection failed",
+                retry: true,
+            })
+        }
+        Err(_) => {
+            return Err(Attempt::Failed {
+                error: "The request failed",
+                retry: false,
+            })
+        }
+    };
+    Ok(response)
 }
 
 fn response_text(bytes: &[u8]) -> String {
@@ -382,16 +417,11 @@ fn client(
     addresses: &[SocketAddr],
     ssl_verify: bool,
 ) -> reqwest::Result<reqwest::Client> {
-    let mut builder = reqwest::Client::builder()
+    outbound::pinned_client(url, addresses)
         .timeout(TIMEOUT)
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
         .danger_accept_invalid_certs(!ssl_verify)
-        .user_agent(user_agent());
-    if let Some(Host::Domain(name)) = url.host() {
-        builder = builder.resolve_to_addrs(name, addresses);
-    }
-    builder.build()
+        .user_agent(user_agent())
+        .build()
 }
 
 async fn read_limited(response: &mut reqwest::Response) -> Result<Vec<u8>, reqwest::Error> {
@@ -465,13 +495,6 @@ fn failed_record(outgoing: &Outgoing, duration_ms: i32, error: &str) -> NewDeliv
     }
 }
 
-/// HMAC-SHA256 of `message`, the signature receivers check.
-pub fn hmac_sha256(key: &[u8], message: &[u8]) -> [u8; 32] {
-    let mut mac = Hmac::<Sha256>::new_from_slice(key).expect("HMAC accepts any key length");
-    mac.update(message);
-    mac.finalize().into_bytes().into()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -479,7 +502,7 @@ mod tests {
     #[tokio::test]
     async fn timeout_covers_the_whole_attempt_and_is_retryable() {
         let result = bounded_attempt(std::future::pending()).await;
-        assert!(matches!(result, Attempt::Failed { retry: true, .. }));
+        assert!(matches!(result, Err(Attempt::Failed { retry: true, .. })));
     }
 
     #[test]
@@ -497,6 +520,7 @@ mod tests {
             content_type: "application/x-www-form-urlencoded".into(),
             body: "payload=%7B%7D".into(),
             automatic: true,
+            manual_actor: None,
         };
         let failed = failed_record(&outgoing, 0, "The secret key is not configured");
         assert_eq!(

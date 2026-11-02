@@ -681,8 +681,8 @@ async fn stale_fork_placement_contract(mut database: Database) {
             .unwrap()
             .id,
         );
-        // A promotion needs its target to be reporting in.
-        db::cluster::record_node_heartbeat(database.pool(), &key, "test", "{}", None)
+        // A promotion needs its target to be reporting in, free disk space included.
+        db::cluster::record_node_heartbeat(database.pool(), &key, "test", "{}", Some(1 << 40))
             .await
             .unwrap();
     }

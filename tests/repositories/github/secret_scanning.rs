@@ -756,7 +756,7 @@ async fn custom_patterns(
         let closed = call(
             router,
             "GET",
-            &format!("{repo_api}/secret-scanning/alerts?secret_type={slug}&state=resolved&resolution=wont_fix"),
+            &format!("{repo_api}/secret-scanning/alerts?secret_type={slug}&state=resolved&resolution=pattern_deleted"),
             writer,
             Value::Null,
             "secret-scanning/list-alerts-for-repo",
@@ -764,7 +764,8 @@ async fn custom_patterns(
         )
         .await;
         assert_eq!(closed.as_array().unwrap().len(), 1);
-        assert_eq!(closed[0]["resolution"], "wont_fix");
+        // GitHub closes the alerts of a deleted custom pattern as pattern_deleted.
+        assert_eq!(closed[0]["resolution"], "pattern_deleted");
         assert_eq!(closed[0]["resolution_comment"], "Custom pattern deleted");
         call(
             router,

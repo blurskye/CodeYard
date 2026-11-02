@@ -17,20 +17,97 @@ use super::authority::*;
 /// One page of a team's members who are still active members of its organization.
 const TEAM_MEMBERS_PAGE: &str = "SELECT tm.* FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.id>?3 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password ORDER BY tm.id LIMIT ?4";
 
-/// One page of a team's repository grants. Team visibility is not READ, so the rows are
-/// filtered before paging with same-organization team access plus direct or public READ.
-fn team_repositories_page_sql() -> String {
-    format!("SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM effective_team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id JOIN users u ON u.id=?6 WHERE a.team_id=?1 AND a.id>?2 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=?3 AND r.owner_user_id IS NULL AND (?5 OR NOT r.is_private OR ({})>=1) ORDER BY a.id LIMIT ?4",super::super::repositories::access::USER_REPO_ACCESS_SQL)
+/// Team members with the role the GitHub API reports: organization owners count as maintainers.
+const REPORTED_MEMBERS: &str = "SELECT tm.id, tm.team_id, tm.user_id, CASE WHEN om.role='owner' THEN 'maintainer' ELSE tm.role END AS role, tm.created_at FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password";
+
+/// A team's visible parent in the same organization. Secret teams have no parent.
+const PARENT: &str = "SELECT p.* FROM teams t JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id WHERE t.id=?1 AND t.privacy='visible' AND p.privacy='visible'";
+
+/// A team and every team below it.
+const SUBTREE: &str = "SELECT team_id FROM team_ancestors WHERE ancestor_id=?1";
+
+/// A team's repository grants, `?2` and `?4` being the caller's row filter and limit. Team
+/// visibility is not READ, so the rows are filtered with same-organization team access plus
+/// direct or public READ before the limit applies.
+fn team_repositories_sql(filter: &str) -> String {
+    format!("SELECT a.id, a.repo_id, a.permission, r.name, o.name AS owner FROM effective_team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN organizations o ON o.id=r.owner_org_id JOIN users u ON u.id=?6 WHERE a.team_id=?1 AND {filter} AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=?3 AND r.owner_user_id IS NULL AND (?5 OR NOT r.is_private OR ({USER_REPO_ACCESS_SQL})>=1) ORDER BY a.id LIMIT ?4")
+}
+
+/// The team when the actor may read it: an active member of its organization who can see it.
+async fn readable_team(
+    connection: &mut sqlx::SqliteConnection,
+    actor: i64,
+    org: i64,
+    team: i64,
+) -> Result<Option<(OrgRole, Team)>> {
+    let Applied(role) = read_authority(connection, actor, org).await? else {
+        return Ok(None);
+    };
+    let Some(team) = scoped_team(connection, org, team).await? else {
+        return Ok(None);
+    };
+    Ok(team_visible(connection, actor, role, &team)
+        .await?
+        .then_some((role, team)))
+}
+
+/// The team page's counts and parent, read in the transaction that authorized the team.
+async fn public_team(
+    connection: &mut sqlx::SqliteConnection,
+    actor: i64,
+    role: OrgRole,
+    team: Team,
+) -> Result<PublicTeam> {
+    let org = team.org_id;
+    let member_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password")
+        .bind(org).bind(team.id).fetch_one(&mut *connection).await?;
+    let repository_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM effective_team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?4 WHERE a.team_id=?1 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (?3 OR NOT r.is_private OR ({USER_REPO_ACCESS_SQL})>=1)"))
+        .bind(team.id).bind(org).bind(administers(role)).bind(actor).fetch_one(&mut *connection).await?;
+    let parent = sqlx::query_as(PARENT)
+        .bind(team.id)
+        .fetch_optional(connection)
+        .await?;
+    Ok(PublicTeam {
+        manage: administers(role),
+        team,
+        member_count,
+        repository_count,
+        parent,
+    })
+}
+
+async fn manages_team(
+    c: &mut sqlx::SqliteConnection,
+    actor: i64,
+    org: i64,
+    team: i64,
+    role: OrgRole,
+) -> Result<bool> {
+    if administers(role) {
+        return Ok(true);
+    }
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM teams t JOIN team_memberships m ON m.team_id=t.id WHERE t.id=?1 AND t.org_id=?2 AND m.user_id=?3 AND m.role='maintainer')")
+        .bind(team).bind(org).bind(actor).fetch_one(c).await?)
 }
 
 pub async fn create_organization_team(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &NewTeam,
 ) -> Result<OrganizationOutcome<Team>> {
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -48,14 +125,27 @@ pub async fn create_organization_team(
         }
     }
     for &repo in &input.repositories {
+        if let Some(token) = token {
+            if !super::super::users::tokens::repository_write_on(
+                &mut tx,
+                token,
+                actor,
+                repo,
+                "administration",
+            )
+            .await?
+            {
+                return Ok(Denied);
+            }
+        }
         if !scoped_repo(&mut tx, org, repo).await? {
             return Ok(Conflict);
         }
     }
     let parent = input.profile.parent_team_id.flatten();
-    validate_parent(&mut tx, org, 0, parent, input.profile.privacy).await?;
+    validate_parent(&mut tx, org, 0, parent, input.privacy).await?;
     let team: Option<Team> = sqlx::query_as("INSERT INTO teams(org_id,slug,name,description,privacy,default_permission,notifications_enabled,parent_team_id) VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(org_id,slug) DO NOTHING RETURNING *")
-        .bind(org).bind(&input.slug).bind(&input.profile.name).bind(&input.profile.description).bind(input.profile.privacy.as_str()).bind(input.profile.default_permission.unwrap_or(1)).bind(input.profile.notifications_enabled.unwrap_or(true)).bind(parent).fetch_optional(&mut *tx).await?;
+        .bind(org).bind(&input.slug).bind(&input.name).bind(input.profile.description.clone().flatten()).bind(input.privacy.as_str()).bind(input.profile.default_permission.unwrap_or(1)).bind(input.profile.notifications_enabled.unwrap_or(true)).bind(parent).fetch_optional(&mut *tx).await?;
     let Some(team) = team else {
         return Ok(Conflict);
     };
@@ -72,25 +162,41 @@ pub async fn create_organization_team(
 }
 pub async fn update_organization_team(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     input: &TeamProfile,
 ) -> Result<OrganizationOutcome<Team>> {
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !administers(role) {
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
+    if !manages_team(&mut tx, actor, org, team, role).await? {
         return Ok(Denied);
     }
     let Some(current) = scoped_team(&mut tx, org, team).await? else {
         return Ok(Missing);
     };
     let parent = input.parent_team_id.unwrap_or(current.parent_team_id);
-    let privacy = if input.keep_privacy {
-        crate::backend::db::organizations::TeamPrivacy::parse(&current.privacy)
-            .map_err(|_| anyhow::anyhow!("Invalid stored team privacy"))?
-    } else {
-        input.privacy
+    if !administers(role) && parent != current.parent_team_id {
+        if let Some(parent) = parent {
+            if !manages_team(&mut tx, actor, org, parent, role).await? {
+                return Ok(Denied);
+            }
+        }
+    }
+    let privacy = match input.privacy {
+        Some(privacy) => privacy,
+        None => TeamPrivacy::parse(&current.privacy)
+            .map_err(|_| anyhow::anyhow!("Invalid stored team privacy"))?,
     };
     validate_parent(&mut tx, org, team, parent, privacy).await?;
     if let Some(slug) = &input.slug {
@@ -110,7 +216,7 @@ pub async fn update_organization_team(
     // members that it takes below write access; runs already below it are left alone.
     let team_id = team;
     let reparented = parent != current.parent_team_id && current.parent_team_id.is_some();
-    let denied_runs = format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id WHERE r.owner_kind='org' AND r.owner_org_id=?1 AND c.triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id=?2) AND (c.status IN ('queued','running') OR c.completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND ({USER_REPO_ACCESS_SQL}) < 3");
+    let denied_runs = format!("SELECT c.id FROM ci_runs c JOIN repositories r ON r.id=c.repo_id JOIN users u ON u.id=c.triggered_by_id WHERE r.owner_kind='org' AND r.owner_org_id=?1 AND c.triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id=?2) AND (c.status IN ('queued','running') OR c.completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND ({USER_REPO_ACCESS_SQL}) < CASE WHEN c.pipeline IN ('cd','full') OR c.environment IS NOT NULL THEN 5 ELSE 3 END");
     let denied_before: Vec<i64> = if reparented {
         sqlx::query_scalar(&denied_runs)
             .bind(org)
@@ -120,8 +226,8 @@ pub async fn update_organization_team(
     } else {
         Vec::new()
     };
-    let team = sqlx::query_as("UPDATE teams SET name=?3,description=?4,privacy=?5,slug=COALESCE(?6,slug),default_permission=COALESCE(?7,default_permission),notifications_enabled=COALESCE(?8,notifications_enabled),parent_team_id=?9,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND org_id=?2 RETURNING *")
-        .bind(team).bind(org).bind(&input.name).bind(&input.description).bind(privacy.as_str()).bind(&input.slug).bind(input.default_permission).bind(input.notifications_enabled).bind(parent).fetch_one(&mut *tx).await?;
+    let team = sqlx::query_as("UPDATE teams SET name=COALESCE(?3,name),description=CASE WHEN ?10 THEN ?4 ELSE description END,privacy=?5,slug=COALESCE(?6,slug),default_permission=COALESCE(?7,default_permission),notifications_enabled=COALESCE(?8,notifications_enabled),parent_team_id=?9,updated_at=strftime('%Y-%m-%dT%H:%M:%f000Z','now') WHERE id=?1 AND org_id=?2 RETURNING *")
+        .bind(team).bind(org).bind(&input.name).bind(input.description.clone().flatten()).bind(privacy.as_str()).bind(&input.slug).bind(input.default_permission).bind(input.notifications_enabled).bind(parent).bind(input.description.is_some()).fetch_one(&mut *tx).await?;
     if reparented {
         let denied: Vec<i64> = sqlx::query_scalar(&denied_runs)
             .bind(org)
@@ -139,31 +245,47 @@ pub async fn update_organization_team(
 }
 pub async fn delete_organization_team(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !administers(role) {
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
+    if !manages_team(&mut tx, actor, org, team, role).await? {
         return Ok(Denied);
     }
     if scoped_team(&mut tx, org, team).await?.is_none() {
         return Ok(Missing);
     }
-    let runs: Vec<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id=?1) AND repo_id IN (SELECT r.id FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id=?1 AND a.repo_id=r.id AND a.permission>=3) OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 3 AND 5 JOIN team_ancestors lineage ON lineage.ancestor_id=a.team_id WHERE lineage.team_id=?1 AND a.org_id=?2 AND a.user_id IS NULL)))")
+    // The runs of everyone on the team or a child team, on repositories that any of them reach.
+    let runs: Vec<i64> = sqlx::query_scalar(&format!("SELECT id FROM ci_runs WHERE (status IN ('queued','running') OR completed_at > strftime('%Y-%m-%dT%H:%M:%f000Z','now','-1 hour')) AND triggered_by_id IN (SELECT user_id FROM effective_team_memberships WHERE team_id IN ({SUBTREE})) AND repo_id IN (SELECT r.id FROM repositories r WHERE r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (EXISTS(SELECT 1 FROM effective_team_repo_access a WHERE a.team_id IN ({SUBTREE}) AND a.repo_id=r.id AND a.permission>=3) OR EXISTS(SELECT 1 FROM organization_role_assignments a JOIN organization_roles role ON role.id=a.role_id AND role.base_level BETWEEN 3 AND 5 JOIN team_ancestors lineage ON lineage.ancestor_id=a.team_id WHERE lineage.team_id IN ({SUBTREE}) AND a.org_id=?2 AND a.user_id IS NULL)))"))
         .bind(team).bind(org).fetch_all(&mut *tx).await?;
     super::super::ci::stop_ci_runs(&mut tx, &runs).await?;
-    sqlx::query("DELETE FROM team_repo_access WHERE team_id=?1")
+    let teams: Vec<i64> = sqlx::query_scalar(SUBTREE)
         .bind(team)
+        .fetch_all(&mut *tx)
+        .await?;
+    let teams = serde_json::to_string(&teams)?;
+    sqlx::query("DELETE FROM team_repo_access WHERE team_id IN (SELECT value FROM json_each(?1))")
+        .bind(&teams)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM team_memberships WHERE team_id=?1")
-        .bind(team)
+    sqlx::query("DELETE FROM team_memberships WHERE team_id IN (SELECT value FROM json_each(?1))")
+        .bind(&teams)
         .execute(&mut *tx)
         .await?;
-    sqlx::query("DELETE FROM teams WHERE id=?1 AND org_id=?2")
-        .bind(team)
+    sqlx::query("DELETE FROM teams WHERE org_id=?2 AND id IN (SELECT value FROM json_each(?1))")
+        .bind(&teams)
         .bind(org)
         .execute(&mut *tx)
         .await?;
@@ -178,8 +300,22 @@ pub async fn list_organization_teams(
 ) -> Result<OrganizationOutcome<Vec<TeamListing>>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
-    let teams = sqlx::query_as("SELECT t.*, (SELECT COUNT(*) FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=t.org_id JOIN users u ON u.id=tm.user_id WHERE tm.team_id=t.id AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password) AS member_count FROM teams t WHERE t.org_id=?1 AND t.id>?2 AND (t.privacy='visible' OR (t.privacy='secret' AND (?3 OR EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=?4 AND m.role IN ('member','maintainer'))))) ORDER BY t.id LIMIT ?5")
+    let mut teams: Vec<TeamListing> = sqlx::query_as("SELECT t.*, (SELECT COUNT(*) FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=t.org_id JOIN users u ON u.id=tm.user_id WHERE tm.team_id=t.id AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password) AS member_count FROM teams t WHERE t.org_id=?1 AND t.id>?2 AND (t.privacy='visible' OR (t.privacy='secret' AND (?3 OR EXISTS(SELECT 1 FROM team_memberships m WHERE m.team_id=t.id AND m.user_id=?4 AND m.role IN ('member','maintainer'))))) ORDER BY t.id LIMIT ?5")
         .bind(org).bind(page.after).bind(administers(role)).bind(actor).bind(page.limit).fetch_all(&mut *tx).await?;
+    let ids: Vec<i64> = teams
+        .iter()
+        .filter(|row| row.team.privacy == "visible")
+        .filter_map(|row| row.team.parent_team_id)
+        .collect();
+    let parents: Vec<Team> = sqlx::query_as("SELECT * FROM teams WHERE org_id=?1 AND privacy='visible' AND id IN (SELECT value FROM json_each(?2))")
+        .bind(org).bind(serde_json::to_string(&ids)?).fetch_all(&mut *tx).await?;
+    for row in &mut teams {
+        row.parent = row
+            .team
+            .parent_team_id
+            .filter(|_| row.team.privacy == "visible")
+            .and_then(|id| parents.iter().find(|parent| parent.id == id).cloned());
+    }
     tx.commit().await?;
     Ok(Applied(teams))
 }
@@ -204,6 +340,16 @@ pub async fn list_organization_team_members(
     team: i64,
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<TeamMembership>>> {
+    list_members(pool, actor, org, team, page, false).await
+}
+async fn list_members(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    team: i64,
+    page: OrganizationPage,
+    direct: bool,
+) -> Result<OrganizationOutcome<Vec<TeamMembership>>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
     let Some(team) = scoped_team(&mut tx, org, team).await? else {
@@ -212,27 +358,34 @@ pub async fn list_organization_team_members(
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(Denied);
     }
-    let members = sqlx::query_as(TEAM_MEMBERS_PAGE)
-        .bind(org)
-        .bind(team.id)
-        .bind(page.after)
-        .bind(page.limit)
-        .fetch_all(&mut *tx)
-        .await?;
+    // Archives preserve dormant direct grants; display and effective-access filters do not apply.
+    let members = sqlx::query_as(if direct { "SELECT tm.* FROM team_memberships tm JOIN teams t ON t.id=tm.team_id WHERE t.org_id=?1 AND tm.team_id=?2 AND tm.id>?3 ORDER BY tm.id LIMIT ?4" } else { TEAM_MEMBERS_PAGE })
+        .bind(org).bind(team.id).bind(page.after).bind(page.limit)
+        .fetch_all(&mut *tx).await?;
     tx.commit().await?;
     Ok(Applied(members))
 }
 pub async fn add_organization_team_member(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     target: i64,
     role: TeamRole,
 ) -> Result<OrganizationOutcome<TeamMembership>> {
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
-    if !administers(actor_role) {
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
+    if !manages_team(&mut tx, actor, org, team, actor_role).await? {
         return Ok(Denied);
     }
     if !active(&mut tx, target).await? {
@@ -255,14 +408,24 @@ pub async fn add_organization_team_member(
 }
 pub async fn remove_organization_team_member(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
-    if !administers(role) {
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await? {
+            return Ok(Denied);
+        }
+    }
+    if !manages_team(&mut tx, actor, org, team, role).await? {
         return Ok(Denied);
     }
     // Exact scoped cleanup, not a grant: target activity/org role is irrelevant.
@@ -292,14 +455,33 @@ pub async fn remove_organization_team_member(
 }
 pub async fn grant_organization_team_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     repo: i64,
     permission: TeamRepositoryPermission,
 ) -> Result<OrganizationOutcome<TeamRepoAccess>> {
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await?
+            || !super::super::users::tokens::repository_write_on(
+                &mut tx,
+                token,
+                actor,
+                repo,
+                "administration",
+            )
+            .await?
+        {
+            return Ok(Denied);
+        }
+    }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -326,13 +508,32 @@ pub async fn grant_organization_team_repository(
 }
 pub async fn revoke_organization_team_repository(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     repo: i64,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant: crate::backend::db::credentials::Actor = actor.into();
+    let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let role = require_org!(tx, actor, org);
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
+    if let Some(token) = token {
+        if !super::super::users::tokens::team_write_on(&mut tx, token, actor, org).await?
+            || !super::super::users::tokens::repository_write_on(
+                &mut tx,
+                token,
+                actor,
+                repo,
+                "administration",
+            )
+            .await?
+        {
+            return Ok(Denied);
+        }
+    }
     if !administers(role) {
         return Ok(Denied);
     }
@@ -367,6 +568,16 @@ pub async fn list_organization_team_repositories(
     team: i64,
     page: OrganizationPage,
 ) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>> {
+    list_repositories(pool, actor, org, team, page, false).await
+}
+async fn list_repositories(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    team: i64,
+    page: OrganizationPage,
+    direct: bool,
+) -> Result<OrganizationOutcome<Vec<TeamRepositoryGrant>>> {
     let mut tx = begin_read(pool).await?;
     let role = require_read_org!(tx, actor, org);
     let Some(team) = scoped_team(&mut tx, org, team).await? else {
@@ -375,7 +586,13 @@ pub async fn list_organization_team_repositories(
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(Denied);
     }
-    let rows = sqlx::query_as(&team_repositories_page_sql())
+    let sql = team_repositories_sql("a.id>?2");
+    let sql = if direct {
+        sql.replace("effective_team_repo_access", "team_repo_access")
+    } else {
+        sql
+    };
+    let rows = sqlx::query_as(&sql)
         .bind(team.id)
         .bind(page.after)
         .bind(org)
@@ -409,17 +626,30 @@ pub async fn get_public_team(
     if !team_visible(&mut tx, actor, role, &team).await? {
         return Ok(None);
     }
-    let member_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM effective_team_memberships tm JOIN org_memberships om ON om.user_id=tm.user_id AND om.org_id=?1 JOIN users u ON u.id=tm.user_id WHERE tm.team_id=?2 AND tm.role IN ('member','maintainer') AND om.role IN ('owner','admin','member') AND NOT u.is_banned AND NOT u.must_change_password")
-        .bind(org).bind(team.id).fetch_one(&mut *tx).await?;
-    let repository_count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM effective_team_repo_access a JOIN repositories r ON r.id=a.repo_id JOIN users u ON u.id=?4 WHERE a.team_id=?1 AND a.permission BETWEEN 1 AND 5 AND r.owner_kind='org' AND r.owner_org_id=?2 AND r.owner_user_id IS NULL AND (?3 OR NOT r.is_private OR ({})>=1)",super::super::repositories::access::USER_REPO_ACCESS_SQL))
-        .bind(team.id).bind(org).bind(administers(role)).bind(actor).fetch_one(&mut *tx).await?;
+    let public = public_team(&mut tx, actor, role, team).await?;
     tx.commit().await?;
-    Ok(Some(PublicTeam {
-        manage: administers(role),
-        team,
-        member_count,
-        repository_count,
-    }))
+    Ok(Some(public))
+}
+/// The same read by team ID, for the routes that name no organization.
+pub async fn get_public_team_by_id(
+    pool: &SqlitePool,
+    actor: i64,
+    team: i64,
+) -> Result<Option<PublicTeam>> {
+    let mut tx = begin_read(pool).await?;
+    let Some(org) = sqlx::query_scalar::<_, i64>("SELECT org_id FROM teams WHERE id=?1")
+        .bind(team)
+        .fetch_optional(&mut *tx)
+        .await?
+    else {
+        return Ok(None);
+    };
+    let Some((role, team)) = readable_team(&mut tx, actor, org, team).await? else {
+        return Ok(None);
+    };
+    let public = public_team(&mut tx, actor, role, team).await?;
+    tx.commit().await?;
+    Ok(Some(public))
 }
 pub async fn list_public_team_members(
     pool: &SqlitePool,
@@ -428,25 +658,12 @@ pub async fn list_public_team_members(
     team: i64,
     page: OrganizationPage,
 ) -> Result<Option<Vec<TeamMembership>>> {
-    let mut tx = begin_read(pool).await?;
-    let Applied(role) = read_authority(&mut tx, actor, org).await? else {
-        return Ok(None);
-    };
-    let Some(team) = scoped_team(&mut tx, org, team).await? else {
-        return Ok(None);
-    };
-    if !team_visible(&mut tx, actor, role, &team).await? {
-        return Ok(None);
-    }
-    let members = sqlx::query_as(TEAM_MEMBERS_PAGE)
-        .bind(org)
-        .bind(team.id)
-        .bind(page.after)
-        .bind(page.limit)
-        .fetch_all(&mut *tx)
-        .await?;
-    tx.commit().await?;
-    Ok(Some(members))
+    Ok(
+        match list_members(pool, actor, org, team, page, false).await? {
+            Applied(rows) => Some(rows),
+            _ => None,
+        },
+    )
 }
 pub async fn list_public_team_repositories(
     pool: &SqlitePool,
@@ -455,27 +672,78 @@ pub async fn list_public_team_repositories(
     team: i64,
     page: OrganizationPage,
 ) -> Result<Option<Vec<TeamRepositoryGrant>>> {
+    Ok(
+        match list_repositories(pool, actor, org, team, page, false).await? {
+            Applied(rows) => Some(rows),
+            _ => None,
+        },
+    )
+}
+pub async fn get_public_team_repository(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    team: i64,
+    repo: i64,
+) -> Result<Option<Option<TeamRepositoryGrant>>> {
     let mut tx = begin_read(pool).await?;
-    let Applied(role) = read_authority(&mut tx, actor, org).await? else {
+    let Some((role, team)) = readable_team(&mut tx, actor, org, team).await? else {
         return Ok(None);
     };
-    let Some(team) = scoped_team(&mut tx, org, team).await? else {
-        return Ok(None);
-    };
-    if !team_visible(&mut tx, actor, role, &team).await? {
-        return Ok(None);
-    }
-    let rows = sqlx::query_as(&team_repositories_page_sql())
+    let grant = sqlx::query_as(&team_repositories_sql("a.repo_id=?2"))
         .bind(team.id)
-        .bind(page.after)
+        .bind(repo)
         .bind(org)
-        .bind(page.limit)
+        .bind(1_i64)
         .bind(administers(role))
         .bind(actor)
+        .fetch_optional(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Some(grant))
+}
+pub async fn list_team_members_by_role(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    team: i64,
+    role: Option<TeamRole>,
+    page: OrganizationPage,
+) -> Result<Option<Vec<TeamMembership>>> {
+    let mut tx = begin_read(pool).await?;
+    let Some((_, team)) = readable_team(&mut tx, actor, org, team).await? else {
+        return Ok(None);
+    };
+    let members = sqlx::query_as(&format!("{REPORTED_MEMBERS} AND tm.id>?3 AND (?5 IS NULL OR (CASE WHEN om.role='owner' THEN 'maintainer' ELSE tm.role END)=?5) ORDER BY tm.id LIMIT ?4"))
+        .bind(org)
+        .bind(team.id)
+        .bind(page.after)
+        .bind(page.limit)
+        .bind(role.map(TeamRole::as_str))
         .fetch_all(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(Some(rows))
+    Ok(Some(members))
+}
+pub async fn get_team_member(
+    pool: &SqlitePool,
+    actor: i64,
+    org: i64,
+    team: i64,
+    user: i64,
+) -> Result<Option<Option<TeamMembership>>> {
+    let mut tx = begin_read(pool).await?;
+    let Some((_, team)) = readable_team(&mut tx, actor, org, team).await? else {
+        return Ok(None);
+    };
+    let member = sqlx::query_as(&format!("{REPORTED_MEMBERS} AND tm.user_id=?3"))
+        .bind(org)
+        .bind(team.id)
+        .bind(user)
+        .fetch_optional(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(Some(member))
 }
 
 /// Users on a team who are current members of its organization. Code owner names such as
@@ -524,13 +792,7 @@ pub async fn list_child_teams(
     page: OrganizationPage,
 ) -> Result<Option<Vec<Team>>> {
     let mut tx = begin_read(pool).await?;
-    let Applied(role) = read_authority(&mut tx, actor, org).await? else {
-        return Ok(None);
-    };
-    let Some(selected) = scoped_team(&mut tx, org, team).await? else {
-        return Ok(None);
-    };
-    if !team_visible(&mut tx, actor, role, &selected).await? {
+    if readable_team(&mut tx, actor, org, team).await?.is_none() {
         return Ok(None);
     }
     let rows = sqlx::query_as("SELECT * FROM teams WHERE org_id=?1 AND parent_team_id=?2 AND privacy='visible' AND id>?3 ORDER BY id LIMIT ?4")
@@ -540,7 +802,55 @@ pub async fn list_child_teams(
 }
 
 pub async fn get_team_parent(pool: &SqlitePool, team: i64) -> Result<Option<Team>> {
-    Ok(sqlx::query_as("SELECT p.* FROM teams t JOIN teams p ON p.id=t.parent_team_id AND p.org_id=t.org_id WHERE t.id=?1 AND t.privacy='visible' AND p.privacy='visible'").bind(team).fetch_optional(pool).await?)
+    Ok(sqlx::query_as(PARENT)
+        .bind(team)
+        .fetch_optional(pool)
+        .await?)
+}
+
+pub async fn team_identity(
+    pool: &SqlitePool,
+    actor: i64,
+    token: i64,
+    identity: crate::backend::db::organizations::teams::TeamIdentity<'_>,
+) -> Result<Option<Team>> {
+    use crate::backend::{db::organizations::teams::TeamIdentity, identity::oauth_apps};
+    let mut tx = begin_read(pool).await?;
+    let scopes: Option<Option<String>> = sqlx::query_scalar("SELECT oa.scopes FROM personal_access_tokens t JOIN users u ON u.id=t.user_id LEFT JOIN oauth_app_tokens oa ON oa.token_id=t.id WHERE t.id=?1 AND t.user_id=?2 AND NOT u.is_banned AND NOT u.must_change_password AND (t.expires_at IS NULL OR julianday(t.expires_at)>julianday('now')) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM actions_github_tokens j WHERE j.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_app_tokens a WHERE a.token_id=t.id) AND NOT EXISTS(SELECT 1 FROM github_apps a WHERE a.client_id=oa.client_id) AND (oa.client_id IS NULL OR oa.client_id=?3 OR EXISTS(SELECT 1 FROM oauth_applications a WHERE a.client_id=oa.client_id))")
+        .bind(token).bind(actor).bind(oauth_apps::CLI_CLIENT).fetch_optional(&mut *tx).await?;
+    let Some(scopes) = scopes else {
+        return Ok(None);
+    };
+    if scopes
+        .as_ref()
+        .is_some_and(|scopes| !oauth_apps::has_scope(scopes, "read:org"))
+    {
+        return Ok(None);
+    }
+    let (id, org, slug) = match identity {
+        TeamIdentity::Id(id) => (Some(id), None, None),
+        TeamIdentity::Slug(org, slug) => (None, Some(org), Some(slug)),
+    };
+    let Some(team) = sqlx::query_as::<_, Team>(
+        "SELECT * FROM teams WHERE (id=?1 AND ?2 IS NULL) OR (org_id=?2 AND slug=?3)",
+    )
+    .bind(id)
+    .bind(org)
+    .bind(slug)
+    .fetch_optional(&mut *tx)
+    .await?
+    else {
+        return Ok(None);
+    };
+    if scopes.is_none() && sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM organization_token_policies WHERE org_id=?1 AND NOT classic_allowed)").bind(team.org_id).fetch_one(&mut *tx).await? { return Ok(None); }
+    let Applied(role) = read_authority(&mut tx, actor, team.org_id).await? else {
+        return Ok(None);
+    };
+    if !team_visible(&mut tx, actor, role, &team).await? {
+        return Ok(None);
+    }
+    tx.commit().await?;
+    Ok(Some(team))
 }
 
 pub async fn get_team_by_id(pool: &SqlitePool, actor: i64, team: i64) -> Result<Option<Team>> {
@@ -572,6 +882,6 @@ pub async fn list_user_teams(
         (0..=1_000_000).contains(&offset) && (1..=101).contains(&limit),
         "Invalid page"
     );
-    Ok(sqlx::query_as("SELECT t.* FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id JOIN org_memberships om ON om.org_id=t.org_id AND om.user_id=tm.user_id JOIN users u ON u.id=tm.user_id WHERE u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND om.role IN ('owner','admin','member') AND tm.role IN ('member','maintainer') AND t.privacy IN ('visible','secret') ORDER BY t.id LIMIT ?2 OFFSET ?3")
+    Ok(sqlx::query_as("SELECT t.* FROM teams t JOIN effective_team_memberships tm ON tm.team_id=t.id JOIN org_memberships om ON om.org_id=t.org_id AND om.user_id=tm.user_id JOIN users u ON u.id=tm.user_id WHERE u.id=?1 AND NOT u.is_banned AND NOT u.must_change_password AND om.role IN ('owner','admin','member') AND tm.role IN ('member','maintainer') AND t.privacy IN ('visible','secret') AND NOT EXISTS(SELECT 1 FROM organization_blocks b WHERE b.org_id=t.org_id AND b.user_id=u.id) AND EXISTS(SELECT 1 FROM org_memberships own JOIN users usable ON usable.id=own.user_id WHERE own.org_id=t.org_id AND own.role='owner' AND NOT usable.is_banned AND NOT usable.must_change_password) ORDER BY t.id LIMIT ?2 OFFSET ?3")
         .bind(actor).bind(limit).bind(offset).fetch_all(pool).await?)
 }

@@ -640,6 +640,9 @@ async fn contract(pg: bool) {
             f.pool(),
             None,
             manager,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(f.pool(), manager).await
+            ),
             org.id,
             &db::organization_values::Save {
                 kind: db::organization_values::Kind::Variable,
@@ -703,6 +706,9 @@ async fn transfer_selections(pg: bool) {
             f.pool(),
             Some(&encryptor),
             owner,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(f.pool(), owner).await,
+            ),
             organizations[0].id,
             &Save {
                 kind,
@@ -716,10 +722,19 @@ async fn transfer_selections(pg: bool) {
         .await
         .unwrap();
         assert_eq!(
-            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED")
-                .await
-                .unwrap()
-                .len(),
+            values::repositories(
+                f.pool(),
+                owner,
+                organizations[0].id,
+                kind,
+                "SELECTED",
+                0,
+                100
+            )
+            .await
+            .unwrap()
+            .1
+            .len(),
             1
         );
     }
@@ -739,12 +754,19 @@ async fn transfer_selections(pg: bool) {
             .await
             .unwrap()
             .is_empty());
-        assert!(
-            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED")
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        assert!(values::repositories(
+            f.pool(),
+            owner,
+            organizations[0].id,
+            kind,
+            "SELECTED",
+            0,
+            100
+        )
+        .await
+        .unwrap()
+        .1
+        .is_empty());
     }
     lifecycle::transfer(f.pool(), None, owner, repo.id, &organizations[0].name)
         .await
@@ -754,12 +776,19 @@ async fn transfer_selections(pg: bool) {
             .await
             .unwrap()
             .is_empty());
-        assert!(
-            values::repositories(f.pool(), owner, organizations[0].id, kind, "SELECTED")
-                .await
-                .unwrap()
-                .is_empty()
-        );
+        assert!(values::repositories(
+            f.pool(),
+            owner,
+            organizations[0].id,
+            kind,
+            "SELECTED",
+            0,
+            100
+        )
+        .await
+        .unwrap()
+        .1
+        .is_empty());
     }
     f.finish().await;
 }

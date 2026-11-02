@@ -144,7 +144,18 @@ async fn pull_text(
         Ok(None) => return axum::http::StatusCode::NOT_FOUND.into_response(),
         Err(_) => return axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
-    crate::backend::api::github::pull_diff_text(state, &repository, &pull, patch).await
+    let response =
+        crate::backend::api::github::pull_diff_text(state, &repository, &pull, patch).await;
+    if let Err(error) = crate::backend::api::repos::access::check_repo_read_access(
+        &state.pool,
+        &repository,
+        headers,
+    )
+    .await
+    {
+        return error.into_response();
+    }
+    crate::backend::api::http::render::secure_html_headers(response)
 }
 
 async fn pull_alias_with_tab(

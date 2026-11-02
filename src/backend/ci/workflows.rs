@@ -1,7 +1,12 @@
 use super::config::CiPipelineKind;
-use super::dispatch_inputs::{self, DispatchInput, InputKind, MAX_INPUTS};
 use crate::backend::repositories::store::{ErrorKind, RepoError, RepoStore, MAX_CI_WORKFLOW_BYTES};
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
+pub use codeyard_actions::workflow::events::{WorkflowEventFilter, WorkflowTriggers};
+#[cfg(test)]
+use codeyard_actions::workflow::{
+    dispatch_inputs::InputKind,
+    events::{MAX_WORKFLOW_FILTER_PATTERNS, MAX_WORKFLOW_PATTERN_BYTES},
+};
 use serde::{Deserialize, Serialize};
 use serde_yaml::Value;
 use std::{
@@ -13,6 +18,21 @@ use tokio::sync::Semaphore;
 use tracing::warn;
 
 pub(super) static PARSING_SLOTS: Semaphore = Semaphore::const_new(2);
+
+pub(super) async fn parse_definitions(
+    definitions: &BTreeMap<String, Vec<u8>>,
+) -> Result<BTreeMap<String, Value>> {
+    let permit = PARSING_SLOTS.acquire().await?;
+    let definitions = definitions.clone();
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        definitions
+            .into_iter()
+            .map(|(path, bytes)| Ok((path, parse_yaml(&bytes)?)))
+            .collect()
+    })
+    .await?
+}
 static DISCOVERY_SLOTS: Semaphore = Semaphore::const_new(2);
 static DISCOVERY_PAYLOADS: Semaphore = Semaphore::const_new(4);
 // Let the store finish its address and replica fallback before discovery gives up.
@@ -30,36 +50,6 @@ struct CachedWorkflows {
 
 static WORKFLOW_CACHE: LazyLock<Mutex<VecDeque<CachedWorkflows>>> =
     LazyLock::new(|| Mutex::new(VecDeque::new()));
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkflowEventFilter {
-    #[serde(default)]
-    pub types: Vec<String>,
-    #[serde(default)]
-    pub workflows: Vec<String>,
-    pub branches: Vec<String>,
-    pub branches_ignore: Vec<String>,
-    pub tags: Vec<String>,
-    pub tags_ignore: Vec<String>,
-    pub paths: Vec<String>,
-    pub paths_ignore: Vec<String>,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct WorkflowTriggers {
-    pub push: Option<WorkflowEventFilter>,
-    pub pull_request: Option<WorkflowEventFilter>,
-    #[serde(default)]
-    pub pull_request_target: Option<WorkflowEventFilter>,
-    pub workflow_dispatch: bool,
-    #[serde(default)]
-    pub events: BTreeMap<String, WorkflowEventFilter>,
-    #[serde(default)]
-    pub schedules: Vec<String>,
-    /// The `inputs` of `on.workflow_dispatch`, in the order the file declares them.
-    #[serde(default)]
-    pub dispatch_inputs: Vec<DispatchInput>,
-}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WorkflowDefinition {
@@ -100,7 +90,7 @@ impl WorkflowMatchBudget {
         }
     }
 
-    fn charge(
+    pub(crate) fn charge(
         &mut self,
         pattern_bytes: usize,
         value_bytes: usize,
@@ -287,7 +277,7 @@ pub fn should_skip_run_from_message(message: &str) -> bool {
 /// quoted `skip-checks: true` in prose does not count.
 fn has_skip_checks_trailer(message: &str) -> bool {
     let message = message.trim_end().replace("\r\n", "\n");
-    let Some((_, trailers)) = message.rsplit_once("\n\n") else {
+    let Some((_, trailers)) = message.rsplit_once("\n\n\n") else {
         return false;
     };
     let mut skip = false;
@@ -299,18 +289,13 @@ fn has_skip_checks_trailer(message: &str) -> bool {
         if key.is_empty() || key.contains(char::is_whitespace) {
             return false;
         }
-        skip |=
-            key.eq_ignore_ascii_case("skip-checks") && value.trim().eq_ignore_ascii_case("true");
+        skip = key.eq_ignore_ascii_case("skip-checks") && value.trim().eq_ignore_ascii_case("true");
     }
     skip
 }
 
-pub async fn commit_message_for_ref(store: &RepoStore, commitish: &str) -> Option<String> {
-    store
-        .commit(commitish)
-        .await
-        .ok()
-        .map(|commit| commit.message)
+pub async fn commit_message_for_ref(store: &RepoStore, commitish: &str) -> Result<String> {
+    Ok(store.commit(commitish).await?.message)
 }
 
 /// Reads the kind from whole words in the file name: `deploy-image.yml` is a deploy
@@ -328,16 +313,10 @@ pub fn infer_pipeline_from_workflow_path(path: &str) -> CiPipelineKind {
 }
 
 pub fn workflow_name_from_path(path: &str) -> String {
-    let file_name = path.rsplit('/').next().unwrap_or(path);
-    file_name
-        .trim_end_matches(".yml")
-        .trim_end_matches(".yaml")
-        .to_string()
+    crate::webui::workflow_filename(path)
 }
 
 const MAX_WORKFLOW_NAME_BYTES: usize = 1024;
-const MAX_WORKFLOW_FILTER_PATTERNS: usize = 256;
-const MAX_WORKFLOW_PATTERN_BYTES: usize = 1024;
 
 async fn discovery_slot(
     slots: &Semaphore,
@@ -396,10 +375,30 @@ pub async fn list_workflows_for_ref(
     tokio::task::spawn_blocking(move || {
         // Cancellation must not release capacity while YAML is still being parsed or dropped.
         let (_permit, _payload) = (permit, payload);
+        struct Budget(usize);
+        impl std::io::Write for Budget {
+            fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+                self.0 = self.0.checked_sub(bytes.len()).ok_or_else(|| {
+                    std::io::Error::other("Workflow definitions exceed size limit")
+                })?;
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+        let mut budget = Budget(WORKFLOW_CACHE_BYTES - 2);
         let mut workflows = Vec::new();
         for file in files {
             match parse_workflow_definition(&file.path, &file.content) {
-                Ok(workflow) => workflows.push(workflow),
+                Ok(workflow) => {
+                    if !workflows.is_empty() {
+                        std::io::Write::write_all(&mut budget, b",")?;
+                    }
+                    serde_json::to_writer(&mut budget, &workflow)
+                        .context("Workflow definitions exceed size limit")?;
+                    workflows.push(workflow);
+                }
                 Err(error) => {
                     warn!(
                         "failed to parse workflow file {} at {}: {}",
@@ -410,9 +409,7 @@ pub async fn list_workflows_for_ref(
         }
 
         workflows.sort_by(|a, b| a.name.cmp(&b.name).then(a.path.cmp(&b.path)));
-        let bytes = serde_json::to_vec(&workflows)
-            .expect("workflow definitions serialize")
-            .len();
+        let bytes = WORKFLOW_CACHE_BYTES - budget.0;
         if bytes <= WORKFLOW_CACHE_BYTES {
             let mut cache = WORKFLOW_CACHE
                 .lock()
@@ -431,10 +428,10 @@ pub async fn list_workflows_for_ref(
                 definitions: workflows.clone(),
             });
         }
-        workflows
+        Ok(workflows)
     })
     .await
-    .context("workflow discovery task failed")
+    .context("workflow discovery task failed")?
 }
 
 fn parse_workflow_yaml(content: &str) -> Result<Value> {
@@ -542,7 +539,10 @@ pub(super) fn workflow_definition_from_yaml(
     yaml: &Value,
 ) -> Result<WorkflowDefinition> {
     let name = workflow_name(yaml, path)?;
-    let triggers = parse_triggers(extract_on_section(yaml))?;
+    let triggers = codeyard_actions::workflow::events::parse(yaml.get("on"))?;
+    for cron in &triggers.schedules {
+        super::schedule::parse(cron)?;
+    }
 
     Ok(WorkflowDefinition {
         path: path.to_string(),
@@ -603,15 +603,11 @@ fn text_field<'a>(value: &'a Value, key: &str) -> Option<&'a str> {
 }
 
 fn bounded(text: &str) -> String {
-    let mut end = text.len().min(MAX_STEP_NAME_BYTES);
-    while !text.is_char_boundary(end) {
-        end -= 1;
-    }
-    text[..end].to_owned()
+    text[..text.floor_char_boundary(MAX_STEP_NAME_BYTES)].to_owned()
 }
 
 fn workflow_name(yaml: &Value, path: &str) -> Result<String> {
-    let name = extract_string_field(yaml, "name").unwrap_or_else(|| workflow_name_from_path(path));
+    let name = extract_string_field(yaml, "name").unwrap_or_else(|| path.to_owned());
     ensure!(
         name.len() <= MAX_WORKFLOW_NAME_BYTES,
         "workflow name too long"
@@ -624,20 +620,6 @@ fn workflow_name(yaml: &Value, path: &str) -> Result<String> {
     Ok(name)
 }
 
-fn extract_on_section(yaml: &Value) -> Option<&Value> {
-    let Value::Mapping(mapping) = yaml else {
-        return None;
-    };
-
-    for (key, value) in mapping {
-        if yaml_key_to_string(key).as_deref() == Some("on") {
-            return Some(value);
-        }
-    }
-
-    None
-}
-
 fn extract_string_field(yaml: &Value, key_name: &str) -> Option<String> {
     let Value::Mapping(mapping) = yaml else {
         return None;
@@ -648,191 +630,13 @@ fn extract_string_field(yaml: &Value, key_name: &str) -> Option<String> {
             if let Some(text) = value.as_str() {
                 let trimmed = text.trim();
                 if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
+                    return Some(text.to_string());
                 }
             }
         }
     }
 
     None
-}
-
-fn parse_triggers(on_section: Option<&Value>) -> Result<WorkflowTriggers> {
-    let mut triggers = WorkflowTriggers::default();
-    let Some(on_value) = on_section else {
-        return Ok(triggers);
-    };
-
-    match on_value {
-        Value::String(event) => apply_event_trigger(event, &Value::Null, &mut triggers)?,
-        Value::Sequence(events) => {
-            for event in events {
-                if let Some(event_name) = event.as_str() {
-                    apply_event_trigger(event_name, &Value::Null, &mut triggers)?;
-                }
-            }
-        }
-        Value::Mapping(events) => {
-            for (event_key, config) in events {
-                if let Some(event_name) = yaml_key_to_string(event_key) {
-                    apply_event_trigger(&event_name, config, &mut triggers)?;
-                }
-            }
-        }
-        _ => {}
-    }
-
-    Ok(triggers)
-}
-
-fn apply_event_trigger(
-    event_name: &str,
-    config: &Value,
-    triggers: &mut WorkflowTriggers,
-) -> Result<()> {
-    match event_name.to_ascii_lowercase().as_str() {
-        "push" => triggers.push = Some(parse_event_filter(config)?),
-        "pull_request" => triggers.pull_request = Some(parse_event_filter(config)?),
-        "pull_request_target" => triggers.pull_request_target = Some(parse_event_filter(config)?),
-        "schedule" => {
-            let schedules = config
-                .as_sequence()
-                .context("workflow schedules must be a list")?;
-            ensure!(schedules.len() <= 32, "too many workflow schedules");
-            for value in schedules {
-                let cron = field(value, "cron")
-                    .and_then(Value::as_str)
-                    .context("workflow schedule requires cron")?;
-                super::schedule::parse(cron)?;
-                triggers.schedules.push(cron.to_owned());
-            }
-        }
-        "workflow_dispatch" => {
-            triggers.workflow_dispatch = true;
-            triggers.dispatch_inputs = parse_dispatch_inputs(config)?;
-        }
-        event if super::events::is_repository_event(event) => {
-            triggers
-                .events
-                .insert(event.to_owned(), parse_event_filter(config)?);
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn parse_dispatch_inputs(config: &Value) -> Result<Vec<DispatchInput>> {
-    let Some(inputs) = field(config, "inputs") else {
-        return Ok(Vec::new());
-    };
-    let Value::Mapping(mapping) = inputs else {
-        bail!("workflow inputs must be a mapping");
-    };
-    ensure!(
-        mapping.len() <= MAX_INPUTS,
-        "workflow declares too many inputs"
-    );
-    mapping
-        .iter()
-        .map(|(key, spec)| -> Result<DispatchInput> {
-            let kind = match field(spec, "type")
-                .and_then(Value::as_str)
-                .unwrap_or("string")
-            {
-                "string" => InputKind::Text,
-                "boolean" => InputKind::Boolean,
-                "number" => InputKind::Number,
-                "choice" => InputKind::Choice,
-                "environment" => InputKind::Environment,
-                _ => bail!("unsupported workflow input type"),
-            };
-            let options = match field(spec, "options") {
-                None => Vec::new(),
-                Some(Value::Sequence(values)) => {
-                    values.iter().map(scalar_text).collect::<Result<_>>()?
-                }
-                Some(_) => bail!("workflow input options must be a list"),
-            };
-            let input = DispatchInput {
-                name: key
-                    .as_str()
-                    .context("invalid workflow input name")?
-                    .to_owned(),
-                description: field(spec, "description")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_owned(),
-                kind,
-                required: field(spec, "required")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false),
-                default: field(spec, "default").map(scalar_text).transpose()?,
-                options,
-            };
-            dispatch_inputs::check_declaration(&input).map_err(anyhow::Error::msg)?;
-            Ok(input)
-        })
-        .collect()
-}
-
-/// A YAML scalar as the text GitHub shows for it: booleans as `true` or `false`.
-fn scalar_text(value: &Value) -> Result<String> {
-    match value {
-        Value::String(text) => Ok(text.clone()),
-        Value::Bool(flag) => Ok(flag.to_string()),
-        Value::Number(number) => Ok(number.to_string()),
-        _ => bail!("workflow input values must be scalars"),
-    }
-}
-
-fn parse_event_filter(config: &Value) -> Result<WorkflowEventFilter> {
-    ensure!(
-        config.is_null() || config.is_mapping(),
-        "invalid workflow event filter"
-    );
-    let mut filter = WorkflowEventFilter::default();
-    let Value::Mapping(mapping) = config else {
-        return Ok(filter);
-    };
-
-    for (key, value) in mapping {
-        match yaml_key_to_string(key).as_deref() {
-            Some("types") => filter.types = parse_pattern_list(value)?,
-            Some("workflows") => filter.workflows = parse_pattern_list(value)?,
-            Some("branches") => filter.branches = parse_pattern_list(value)?,
-            Some("branches-ignore") => filter.branches_ignore = parse_pattern_list(value)?,
-            Some("tags") => filter.tags = parse_pattern_list(value)?,
-            Some("tags-ignore") => filter.tags_ignore = parse_pattern_list(value)?,
-            Some("paths") => filter.paths = parse_pattern_list(value)?,
-            Some("paths-ignore") => filter.paths_ignore = parse_pattern_list(value)?,
-            _ => {}
-        }
-    }
-
-    Ok(filter)
-}
-
-fn parse_pattern_list(value: &Value) -> Result<Vec<String>> {
-    let values = match value {
-        Value::String(value) => vec![value.as_str()],
-        Value::Sequence(values) => values
-            .iter()
-            .map(|value| value.as_str().context("invalid workflow pattern"))
-            .collect::<Result<Vec<_>>>()?,
-        _ => anyhow::bail!("invalid workflow patterns"),
-    };
-    ensure!(
-        values.len() <= MAX_WORKFLOW_FILTER_PATTERNS
-            && values
-                .iter()
-                .all(|value| value.len() <= MAX_WORKFLOW_PATTERN_BYTES),
-        "workflow filter too large"
-    );
-    Ok(values
-        .into_iter()
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-        .collect())
 }
 
 fn yaml_key_to_string(value: &Value) -> Option<String> {
@@ -1305,12 +1109,12 @@ mod tests {
         ] {
             assert!(super::super::admission::is_safe_workflow_path(path));
             assert!(parse_workflow_definition(path, "on: workflow_dispatch").is_ok());
-            assert!(parse_push_workflow(path, "on: push").is_ok());
+            assert!(parse_workflow_definition(path, "on: push").is_ok());
         }
         let path = format!(".github/workflows/{}.yml", "x".repeat(238));
         assert!(!super::super::admission::is_safe_workflow_path(&path));
         assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_err());
-        assert!(parse_push_workflow(&path, "on: push").is_err());
+        assert!(parse_workflow_definition(&path, "on: push").is_err());
         let path = format!(".github/workflows/{}.yml", "x".repeat(233));
         assert_eq!(path.len(), 255);
         assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_ok());
@@ -1398,8 +1202,7 @@ mod tests {
 name: CI
 on:
   push:
-    branches: [main, 'release/**']
-    branches-ignore: ['release/**-draft']
+    branches: [main, 'release/**', '!release/**-draft']
   workflow_dispatch:
   pull_request:
 "#;
@@ -1525,14 +1328,14 @@ on: [push, pull_request]
             "pull_request",
             "main",
             &["src/lib.rs".to_string()],
-            Some("feat: add endpoint\n\nskip-checks: true")
+            Some("feat: add endpoint\n\n\nskip-checks: true")
         ));
     }
 
     #[test]
     fn skip_checks_must_be_in_the_final_trailer_block() {
         assert!(should_skip_run_from_message(
-            "feat: add\n\nBody.\n\nskip-checks: true"
+            "feat: add\n\nBody.\n\n\nskip-checks: true"
         ));
         assert!(!should_skip_run_from_message(
             "feat: add\n\nskip-checks: true\n\nThis prose follows the quote."
@@ -1637,7 +1440,7 @@ on: [push, pull_request]
             )
             .is_err());
 
-        let ordinary = parse_push_workflow(
+        let ordinary = parse_workflow_definition(
             ".github/workflows/ordinary.yml",
             "on:\n  push:\n    paths: ['src/**']\n",
         )
@@ -1731,12 +1534,16 @@ on: [push, pull_request]
                 .iter()
                 .map(|workflow| (workflow.name.as_str(), workflow.path.as_str()))
                 .collect::<Vec<_>>(),
+            // A workflow without a name is shown by its path, as on GitHub.
             vec![
+                (
+                    ".github/workflows/build linux.yml",
+                    ".github/workflows/build linux.yml"
+                ),
+                (".github/workflows/雪.yaml", ".github/workflows/雪.yaml"),
                 ("Alpha", ".github/workflows/z.yml"),
                 ("Limit", ".github/workflows/limit.yml"),
                 ("Zebra", ".github/workflows/a.yaml"),
-                ("build linux", ".github/workflows/build linux.yml"),
-                ("雪", ".github/workflows/雪.yaml"),
             ]
         );
         let sha = store.commit("main").await.unwrap().sha;
@@ -1832,53 +1639,50 @@ on: [push, pull_request]
     }
 
     #[test]
-    fn discovery_and_push_parsers_share_semantic_limits() {
-        let parsers: [fn(&str, &str) -> Result<WorkflowDefinition>; 2] =
-            [parse_workflow_definition, parse_push_workflow];
-        for parse in parsers {
-            let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES);
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("name: '{name}'\non: push")
-            )
-            .is_ok());
-            let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES + 1);
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("name: '{name}'\non: push")
-            )
-            .is_err());
+    fn workflow_parser_enforces_semantic_limits() {
+        let parse = parse_workflow_definition;
+        let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES);
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("name: '{name}'\non: push")
+        )
+        .is_ok());
+        let name = "n".repeat(MAX_WORKFLOW_NAME_BYTES + 1);
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("name: '{name}'\non: push")
+        )
+        .is_err());
 
-            let patterns = std::iter::repeat_n("'src/**'", MAX_WORKFLOW_FILTER_PATTERNS)
-                .collect::<Vec<_>>()
-                .join(", ");
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("on:\n  push:\n    paths: [{patterns}]")
-            )
-            .is_ok());
-            let patterns = std::iter::repeat_n("'src/**'", MAX_WORKFLOW_FILTER_PATTERNS + 1)
-                .collect::<Vec<_>>()
-                .join(", ");
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("on:\n  push:\n    paths: [{patterns}]")
-            )
-            .is_err());
+        let patterns = std::iter::repeat_n("'src/**'", MAX_WORKFLOW_FILTER_PATTERNS)
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("on:\n  push:\n    paths: [{patterns}]")
+        )
+        .is_ok());
+        let patterns = std::iter::repeat_n("'src/**'", MAX_WORKFLOW_FILTER_PATTERNS + 1)
+            .collect::<Vec<_>>()
+            .join(", ");
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("on:\n  push:\n    paths: [{patterns}]")
+        )
+        .is_err());
 
-            let pattern = "p".repeat(MAX_WORKFLOW_PATTERN_BYTES);
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("on:\n  push:\n    paths: ['{pattern}']")
-            )
-            .is_ok());
-            let pattern = "p".repeat(MAX_WORKFLOW_PATTERN_BYTES + 1);
-            assert!(parse(
-                ".github/workflows/ci.yml",
-                &format!("on:\n  push:\n    paths: ['{pattern}']")
-            )
-            .is_err());
-        }
+        let pattern = "p".repeat(MAX_WORKFLOW_PATTERN_BYTES);
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("on:\n  push:\n    paths: ['{pattern}']")
+        )
+        .is_ok());
+        let pattern = "p".repeat(MAX_WORKFLOW_PATTERN_BYTES + 1);
+        assert!(parse(
+            ".github/workflows/ci.yml",
+            &format!("on:\n  push:\n    paths: ['{pattern}']")
+        )
+        .is_err());
     }
 
     #[tokio::test]
@@ -1928,16 +1732,13 @@ on: [push, pull_request]
         assert_eq!(exact.len(), MAX_CI_WORKFLOW_BYTES);
         let oversized = format!("{exact} ");
 
-        let parsers: [fn(&str, &str) -> Result<WorkflowDefinition>; 2] =
-            [parse_workflow_definition, parse_push_workflow];
-        for parse in parsers {
-            assert!(parse(".github/workflows/ci.yml", &exact).is_ok());
-            let error = parse(".github/workflows/ci.yml", &oversized).unwrap_err();
-            assert!(
-                format!("{error:#}").contains("CI workflow exceeds size limit"),
-                "{error:#}"
-            );
-        }
+        let parse = parse_workflow_definition;
+        assert!(parse(".github/workflows/ci.yml", &exact).is_ok());
+        let error = parse(".github/workflows/ci.yml", &oversized).unwrap_err();
+        assert!(
+            format!("{error:#}").contains("CI workflow exceeds size limit"),
+            "{error:#}"
+        );
     }
 
     #[test]
@@ -1984,46 +1785,8 @@ fn field<'a>(value: &'a Value, name: &str) -> Option<&'a Value> {
     value.as_mapping()?.iter().find_map(|(key, value)| {
         let matches = key
             .as_str()
-            .is_some_and(|key| key.eq_ignore_ascii_case(name))
-            || (name == "on" && key == &Value::Bool(true));
+            .is_some_and(|key| key.eq_ignore_ascii_case(name));
         matches.then_some(value)
-    })
-}
-
-pub(crate) fn parse_push_workflow(path: &str, text: &str) -> Result<WorkflowDefinition> {
-    ensure!(
-        super::admission::is_safe_workflow_path(path),
-        "invalid CI workflow path"
-    );
-    // `serde_yaml`'s recursion and alias-expansion defaults are intentionally retained.
-    let yaml = parse_workflow_yaml(text)?;
-    let push = match field(&yaml, "on") {
-        Some(Value::String(event)) if event.eq_ignore_ascii_case("push") => {
-            Some(WorkflowEventFilter::default())
-        }
-        Some(Value::Sequence(events))
-            if events.iter().any(|event| {
-                event
-                    .as_str()
-                    .is_some_and(|s| s.eq_ignore_ascii_case("push"))
-            }) =>
-        {
-            Some(WorkflowEventFilter::default())
-        }
-        Some(events @ Value::Mapping(_)) => {
-            field(events, "push").map(parse_event_filter).transpose()?
-        }
-        _ => None,
-    };
-    let name = workflow_name(&yaml, path)?;
-    Ok(WorkflowDefinition {
-        path: path.to_owned(),
-        name,
-        triggers: WorkflowTriggers {
-            push,
-            ..WorkflowTriggers::default()
-        },
-        jobs: Vec::new(),
     })
 }
 
@@ -2038,11 +1801,11 @@ mod push_parser_tests {
             "on: [push, workflow_dispatch]",
             "on:\n  push:\n",
         ] {
-            assert!(parse_push_workflow(".github/workflows/ci.yml", text)
+            assert!(parse_workflow_definition(".github/workflows/ci.yml", text)
                 .unwrap()
                 .matches_event("push", "main"));
         }
-        let workflow = parse_push_workflow(
+        let workflow = parse_workflow_definition(
             ".github/workflows/deploy.yml",
             "on:\n  push:\n    branches: [main]\n    paths: ['src/**']\n",
         )
@@ -2065,8 +1828,10 @@ mod push_parser_tests {
             &["src/lib.rs".to_owned()],
             None
         ));
-        assert!(
-            parse_push_workflow(".github/workflows/ci.yml", "on:\n  push:\n    paths: 99").is_err()
-        );
+        assert!(parse_workflow_definition(
+            ".github/workflows/ci.yml",
+            "on:\n  push:\n    paths: 99"
+        )
+        .is_err());
     }
 }

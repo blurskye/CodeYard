@@ -346,6 +346,9 @@ async fn review_page_budgets(pg: bool) {
             w.database.pool(),
             w.pull.id,
             w.bob_id,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(w.database.pool(), w.bob_id).await,
+            ),
             "commented",
             Some("Review summary"),
             Some(&w.head),
@@ -642,7 +645,8 @@ async fn collaboration_metadata_and_recovery(pg: bool) {
             .await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
     }
-    // The author without base write access must not receive an unusable task control.
+    // The author without base write access may tick the tasks in their own text, as GitHub lets
+    // an author edit it and 48dd9e6a8 made it, but gets no label choices.
     w.database
         .execute(
             "UPDATE pull_requests SET author_id=$1, body='- [ ] Task' WHERE id=$2",
@@ -668,7 +672,7 @@ async fn collaboration_metadata_and_recovery(pg: bool) {
     else {
         panic!("not detail")
     };
-    assert!(!item.can_tick);
+    assert!(item.can_tick);
     assert!(available_labels.is_empty());
     // Database-only collaboration must keep working without a readable Git directory.
     std::fs::rename(&w.repository.disk_path, w._root.path().join("offline.git")).unwrap();
@@ -706,6 +710,9 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
         w.database.pool(),
         w.pull.id,
         w.bob_id,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(w.database.pool(), w.bob_id).await,
+        ),
         "changes_requested",
         Some("Needs changes"),
         Some(&w.head),
@@ -716,6 +723,9 @@ async fn published_reviews_and_delayed_notices(pg: bool) {
         w.database.pool(),
         w.pull.id,
         w.bob_id,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(w.database.pool(), w.bob_id).await,
+        ),
         "commented",
         Some("Just a note"),
         Some(&w.head),

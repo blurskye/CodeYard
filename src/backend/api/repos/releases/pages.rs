@@ -32,7 +32,13 @@ use std::sync::Arc;
 
 const PER_PAGE: i64 = 30;
 
-fn release_item(row: &ReleaseRow) -> ReleaseItem {
+/// An asset upload carries the file, the CSRF token and the label, so a form with more parts or
+/// a longer text field is not one of ours.
+const MAX_UPLOAD_PARTS: usize = 8;
+const MAX_UPLOAD_FIELD_BYTES: usize = 4096;
+
+/// The list shows no notes, so it asks for the item without them.
+fn release_item(row: &ReleaseRow, with_body: bool) -> ReleaseItem {
     let release = &row.release;
     ReleaseItem {
         id: release.id,
@@ -42,9 +48,14 @@ fn release_item(row: &ReleaseRow) -> ReleaseItem {
             .clone()
             .filter(|name| !name.is_empty())
             .unwrap_or_else(|| release.tag_name.clone()),
-        body: release.body.clone().unwrap_or_default(),
+        body: if with_body {
+            release.body.clone().unwrap_or_default()
+        } else {
+            String::new()
+        },
         author: row.author.clone(),
         target: release.target_commitish.clone(),
+        archive_revision: super::json::archive_revision(release),
         created_at: release.created_at.to_rfc3339(),
         published_at: release.published_at.map(|date| date.to_rfc3339()),
         draft: release.is_draft,
@@ -178,7 +189,7 @@ fn fields_of(draft: &ReleaseDraft) -> ReleaseFields {
         body: (!draft.body.trim().is_empty()).then(|| draft.body.clone()),
         is_draft: draft.draft,
         is_prerelease: draft.prerelease,
-        make_latest: draft.latest,
+        make_latest: draft.latest.into(),
     }
 }
 
@@ -192,7 +203,7 @@ async fn new_form(
     let Some(actor) = ctx.user.as_ref().map(|user| user.id) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in to publish a release.");
     };
-    let (tags, branches, default_branch) = match releases::form_choices(
+    let (tags, mut branches, default_branch) = match releases::form_choices(
         &ctx.state.pool,
         ctx.state.cluster.as_ref(),
         actor,
@@ -202,11 +213,16 @@ async fn new_form(
     .await
     {
         Ok(choices) => (choices.tags, choices.branches, choices.default_branch),
-        Err(ReleaseError::Git(_)) if error.is_some() => {
+        Err(ReleaseError::Git(_) | ReleaseError::Unavailable) if error.is_some() => {
             (Vec::new(), Vec::new(), draft.target.clone())
         }
         Err(error) => return refusal(ctx, repo, error),
     };
+    // A target that vanished stays the selected option, so a retry fails again instead of
+    // quietly tagging another branch.
+    if !draft.target.is_empty() && !branches.is_empty() && !branches.contains(&draft.target) {
+        branches.push(draft.target.clone());
+    }
     ctx.page_model(
         "New release",
         repo_page(
@@ -310,16 +326,12 @@ pub(crate) async fn list(
         .unwrap_or(1)
         .max(1);
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    match releases::list(&ctx.state.pool, viewer, &owner, &name, page, PER_PAGE).await {
+    match releases::list(&ctx.state.pool, viewer, repo.id, page, PER_PAGE).await {
         Ok(listing) => {
             let items = listing
                 .releases
                 .iter()
-                .map(|row| {
-                    let mut item = release_item(row);
-                    item.body.clear();
-                    item
-                })
+                .map(|row| release_item(row, false))
                 .collect();
             ctx.page_model(
                 "Releases",
@@ -354,10 +366,10 @@ pub(crate) async fn detail(
         Err(response) => return response,
     };
     let viewer = ctx.user.as_ref().map(|user| user.id);
-    match releases::detail_by_tag(&ctx.state.pool, viewer, &owner, &name, &tag).await {
+    match releases::detail_by_tag(&ctx.state.pool, viewer, repo.id, &tag).await {
         Ok(found) => {
             let base = repo.base();
-            let release = release_item(&found.release);
+            let release = release_item(&found.release, true);
             let assets = found
                 .assets
                 .iter()
@@ -678,12 +690,17 @@ pub(crate) async fn upload_asset(
     let read = async {
         let mut fields = HashMap::new();
         let mut file = None;
+        let mut parts = 0;
         loop {
-            let part = match multipart.next_field().await {
+            let mut part = match multipart.next_field().await {
                 Ok(Some(part)) => part,
                 Ok(None) => break,
                 Err(error) => return Err(upload_read_error(&ctx, &error)),
             };
+            parts += 1;
+            if parts > MAX_UPLOAD_PARTS {
+                return Err(ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read."));
+            }
             let part_name = part.name().unwrap_or_default().to_owned();
             if part_name == "file" {
                 let filename = part.file_name().unwrap_or_default().to_owned();
@@ -691,8 +708,23 @@ pub(crate) async fn upload_asset(
                     Ok(bytes) => file = Some((filename, bytes.to_vec())),
                     Err(error) => return Err(upload_read_error(&ctx, &error)),
                 }
-            } else if let Ok(text) = part.text().await {
-                fields.insert(part_name, text);
+            } else {
+                match crate::backend::api::http::multipart::bounded_text(
+                    &mut part,
+                    MAX_UPLOAD_FIELD_BYTES,
+                )
+                .await
+                {
+                    Ok(Some(text)) => {
+                        fields.insert(part_name, text);
+                    }
+                    Ok(None) => {
+                        return Err(
+                            ctx.error(StatusCode::BAD_REQUEST, "The upload could not be read.")
+                        )
+                    }
+                    Err(error) => return Err(upload_read_error(&ctx, &error)),
+                }
             }
         }
         Ok((fields, file))
@@ -722,10 +754,13 @@ pub(crate) async fn upload_asset(
     };
     let label = field(&fields, "label");
     let label = label.trim();
+    let session =
+        crate::backend::api::http::session::extract_session_id(&ctx.headers).unwrap_or_default();
     match releases::add_asset(
         &ctx.state.pool,
         &ctx.state.storage,
         actor,
+        &db::users::accounts::AccountCredential::Session(&session),
         &owner,
         &name,
         id,
@@ -829,6 +864,10 @@ pub(crate) async fn download(
         Ok(ctx) => ctx,
         Err(response) => return response,
     };
+    let loaded = match chrome::load_database(&ctx, &owner, &name).await {
+        Ok(loaded) => loaded,
+        Err(response) => return response,
+    };
     let Some((tag, asset)) = rest.rsplit_once('/') else {
         return ctx.error(StatusCode::NOT_FOUND, "Asset not found.");
     };
@@ -837,8 +876,7 @@ pub(crate) async fn download(
         &ctx.state.pool,
         &ctx.state.storage,
         viewer,
-        &owner,
-        &name,
+        loaded.repository.id,
         tag,
         asset,
         method != axum::http::Method::HEAD,

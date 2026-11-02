@@ -18,9 +18,40 @@ fn spec() -> &'static Value {
             .read_to_string(&mut text)
             .unwrap();
         let mut spec = serde_json::from_str(&text).unwrap();
+        secret_scanning_resolutions(&mut spec);
+        pull_request_head_repositories(&mut spec);
         nullable(&mut spec);
         spec
     })
+}
+
+/// GitHub's description names `pattern_edited` and `pattern_deleted` as resolutions an alert can
+/// have, in the alert list's `resolution` filter and in the webhook alert schema, but the REST
+/// alert schema's enum leaves them out. The alert schema takes the documented values.
+fn secret_scanning_resolutions(spec: &mut Value) {
+    let resolutions = spec
+        .pointer_mut("/components/schemas/secret-scanning-alert-resolution/enum")
+        .and_then(Value::as_array_mut)
+        .expect("GitHub's description has the secret scanning resolution enum");
+    for value in ["pattern_edited", "pattern_deleted"] {
+        if !resolutions.iter().any(|known| known == value) {
+            resolutions.push(json!(value));
+        }
+    }
+}
+
+/// GitHub's description marks a pull request's `head.repo` nullable in its webhook pull request
+/// schemas, for a head repository that is gone or that the reader cannot see, but its REST pull
+/// request schemas leave that out. The REST schemas take the documented null.
+fn pull_request_head_repositories(spec: &mut Value) {
+    for schema in ["pull-request", "pull-request-simple"] {
+        let repo = spec
+            .pointer_mut(&format!(
+                "/components/schemas/{schema}/properties/head/properties/repo"
+            ))
+            .expect("GitHub's description has the pull request head repository");
+        *repo = json!({"anyOf": [repo.take(), {"type": "null"}]});
+    }
 }
 
 /// OpenAPI 3.0 marks nullable schemas with `nullable: true`; JSON Schema spells it with types.
@@ -57,15 +88,25 @@ fn resolve(value: &Value) -> &Value {
     }
 }
 
-type Validators = HashMap<(String, u16), Arc<jsonschema::Validator>>;
+/// One cell per operation and status. The map's lock is held only to find a cell, so tests
+/// build different validators at the same time and wait only for one they share; a test that
+/// panics while building leaves the others able to continue.
+type Validators = HashMap<(String, u16), Arc<OnceLock<Arc<jsonschema::Validator>>>>;
 
 fn validator(operation_id: &str, status: u16) -> Arc<jsonschema::Validator> {
     static VALIDATORS: OnceLock<Mutex<Validators>> = OnceLock::new();
-    let key = (operation_id.to_owned(), status);
-    let mut validators = VALIDATORS.get_or_init(Default::default).lock().unwrap();
-    if let Some(validator) = validators.get(&key) {
-        return validator.clone();
-    }
+    let cell = VALIDATORS
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap()
+        .entry((operation_id.to_owned(), status))
+        .or_default()
+        .clone();
+    cell.get_or_init(|| Arc::new(build_validator(operation_id, status)))
+        .clone()
+}
+
+fn build_validator(operation_id: &str, status: u16) -> jsonschema::Validator {
     let operation = spec()["paths"]
         .as_object()
         .unwrap()
@@ -104,14 +145,10 @@ fn validator(operation_id: &str, status: u16) -> Arc<jsonschema::Validator> {
         "GitHub documents no JSON body for {operation_id} {status}"
     );
     let root = json!({"allOf": [schema], "components": spec()["components"]});
-    let validator = Arc::new(
-        jsonschema::options()
-            .with_draft(jsonschema::Draft::Draft4)
-            .build(&root)
-            .unwrap_or_else(|error| panic!("{operation_id} {status}: {error}")),
-    );
-    validators.insert(key, validator.clone());
-    validator
+    jsonschema::options()
+        .with_draft(jsonschema::Draft::Draft4)
+        .build(&root)
+        .unwrap_or_else(|error| panic!("{operation_id} {status}: {error}"))
 }
 
 /// One line per failure, with the failures of each `oneOf`/`anyOf` branch listed beneath it, so

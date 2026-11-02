@@ -671,35 +671,26 @@ async fn credentialed_private_blob_and_denials_cannot_enter_a_shared_cache() {
     )
     .unwrap();
     let private = "/api/repos/overlapping_user/personal/blob/main/README.md";
-    for (path, cookie, authorization, expected, sensitive) in [
+    for (path, cookie, authorization, expected) in [
         (
             private,
             Some(fixture.owner.session.as_str()),
             None,
             StatusCode::OK,
-            true,
         ),
         (
             private,
             Some(fixture.member.session.as_str()),
             None,
             StatusCode::NOT_FOUND,
-            true,
         ),
-        (private, None, None, StatusCode::NOT_FOUND, false),
-        (
-            "/api/repos/fixture_org/public",
-            None,
-            None,
-            StatusCode::OK,
-            false,
-        ),
+        (private, None, None, StatusCode::NOT_FOUND),
+        ("/api/repos/fixture_org/public", None, None, StatusCode::OK),
         (
             "/api/repos/fixture_org/public",
             None,
             Some("Bearer fixture"),
             StatusCode::OK,
-            true,
         ),
     ] {
         let mut request = Request::builder().uri(path);
@@ -716,22 +707,16 @@ async fn credentialed_private_blob_and_denials_cannot_enter_a_shared_cache() {
             .await
             .unwrap();
         assert_eq!(response.status(), expected, "{path}");
-        if sensitive {
-            assert_eq!(
-                response.headers()[header::CACHE_CONTROL],
-                "no-store, private"
-            );
-            assert_eq!(response.headers()[header::VARY], "Cookie, Authorization");
-            assert_eq!(
-                response.headers()[header::X_CONTENT_TYPE_OPTIONS],
-                "nosniff"
-            );
-        } else {
-            assert!(
-                response.headers().get(header::CACHE_CONTROL).is_none(),
-                "public anonymous read must keep its existing cache policy"
-            );
-        }
+        // Every native API answer stays out of shared caches, with or without credentials.
+        assert_eq!(
+            response.headers()[header::CACHE_CONTROL],
+            "no-store, private"
+        );
+        assert_eq!(response.headers()[header::VARY], "Cookie, Authorization");
+        assert_eq!(
+            response.headers()[header::X_CONTENT_TYPE_OPTIONS],
+            "nosniff"
+        );
         let body = to_bytes(response.into_body(), 2 * 1024 * 1024)
             .await
             .unwrap();

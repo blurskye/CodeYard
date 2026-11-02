@@ -13,7 +13,8 @@ pub enum CommentRefusal {
 }
 
 pub struct CommentCreate<'a> {
-    pub actor_id: i64,
+    /// The caller and the session or token it signed in with.
+    pub actor: crate::backend::db::credentials::Actor,
     pub repo_id: i64,
     pub sha: &'a str,
     pub body: &'a str,
@@ -23,7 +24,8 @@ pub struct CommentCreate<'a> {
 }
 
 pub struct CommentEdit<'a> {
-    pub actor_id: i64,
+    /// The caller and the session or token it signed in with.
+    pub actor: crate::backend::db::credentials::Actor,
     pub repo_id: i64,
     pub id: i64,
     pub body: &'a str,
@@ -80,7 +82,7 @@ native_operation!(crate::backend::db::postgres::repositories::commit_comments::e
     fn edit_comment(pool: &DbPool, input: CommentEdit<'_>) -> Result<Option<CommentEdited>>);
 native_operation!(crate::backend::db::postgres::repositories::commit_comments::delete_comment,
     crate::backend::db::sqlite::repositories::commit_comments::delete_comment,
-    fn delete_comment(pool: &DbPool, actor: i64, repo: i64, id: i64, expected_revision: Option<&str>) -> Result<Option<CommitComment>>);
+    fn delete_comment(pool: &DbPool, actor: impl Into<crate::backend::db::credentials::Actor>, repo: i64, id: i64, expected_revision: Option<&str>) -> Result<Option<CommitComment>>);
 native_operation!(crate::backend::db::postgres::repositories::commit_comments::get_comment,
     crate::backend::db::sqlite::repositories::commit_comments::get_comment,
     fn get_comment(pool: &DbPool, repo: i64, id: i64) -> Result<Option<CommitComment>>);

@@ -5,7 +5,6 @@ use crate::backend::{
     db::{
         self,
         advisories::{self, Advisory, Data, Listing, Scope, Sort},
-        models::User,
         repositories::security,
     },
     repositories::{
@@ -28,6 +27,19 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 pub(super) fn failure(error: anyhow::Error) -> Error {
+    if let Some(
+        graph @ (db::dependency_graph::GraphError::Limit
+        | db::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+    {
+        return Error::new(StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
+    }
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return Error::new(
+            StatusCode::FORBIDDEN,
+            "A live unrestricted credential is required",
+        );
+    }
     match error.downcast_ref::<advisories::Refusal>() {
         Some(advisories::Refusal::Denied) => {
             return Error::new(StatusCode::FORBIDDEN, "Advisory administration denied")
@@ -89,7 +101,11 @@ async fn person(state: &AppState, id: Option<i64>) -> Result<Value> {
         Ok(Value::Null)
     }
 }
-async fn document(state: &AppState, row: &Advisory, viewer: Option<&User>) -> Result<Value> {
+async fn document(
+    state: &AppState,
+    row: &Advisory,
+    viewer: Option<&auth::Authentication>,
+) -> Result<Value> {
     let data = Data::from_row(row).map_err(Error::unavailable)?;
     let repo = db::repositories::records::get_repository_by_id(&state.pool, row.repo_id)
         .await
@@ -114,12 +130,10 @@ async fn document(state: &AppState, row: &Advisory, viewer: Option<&User>) -> Re
             .await
             .map_err(Error::unavailable)?
         {
-            let allowed = viewer.id == fork.owner_user_id.unwrap_or(0)
-                || (viewer.is_admin && fork.owner_kind == "user")
-                || db::repositories::access::get_user_repo_access(&state.pool, viewer.id, id)
-                    .await
-                    .map_err(Error::unavailable)?
-                    .can_read();
+            // The private fork shows only to a credential that may read it.
+            let allowed = auth::readable_repositories(state, Some(viewer), &[id], "metadata")
+                .await?
+                .contains(&id);
             if allowed {
                 repos::document(state, &fork, Some(viewer)).await?
             } else {
@@ -225,7 +239,7 @@ async fn list(
             Ok((cursor.at, cursor.id))
         })
         .transpose()?;
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
+    let limit = super::pagination::page_size(query.per_page);
     let options = Listing {
         state: query.state.as_deref(),
         sort,
@@ -273,7 +287,7 @@ async fn list(
     }
     let mut documents = Vec::new();
     for row in rows {
-        documents.push(document(&state, &row, actor.as_ref().map(|a| &a.user)).await?);
+        documents.push(document(&state, &row, actor.as_ref()).await?);
     }
     let mut headers = HeaderMap::new();
     if !links.is_empty() {
@@ -300,9 +314,7 @@ async fn get_advisory(
     .await
     .map_err(failure)?
     .ok_or_else(Error::missing)?;
-    Ok(Json(
-        document(&state, &row, actor.as_ref().map(|a| &a.user)).await?,
-    ))
+    Ok(Json(document(&state, &row, actor.as_ref()).await?))
 }
 async fn create(
     State(state): State<Arc<AppState>>,
@@ -315,21 +327,56 @@ async fn create(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(auth::required)?;
     let report = uri.path().ends_with("/reports");
-    let mut row = advisories::create(&state.pool, actor.user.id, repo.id, &value, report)
+    let mut row = advisories::create(&state.pool, actor.database_actor(), repo.id, &value, report)
         .await
         .map_err(failure)?;
     if value["start_private_fork"] == true {
-        workflow::private_fork(&state, actor.user.id, &repo, &row.ghsa_id)
-            .await
-            .map_err(failure)?;
-        row = advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id)
-            .await
-            .map_err(failure)?
-            .ok_or_else(Error::missing)?;
+        match workflow::private_fork(&state, actor.database_actor(), &repo, &row.ghsa_id).await {
+            Ok(_) => {
+                if let Some(fresh) =
+                    advisories::get(&state.pool, Some(actor.user.id), repo.id, &row.ghsa_id)
+                        .await
+                        .map_err(failure)?
+                {
+                    row = fresh;
+                } else if !report {
+                    return Err(Error::missing());
+                }
+            }
+            Err(error) if report => {
+                // The report is already committed; optional remediation cannot reject it.
+                let denied = matches!(
+                    error.downcast_ref::<advisories::Refusal>(),
+                    Some(advisories::Refusal::Denied)
+                ) || error
+                    .downcast_ref::<StorageError>()
+                    .is_some_and(|error| matches!(error.kind, LifecycleFailure::Denied));
+                if !denied {
+                    tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Optional vulnerability-report fork was not created");
+                }
+            }
+            Err(error) => {
+                match advisories::discard_created(&state.pool, actor.user.id, &row).await {
+                    Ok(true) => return Err(failure(error)),
+                    Ok(false) => {}
+                    Err(cleanup) => {
+                        tracing::error!(ghsa_id=%row.ghsa_id,%cleanup,"Failed advisory provisioning left a draft requiring cleanup")
+                    }
+                }
+                tracing::warn!(ghsa_id=%row.ghsa_id,%error,"Private-fork provisioning failed; retained advisory is reported to the caller");
+                return Err(Error::new(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    format!(
+                        "Advisory {} was created but its private fork could not be provisioned",
+                        row.ghsa_id
+                    ),
+                ));
+            }
+        }
     }
     Ok((
         StatusCode::CREATED,
-        Json(document(&state, &row, Some(&actor.user)).await?),
+        Json(document(&state, &row, Some(&actor)).await?),
     )
         .into_response())
 }
@@ -344,14 +391,14 @@ async fn update(
     let actor = actor.ok_or_else(auth::required)?;
     let row = advisories::update(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         repo.id,
         &params["ghsa_id"],
         &value,
     )
     .await
     .map_err(failure)?;
-    Ok(Json(document(&state, &row, Some(&actor.user)).await?))
+    Ok(Json(document(&state, &row, Some(&actor)).await?))
 }
 async fn cve(
     State(state): State<Arc<AppState>>,
@@ -362,7 +409,10 @@ async fn cve(
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     advisories::request_cve(
         &state.pool,
-        actor.ok_or_else(auth::required)?.user.id,
+        {
+            let actor = actor.ok_or_else(auth::required)?;
+            actor.database_actor()
+        },
         repo.id,
         &params["ghsa_id"],
     )
@@ -378,12 +428,12 @@ async fn fork(
     let (repo, actor) =
         repository(&state, &headers, &params["owner"], &params["repo"], true).await?;
     let actor = actor.ok_or_else(auth::required)?;
-    let fork = workflow::private_fork(&state, actor.user.id, &repo, &params["ghsa_id"])
+    let fork = workflow::private_fork(&state, actor.database_actor(), &repo, &params["ghsa_id"])
         .await
         .map_err(failure)?;
     Ok((
         StatusCode::ACCEPTED,
-        Json(repos::document(&state, &fork, Some(&actor.user)).await?),
+        Json(repos::document(&state, &fork, Some(&actor)).await?),
     )
         .into_response())
 }

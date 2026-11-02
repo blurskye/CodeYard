@@ -587,7 +587,8 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
         &owner.username,
     )
     .await;
-    assert_eq!(error.message, "repository is not stored on this node");
+    // A node that holds no copy answers as unavailable, so the caller tries another holder.
+    assert!(error.is_storage_node_unavailable(), "{error:?}");
     sqlx::query("UPDATE nodes SET status='revoked' WHERE id=$1")
         .bind(caller.context.node_id)
         .execute(raw)

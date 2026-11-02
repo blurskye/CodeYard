@@ -156,7 +156,7 @@ async fn environment(
     } else {
         let (repo, auth) = administer(&state, &headers, &params, true).await?;
         if method == Method::DELETE {
-            environments::delete(&state.pool, auth.user.id, repo.id, name)
+            environments::delete(&state.pool, auth.database_actor(), repo.id, name)
                 .await
                 .map_err(write_error)?;
             return Ok(StatusCode::NO_CONTENT.into_response());
@@ -171,7 +171,7 @@ async fn environment(
                 .map_err(|_| Error::validation("Environment", "configuration", "invalid"))?
                 .unwrap_or_default()
         };
-        let env = environments::upsert(&state.pool, auth.user.id, repo.id, name, &input)
+        let env = environments::upsert(&state.pool, auth.database_actor(), repo.id, name, &input)
             .await
             .map_err(write_error)?;
         (env, Some(auth.user.id))
@@ -240,7 +240,7 @@ async fn policies(
     if method == Method::DELETE {
         environments::delete_branch(
             &state.pool,
-            auth.user.id,
+            auth.database_actor(),
             repo.id,
             env.id,
             id.ok_or_else(Error::missing)?,
@@ -265,7 +265,7 @@ async fn policies(
     };
     let (branch, duplicate) = environments::save_branch(
         &state.pool,
-        auth.user.id,
+        auth.database_actor(),
         repo.id,
         env.id,
         id,

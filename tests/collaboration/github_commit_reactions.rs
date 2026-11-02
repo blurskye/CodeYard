@@ -295,12 +295,22 @@ async fn reactions(pg: bool) {
     let issue = db::issues::create_issue(f.pool(), repo.id, alice, "Independent reaction", "")
         .await
         .unwrap();
-    let issue_comment = db::issues::add_issue_comment(f.pool(), issue.id, alice, "Comment")
-        .await
-        .unwrap();
+    let issue_comment = db::issues::add_issue_comment(
+        f.pool(),
+        issue.repo_id,
+        issue.id,
+        alice,
+        "Comment",
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice).await,
+        ),
+    )
+    .await
+    .unwrap();
     db::reactions::create_reaction(
         f.pool(),
         alice,
+        &db::users::accounts::AccountCredential::Session(&browser.session),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: issue.id,

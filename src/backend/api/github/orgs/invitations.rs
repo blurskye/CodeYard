@@ -93,8 +93,7 @@ async fn create(
     body: std::result::Result<Json<Input>, axum::extract::rejection::JsonRejection>,
 ) -> Result<Response> {
     let (org, actor) = context(&state, &headers, &name, true).await?;
-    let Json(input) =
-        body.map_err(|_| Error::validation("OrganizationInvitation", "body", "invalid"))?;
+    let Json(input) = body.map_err(super::super::json_error)?;
     let role = match input.role.as_deref().unwrap_or("direct_member") {
         "admin" => OrgRole::Owner,
         "direct_member" | "reinstate" => OrgRole::Member,
@@ -118,7 +117,7 @@ async fn create(
     let invitation = outcome(
         organizations::create_organization_invitation(
             &state.pool,
-            actor.user.id,
+            actor.database_actor(),
             org.id,
             &input,
             true,
@@ -255,7 +254,7 @@ async fn cancel(
     outcome(
         organizations::cancel_invitation_id(
             &state.pool,
-            actor.user.id,
+            actor.database_actor(),
             org.id,
             invitation_id(&params)?,
             true,

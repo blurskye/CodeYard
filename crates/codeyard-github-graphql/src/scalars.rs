@@ -44,10 +44,22 @@ pub struct CustomPropertyValue(pub async_graphql::Value);
 #[async_graphql::Scalar(name = "CustomPropertyValue")]
 impl async_graphql::ScalarType for CustomPropertyValue {
     fn parse(value: async_graphql::Value) -> async_graphql::InputValueResult<Self> {
-        Ok(Self(value))
+        if <Self as async_graphql::ScalarType>::is_valid(&value) {
+            Ok(Self(value))
+        } else {
+            Err(async_graphql::InputValueError::custom(
+                "expected a string or string array",
+            ))
+        }
     }
-    fn is_valid(_value: &async_graphql::Value) -> bool {
-        true
+    fn is_valid(value: &async_graphql::Value) -> bool {
+        match value {
+            async_graphql::Value::String(_) => true,
+            async_graphql::Value::List(values) => values
+                .iter()
+                .all(|value| matches!(value, async_graphql::Value::String(_))),
+            _ => false,
+        }
     }
     fn to_value(&self) -> async_graphql::Value {
         self.0.clone()
@@ -100,11 +112,13 @@ impl async_graphql::ScalarType for GitObjectID {
         if <Self as async_graphql::ScalarType>::is_valid(&value) {
             Ok(Self(value))
         } else {
-            Err(async_graphql::InputValueError::custom("expected a string"))
+            Err(async_graphql::InputValueError::custom(
+                "expected a full hexadecimal object ID",
+            ))
         }
     }
     fn is_valid(value: &async_graphql::Value) -> bool {
-        matches!(value, async_graphql::Value::String(_))
+        matches!(value, async_graphql::Value::String(value) if value.len() == 40 && value.bytes().all(|byte| byte.is_ascii_hexdigit()))
     }
     fn to_value(&self) -> async_graphql::Value {
         self.0.clone()

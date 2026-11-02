@@ -127,10 +127,11 @@ async fn buffered_failure_timeout_and_abort_stop_parent_and_descendant() {
         .await
         .unwrap();
         // Also own cleanup if an assertion below fails.
-        let _cleanup = ProcessGroup(Some(numbers[0] as u32));
+        let _cleanup = ProcessGroup::new(Some(numbers[0] as u32), Duration::ZERO);
         if reason == "abort" {
             for &pid in &numbers {
                 assert_eq!(
+                    // SAFETY: signal zero only checks whether the process exists; kill takes no pointers.
                     unsafe { libc::kill(pid, 0) },
                     0,
                     "positive liveness control"
@@ -150,10 +151,10 @@ async fn buffered_failure_timeout_and_abort_stop_parent_and_descendant() {
             );
         }
         tokio::time::timeout(Duration::from_secs(5), async {
-            while numbers
-                .iter()
-                .any(|&pid| unsafe { libc::kill(pid, 0) } == 0)
-            {
+            while numbers.iter().any(|&pid| {
+                // SAFETY: signal zero only checks whether the process exists; kill takes no pointers.
+                unsafe { libc::kill(pid, 0) == 0 }
+            }) {
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         })

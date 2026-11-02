@@ -1,4 +1,6 @@
-use crate::backend::db::pull_requests::async_merge::{AsyncMerge, NewAsyncMerge};
+use crate::backend::db::pull_requests::async_merge::{
+    AsyncMerge, NewAsyncMerge, PENDING_TIMEOUT_SECONDS, TIMEOUT_MESSAGE,
+};
 use anyhow::Result;
 use serde_json::Value;
 use sqlx::PgPool;
@@ -18,14 +20,24 @@ pub async fn finish(pool: &PgPool, uuid: &str, status: &str, details: &Value) ->
     sqlx::query("UPDATE pull_request_async_merges SET status=$2,details=$3,expires_at=NOW()+INTERVAL '1 day' WHERE uuid=$1 AND status='pending'").bind(uuid).bind(status).bind(details).execute(pool).await?;
     Ok(())
 }
+/// Requests whose pull request already merged finish as merged: the merge committed before the
+/// restart cut off the result. The rest of this node's pending requests fail.
 pub async fn recover(pool: &PgPool, node_id: Option<i64>, details: &Value) -> Result<u64> {
-    Ok(sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=$2,expires_at=NOW()+INTERVAL '1 day' WHERE worker_node_id IS NOT DISTINCT FROM $1 AND status='pending'").bind(node_id).bind(details).execute(pool).await?.rows_affected())
+    let mut tx = pool.begin().await?;
+    // Rows without a worker predate cluster adoption, so any node recovers them.
+    let merged = sqlx::query("UPDATE pull_request_async_merges a SET status='merged',details=jsonb_build_object('message','Pull request #'||p.number||' merged successfully','sha',p.merge_commit_sha),expires_at=NOW()+INTERVAL '1 day' FROM pull_requests p WHERE p.id=a.pull_request_id AND p.merged AND p.merge_commit_sha IS NOT NULL AND (a.worker_node_id IS NULL OR a.worker_node_id=$1) AND a.status='pending'").bind(node_id).execute(&mut *tx).await?.rows_affected();
+    let failed = sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=$2,expires_at=NOW()+INTERVAL '1 day' WHERE (worker_node_id IS NULL OR worker_node_id=$1) AND status='pending'").bind(node_id).bind(details).execute(&mut *tx).await?.rows_affected();
+    tx.commit().await?;
+    Ok(merged + failed)
 }
 pub async fn prune(pool: &PgPool) -> Result<u64> {
-    Ok(
-        sqlx::query("DELETE FROM pull_request_async_merges WHERE expires_at<=NOW()")
-            .execute(pool)
-            .await?
-            .rows_affected(),
-    )
+    let mut tx = pool.begin().await?;
+    let failed = sqlx::query("UPDATE pull_request_async_merges SET status='failed',details=$2,expires_at=NOW()+INTERVAL '1 day' WHERE status='pending' AND created_at<=NOW()-$1::bigint*INTERVAL '1 second'")
+        .bind(PENDING_TIMEOUT_SECONDS).bind(serde_json::json!({"message":TIMEOUT_MESSAGE})).execute(&mut *tx).await?.rows_affected();
+    let deleted = sqlx::query("DELETE FROM pull_request_async_merges WHERE expires_at<=NOW()")
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    tx.commit().await?;
+    Ok(failed + deleted)
 }

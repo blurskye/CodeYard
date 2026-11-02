@@ -98,9 +98,10 @@ async fn list(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &name, false).await?;
-    let secrets = db::dependabot::list_organization_secrets(&state.pool, actor.user.id, org)
-        .await
-        .map_err(error)?;
+    let secrets =
+        db::dependabot::list_organization_secrets(&state.pool, actor.database_actor(), org)
+            .await
+            .map_err(error)?;
     let (offset, limit) = page.window()?;
     let total = secrets.len();
     let secrets: Vec<_> = secrets
@@ -126,9 +127,10 @@ pub(super) async fn public_key(
         .secret_encryptor
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
-    let (id, key) = db::dependabot::organization_key(&state.pool, encryptor, actor.user.id, org)
-        .await
-        .map_err(error)?;
+    let (id, key) =
+        db::dependabot::organization_key(&state.pool, encryptor, actor.database_actor(), org)
+            .await
+            .map_err(error)?;
     Ok(Json(
         json!({"key_id":id,"key":STANDARD.encode(key.public_key().as_bytes())}),
     ))
@@ -140,12 +142,13 @@ async fn secret(
     Path((org_name, name)): Path<(String, String)>,
 ) -> Result<Json<Value>> {
     let (org, actor) = organization(&state, &headers, &org_name, false).await?;
-    let secret = db::dependabot::list_organization_secrets(&state.pool, actor.user.id, org)
-        .await
-        .map_err(error)?
-        .into_iter()
-        .find(|s| s.name == name.to_ascii_uppercase())
-        .ok_or_else(Error::missing)?;
+    let secret =
+        db::dependabot::list_organization_secrets(&state.pool, actor.database_actor(), org)
+            .await
+            .map_err(error)?
+            .into_iter()
+            .find(|s| s.name == name.to_ascii_uppercase())
+            .ok_or_else(Error::missing)?;
     Ok(Json(document(&org_name, secret)))
 }
 
@@ -187,9 +190,10 @@ async fn save(
         .as_deref()
         .ok_or_else(|| Error::unavailable(()))?;
     // The key operation checks live organization authority even for metadata-only updates.
-    let (id, key) = db::dependabot::organization_key(&state.pool, encryptor, actor.user.id, org)
-        .await
-        .map_err(error)?;
+    let (id, key) =
+        db::dependabot::organization_key(&state.pool, encryptor, actor.database_actor(), org)
+            .await
+            .map_err(error)?;
     let value = match (body.encrypted_value, body.key_id) {
         (Some(value), Some(key_id)) => Some(open_value(&key, &id, &key_id, &value)?),
         (None, None) => None,
@@ -206,7 +210,7 @@ async fn save(
     let created = db::dependabot::save_organization_secret(
         &state.pool,
         encryptor,
-        actor.user.id,
+        actor.database_actor(),
         org,
         &OrganizationSecretInput {
             name: &name.to_ascii_uppercase(),
@@ -232,7 +236,7 @@ async fn remove(
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
     if !db::dependabot::delete_organization_secret(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         org,
         &name.to_ascii_uppercase(),
     )
@@ -254,7 +258,7 @@ async fn selected(
     let (org, actor) = organization(&state, &headers, &org_name, false).await?;
     let repositories = db::dependabot::selected_repositories(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         org,
         &name.to_ascii_uppercase(),
     )
@@ -264,7 +268,7 @@ async fn selected(
     let (offset, limit) = page.window()?;
     let mut documents = Vec::new();
     for repo in repositories.into_iter().skip(offset).take(limit) {
-        documents.push(repos::document(&state, &repo, Some(&actor.user)).await?);
+        documents.push(repos::document(&state, &repo, Some(&actor)).await?);
     }
     Ok((
         page.headers(&uri, offset.saturating_add(limit) < total)?,
@@ -293,7 +297,7 @@ async fn set_selected(
         .collect::<Result<Vec<_>>>()?;
     db::dependabot::select_repositories(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         org,
         &name.to_ascii_uppercase(),
         RepositorySelection::Set(&ids),
@@ -311,14 +315,20 @@ async fn repository_access(
     Query(page): Query<Pagination>,
 ) -> Result<Response> {
     let (org, actor) = organization(&state, &headers, &name, false).await?;
-    let (level, repositories) = db::dependabot::repository_access(&state.pool, actor.user.id, org)
-        .await
-        .map_err(error)?;
     let (offset, limit) = page.window()?;
-    let has_more = offset.saturating_add(limit) < repositories.len();
+    let (level, mut repositories) = db::dependabot::repository_access(
+        &state.pool,
+        actor.database_actor(),
+        org,
+        (offset as i64, limit as i64 + 1),
+    )
+    .await
+    .map_err(error)?;
+    let has_more = repositories.len() > limit;
+    repositories.truncate(limit);
     let mut documents = Vec::new();
-    for repository in repositories.into_iter().skip(offset).take(limit) {
-        documents.push(repos::document(&state, &repository, Some(&actor.user)).await?);
+    for repository in repositories {
+        documents.push(repos::document(&state, &repository, Some(&actor)).await?);
     }
     Ok((
         page.headers(&uri, has_more)?,
@@ -345,7 +355,7 @@ async fn update_repository_access(
     let Json(body) = body.map_err(|_| Error::invalid("Invalid repository selection"))?;
     db::dependabot::update_repository_access(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         org,
         &body.repository_ids_to_add,
         &body.repository_ids_to_remove,
@@ -374,7 +384,7 @@ async fn set_default_level(
     }
     db::dependabot::set_repository_access_default(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         org,
         &body.default_level,
     )
@@ -391,7 +401,7 @@ async fn add_selected(
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
     db::dependabot::select_repositories(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         org,
         &name.to_ascii_uppercase(),
         RepositorySelection::Add(id),
@@ -409,7 +419,7 @@ async fn remove_selected(
     let (org, actor) = organization(&state, &headers, &org_name, true).await?;
     db::dependabot::select_repositories(
         &state.pool,
-        actor.user.id,
+        actor.database_actor(),
         org,
         &name.to_ascii_uppercase(),
         RepositorySelection::Remove(id),

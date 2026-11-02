@@ -68,11 +68,17 @@ async fn scan(w: &World) {
     db::vulnerabilities::enqueue(w.f.pool(), w.repo.id)
         .await
         .unwrap();
-    let (id, generation) = db::vulnerabilities::claim(w.f.pool())
-        .await
-        .unwrap()
-        .unwrap();
-    assert_eq!(id, w.repo.id);
+    // Every new repository queues its first scan, so the PostgreSQL fixture's repository may
+    // come first; it is claimed and left alone.
+    let (id, generation) = loop {
+        let (id, generation) = db::vulnerabilities::claim(w.f.pool())
+            .await
+            .unwrap()
+            .unwrap();
+        if id == w.repo.id {
+            break (id, generation);
+        }
+    };
     let repo = w.f.repository(id).await;
     codeyard::backend::vulnerabilities::scan(&w.state, &repo, generation)
         .await
@@ -88,8 +94,9 @@ async fn proposals(pg: bool) {
     let w = setup(pg).await;
     let provider = provider::Provider::new().await;
     let base = seed(&w, &provider);
-    scan(&w).await;
+    // A private repository's dependency graph, and so its scan, is on once Dependabot alerts are.
     enable(&w, &w.writer).await;
+    scan(&w).await;
     run(&w, &provider).await;
     let snapshot = records::snapshot(w.f.pool(), w.owner, w.repo.id)
         .await
@@ -187,7 +194,7 @@ async fn proposals(pg: bool) {
         &w.ci,
         &w.broadcaster,
         w.owner,
-        ("alice".into(), "deps".into(), actual.number),
+        (actual.repo_id, actual.number),
         UpdatePullRequestRequest {
             expected_state: actual.state.clone(),
             expected_updated: actual.updated_at.to_rfc3339(),
@@ -265,11 +272,12 @@ async fn bad_archive(pg: bool) {
     let w = setup(pg).await;
     let provider = provider::Provider::new().await;
     let base = seed(&w, &provider);
-    scan(&w).await;
     provider
         .tamper
         .store(true, std::sync::atomic::Ordering::SeqCst);
+    // A private repository's dependency graph, and so its scan, is on once Dependabot alerts are.
     enable(&w, &w.writer).await;
+    scan(&w).await;
     run(&w, &provider).await;
     let snapshot = records::snapshot(w.f.pool(), w.owner, w.repo.id)
         .await
@@ -350,10 +358,12 @@ async fn default_collision(pg: bool) {
         fixed_versions: vec!["1.2.1".into()],
     }
     .key();
+    // The proposal branch is named by the update it carries: path, package, both versions and
+    // the scanned commit.
     let digest = hex::encode(Sha256::digest(
-        format!("{}\0{}\0{base}", "1.2.0", "1.2.1").as_bytes(),
+        serde_json::to_vec(&("node_modules/fixture", "fixture", "1.2.0", "1.2.1", &base)).unwrap(),
     ));
-    let branch = format!("codeyard/security/{key}-{digest}");
+    let branch = format!("codeyard/security/{digest}");
     repo_store(&w.repo, None)
         .create_branch_as(w.f.pool(), w.repo.id, w.owner, &branch, &base)
         .await
@@ -368,8 +378,9 @@ async fn default_collision(pg: bool) {
         StatusCode::OK,
     )
     .await;
-    scan(&w).await;
+    // A private repository's dependency graph, and so its scan, is on once Dependabot alerts are.
     enable(&w, &w.writer).await;
+    scan(&w).await;
     run(&w, &provider).await;
     let snapshot = records::snapshot(w.f.pool(), w.owner, w.repo.id)
         .await

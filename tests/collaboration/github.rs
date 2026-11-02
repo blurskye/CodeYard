@@ -44,7 +44,8 @@ pub(super) async fn document(response: Response, operation: &str, expected: u16)
     let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
         .await
         .unwrap();
-    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    let body: Value = serde_json::from_slice(&bytes)
+        .unwrap_or_else(|error| panic!("{operation}: {status} without a JSON body: {error}"));
     assert_eq!(status.as_u16(), expected, "{operation}: {body}");
     assert_github_schema(operation, expected, &body);
     body
@@ -247,6 +248,27 @@ async fn labels(pg: bool) {
         .as_str()
         .unwrap()
         .ends_with("/labels/bug%20fix"));
+    // A left-out description is kept, and an explicit null clears it.
+    for (body, expected) in [
+        (json!({"description":"notes"}), json!("notes")),
+        (json!({"color":"123456"}), json!("notes")),
+        (json!({"description":null}), Value::Null),
+    ] {
+        let changed = document(
+            request(
+                &router,
+                "PATCH",
+                &format!("{labels}/bug%20fix"),
+                Some(write),
+                body,
+            )
+            .await,
+            "issues/update-label",
+            200,
+        )
+        .await;
+        assert_eq!(changed["description"], expected);
+    }
     for method in ["PATCH", "DELETE"] {
         assert_eq!(
             request(

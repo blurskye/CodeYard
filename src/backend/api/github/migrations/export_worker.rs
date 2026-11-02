@@ -31,7 +31,8 @@ pub(super) fn spawn(state: Arc<AppState>, headers: HeaderMap, row: RepositoryExp
             if Some(actor.user.id) != row.actor_id || exports::by_guid(&state.pool, actor.user.id, &row.guid).await.map_err(Error::unavailable)?.is_none() { return Err(Error::missing()); }
             let key = row.object_key();
             let digest = format!("{:x}", Sha256::digest(&bytes));
-            state.storage.put_bytes(&Upload { key: &key, bytes: bytes.len() as i64, content_type: "application/gzip", sha256_hex: &digest }, bytes).await.map_err(Error::unavailable)?;
+            let io = Arc::new(state.storage.try_acquire_io().map_err(Error::unavailable)?);
+            state.storage.put_bytes(&Upload { key: &key, bytes: bytes.len() as i64, content_type: "application/gzip", sha256_hex: &digest }, bytes, io).await.map_err(Error::unavailable)?;
             exports::finish(&state.pool, row.id, "exported").await.map_err(Error::unavailable)
         }).await;
         if !matches!(result, Ok(Ok(()))) {
@@ -61,7 +62,11 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
     {
         return Err(Error::missing());
     }
-    let options = row.options().map_err(Error::unavailable)?;
+    let mut options = row.options().map_err(Error::unavailable)?;
+    if options.org_metadata_only {
+        options.exclude_metadata = false;
+        options.exclude_owner_projects = false;
+    }
     let ids = row.repository_ids().map_err(Error::unavailable)?;
     let mut archive = MigrationArchive::default();
     if let Some(org) = row.owner_org_id {
@@ -88,7 +93,7 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
                 .await
                 .map_err(Error::unavailable)?;
         }
-        let value = repos::document(state, &repo, Some(&actor.user)).await?;
+        let value = repos::document(state, &repo, Some(&actor)).await?;
         archive
             .records("repository", vec![value])
             .map_err(Error::unavailable)?;
@@ -107,7 +112,7 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
             .map_err(Error::unavailable)?;
         }
         if !options.exclude_metadata {
-            metadata(state, headers, &repo, &owner, &mut archive).await?;
+            metadata(state, headers, actor.user.id, &repo, &owner, &mut archive).await?;
         }
         if !options.exclude_metadata && !options.exclude_releases {
             release_records(
@@ -129,25 +134,49 @@ async fn build(state: &AppState, headers: &HeaderMap, row: &RepositoryExport) ->
 async fn metadata(
     state: &AppState,
     headers: &HeaderMap,
+    actor: i64,
     repo: &db::models::Repository,
     owner: &str,
     archive: &mut MigrationArchive,
 ) -> Result<()> {
     let repository = payloads::repository(repo, owner)["html_url"].clone();
-    let labels = db::labels::list_repo_labels(&state.pool, repo.id)
-        .await
-        .map_err(Error::unavailable)?;
-    let values = labels
-        .iter()
-        .map(|label| {
-            let mut value = payloads::label(label, owner, &repo.name);
+    for (kind, record) in [("type", "issue_type"), ("field", "issue_field")] {
+        let definitions = db::issue_attributes::catalog(&state.pool, repo.id, Some(actor), kind)
+            .await
+            .map_err(Error::unavailable)?;
+        let mut values = Vec::new();
+        for definition in definitions {
+            let mut value = serde_json::to_value(definition).map_err(Error::unavailable)?;
             value["repository"] = repository.clone();
-            value
-        })
-        .collect();
-    archive
-        .records("label", values)
-        .map_err(Error::unavailable)?;
+            values.push(value);
+        }
+        archive
+            .records(record, values)
+            .map_err(Error::unavailable)?;
+    }
+    let mut offset = 0;
+    loop {
+        let labels =
+            db::labels::list_repo_labels_page(&state.pool, repo.id, "", "oldest", 100, offset)
+                .await
+                .map_err(Error::unavailable)?;
+        let count = labels.len();
+        let values = labels
+            .iter()
+            .map(|label| {
+                let mut value = payloads::label(label, owner, &repo.name);
+                value["repository"] = repository.clone();
+                value
+            })
+            .collect();
+        archive
+            .records("label", values)
+            .map_err(Error::unavailable)?;
+        if count < 100 {
+            break;
+        }
+        offset += 100;
+    }
     let mut offset = 0;
     loop {
         let rows =
@@ -169,24 +198,33 @@ async fn metadata(
         }
         offset += 100;
     }
-    let mut offset = 0;
+    let mut before = i64::MAX;
     loop {
-        let filter = db::discussions::ListFilter {
-            offset,
-            ..Default::default()
-        };
-        let rows = db::issues::list_repo_issues(&state.pool, repo.id, &filter, 100)
+        let rows = exports::discussion_ids(&state.pool, repo.id, false, before, 100)
             .await
             .map_err(Error::unavailable)?;
         let count = rows.len();
+        let next = rows.last().copied();
         let mut values = Vec::new();
-        for row in rows {
-            let mut value =
-                issues::document(&state.pool, repo, owner, AssignedItem::Issue(row.issue.id))
-                    .await?;
+        for id in rows {
+            let mut value = issues::document(
+                &state.pool,
+                issues::Reader::Repository,
+                repo,
+                owner,
+                AssignedItem::Issue(id),
+            )
+            .await?;
+            value["issue_type"] = value["type"].take();
+            value["issue_field_values"] = serde_json::to_value(
+                db::issue_attributes::values(&state.pool, repo.id, id, Some(actor))
+                    .await
+                    .map_err(Error::unavailable)?,
+            )
+            .map_err(Error::unavailable)?;
             value["repository"] = repository.clone();
             values.push(value);
-            issue_comments(state, repo, owner, row.issue.id, archive).await?;
+            issue_comments(state, repo, owner, id, archive).await?;
         }
         archive
             .records("issue", values)
@@ -194,22 +232,21 @@ async fn metadata(
         if count < 100 {
             break;
         }
-        offset += 100;
+        before = next.ok_or_else(|| Error::unavailable(()))?;
     }
-    let mut offset = 0;
+    let mut before = i64::MAX;
     loop {
-        let filter = db::discussions::ListFilter {
-            offset,
-            ..Default::default()
-        };
-        let rows =
-            db::pull_requests::records::list_repo_pull_requests(&state.pool, repo.id, &filter, 100)
-                .await
-                .map_err(Error::unavailable)?;
+        let rows = exports::discussion_ids(&state.pool, repo.id, true, before, 100)
+            .await
+            .map_err(Error::unavailable)?;
         let count = rows.len();
+        let next = rows.last().copied();
         let mut values = Vec::new();
-        for row in rows {
-            let pull = row.pull_request;
+        for id in rows {
+            let pull = db::pull_requests::records::get_pull_request_by_id(&state.pool, id)
+                .await
+                .map_err(Error::unavailable)?
+                .ok_or_else(Error::missing)?;
             let mut value = pulls::document(state, headers, repo, owner, &pull, false).await?;
             value["repository"] = repository.clone();
             values.push(value);
@@ -267,7 +304,7 @@ async fn metadata(
         if count < 100 {
             break;
         }
-        offset += 100;
+        before = next.ok_or_else(|| Error::unavailable(()))?;
     }
     Ok(())
 }
@@ -418,7 +455,15 @@ async fn release_records(
                             .map_err(Error::unavailable)?;
                         bytes.extend_from_slice(&chunk);
                     }
-                    archive.append(&path, &bytes).map_err(Error::unavailable)?;
+                    let mut pending = std::mem::take(archive);
+                    let archive_path = path.clone();
+                    *archive = tokio::task::spawn_blocking(move || {
+                        pending.append(&archive_path, &bytes)?;
+                        anyhow::Ok(pending)
+                    })
+                    .await
+                    .map_err(Error::unavailable)?
+                    .map_err(Error::unavailable)?;
                     let mut asset_value = releases::asset_document(
                         state,
                         owner,
@@ -460,7 +505,7 @@ async fn organization(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let origin = crate::backend::api::http::config::link_origin();
-    let url = format!("{origin}/{}", crate::webui::encode_component(&record.name));
+    let url = format!("{origin}{}", crate::webui::profile_path(&record.name));
     archive.person(json!({"id":record.id,"login":record.name,"html_url":url,"url":url,"type":"Organization","name":record.display_name,"description":record.description,"created_at":record.created_at,"updated_at":record.updated_at}));
     let mut after = 0;
     loop {
@@ -517,9 +562,9 @@ async fn teams(
                 org_slug: slug.to_owned(),
             });
             value["organization"] = json!(format!(
-                "{}/{}",
+                "{}{}",
                 crate::backend::api::http::config::link_origin(),
-                crate::webui::encode_component(slug)
+                crate::webui::profile_path(slug)
             ));
             value["parent_team_id"] = json!(row.team.parent_team_id);
             value["default_permission"] = json!(row.team.default_permission);

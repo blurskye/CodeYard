@@ -23,6 +23,7 @@ pub(super) fn error(error: anyhow::Error) -> Error {
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => Error::new(StatusCode::FORBIDDEN, error.to_string()),
         Some(Refusal::Missing) => Error::missing(),
+        Some(Refusal::Conflict) => Error::new(StatusCode::CONFLICT, error.to_string()),
         Some(_) => Error::invalid(error.to_string()),
         None if error.downcast_ref::<sqlx::Error>().is_some_and(|e| {
             e.as_database_error()
@@ -88,7 +89,6 @@ async fn list(
 }
 #[derive(Deserialize)]
 struct Input {
-    #[serde(default)]
     issue_field_values: Vec<ValueInput>,
 }
 async fn save(
@@ -99,24 +99,21 @@ async fn save(
     body: Bytes,
 ) -> Result<Json<Value>> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth.ok_or_else(auth::required)?;
     let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let input: Input = serde_json::from_slice(&body)
         .map_err(|_| Error::validation("IssueFieldValue", "issue_field_values", "invalid"))?;
-    if method == Method::PUT && input.issue_field_values.iter().any(|v| v.value.is_array()) {
-        return Err(Error::validation("IssueFieldValue", "value", "invalid"));
-    }
     db::issue_attributes::set_values(
         &state.pool,
         repo.id,
-        actor.id,
+        actor.database_actor(),
         issue,
         &input.issue_field_values,
         method == Method::PUT,
     )
     .await
     .map_err(error)?;
-    let values = db::issue_attributes::values(&state.pool, repo.id, issue, Some(actor.id))
+    let values = db::issue_attributes::values(&state.pool, repo.id, issue, Some(actor.user.id))
         .await
         .map_err(Error::unavailable)?;
     Ok(Json(Value::Array(
@@ -129,10 +126,10 @@ async fn remove(
     Path(p): Path<Params>,
 ) -> Result<StatusCode> {
     let (repo, auth) = repository(&state, &headers, &p["owner"], &p["repo"], true).await?;
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let actor = auth.ok_or_else(auth::required)?;
     let issue = issues::required_issue(&state.pool, repo.id, &p["issue_number"]).await?;
     let field = p["issue_field_id"].parse().map_err(|_| Error::missing())?;
-    db::issue_attributes::delete_value(&state.pool, repo.id, actor.id, issue, field)
+    db::issue_attributes::delete_value(&state.pool, repo.id, actor.database_actor(), issue, field)
         .await
         .map_err(error)?;
     Ok(StatusCode::NO_CONTENT)

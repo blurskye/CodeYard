@@ -255,6 +255,12 @@ async fn contract(pg: bool) {
         201,
     )
     .await;
+    // With a mail server set up, the offer's email is queued in the transaction that saves it.
+    f.execute(
+        "INSERT INTO email_settings(id,host,port,security,from_address) VALUES(1,'mail.example.test',2525,'tls','noreply@example.test')",
+        &[],
+    )
+    .await;
     let (_, invitation) = request(
         &router,
         "orgs/create-invitation",
@@ -266,18 +272,9 @@ async fn contract(pg: bool) {
     )
     .await;
     let invitation = invitation["id"].as_i64().unwrap();
-    db::email::enqueue_invitation_email(
-        f.pool(),
-        invitation,
-        "outside@example.test",
-        "Join acme",
-        "Invitation",
-    )
-    .await
-    .unwrap();
     assert_eq!(
         f.scalar(
-            "SELECT COUNT(*) FROM email_outbox WHERE organization_invitation_id=$1",
+            "SELECT COUNT(*) FROM email_outbox WHERE organization_invitation_id=$1 AND to_address='outside@example.test'",
             &[invitation]
         )
         .await,

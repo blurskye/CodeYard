@@ -158,24 +158,35 @@ async fn eligible_reviews(
 }
 
 /// For `require_last_push_approval`: someone other than whoever pushed the head approved that
-/// head. A push the server holds no record of counts as the author's, whose reviews never count.
+/// head. Missing or mismatched publication provenance cannot authorize a merge.
 async fn last_push_approved(
     pool: &db::DbPool,
+    ci: &CiRuns,
     pull: &db::models::PullRequest,
     decisions: &[db::pull_requests::reviews::PullRequestReviewDecision],
 ) -> anyhow::Result<bool> {
-    let pusher = db::events::push_actor(
+    let Some(repository) = db::repositories::records::get_repository_by_id(
         pool,
         pull.head_repo_id.unwrap_or(pull.repo_id),
-        &format!("refs/heads/{}", pull.head_branch),
-        &pull.head_sha,
     )
     .await?
-    .unwrap_or(pull.author_id);
+    else {
+        return Ok(false);
+    };
+    let Some(record) = repo_store(&repository, ci.cluster.as_ref())
+        .branch_publication(repository.id, &format!("refs/heads/{}", pull.head_branch))
+        .await?
+    else {
+        return Ok(false);
+    };
+    if record.publication.new != pull.head_sha {
+        return Ok(false);
+    }
+    let pusher = record.publication.actor.user_id();
     Ok(decisions.iter().any(|decision| {
         decision.state == "approved"
             && decision.commit_sha.as_deref() == Some(pull.head_sha.as_str())
-            && decision.author_id != pusher
+            && Some(decision.author_id) != pusher
     }))
 }
 
@@ -193,12 +204,10 @@ pub async fn review_decision(
     repository: &db::models::Repository,
     pull: &db::models::PullRequest,
 ) -> anyhow::Result<Option<ReviewDecision>> {
-    let rules = crate::backend::repositories::protection::matching_rules(
-        pool,
-        repository,
-        &pull.base_branch,
-    )
-    .await?;
+    let target = super::stacks::merge_target(pool, pull).await?;
+    let rules =
+        crate::backend::repositories::protection::matching_rules(pool, repository, &target.0)
+            .await?;
     let decisions = eligible_reviews(pool, pull, repository).await?;
     let mut approved = false;
     for rule in &rules {
@@ -211,7 +220,7 @@ pub async fn review_decision(
             return Ok(Some(ReviewDecision::Required));
         }
         if rule.github_settings.require_last_push_approval
-            && !last_push_approved(pool, pull, &decisions).await?
+            && !last_push_approved(pool, ci, pull, &decisions).await?
         {
             return Ok(Some(ReviewDecision::Required));
         }
@@ -226,12 +235,7 @@ pub async fn review_decision(
                 .map(|d| d.author_id)
                 .collect::<Vec<_>>();
             if !code_owners::missing_owner_approvals(
-                pool,
-                ci,
-                repository,
-                &pull.base_sha,
-                pull,
-                &approvers,
+                pool, ci, repository, &target.1, pull, &approvers,
             )
             .await?
             .is_empty()
@@ -267,7 +271,7 @@ fn required_status_check_failures(
     statuses: &[db::models::CommitStatus],
     ci_runs: &[db::models::CiRun],
     // The newest check run of each required name, from its bound app when the context has one.
-    check_runs: &[db::checks::Run],
+    check_runs: &[&db::checks::Run],
     // None stands for a bound app that no longer exists, so nothing meets its context.
     bound_apps: &HashMap<&str, Option<i64>>,
 ) -> Vec<String> {
@@ -292,15 +296,20 @@ fn required_status_check_failures(
             run.commit_status_context(),
             run.alias_commit_status_context(),
         ] {
-            ci_by_context.entry(context).or_default().push(run);
+            ci_by_context
+                .entry(context.to_ascii_lowercase())
+                .or_default()
+                .push(run);
         }
     }
     let mut failures = Vec::new();
     for required in required_checks {
         // A stored success can hide another producer's failure, so a server-owned requirement
         // is checked against the actual runs, under their full names and their aliases.
-        if db::repositories::protection::server_owned_status_context(required) {
-            match ci_by_context.get(required) {
+        if !bound_apps.contains_key(required.as_str())
+            && db::repositories::protection::server_owned_status_context(required)
+        {
+            match ci_by_context.get(&required.to_ascii_lowercase()) {
                 Some(runs) => {
                     if runs.iter().any(|run| run.status != "success") {
                         let state = if runs.iter().any(|run| {
@@ -322,6 +331,7 @@ fn required_status_check_failures(
         let app = bound_apps.get(required.as_str()).copied();
         let run = check_runs
             .iter()
+            .copied()
             .find(|run| run.name == *required && app != Some(None))
             .map(check_run_state);
         let status = by_context
@@ -377,6 +387,12 @@ async fn merge_blockers(
     let mut blockers = Vec::new();
     // Every rule judges the same reviews, so they are read once, when the first rule needs them.
     let mut reviews = None;
+    // Every rule also judges the same head, so its statuses, CI runs, app bindings and newest
+    // check runs are read once, when a rule first needs them, and shared between the rules.
+    let mut statuses: Option<Vec<db::models::CommitStatus>> = None;
+    let mut ci_runs: Option<Vec<db::models::CiRun>> = None;
+    let mut app_clients: HashMap<i64, Option<i64>> = HashMap::new();
+    let mut latest_runs: HashMap<(String, Option<i64>), Option<db::checks::Run>> = HashMap::new();
     let mut changes_requested_reported = false;
     for rule in &rules {
         if reviews.is_none() {
@@ -392,7 +408,10 @@ async fn merge_blockers(
             &pull_request.head_sha,
             rule.dismiss_stale_reviews,
         );
-        if has_changes_requested && !changes_requested_reported {
+        if db::repositories::protection::has_review_requirements(rule)
+            && has_changes_requested
+            && !changes_requested_reported
+        {
             changes_requested_reported = true;
             blockers.push(OperationError::Conflict {
                 code: "branch_protection",
@@ -418,7 +437,7 @@ async fn merge_blockers(
         }
 
         if rule.github_settings.require_last_push_approval
-            && !last_push_approved(pool, pull_request, decisions)
+            && !last_push_approved(pool, ci, pull_request, decisions)
                 .await
                 .map_err(database_error)?
         {
@@ -481,71 +500,90 @@ async fn merge_blockers(
             let mut required_status_checks = Vec::new();
             let mut seen = HashSet::new();
             for check in &rule.required_status_checks {
-                let trimmed = check.trim();
-                if !trimmed.is_empty() && seen.insert(trimmed.to_string()) {
-                    required_status_checks.push(trimmed.to_string());
+                if seen.insert(check.clone()) {
+                    required_status_checks.push(check.clone());
                 }
             }
-            if required_status_checks.is_empty() {
-                blockers.push(OperationError::Conflict {
-                    code: "branch_protection",
-                    message:
-                        "Status checks are required but no contexts are configured; merge denied."
+            if !required_status_checks.is_empty() {
+                if statuses.is_none() {
+                    statuses = Some(
+                        db::repositories::protection::list_commit_statuses(
+                            pool,
+                            repository.id,
+                            &pull_request.head_sha,
+                        )
+                        .await
+                        .map_err(database_error)?,
+                    );
+                }
+                if ci_runs.is_none() {
+                    ci_runs = Some(
+                        db::ci::latest_ci_runs_for_commit(
+                            pool,
+                            repository.id,
+                            &pull_request.head_sha,
+                            pull_request.id,
+                            target.0,
+                        )
+                        .await
+                        .map_err(database_error)?,
+                    );
+                }
+                // Old ambiguous bindings must fail closed as well as being refused by new writes.
+                let mut bindings = rule.github_settings.checks.clone();
+                db::repositories::protection::normalize_check_bindings(&mut bindings).map_err(
+                    |_| OperationError::Conflict {
+                        code: "branch_protection",
+                        message: "Required check producers conflict; update branch protection."
                             .to_owned(),
-                });
-            } else {
-                let statuses = db::repositories::protection::list_commit_statuses(
-                    pool,
-                    repository.id,
-                    &pull_request.head_sha,
-                )
-                .await
-                .map_err(database_error)?;
-                let ci_runs = db::ci::latest_ci_runs_for_commit(
-                    pool,
-                    repository.id,
-                    &pull_request.head_sha,
-                    pull_request.id,
-                    target.0,
-                )
-                .await
-                .map_err(database_error)?;
+                    },
+                )?;
                 // Protection binds GitHub App ids, but a check suite records the app's OAuth
                 // client row, so each binding is translated to that row.
                 let mut bound_apps: HashMap<&str, Option<i64>> = HashMap::new();
-                for check in &rule.github_settings.checks {
+                for check in &bindings {
                     let (Some(context), Some(id)) =
                         (check["context"].as_str(), check["app_id"].as_i64())
                     else {
                         continue;
                     };
-                    let app = db::github_apps::app(pool, &id.to_string())
-                        .await
-                        .map_err(database_error)?
-                        .filter(|app| app.id == id);
-                    let client = match app {
-                        Some(app) => db::oauth_apps::application(pool, &app.client_id)
-                            .await
-                            .map_err(database_error)?
-                            .map(|client| client.id),
-                        None => None,
+                    let client = match app_clients.get(&id) {
+                        Some(client) => *client,
+                        None => {
+                            let app = db::github_apps::app(pool, &id.to_string())
+                                .await
+                                .map_err(database_error)?
+                                .filter(|app| app.id == id);
+                            let client = match app {
+                                Some(app) => db::oauth_apps::application(pool, &app.client_id)
+                                    .await
+                                    .map_err(database_error)?
+                                    .map(|client| client.id),
+                                None => None,
+                            };
+                            app_clients.insert(id, client);
+                            client
+                        }
                     };
                     bound_apps.insert(context, client);
                 }
                 // Only the newest check run of each required name is read, from its bound app
                 // when the context has one, so a long check history is never loaded whole.
-                let mut check_runs = Vec::new();
+                let mut wanted = Vec::new();
                 for required in &required_status_checks {
                     let app_id = match bound_apps.get(required.as_str()) {
                         Some(None) => continue,
                         Some(app) => *app,
                         None => None,
                     };
-                    if db::repositories::protection::server_owned_status_context(required) {
+                    if !bound_apps.contains_key(required.as_str())
+                        && db::repositories::protection::server_owned_status_context(required)
+                    {
                         continue;
                     }
-                    check_runs.extend(
-                        db::checks::runs(
+                    let key = (required.clone(), app_id);
+                    if !latest_runs.contains_key(&key) {
+                        let run = db::checks::runs(
                             pool,
                             repository.id,
                             &db::checks::Filter {
@@ -558,14 +596,22 @@ async fn merge_blockers(
                             1,
                         )
                         .await
-                        .map_err(database_error)?,
-                    );
+                        .map_err(database_error)?
+                        .into_iter()
+                        .next();
+                        latest_runs.insert(key.clone(), run);
+                    }
+                    wanted.push(key);
                 }
+                let check_runs: Vec<&db::checks::Run> = wanted
+                    .iter()
+                    .filter_map(|key| latest_runs.get(key).and_then(Option::as_ref))
+                    .collect();
                 let failures = required_status_check_failures(
                     &pull_request.head_sha,
                     &required_status_checks,
-                    &statuses,
-                    &ci_runs,
+                    statuses.as_deref().unwrap_or_default(),
+                    ci_runs.as_deref().unwrap_or_default(),
                     &check_runs,
                     &bound_apps,
                 );
@@ -962,6 +1008,7 @@ fn same_revision(now: &db::models::PullRequest, prepared: &db::models::PullReque
 
 pub struct PreparedMerge {
     actor_id: i64,
+    authority: db::credentials::Actor,
     owner: String,
     repo: String,
     repository: db::models::Repository,
@@ -972,11 +1019,18 @@ pub struct PreparedMerge {
     merge: StoreMerge,
     merge_sha: String,
     async_request: Option<(String, i64)>,
+    auto_merge: Option<db::pull_requests::merge_policy::AutoMergeIdentity>,
 }
 
 impl PreparedMerge {
     pub(super) fn bind_async_request(&mut self, uuid: &str, token_id: i64) {
         self.async_request = Some((uuid.into(), token_id));
+    }
+    pub(super) fn bind_auto_merge(&mut self, pull_request_id: i64, generation: &str) {
+        self.auto_merge = Some(db::pull_requests::merge_policy::AutoMergeIdentity {
+            pull_request_id,
+            generation: generation.into(),
+        });
     }
     pub(super) fn matches_request(&self, repo_id: i64, pull_id: i64) -> bool {
         self.repository.id == repo_id && self.pull_request.id == pull_id
@@ -986,10 +1040,21 @@ impl PreparedMerge {
 pub async fn prepare_pull_request_merge(
     pool: &db::DbPool,
     ci: &CiRuns,
-    actor_id: i64,
-    (owner, repo, number): (String, String, i32),
+    actor: impl Into<db::credentials::Actor>,
+    repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<PreparedMerge, OperationError> {
+    prepare_pull_request_merge_checked(pool, ci, actor.into(), repository, request, None).await
+}
+async fn prepare_pull_request_merge_checked(
+    pool: &db::DbPool,
+    ci: &CiRuns,
+    authority: db::credentials::Actor,
+    (owner, repo, number): (String, String, i32),
+    request: MergeRequest,
+    expected: Option<(i64, i64)>,
+) -> Result<PreparedMerge, OperationError> {
+    let actor_id = authority.user_id;
     let repository = db::repositories::records::get_repository(pool, &owner, &repo)
         .await
         .map_err(database_error)?
@@ -998,8 +1063,14 @@ pub async fn prepare_pull_request_merge(
             message: "Repository not found".to_owned(),
         })?;
 
+    if expected.is_some_and(|(id, _)| repository.id != id) {
+        return Err(stale_revision());
+    }
     let user = super::actor(pool, actor_id).await?;
     super::require_write(pool, &user, &repository).await?;
+    crate::backend::repositories::access::check_publication_actor(pool, &authority, &repository)
+        .await
+        .map_err(|error| publish_failure(error.into(), request.merge_method))?;
 
     let pull_request = db::pull_requests::records::get_pull_request(pool, repository.id, number)
         .await
@@ -1008,6 +1079,9 @@ pub async fn prepare_pull_request_merge(
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
+    if expected.is_some_and(|(_, id)| pull_request.id != id) {
+        return Err(stale_revision());
+    }
     // A merge uses this pull request's branches as they are now. An unrelated
     // broken fork must not deny a healthy pull request.
     pull_requests::refresh_open_pull_request(
@@ -1107,75 +1181,13 @@ pub async fn prepare_pull_request_merge(
     } else {
         None
     };
-    for text in [
+    let message = merge_message(
+        &pull_request,
+        request.merge_method,
         request.commit_title.as_deref(),
         request.commit_message.as_deref(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        if text.contains('\0') || crate::backend::issues::validate_body(text, false).is_err() {
-            return Err(OperationError::Invalid {
-                code: "validation_error",
-                message: "Invalid merge commit message".into(),
-            });
-        }
-    }
-    if request.author_email.as_deref().is_some_and(|email| {
-        email.is_empty()
-            || email.len() > 255
-            || !email.contains('@')
-            || email
-                .chars()
-                .any(|c| c.is_control() || matches!(c, '<' | '>'))
-    }) {
-        return Err(OperationError::Invalid {
-            code: "validation_error",
-            message: "Invalid merge author email".into(),
-        });
-    }
-    let (title, body) = default_merge_text(&pull_request, request.merge_method);
-    let message = if body.is_empty() {
-        title
-    } else {
-        format!("{title}\n\n{body}")
-    };
-    let message = if request.merge_method == MergeMethod::Squash {
-        request.commit_title.clone().unwrap_or(message)
-    } else if request.merge_method != MergeMethod::Rebase
-        && (request.commit_title.is_some() || request.commit_message.is_some())
-    {
-        let (title, body) = message.split_once("\n\n").unwrap_or((&message, ""));
-        let title = request.commit_title.as_deref().unwrap_or(title);
-        let body = request.commit_message.as_deref().unwrap_or(body);
-        if body.is_empty() {
-            title.to_owned()
-        } else {
-            format!("{title}\n\n{body}")
-        }
-    } else {
-        message
-    };
-    let message_len = message.len()
-        + if request.merge_method == MergeMethod::Squash {
-            request.commit_message.as_ref().map_or(0, |body| {
-                if body.is_empty() {
-                    0
-                } else {
-                    body.len() + 2
-                }
-            })
-        } else {
-            0
-        };
-    if request.merge_method != MergeMethod::Rebase
-        && (message.is_empty() || message_len > crate::backend::git::MAX_MERGE_MESSAGE_BYTES)
-    {
-        return Err(OperationError::Invalid {
-            code: "validation_error",
-            message: "Merge commit messages must contain 1 to 8192 bytes".into(),
-        });
-    }
+        request.author_email.as_deref(),
+    )?;
     let merge = StoreMerge {
         head_branch: head_ref(&repository, &pull_request),
         base_branch: trunk.base_branch.clone(),
@@ -1201,6 +1213,7 @@ pub async fn prepare_pull_request_merge(
 
     Ok(PreparedMerge {
         actor_id,
+        authority,
         owner,
         repo,
         repository,
@@ -1209,7 +1222,83 @@ pub async fn prepare_pull_request_merge(
         merge,
         merge_sha,
         async_request: None,
+        auto_merge: None,
     })
+}
+
+pub(super) fn merge_message(
+    pull: &db::models::PullRequest,
+    method: MergeMethod,
+    title: Option<&str>,
+    body: Option<&str>,
+    email: Option<&str>,
+) -> Result<String, OperationError> {
+    validate_options(title, body, email)?;
+    let (default_title, default_body) = default_merge_text(pull, method);
+    let default = if default_body.is_empty() {
+        default_title
+    } else {
+        format!("{default_title}\n\n{default_body}")
+    };
+    let message = if method == MergeMethod::Squash {
+        title.map(str::to_owned).unwrap_or(default)
+    } else if method != MergeMethod::Rebase && (title.is_some() || body.is_some()) {
+        let (default_title, default_body) = default.split_once("\n\n").unwrap_or((&default, ""));
+        let title = title.unwrap_or(default_title);
+        let body = body.unwrap_or(default_body);
+        if body.is_empty() {
+            title.to_owned()
+        } else {
+            format!("{title}\n\n{body}")
+        }
+    } else {
+        default
+    };
+    let length = message.len()
+        + if method == MergeMethod::Squash {
+            body.filter(|body| !body.is_empty())
+                .map_or(0, |body| body.len() + 2)
+        } else {
+            0
+        };
+    if method != MergeMethod::Rebase
+        && (message.is_empty() || length > crate::backend::git::MAX_MERGE_MESSAGE_BYTES)
+    {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "Merge commit messages must contain 1 to 8192 bytes".into(),
+        });
+    }
+    Ok(message)
+}
+
+fn validate_options(
+    title: Option<&str>,
+    message: Option<&str>,
+    email: Option<&str>,
+) -> Result<(), OperationError> {
+    for text in [title, message].into_iter().flatten() {
+        if text.contains('\0') || crate::backend::issues::validate_body(text, false).is_err() {
+            return Err(OperationError::Invalid {
+                code: "validation_error",
+                message: "Invalid merge commit message".into(),
+            });
+        }
+    }
+    if email.is_some_and(|email| {
+        email.is_empty()
+            || email.len() > 255
+            || !email.contains('@')
+            || email
+                .chars()
+                .any(|c| c.is_control() || matches!(c, '<' | '>'))
+    }) {
+        return Err(OperationError::Invalid {
+            code: "validation_error",
+            message: "Invalid merge author email".into(),
+        });
+    }
+    Ok(())
 }
 
 /// Maps a failed publication of a merge onto the refusal to show.
@@ -1248,11 +1337,29 @@ fn publish_failure(error: RepoError, method: MergeMethod) -> OperationError {
 pub async fn publish_prepared_merge(
     pool: &db::DbPool,
     ci: &CiRuns,
+    broadcaster: &std::sync::Arc<NotificationBroadcaster>,
+    prepared: PreparedMerge,
+) -> Result<MergeResponse, OperationError> {
+    // A dropped request must not cancel a publication halfway, so it runs on its own task.
+    let (pool, ci, broadcaster) = (pool.clone(), ci.clone(), std::sync::Arc::clone(broadcaster));
+    tokio::spawn(
+        async move { publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await },
+    )
+    .await
+    .map_err(|_| OperationError::Unavailable {
+        code: "merge_interrupted",
+        message: "Merge publication was interrupted; check the branch before retrying.".into(),
+    })?
+}
+async fn publish_prepared_merge_owned(
+    pool: &db::DbPool,
+    ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     prepared: PreparedMerge,
 ) -> Result<MergeResponse, OperationError> {
     let PreparedMerge {
         actor_id,
+        authority,
         owner,
         repo,
         repository,
@@ -1261,7 +1368,14 @@ pub async fn publish_prepared_merge(
         merge,
         merge_sha,
         async_request,
+        auto_merge,
     } = prepared;
+    let policy = db::pull_requests::merge_policy::Snapshot {
+        revision: db::pull_requests::merge_policy::revision(pool, repository.id)
+            .await
+            .map_err(database_error)?,
+        auto_merge,
+    };
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
         .await
         .map_err(database_error)?
@@ -1310,6 +1424,7 @@ pub async fn publish_prepared_merge(
                 repository.id,
                 user.id,
                 &crate::backend::repositories::store::AsyncMergePublication {
+                    policy: Some(policy),
                     uuid,
                     token_id,
                     pull_request_id: pull_request.id,
@@ -1326,13 +1441,14 @@ pub async fn publish_prepared_merge(
             .publish_merge_as(
                 pool,
                 repository.id,
-                user.id,
+                authority.clone(),
                 &merge.head_branch,
                 &merge.base_branch,
                 &merge.head,
                 &merge.base,
                 &merge_sha,
                 merge.method,
+                Some(policy),
             )
             .await
     } else {
@@ -1344,11 +1460,12 @@ pub async fn publish_prepared_merge(
             .publish_stacked_merge_as(
                 pool,
                 repository.id,
-                user.id,
+                authority.clone(),
                 &heads,
                 &merge.base_branch,
                 &merge.base,
                 &merge_sha,
+                Some(policy),
             )
             .await
     };
@@ -1424,17 +1541,6 @@ pub async fn publish_prepared_merge(
     }
 
     for layer in &chain {
-        db::timeline::record(
-            pool,
-            repository.id,
-            db::timeline::Subject::PullRequest,
-            layer.id,
-            user.id,
-            "merged",
-            &merge.base_branch,
-            "",
-        )
-        .await;
         if let Ok(Some(merged)) =
             db::pull_requests::records::get_pull_request_by_id(pool, layer.id).await
         {
@@ -1507,6 +1613,11 @@ pub async fn publish_prepared_merge(
         )
         .await;
     }
+    // As on GitHub, closing keywords in a description close the issues only when the pull
+    // request lands on the default branch.
+    if merge.base_branch == repository.default_branch {
+        close_linked_issues(pool, broadcaster, user.id, &repository, &owner, &chain).await;
+    }
 
     Ok(MergeResponse {
         sha: merge_sha,
@@ -1522,16 +1633,112 @@ pub async fn publish_prepared_merge(
     })
 }
 
-pub async fn merge_pull_request(
+/// The most issues one merged description closes, so a long list of keywords stays bounded.
+const MAX_CLOSED_ISSUES: usize = 50;
+
+/// Closes the open issues of this repository that a merged layer's description names with a
+/// closing keyword, through the ordinary issue update, so it checks the merger's access and
+/// sends the usual notifications and webhooks. The merge is already published, so a failure
+/// is logged and does not undo it.
+async fn close_linked_issues(
     pool: &db::DbPool,
-    ci: &CiRuns,
     broadcaster: &NotificationBroadcaster,
     actor_id: i64,
+    repository: &db::models::Repository,
+    owner: &str,
+    layers: &[db::models::PullRequest],
+) {
+    let base = crate::backend::api::http::config::link_origin();
+    let mut seen = HashSet::new();
+    for layer in layers {
+        let numbers = crate::backend::issues::closing::referenced_numbers(
+            &layer.body,
+            owner,
+            &repository.name,
+            &base,
+        );
+        for number in numbers.into_iter().take(MAX_CLOSED_ISSUES) {
+            if !seen.insert(number) {
+                continue;
+            }
+            let issue = match db::issues::get_issue(pool, repository.id, number).await {
+                Ok(Some(issue)) if issue.state == "open" => issue,
+                Ok(_) => continue,
+                Err(error) => {
+                    tracing::warn!(repo_id = repository.id, number, %error, "could not read an issue a merged pull request closes");
+                    continue;
+                }
+            };
+            let closed = crate::backend::issues::mutations::update_issue_latest(
+                pool,
+                broadcaster,
+                actor_id,
+                repository.id,
+                number,
+                crate::backend::issues::mutations::UpdateIssueRequest {
+                    expected_state: issue.state,
+                    expected_updated: issue.updated_at.to_rfc3339(),
+                    title: None,
+                    body: None,
+                    state: Some("closed".to_owned()),
+                    state_reason: Some("completed".to_owned()),
+                },
+            )
+            .await;
+            if let Err(error) = closed {
+                tracing::warn!(repo_id = repository.id, number, %error, "could not close an issue a merged pull request names");
+            }
+        }
+    }
+}
+
+/// Merges a pull request for a request that can be cancelled, as when its client goes away or a
+/// GraphQL call times out. Publication and its bookkeeping run as a task that the server's
+/// shutdown waits for, so a cancelled request cannot leave a merged base with an open pull
+/// request.
+pub async fn merge_pull_request(
+    state: &crate::backend::app::AppState,
+    actor: impl Into<db::credentials::Actor>,
     repository: (String, String, i32),
     request: MergeRequest,
 ) -> Result<MergeResponse, OperationError> {
-    let prepared = prepare_pull_request_merge(pool, ci, actor_id, repository, request).await?;
-    publish_prepared_merge(pool, ci, broadcaster, prepared).await
+    merge_pull_request_checked(state, actor, repository, request, None).await
+}
+
+/// `merge_pull_request` for a merge whose repository and pull request ids the caller already
+/// read, so a renamed or replaced one is refused.
+pub async fn merge_pull_request_checked(
+    state: &crate::backend::app::AppState,
+    actor: impl Into<db::credentials::Actor>,
+    repository: (String, String, i32),
+    request: MergeRequest,
+    expected: Option<(i64, i64)>,
+) -> Result<MergeResponse, OperationError> {
+    let prepared = prepare_pull_request_merge_checked(
+        &state.pool,
+        &state.ci_runs,
+        actor.into(),
+        repository,
+        request,
+        expected,
+    )
+    .await?;
+    let unavailable = || OperationError::Unavailable {
+        code: "merge_worker_unavailable",
+        message: "The merge worker is unavailable".into(),
+    };
+    let (pool, ci, broadcaster) = (
+        state.pool.clone(),
+        state.ci_runs.clone(),
+        state.notification_broadcaster.clone(),
+    );
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    if !state.git_tasks.spawn(async move {
+        let _ = sender.send(publish_prepared_merge_owned(&pool, &ci, &broadcaster, prepared).await);
+    }) {
+        return Err(unavailable());
+    }
+    receiver.await.unwrap_or_else(|_| Err(unavailable()))
 }
 
 #[cfg(test)]
@@ -1698,7 +1905,8 @@ mod tests {
         let failures = |runs: &[db::checks::Run],
                         statuses: &[db::models::CommitStatus],
                         bound: &HashMap<&str, Option<i64>>| {
-            required_status_check_failures("H1", &required, statuses, &[], runs, bound)
+            let runs: Vec<&db::checks::Run> = runs.iter().collect();
+            required_status_check_failures("H1", &required, statuses, &[], &runs, bound)
         };
         let passed = [run("completed", Some("success"))];
         assert!(failures(&passed, &[], &none).is_empty());

@@ -50,7 +50,7 @@ pub struct Status {
 }
 
 pub struct NewDeployment<'a> {
-    pub actor: i64,
+    pub actor: super::credentials::Actor,
     pub repo: i64,
     pub sha: &'a str,
     pub reference: &'a str,
@@ -68,6 +68,17 @@ fn valid_text(value: &str, limit: usize) -> bool {
 }
 
 impl NewDeployment<'_> {
+    pub(crate) fn checks_passed(&self, checks: &[(String, String)]) -> bool {
+        match self.required_contexts {
+            Some(contexts) => contexts.iter().all(|context| {
+                checks
+                    .iter()
+                    .any(|(name, state)| name.eq_ignore_ascii_case(context) && state == "success")
+            }),
+            None => checks.iter().all(|(_, state)| state == "success"),
+        }
+    }
+
     pub(crate) fn validate(&self) -> Result<()> {
         anyhow::ensure!(
             crate::backend::git::is_full_commit_id(self.sha)
@@ -145,19 +156,45 @@ native_operation!(crate::backend::db::postgres::deployments::create,
     fn create(pool: &DbPool, input: NewDeployment<'_>) -> Result<Deployment>);
 native_operation!(crate::backend::db::postgres::deployments::get,
     crate::backend::db::sqlite::deployments::get,
-    fn get(pool: &DbPool, repo: i64, id: i64) -> Result<Option<Deployment>>);
+    fn get(pool: &DbPool, viewer: Option<i64>, repo: i64, id: i64) -> Result<Option<Deployment>>);
 native_operation!(crate::backend::db::postgres::deployments::list,
     crate::backend::db::sqlite::deployments::list,
-    fn list(pool: &DbPool, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Deployment>>);
+    fn list(pool: &DbPool, viewer: Option<i64>, repo: i64, filter: &Filter, offset: i64, limit: i64) -> Result<Vec<Deployment>>);
 native_operation!(crate::backend::db::postgres::deployments::delete,
     crate::backend::db::sqlite::deployments::delete,
-    fn delete(pool: &DbPool, actor: i64, repo: i64, id: i64) -> Result<()>);
+    fn delete(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, id: i64) -> Result<()>);
 native_operation!(crate::backend::db::postgres::deployments::create_status,
     crate::backend::db::sqlite::deployments::create_status,
-    fn create_status(pool: &DbPool, actor: i64, repo: i64, deployment: i64, input: &NewStatus) -> Result<(Deployment, Vec<Status>)>);
+    /// Every status the call saved, each with its deployment after the change; the new status is last.
+    fn create_status(pool: &DbPool, actor: impl Into<super::credentials::Actor>, repo: i64, deployment: i64, input: &NewStatus) -> Result<Vec<(Deployment, Status)>>);
+/// Pairs the inactive statuses written for older deployments with those deployments.
+pub(in crate::backend::db) fn pair(
+    deployments: Vec<Deployment>,
+    statuses: Vec<Status>,
+) -> Result<Vec<(Deployment, Status)>> {
+    let deployments: std::collections::HashMap<i64, Deployment> = deployments
+        .into_iter()
+        .map(|deployment| (deployment.id, deployment))
+        .collect();
+    statuses
+        .into_iter()
+        .map(|status| {
+            let deployment = deployments
+                .get(&status.deployment_id)
+                .cloned()
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "deployment {} vanished during the status write",
+                        status.deployment_id
+                    )
+                })?;
+            Ok((deployment, status))
+        })
+        .collect()
+}
 native_operation!(crate::backend::db::postgres::deployments::get_status,
     crate::backend::db::sqlite::deployments::get_status,
-    fn get_status(pool: &DbPool, deployment: i64, id: i64) -> Result<Option<Status>>);
+    fn get_status(pool: &DbPool, viewer: Option<i64>, deployment: i64, id: i64) -> Result<Option<Status>>);
 native_operation!(crate::backend::db::postgres::deployments::statuses,
     crate::backend::db::sqlite::deployments::statuses,
-    fn statuses(pool: &DbPool, deployment: i64, offset: i64, limit: i64) -> Result<Vec<Status>>);
+    fn statuses(pool: &DbPool, viewer: Option<i64>, deployment: i64, offset: i64, limit: i64) -> Result<Vec<Status>>);

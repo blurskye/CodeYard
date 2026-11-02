@@ -4,8 +4,8 @@ use crate::backend::{
     app::AppState,
     db::{
         self,
-        models::{User, Webhook, WebhookDelivery},
-        webhooks::{HookOwner, HookSettings},
+        models::{Webhook, WebhookDelivery},
+        webhooks::{DeliveryOutcome, DeliveryWindow, HookOwner, HookSettings},
     },
     webhooks::{
         payloads,
@@ -26,10 +26,12 @@ use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 
 fn hook_error(error: HookError) -> Error {
+    owner_error(error, "Repository administration required")
+}
+
+pub(super) fn owner_error(error: HookError, denied: &'static str) -> Error {
     match error {
-        HookError::Denied => {
-            Error::new(StatusCode::FORBIDDEN, "Repository administration required")
-        }
+        HookError::Denied => Error::new(StatusCode::FORBIDDEN, denied),
         HookError::NotFound => Error::missing(),
         HookError::Invalid(message) => Error::invalid(message),
         HookError::Unavailable => Error::unavailable(()),
@@ -41,12 +43,12 @@ async fn scope(
     headers: &HeaderMap,
     params: &Params,
     write: bool,
-) -> Result<(HookOwner, User)> {
+) -> Result<(HookOwner, auth::Authentication)> {
     let (repo, actor) =
         repository(state, headers, &params["owner"], &params["repo"], write).await?;
-    let actor = actor.ok_or_else(auth::required)?.user;
+    let actor = actor.ok_or_else(auth::required)?;
     let owner = HookOwner::Repository(repo.id);
-    settings::authorize(&state.pool, &actor, owner)
+    settings::authorize(&state.pool, &actor.user, owner)
         .await
         .map_err(hook_error)?;
     Ok((owner, actor))
@@ -63,17 +65,24 @@ fn id(params: &Params, key: &str) -> Result<i64> {
 async fn snapshot(
     state: &AppState,
     owner: HookOwner,
-    actor: &User,
+    actor: &auth::Authentication,
     hook: i64,
     delivery: Option<i64>,
+    history: DeliveryWindow,
 ) -> Result<(Webhook, HookSettings)> {
-    let mut settings =
-        db::webhooks::read_settings(&state.pool, owner, actor.id, Some(hook), delivery, 0, false)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(|| {
-                Error::new(StatusCode::FORBIDDEN, "Repository administration required")
-            })?;
+    let mut settings = db::webhooks::read_settings(
+        &state.pool,
+        owner,
+        actor.user.id,
+        &actor.credential(),
+        Some(hook),
+        delivery,
+        0,
+        history,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(|| Error::new(StatusCode::FORBIDDEN, "Repository administration required"))?;
     let hook = settings.hook.take().ok_or_else(Error::missing)?;
     Ok((hook, settings))
 }
@@ -82,10 +91,11 @@ async fn read_hook(
     state: &AppState,
     params: &Params,
     owner: HookOwner,
-    actor: &User,
+    actor: &auth::Authentication,
     hook: i64,
 ) -> Result<Value> {
-    let (hook, settings) = snapshot(state, owner, actor, hook, None).await?;
+    let (hook, settings) =
+        snapshot(state, owner, actor, hook, None, DeliveryWindow::default()).await?;
     Ok(document(params, &hook, settings.deliveries.first()))
 }
 
@@ -104,7 +114,7 @@ fn document(params: &Params, hook: &Webhook, last: Option<&WebhookDelivery>) -> 
     }
     value["test_url"] = json!(format!("{url}/tests"));
     value["last_response"] = json!({"code": last.and_then(|row| row.status_code),
-        "status": last.map(|row| if row.status_code.is_some_and(|code| (200..300).contains(&code)) { "active" } else { "failed" }).unwrap_or("unused"),
+        "status": last.map(|row| if row.succeeded() { "active" } else { "failed" }).unwrap_or("unused"),
         "message": last.and_then(|row| row.error.as_deref())});
     value
 }
@@ -116,14 +126,22 @@ async fn list(
     Query(page): Query<Pagination>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (owner, _) = scope(&state, &headers, &params, false).await?;
-    let hooks = db::webhooks::list_webhooks(&state.pool, owner)
-        .await
-        .map_err(Error::unavailable)?;
+    let (owner, actor) = scope(&state, &headers, &params, false).await?;
     let (offset, limit) = page.window()?;
-    let next = hooks.len() > offset + limit;
+    let hooks = db::webhooks::list_managed_webhooks(
+        &state.pool,
+        owner,
+        actor.user.id,
+        &actor.credential(),
+        offset as i64,
+        (limit + 1) as i64,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(|| hook_error(HookError::Denied))?;
+    let next = hooks.len() > limit;
     let mut values = Vec::new();
-    for hook in hooks.iter().skip(offset).take(limit) {
+    for hook in hooks.iter().take(limit) {
         let deliveries = db::webhooks::list_delivery_summaries(&state.pool, hook.id)
             .await
             .map_err(Error::unavailable)?;
@@ -173,17 +191,6 @@ fn ssl(value: Value) -> Result<bool> {
     }
 }
 
-fn change_events(events: &mut Vec<String>, add: Option<Vec<String>>, remove: Option<Vec<String>>) {
-    for event in add.unwrap_or_default() {
-        if !events.contains(&event) {
-            events.push(event);
-        }
-    }
-    if let Some(remove) = remove {
-        events.retain(|event| !remove.contains(event));
-    }
-}
-
 async fn save(
     state: Arc<AppState>,
     headers: HeaderMap,
@@ -199,6 +206,9 @@ async fn save(
         .get("hook_id")
         .map(|_| id(&params, "hook_id"))
         .transpose()?;
+    // A full-hook PATCH replaces the configuration it sends, so an omitted secret is cleared;
+    // without a `config` object it keeps the stored configuration, secret included.
+    let replaces_config = !config_only && input.config.is_some();
     let config = input.config.unwrap_or_default();
     let content_type = match config.content_type.as_deref() {
         Some("json") => Some(settings::JSON_CONTENT_TYPE.to_owned()),
@@ -209,8 +219,18 @@ async fn save(
     let ssl_verify = config.insecure_ssl.map(ssl).transpose()?;
     let id = match hook_id {
         None => {
-            let mut events = input.events.unwrap_or_else(|| vec!["push".into()]);
-            change_events(&mut events, input.add_events, input.remove_events);
+            let events = db::webhooks::WebhookPatch {
+                events: input.events.map(|events| events.join(",")),
+                add_events: input.add_events.unwrap_or_default(),
+                remove_events: input.remove_events.unwrap_or_default(),
+                ..Default::default()
+            }
+            .changed_events("push")
+            .map_err(|error| Error::invalid(error.0))?
+            .unwrap_or_else(|| "push".to_owned())
+            .split(',')
+            .map(str::to_owned)
+            .collect();
             let form = HookForm {
                 username: None,
                 password: None,
@@ -230,7 +250,8 @@ async fn save(
                 &state.pool,
                 state.secret_encryptor.as_deref(),
                 owner,
-                &actor,
+                &actor.user,
+                &actor.credential(),
                 None,
                 &form,
             )
@@ -238,37 +259,27 @@ async fn save(
             .map_err(hook_error)?
         }
         Some(id) => {
-            // Only the supplied fields are written, so concurrent edits to the others survive.
-            let events = if input.add_events.is_some() || input.remove_events.is_some() {
-                let mut events = match input.events {
-                    Some(events) => events,
-                    None => snapshot(&state, owner, &actor, id, None)
-                        .await?
-                        .0
-                        .events
-                        .split(',')
-                        .map(str::to_owned)
-                        .collect(),
-                };
-                change_events(&mut events, input.add_events, input.remove_events);
-                Some(events)
-            } else {
-                input.events
-            };
             let patch = HookPatch {
                 payload_url: config.url,
                 content_type,
-                events,
+                events: input.events,
+                add_events: input.add_events.unwrap_or_default(),
+                remove_events: input.remove_events.unwrap_or_default(),
                 active: input.active,
                 ssl_verify,
-                secret: config.secret,
+                secret: if replaces_config {
+                    Some(config.secret.unwrap_or_default())
+                } else {
+                    config.secret
+                },
                 ..Default::default()
             };
             settings::update(
                 &state.pool,
                 state.secret_encryptor.as_deref(),
                 owner,
-                &actor,
+                &actor.user,
+                &actor.credential(),
                 id,
                 &patch,
             )
@@ -331,9 +342,15 @@ async fn remove(
     Path(params): Path<Params>,
 ) -> Result<StatusCode> {
     let (owner, actor) = scope(&state, &headers, &params, true).await?;
-    settings::delete(&state.pool, owner, &actor, id(&params, "hook_id")?)
-        .await
-        .map_err(hook_error)?;
+    settings::delete(
+        &state.pool,
+        owner,
+        &actor.user,
+        &actor.credential(),
+        id(&params, "hook_id")?,
+    )
+    .await
+    .map_err(hook_error)?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -344,45 +361,43 @@ pub(super) struct Deliveries {
     status: Option<String>,
 }
 
-/// GitHub pages delivery history newest first by cursor, optionally keeping only successes
-/// or only failures.
+impl Deliveries {
+    /// The history GitHub pages newest first by cursor, optionally keeping only successes or
+    /// only failures: one row beyond the page tells whether another follows.
+    pub(super) fn window(&self, bodies: bool) -> Result<DeliveryWindow> {
+        let before = self
+            .cursor
+            .as_ref()
+            .map(|cursor| {
+                cursor
+                    .parse::<i64>()
+                    .ok()
+                    .filter(|id| *id > 0)
+                    .ok_or_else(|| Error::validation("Hook", "cursor", "invalid"))
+            })
+            .transpose()?;
+        let outcome = match self.status.as_deref() {
+            None => None,
+            Some("success") => Some(DeliveryOutcome::Success),
+            Some("failure") => Some(DeliveryOutcome::Failure),
+            Some(_) => return Err(Error::validation("Hook", "status", "invalid")),
+        };
+        Ok(DeliveryWindow {
+            bodies,
+            before,
+            outcome,
+            limit: super::pagination::page_size(self.per_page) as i64 + 1,
+        })
+    }
+}
+
+/// The page and its next link from the rows `Deliveries::window` selected.
 pub(super) fn delivery_page(
-    rows: Vec<WebhookDelivery>,
+    mut rows: Vec<WebhookDelivery>,
     query: Deliveries,
     uri: &Uri,
 ) -> Result<(HeaderMap, Vec<WebhookDelivery>)> {
-    let cursor = query
-        .cursor
-        .as_ref()
-        .map(|cursor| {
-            cursor
-                .parse::<i64>()
-                .ok()
-                .filter(|id| *id > 0)
-                .ok_or_else(|| Error::validation("Hook", "cursor", "invalid"))
-        })
-        .transpose()?;
-    if query
-        .status
-        .as_deref()
-        .is_some_and(|status| !matches!(status, "success" | "failure"))
-    {
-        return Err(Error::validation("Hook", "status", "invalid"));
-    }
-    let limit = query.per_page.unwrap_or(30).clamp(1, 100);
-    let mut rows = rows
-        .into_iter()
-        .filter(|row| cursor.is_none_or(|cursor| row.id < cursor))
-        .filter(|row| match query.status.as_deref() {
-            Some("success") => row
-                .status_code
-                .is_some_and(|code| (200..400).contains(&code)),
-            Some("failure") => row
-                .status_code
-                .is_some_and(|code| (400..600).contains(&code)),
-            _ => true,
-        })
-        .collect::<Vec<_>>();
+    let limit = super::pagination::page_size(query.per_page);
     let next = rows.len() > limit;
     rows.truncate(limit);
     let mut headers = HeaderMap::new();
@@ -425,7 +440,9 @@ async fn deliveries(
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
     let (owner, actor) = scope(&state, &headers, &params, false).await?;
-    let (hook, settings) = snapshot(&state, owner, &actor, id(&params, "hook_id")?, None).await?;
+    let window = query.window(false)?;
+    let (hook, settings) =
+        snapshot(&state, owner, &actor, id(&params, "hook_id")?, None, window).await?;
     let (headers, rows) = delivery_page(settings.deliveries, query, &uri)?;
     let rows = rows
         .iter()
@@ -446,6 +463,7 @@ async fn delivery(
         &actor,
         id(&params, "hook_id")?,
         Some(id(&params, "delivery_id")?),
+        DeliveryWindow::default(),
     )
     .await?;
     let row = settings.delivery.ok_or_else(Error::missing)?;
@@ -464,7 +482,8 @@ async fn trigger(
         settings::redeliver(
             &state.pool,
             owner,
-            &actor,
+            &actor.user,
+            &actor.credential(),
             hook,
             id(&params, "delivery_id")?,
         )
@@ -473,11 +492,11 @@ async fn trigger(
         return Ok((StatusCode::ACCEPTED, Json(json!({}))).into_response());
     }
     if uri.path().ends_with("/tests") {
-        settings::test_push(&state.pool, state.cluster.as_ref(), owner, &actor, hook)
+        settings::test_push(&state.pool, owner, &actor.user, &actor.credential(), hook)
             .await
             .map_err(hook_error)?;
     } else {
-        settings::ping(&state.pool, owner, &actor, hook)
+        settings::ping(&state.pool, owner, &actor.user, &actor.credential(), hook)
             .await
             .map_err(hook_error)?;
     }

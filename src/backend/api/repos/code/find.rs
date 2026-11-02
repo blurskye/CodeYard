@@ -1,14 +1,13 @@
-//! The "Go to file" page: every file path at one branch, tag or commit. The `q` query is
-//! applied by the page view, so the same list filters without a round trip.
+//! The "Go to file" page: match the complete tree before retaining bounded paths.
+//! Complete unfiltered listings can also be narrowed without a round trip.
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::chrome::{default_ref, load, resolve, store_error, Loaded};
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
 use crate::webui::pages::repos as view;
-use axum::extract::{OriginalUri, Path, State};
+use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
-use std::collections::HashMap;
 use std::sync::Arc;
 
 async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Response, Response> {
@@ -42,19 +41,23 @@ async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     } else {
         resolved.reference
     };
+    let query: String = ctx
+        .query
+        .get("q")
+        .map(|query| query.chars().take(256).collect())
+        .unwrap_or_default();
     let files = store
-        .file_paths(&reference, view::find::MAX_LISTED_FILES)
+        .file_paths_matching(&reference, &query, view::find::MAX_LISTED_FILES)
         .await
         .map_err(|error| store_error(ctx, Some(&loaded.chrome), error))?;
+    super::super::access::check_repo_read_access(&ctx.state.pool, &loaded.repository, &ctx.headers)
+        .await
+        .map_err(|_| ctx.error(StatusCode::NOT_FOUND, "Repository not found."))?;
     let page = view::find::FindPage {
         reference,
         paths: files.paths,
         truncated: files.truncated,
-        query: ctx
-            .query
-            .get("q")
-            .map(|query| query.chars().take(256).collect())
-            .unwrap_or_default(),
+        query,
     };
     Ok(ctx.page_model(
         &format!(
@@ -72,7 +75,7 @@ pub(in crate::backend::api::repos) async fn page(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
     OriginalUri(uri): OriginalUri,
-    Path(params): Path<HashMap<String, String>>,
+    super::GitPathParams(params): super::GitPathParams,
 ) -> Response {
     let ctx = match PageContext::load(state, headers, &uri).await {
         Ok(ctx) => ctx,

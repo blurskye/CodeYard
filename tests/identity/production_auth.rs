@@ -1323,10 +1323,15 @@ async fn token_insert_waiting_behind_password_revocation_is_refused() {
         racing.await.unwrap(),
         Err(identity::tokens::TokenError::Denied)
     ));
-    assert!(db::users::tokens::list_tokens(&fixture.pool, user.id, 0)
-        .await
-        .unwrap()
-        .is_empty());
+    assert!(db::users::tokens::list_tokens(
+        &fixture.pool,
+        user.id,
+        &crate::support::live_session(&fixture.pool, user.id).await,
+        0
+    )
+    .await
+    .unwrap()
+    .is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

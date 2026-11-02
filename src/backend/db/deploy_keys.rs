@@ -5,21 +5,7 @@ use crate::backend::db::DbPool;
 use anyhow::Result;
 
 /// A live browser session or write token, checked with the repository mutation.
-pub enum Credential {
-    Session(String),
-    Token(i64),
-}
-
-impl From<&str> for Credential {
-    fn from(session: &str) -> Self {
-        Self::Session(session.to_owned())
-    }
-}
-impl From<&String> for Credential {
-    fn from(session: &String) -> Self {
-        Self::Session(session.clone())
-    }
-}
+pub use crate::backend::db::users::accounts::OwnedAccountCredential as Credential;
 
 /// A deploy key to store. The fingerprint and key type come from the validated public key.
 #[derive(Debug, Clone)]
@@ -34,7 +20,7 @@ pub struct NewDeployKey {
 
 native_operation!(crate::backend::db::postgres::deploy_keys::list_deploy_keys,
     crate::backend::db::sqlite::deploy_keys::list_deploy_keys,
-    fn list_deploy_keys(pool: &DbPool, repo_id: i64) -> Result<Vec<DeployKey>>);
+    fn list_deploy_keys(pool: &DbPool, actor: i64, repo_id: i64, credential: impl Into<Credential>, after: i64, limit: i64) -> Result<Vec<DeployKey>>);
 
 native_operation!(crate::backend::db::postgres::deploy_keys::get_deploy_key,
     crate::backend::db::sqlite::deploy_keys::get_deploy_key,

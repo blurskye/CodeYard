@@ -10,6 +10,7 @@ use codeyard::backend::{
     api::create_router,
     app::AppState,
     ci::CiConfig,
+    crypto::hmac_sha256,
     crypto::SecretEncryptor,
     db::{
         self,
@@ -19,7 +20,6 @@ use codeyard::backend::{
     },
     identity::tokens::{self, TokenInput},
     storage::ObjectStore,
-    webhooks::delivery::hmac_sha256,
 };
 use serde_json::{json, Value};
 use std::{sync::Arc, time::Duration};
@@ -435,6 +435,19 @@ async fn contract(pg: bool) {
     assert_eq!(body["active"], false);
     assert_eq!(body["events"], json!(["issues", "push"]));
     assert_eq!(body["config"]["url"], url);
+    // A full update without `config` keeps the stored secret.
+    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        key.decrypt(
+            stored.encrypted_secret.as_ref().unwrap(),
+            stored.secret_nonce.as_ref().unwrap()
+        )
+        .unwrap(),
+        b"original-secret"
+    );
     let (_, body) = request(
         &router,
         "orgs/update-webhook-config-for-org",
@@ -549,11 +562,14 @@ async fn contract(pg: bool) {
     assert!(page.contains("clear_password"));
     assert!(page.contains("clear_secret"));
     let hook_id = hook.to_string();
+    // The edit form carries the revision it was rendered from.
+    let revision = crate::support::http_client::hidden_value(&page, "expected_updated");
     let (status, page) = browser
         .form(
             &format!("/settings/organizations/{}/webhooks/webhook-save", org.id),
             &[
                 ("hook_id", &hook_id),
+                ("expected_updated", &revision),
                 ("payload_url", &url),
                 ("content_type", "application/json"),
                 ("events", "issues"),
@@ -569,19 +585,27 @@ async fn contract(pg: bool) {
         .unwrap();
     assert!(stored.encrypted_secret.is_none());
     assert!(stored.secret_nonce.is_none());
-    let (ciphertext, nonce) = webhooks::webhook_secret_sample(f.pool())
-        .await
-        .unwrap()
-        .unwrap();
     assert_eq!(
-        key.decrypt(&ciphertext, &nonce).unwrap(),
+        key.decrypt(
+            stored.encrypted_password.as_deref().unwrap(),
+            stored.password_nonce.as_deref().unwrap()
+        )
+        .unwrap(),
         b"rotated-password"
     );
+    let page = browser
+        .page_ok(&format!(
+            "/settings/organizations/{}?tab=webhooks&hook={hook}&edit=1",
+            org.id
+        ))
+        .await;
+    let revision = crate::support::http_client::hidden_value(&page, "expected_updated");
     let (status, page) = browser
         .form(
             &format!("/settings/organizations/{}/webhooks/webhook-save", org.id),
             &[
                 ("hook_id", &hook_id),
+                ("expected_updated", &revision),
                 ("payload_url", &url),
                 ("content_type", "application/json"),
                 ("events", "issues"),
@@ -642,6 +666,32 @@ async fn contract(pg: bool) {
         .unwrap();
     assert!(stored.encrypted_secret.is_none());
     assert!(stored.secret_nonce.is_none());
+    // A full update with `config` replaces the configuration, so an omitted secret is cleared.
+    request(
+        &router,
+        "orgs/update-webhook-config-for-org",
+        "PATCH",
+        &format!("{hook_path}/config"),
+        write,
+        json!({"secret":"temporary"}),
+        200,
+    )
+    .await;
+    request(
+        &router,
+        "orgs/update-webhook",
+        "PATCH",
+        &hook_path,
+        write,
+        json!({"config":{"url":url}}),
+        200,
+    )
+    .await;
+    let stored = webhooks::get_webhook(f.pool(), HookOwner::Organization(org.id), hook)
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(stored.encrypted_secret.is_none());
     request(
         &router,
         "orgs/get-webhook-delivery",

@@ -68,11 +68,11 @@ pub struct Target {
 
 native_operation!(crate::backend::db::postgres::reactions::create_reaction,
     crate::backend::db::sqlite::reactions::create_reaction,
-    fn create_reaction(pool: &DbPool, actor_id: i64, target: Target, content: &str) -> Result<(Reaction, bool)>);
+    fn create_reaction(pool: &DbPool, actor_id: i64, credential: &super::users::accounts::AccountCredential<'_>, target: Target, content: &str) -> Result<(Reaction, bool)>);
 
 native_operation!(crate::backend::db::postgres::reactions::delete_reaction,
     crate::backend::db::sqlite::reactions::delete_reaction,
-    fn delete_reaction(pool: &DbPool, actor_id: i64, target: Target, reaction_id: i64) -> Result<bool>);
+    fn delete_reaction(pool: &DbPool, actor_id: i64, credential: &super::users::accounts::AccountCredential<'_>, target: Target, reaction_id: i64) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::reactions::find_reaction,
     crate::backend::db::sqlite::reactions::find_reaction,
@@ -95,7 +95,7 @@ pub struct ReactionCount {
 // The reactor's access, the item and the subject are checked in the same transaction as the change.
 native_operation!(crate::backend::db::postgres::reactions::toggle_reaction,
     crate::backend::db::sqlite::reactions::toggle_reaction,
-    fn toggle_reaction(pool: &DbPool, actor_id: i64, repo_id: i64, item_id: i64, subject: Subject, subject_id: i64, content: &str) -> Result<bool>);
+    fn toggle_reaction(pool: &DbPool, actor_id: i64, credential: &super::users::accounts::AccountCredential<'_>, repo_id: i64, item_id: i64, subject: Subject, subject_id: i64, content: &str) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::reactions::reaction_counts,
     crate::backend::db::sqlite::reactions::reaction_counts,

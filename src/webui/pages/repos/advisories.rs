@@ -14,6 +14,8 @@ pub struct Draft {
     pub package: String,
     pub ecosystem: String,
     pub range: String,
+    #[serde(default)]
+    pub vulnerabilities_json: String,
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Row {
@@ -41,6 +43,8 @@ pub struct Detail {
 }
 #[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Page {
+    #[serde(default)]
+    pub can_administer: bool,
     pub rows: Vec<Row>,
     pub detail: Option<Detail>,
     pub draft: Draft,
@@ -72,6 +76,9 @@ fn fields(draft: &Draft, include_package: bool) -> Element {
             label {"Package ecosystem" DraftSelect {name:"ecosystem",initial_value:draft.ecosystem.clone(),options:ecosystem_options}}
             label {"Package name" DraftInput {name:"package",initial_value:draft.package.clone(),maxlength:Some(255)}}
             label {"Vulnerable versions" DraftInput {name:"range",initial_value:draft.range.clone(),maxlength:Some(1024)}}
+        } else {
+            label {"Affected packages (JSON)" DraftTextarea {name:"vulnerabilities_json",initial_value:draft.vulnerabilities_json.clone(),required:true,rows:10}}
+            p {"Complete each package's ecosystem, name and vulnerable_version_range before publishing. Keep patched_versions and vulnerable_functions when editing existing entries."}
         }
     }
 }
@@ -103,9 +110,12 @@ fn AdvisoryView(repo: RepoChrome, page: Page) -> Element {
                     for vulnerability in &detail.vulnerabilities {article {class:"panel",h4 {"{vulnerability.ecosystem}: {vulnerability.name}"} p {"Affected: {vulnerability.range}"} p {"Patched: {vulnerability.patched}"}}}
                     if let Some(url)=&detail.report_url {NavLink {href:url.clone(),"Original confidential report"}}
                     if let Some(url)=&detail.fork_url {NavLink {href:url.clone(),"Private remediation fork"}}
-                    if repo.can_admin&&!repo.is_archived {
+                    if page.can_administer&&!repo.is_archived {
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}
-                            {fields(&page.draft,detail.vulnerabilities.is_empty())} button {r#type:"submit",name:"op",value:"save","Save advisory"}
+                            // An advisory with no packages yet takes one through plain fields; once it has
+                            // some, the JSON list edits all of them without dropping any.
+                            {fields(&page.draft,detail.vulnerabilities.is_empty())}
+                            button {r#type:"submit",name:"op",value:"save","Save advisory"}
                         }
                         form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} input {r#type:"hidden",name:"ghsa",value:detail.row.ghsa.clone()}
                             if detail.row.state=="triage"||detail.row.state=="closed" {button {name:"op",value:"draft","Accept as draft"}}
@@ -117,7 +127,7 @@ fn AdvisoryView(repo: RepoChrome, page: Page) -> Element {
                     if page.rows.is_empty() {p {"No advisories are visible to this account."}}
                     for row in &page.rows {article {class:"panel",h3 {NavLink {href:format!("{base}/{}",row.ghsa),"{row.summary}"}} p {code {"{row.ghsa}"} " · {row.state} · {row.severity}"}}}
                     nav {aria_label:"Advisory pages",if page.page>1 {NavLink {href:format!("{base}?page={}",page.page-1),"Previous"}} if page.more {NavLink {href:format!("{base}?page={}",page.page+1),"Next"}}}
-                    if repo.can_admin&&!repo.is_archived {h3 {"Create draft advisory"} form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} {fields(&page.draft,true)} button {name:"op",value:"create","Create confidential draft"}}}
+                    if page.can_administer&&!repo.is_archived {h3 {"Create draft advisory"} form {method:"post",action:repo.action("advisory"),{csrf(&repo.csrf_token)} {repository_id(repo.id)} {fields(&page.draft,true)} button {name:"op",value:"create","Create confidential draft"}}}
                 }
             }
         },

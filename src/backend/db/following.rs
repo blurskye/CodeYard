@@ -1,6 +1,14 @@
 use crate::backend::db::{models::User, DbPool};
 use anyhow::Result;
 
+pub(crate) fn connections_sql(followers: bool) -> &'static str {
+    if followers {
+        "SELECT u.* FROM follows f JOIN users u ON u.id=f.follower_id WHERE f.following_id=$1 ORDER BY f.follower_id LIMIT $2 OFFSET $3"
+    } else {
+        "SELECT u.* FROM follows f JOIN users u ON u.id=f.following_id WHERE f.follower_id=$1 ORDER BY f.following_id LIMIT $2 OFFSET $3"
+    }
+}
+
 native_operation!(crate::backend::db::postgres::following::list_connections,
     crate::backend::db::sqlite::following::list_connections,
     fn list_connections(pool: &DbPool, user_id: i64, followers: bool, limit: i64, offset: i64) -> Result<Vec<User>>);
@@ -11,11 +19,11 @@ pub struct FollowRestricted;
 
 native_operation!(crate::backend::db::postgres::following::follow_user,
     crate::backend::db::sqlite::following::follow_user,
-    fn follow_user(pool: &DbPool, follower_id: i64, following_id: i64) -> Result<bool>);
+    fn follow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &super::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::following::unfollow_user,
     crate::backend::db::sqlite::following::unfollow_user,
-    fn unfollow_user(pool: &DbPool, follower_id: i64, following_id: i64) -> Result<bool>);
+    fn unfollow_user(pool: &DbPool, follower_id: i64, following_id: i64, credential: &super::users::accounts::AccountCredential<'_>) -> Result<bool>);
 
 native_operation!(crate::backend::db::postgres::following::is_user_following,
     crate::backend::db::sqlite::following::is_user_following,

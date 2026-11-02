@@ -106,11 +106,10 @@ async fn shutdown_keeps_git_task_admission_open_while_http_handlers_drain() {
     let mut state = closed_state().await;
     state.pool = raw.clone().into();
     let tasks = state.git_tasks.clone();
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
-    drop(listener);
     let (stop, receiver) = tokio::sync::watch::channel(false);
-    let server = tokio::spawn(run_web_server(address, state, receiver));
+    let server = tokio::spawn(run_web_listener(listener, state, receiver));
     let client = reqwest::Client::new();
     tokio::time::timeout(std::time::Duration::from_secs(3), async {
         loop {
@@ -483,7 +482,7 @@ async fn all_real_lane_routers_construct_and_infrastructure_failure_is_html_503(
 async fn a_get_at_a_form_url_goes_to_the_page_the_form_belongs_to() {
     let app = create_router(closed_state().await);
     for (uri, location) in [
-        ("/alice/demo/_forms/settings", "/alice/demo/settings"),
+        ("/alice/demo/_forms/settings", "/alice/demo/settings?tab=general"),
         ("/alice/demo/_forms/delete-label", "/alice/demo/labels"),
         ("/alice/demo/_forms/create-branch", "/alice/demo/branches"),
         ("/alice/demo/_forms/delete-tag", "/alice/demo/tags"),

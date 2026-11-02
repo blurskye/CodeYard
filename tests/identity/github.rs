@@ -80,6 +80,7 @@ async fn contract(pg: bool) {
     let session = Client::login(&router, f.pool(), alice).await;
     let other_session = Client::login(&router, f.pool(), bob).await;
     let mut credentials = Vec::new();
+    let mut token_hashes = std::collections::HashMap::new();
     for (actor, session, scope) in [
         (alice, &session.session, "write"),
         (alice, &session.session, "read"),
@@ -97,6 +98,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
+        token_hashes.insert(token.token.id, tokens::token_hash(&token.value));
         credentials.push(format!("Bearer {}", token.value));
     }
     let write = Some(credentials[0].as_str());
@@ -792,6 +794,7 @@ async fn contract(pg: bool) {
         assert!(public.get(field).is_none(), "private field {field} leaked");
         expected.as_object_mut().unwrap().remove(field);
     }
+    expected["email"] = Value::Null;
     assert_eq!(public, expected);
     let (_, cleared) = request(
         &router,
@@ -1186,13 +1189,19 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(public["public_repos"], 0);
     assert!(public.get("total_private_repos").is_none());
-    let credentials = db::users::tokens::list_tokens(f.pool(), alice, 0)
-        .await
-        .unwrap();
+    let credentials = db::users::tokens::list_tokens(
+        f.pool(),
+        alice,
+        &crate::support::live_session(f.pool(), alice).await,
+        0,
+    )
+    .await
+    .unwrap();
     let read_token = credentials
         .iter()
         .find(|token| token.scope == "read")
         .unwrap();
+    let read_hash = &token_hashes[&read_token.id];
     let patch = db::users::profiles::ProfilePatch {
         company: Some("Must not be saved"),
         ..db::users::profiles::ProfilePatch::default()
@@ -1200,7 +1209,7 @@ async fn contract(pg: bool) {
     let denied = codeyard::backend::identity::profiles::save(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(read_token.id),
+        &db::users::accounts::AccountCredential::Token(read_token.id, read_hash),
         &patch,
     )
     .await
@@ -1213,6 +1222,20 @@ async fn contract(pg: bool) {
         .iter()
         .find(|token| token.scope == "write")
         .unwrap();
+    let write_hash = &token_hashes[&write_token.id];
+    // Hash mismatch is distinct from read-only scope and revocation: this write token is live.
+    let denied = codeyard::backend::identity::profiles::save(
+        f.pool(),
+        alice,
+        &db::users::accounts::AccountCredential::Token(write_token.id, read_hash),
+        &patch,
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(
+        denied,
+        codeyard::backend::identity::profiles::ProfileError::Denied
+    );
     f.execute(
         "DELETE FROM personal_access_tokens WHERE id=$1",
         &[write_token.id],
@@ -1221,7 +1244,7 @@ async fn contract(pg: bool) {
     let denied = codeyard::backend::identity::profiles::save(
         f.pool(),
         alice,
-        &db::users::accounts::AccountCredential::Token(write_token.id),
+        &db::users::accounts::AccountCredential::Token(write_token.id, write_hash),
         &patch,
     )
     .await
@@ -1238,11 +1261,15 @@ async fn contract(pg: bool) {
             .as_deref(),
         Some("Native Company")
     );
-    for token in [read_token.id, write_token.id] {
+    for (token, hash) in [
+        (read_token.id, read_hash.as_str()),
+        (write_token.id, write_hash.as_str()),
+    ] {
         let error = db::users::ssh_keys::add_ssh_key_for_token(
             f.pool(),
             alice,
             token,
+            hash,
             "Must not be added",
             public_key,
         )
@@ -1255,7 +1282,7 @@ async fn contract(pg: bool) {
         let error = codeyard::backend::identity::keys::enroll_signing(
             f.pool(),
             alice,
-            &db::users::accounts::AccountCredential::Token(token),
+            &db::users::accounts::AccountCredential::Token(token, hash),
             "Must not be added",
             public_key,
         )
@@ -1269,10 +1296,15 @@ async fn contract(pg: bool) {
     let key = db::users::ssh_keys::add_ssh_key(f.pool(), alice, "Kept", public_key)
         .await
         .unwrap();
-    let error =
-        db::users::ssh_keys::delete_user_ssh_key_for_token(f.pool(), alice, write_token.id, key.id)
-            .await
-            .unwrap_err();
+    let error = db::users::ssh_keys::delete_user_ssh_key_for_token(
+        f.pool(),
+        alice,
+        write_token.id,
+        write_hash,
+        key.id,
+    )
+    .await
+    .unwrap_err();
     assert_eq!(
         error.downcast_ref::<db::users::ssh_keys::SshKeyWriteRefusal>(),
         Some(&db::users::ssh_keys::SshKeyWriteRefusal::AccountRestricted)

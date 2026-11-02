@@ -619,6 +619,151 @@ async fn contract(pg: bool) {
             db::models::AccessLevel::from(level)
         );
     }
+    // A fine-grained token selected for another repository cannot change team access to
+    // team-repo, through the team's repository route or the team's creation.
+    let other_repo = session
+        .expect(
+            "POST",
+            "/api/repos",
+            json!({"name":"other-repo","is_private":true,"owner_org_id":org.id}),
+            StatusCode::CREATED,
+        )
+        .await["id"]
+        .as_i64()
+        .unwrap();
+    {
+        use codeyard::backend::identity::fine_grained;
+        let created = fine_grained::create(
+            f.pool(),
+            alice,
+            Some(&session.session),
+            fine_grained::Request {
+                name: "team-admin".into(),
+                description: "Team administration".into(),
+                owner: fine_grained::Owner::Organization(org.id),
+                access: fine_grained::Access::Selected,
+                repositories: vec![other_repo],
+                permissions: json!({"members":"write","administration":"write"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+                expires_at: Some(chrono::Utc::now() + chrono::Duration::days(30)),
+            },
+        )
+        .await
+        .unwrap();
+        db::fine_grained_tokens::review(
+            f.pool(),
+            org.id,
+            alice,
+            &[created.id],
+            "pending",
+            "approved",
+            None,
+        )
+        .await
+        .unwrap();
+        let fine = format!("Bearer {}", created.value);
+        call(
+            &router,
+            "PUT",
+            &format!("{path}/repos/team-org/team-repo"),
+            &fine,
+            json!({"permission":"admin"}),
+            ("teams/add-or-update-repo-permissions-in-org", 404),
+        )
+        .await;
+        call(
+            &router,
+            "POST",
+            base,
+            &fine,
+            json!({"name":"Escalated","repo_names":["team-org/team-repo"]}),
+            ("teams/create", 404),
+        )
+        .await;
+        // Nor can it read that grant: the team's repository list and check keep to the
+        // token's repositories.
+        assert_eq!(
+            call(
+                &router,
+                "GET",
+                &format!("{path}/repos"),
+                &fine,
+                Value::Null,
+                ("teams/list-repos-in-org", 200),
+            )
+            .await,
+            json!([])
+        );
+        call(
+            &router,
+            "GET",
+            &format!("{path}/repos/team-org/team-repo"),
+            &fine,
+            Value::Null,
+            ("teams/check-permissions-for-repo-in-org", 404),
+        )
+        .await;
+    }
+    // Team creation is refused before repository names resolve, so members and outsiders cannot
+    // tell a private repository from a missing one.
+    for token in [member, outsider] {
+        for name in ["team-org/team-repo", "team-org/missing"] {
+            call(
+                &router,
+                "POST",
+                base,
+                token,
+                json!({"name":"Probe","repo_names":[name]}),
+                ("teams/create", 403),
+            )
+            .await;
+        }
+    }
+    // Slugs drop accents as GitHub's do.
+    let accented = call(
+        &router,
+        "POST",
+        base,
+        writer,
+        json!({"name":"My TEam Näme"}),
+        ("teams/create", 201),
+    )
+    .await;
+    assert_eq!(accented["slug"], "my-team-name");
+    // A team named "members" still answers membership documents on the organization route.
+    let members_team = call(
+        &router,
+        "POST",
+        base,
+        writer,
+        json!({"name":"members"}),
+        ("teams/create", 201),
+    )
+    .await;
+    let membership = call(
+        &router,
+        "GET",
+        &format!("{base}/members/memberships/alice"),
+        reader,
+        Value::Null,
+        ("teams/get-membership-for-user-in-org", 200),
+    )
+    .await;
+    assert_eq!(membership["role"], "maintainer");
+    assert_eq!(membership["state"], "active");
+    for team in [&accented, &members_team] {
+        call(
+            &router,
+            "DELETE",
+            &format!("/api/v3/teams/{}", team["id"].as_i64().unwrap()),
+            writer,
+            Value::Null,
+            ("teams/delete-legacy", 204),
+        )
+        .await;
+    }
     let with_repo = call(
         &router,
         "POST",

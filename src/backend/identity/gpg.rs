@@ -11,12 +11,24 @@ use base64::Engine;
 use chrono::{DateTime, Utc};
 use pgp::{
     composed::{Deserializable, SignedPublicKey, SignedPublicSubKey},
-    packet::{Packet, PacketParser, PacketTrait, Signature, SignatureType},
-    types::{KeyDetails, Tag},
+    packet::{Packet, PacketParser, PacketTrait, Signature, SignatureType, SubpacketData},
+    types::{KeyDetails, KeyVersion, Tag},
 };
 use std::io::Read;
 
 static CRYPTO_WORK: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+
+pub(super) async fn crypto<T: Send + 'static>(
+    work: impl FnOnce() -> T + Send + 'static,
+) -> anyhow::Result<T> {
+    let permit =
+        tokio::time::timeout(std::time::Duration::from_secs(10), CRYPTO_WORK.acquire()).await??;
+    Ok(tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await?)
+}
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum GpgError {
     #[error("Enter one valid armored OpenPGP public key with self-signed identities")]
@@ -90,12 +102,19 @@ fn material<K: KeyDetails + PacketTrait>(
     revoked: bool,
 ) -> Result<GpgMaterial, GpgError> {
     let flags = signature.key_flags();
+    let legacy_primary = key.tag() == Tag::PublicKey
+        && key.version() != KeyVersion::V6
+        && !signature.config().is_some_and(|config| {
+            config
+                .hashed_subpackets()
+                .any(|packet| matches!(&packet.data, SubpacketData::KeyFlags(_)))
+        });
     let created_at = timestamp(key.created_at().as_secs());
     Ok(GpgMaterial {
         public_key: public_packet(key)?,
         raw_key: None,
         emails: Vec::new(),
-        can_sign: flags.sign() && key.algorithm().can_sign(),
+        can_sign: (flags.sign() || legacy_primary) && key.algorithm().can_sign(),
         can_certify: flags.certify() && key.algorithm().can_sign(),
         can_encrypt_comms: flags.encrypt_comms() && key.algorithm().can_encrypt(),
         can_encrypt_storage: flags.encrypt_storage() && key.algorithm().can_encrypt(),
@@ -111,7 +130,40 @@ fn uid_email(uid: &str) -> Option<String> {
         uid
     };
     let address = address.trim().to_ascii_lowercase();
-    (address.len() <= 255 && address.parse::<lettre::Address>().is_ok()).then_some(address)
+    super::credentials::validate_email(&address)
+        .is_ok()
+        .then_some(address)
+}
+
+pub(super) fn certifies_email(raw: &str, email: &str, at: i64) -> bool {
+    let Ok((certificate, _)) = SignedPublicKey::from_string(raw) else {
+        return false;
+    };
+    certificate.details.users.iter().any(|user| {
+        if !user
+            .id
+            .as_str()
+            .and_then(uid_email)
+            .is_some_and(|identity| identity.eq_ignore_ascii_case(email))
+        {
+            return false;
+        }
+        user.signatures
+            .iter()
+            .filter(|signature| {
+                signature
+                    .created()
+                    .is_some_and(|created| i64::from(created.as_secs()) <= at)
+                    && signature
+                        .verify_certification(&certificate.primary_key, Tag::UserId, &user.id)
+                        .is_ok()
+            })
+            .max_by_key(|signature| signature.created())
+            .is_some_and(|signature| {
+                signature.typ() != Some(SignatureType::CertRevocation)
+                    && signature_live(signature, at)
+            })
+    })
 }
 
 /// Packet and work limits are checked before cryptographic verification. Private packets and
@@ -161,10 +213,13 @@ pub fn parse(armored: &str) -> Result<NewGpgKey, GpgError> {
     cert.details.direct_signatures.retain(|signature| {
         signature.typ() == Some(SignatureType::Key) && signature.verify_key(primary).is_ok()
     });
-    cert.details.revocation_signatures.retain(|signature| {
-        signature.typ() == Some(SignatureType::KeyRevocation)
-            && signature.verify_key(primary).is_ok()
-    });
+    if cert.details.revocation_signatures.iter().any(|signature| {
+        signature.typ() != Some(SignatureType::KeyRevocation)
+            || signature.verify_key(primary).is_err()
+    }) {
+        // Designated-revoker signatures are not yet resolved. Never erase a supplied revocation.
+        return Err(GpgError::InvalidKey);
+    }
     cert.details.user_attributes.clear();
     for user in &mut cert.details.users {
         // Third-party certifications never establish ownership of an identity or key policy.
@@ -198,7 +253,12 @@ pub fn parse(armored: &str) -> Result<NewGpgKey, GpgError> {
         .details
         .direct_signatures
         .iter()
-        .chain(active_users.iter().map(|(_, signature)| *signature))
+        .chain(
+            active_users
+                .iter()
+                .filter(|_| primary.version() != KeyVersion::V6)
+                .map(|(_, signature)| *signature),
+        )
         .filter(|signature| {
             signature
                 .created()
@@ -252,10 +312,20 @@ pub fn parse(armored: &str) -> Result<NewGpgKey, GpgError> {
             .signatures
             .iter()
             .any(|signature| signature.typ() == Some(SignatureType::SubkeyRevocation));
+        let mut subkey_material = material(&subkey.key, binding, revoked)?;
+        if let Some(back) = binding.embedded_signature() {
+            if let Some(expiry) = expires_at(subkey_material.created_at, back) {
+                subkey_material.expires_at = Some(
+                    subkey_material
+                        .expires_at
+                        .map_or(expiry, |outer| outer.min(expiry)),
+                );
+            }
+        }
         root.subkeys.push(NewGpgKey {
             fingerprint: format!("{:X}", subkey.fingerprint()),
             key_id: hex::encode_upper(subkey.legacy_key_id().as_ref()),
-            material: material(&subkey.key, binding, revoked)?,
+            material: subkey_material,
             subkeys: Vec::new(),
         });
     }
@@ -279,18 +349,10 @@ pub async fn enroll(
     if armored.len() > 65536 {
         return Err(GpgError::InvalidKey);
     }
-    // Parsing is bounded to two at a time; a busy upload waits briefly for a slot.
-    let permit = tokio::time::timeout(std::time::Duration::from_secs(10), CRYPTO_WORK.acquire())
-        .await
-        .map_err(|_| GpgError::Unavailable)?
-        .map_err(|_| GpgError::Unavailable)?;
     let armored = armored.to_owned();
-    let key = tokio::task::spawn_blocking(move || {
-        let _permit = permit;
-        parse(&armored)
-    })
-    .await
-    .map_err(|_| GpgError::Unavailable)??;
+    let key = crypto(move || parse(&armored))
+        .await
+        .map_err(|_| GpgError::Unavailable)??;
     db::users::gpg_keys::add_gpg_key(pool, actor, credential, name, &key)
         .await
         .map_err(write_error)

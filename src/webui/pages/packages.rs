@@ -49,6 +49,8 @@ pub struct Listing {
     pub explore: bool,
     pub base: String,
     pub kind: String,
+    #[serde(default)]
+    pub container_namespace: Option<String>,
     pub packages: Vec<Package>,
     pub newer: Option<String>,
     pub older: Option<String>,
@@ -111,6 +113,9 @@ pub fn render(page: Page) -> Element {
                     }
                 }
                 h1 { class: "text-2xl font-semibold mb-4", "{list.title}" }
+                if let Some(namespace) = &list.container_namespace {
+                    p { class: "text-sm text-muted mb-4", "Container registry namespace: ", code { "{namespace}" } }
+                }
                 form { method: "get", action: list.base.clone(), class: "filter-toolbar mb-4",
                     label { r#for: "package-type", "Type" }
                     DraftSelect { id: Some("package-type".to_owned()), name: "type", initial_value: list.kind.clone(), options: vec![
@@ -201,7 +206,7 @@ pub fn render(page: Page) -> Element {
                 if detail.versions.is_empty() { p { class: "p-4", "No versions published." } }
                 for version in &detail.versions {
                     article { class: "package-row p-4",
-                        div { h3 { class: "font-semibold", NavLink { href: version.href.clone(), "{version.name}" } }
+                        div { h3 { class: "font-semibold", if version.deleted { "{version.name}" } else { NavLink { href: version.href.clone(), "{version.name}" } } }
                             p { class: "text-sm text-muted", "{version.created}" }
                             for tag in &version.tags { span { class: "badge", "{tag}" } }
                             if version.deleted { span { class: "badge", "Deleted" } }

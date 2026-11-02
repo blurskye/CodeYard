@@ -338,10 +338,21 @@ async fn profiles_filter_private_repositories_before_loading() {
             anonymous.iter().map(|r| r.id).collect::<Vec<_>>(),
             [public.id]
         );
+        let session = uuid::Uuid::new_v4().to_string();
+        db::users::sessions::create_session(
+            f.pool(),
+            &session,
+            owner,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
         let (_, own, _) = identity::profiles::repositories_on_profile(
             f.pool(),
             "profile_owner",
-            Some(owner),
+            Some(&session),
             "",
             1,
         )
@@ -395,7 +406,7 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
                     body: Some("".to_owned()),
                     is_draft: false,
                     is_prerelease: false,
-                    make_latest: true,
+                    make_latest: true.into(),
                 },
             )
             .await
@@ -403,6 +414,9 @@ async fn deleting_repositories_retires_only_unreferenced_release_uploads() {
             let added = db::releases::add_release_asset(
                 f.pool(),
                 owner,
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(f.pool(), owner).await,
+                ),
                 r.id,
                 release.id,
                 &db::releases::NewReleaseAsset {

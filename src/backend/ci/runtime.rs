@@ -1,10 +1,10 @@
 //! Credentials shared by today's act worker and future runners.
 use crate::backend::db::{self, DbPool};
+pub use crate::backend::identity::tokens::token_hash;
 use anyhow::Result;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 
 #[derive(Clone, Default, Serialize, Deserialize)]
 pub struct RuntimeCredentials {
@@ -13,7 +13,7 @@ pub struct RuntimeCredentials {
 }
 
 pub fn secret() -> String {
-    let mut bytes = [0; 32];
+    let mut bytes = [0; crate::backend::identity::tokens::TOKEN_BYTES];
     rand::rngs::OsRng.fill_bytes(&mut bytes);
     URL_SAFE_NO_PAD.encode(bytes)
 }
@@ -23,10 +23,6 @@ pub fn oidc_url() -> String {
         "{}/api/ci/oidc/token?",
         crate::backend::api::http::config::link_origin().trim_end_matches('/')
     )
-}
-
-pub fn token_hash(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
 }
 
 pub fn results_url(settings: &db::actions::ActionsSettings) -> String {
@@ -52,7 +48,14 @@ pub async fn issue(
         "jti": secret()
     }))?);
     let token = format!("{header}.{payload}.{}", secret());
-    db::action_objects::issue_token(pool, run.id, &token_hash(&token), &backend).await?;
+    db::action_objects::issue_token(
+        pool,
+        run.id,
+        run.worker.as_deref().unwrap_or(""),
+        &token_hash(&token),
+        &backend,
+    )
+    .await?;
     Ok(RuntimeCredentials {
         token,
         results_url: results_url(settings),

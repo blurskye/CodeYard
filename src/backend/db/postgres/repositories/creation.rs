@@ -6,7 +6,8 @@ use crate::backend::db::{
         OrganizationOutcome,
     },
     repositories::creation::{
-        NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal, RepositoryTarget,
+        CreationAdmission, NewRepository, RepositoryCreationOwner, RepositoryStorageRefusal,
+        RepositoryTarget,
     },
 };
 use anyhow::Result;
@@ -25,14 +26,21 @@ pub(crate) async fn creation_authority(
         }
         RepositoryTarget::Organization(org) => {
             match crate::backend::db::postgres::organizations::authority::authority(connection, owner.actor_id, org).await? {
-                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => Ok(false),
+                OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin) => {}
                 OrganizationOutcome::Applied(OrgRole::Member) => {
-                    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_settings WHERE org_id=$1 AND (members_can_create_public_repositories OR members_can_create_private_repositories))").bind(org).fetch_one(connection).await?;
+                    let allowed:bool=sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM organization_settings WHERE org_id=$1 AND (members_can_create_public_repositories OR members_can_create_private_repositories))").bind(org).fetch_one(&mut *connection).await?;
                     anyhow::ensure!(allowed,RepositoryStorageRefusal::Denied);
-                    Ok(false)
                 }
-                _ => Err(RepositoryStorageRefusal::Denied.into()),
+                _ => return Err(RepositoryStorageRefusal::Denied.into()),
             }
+            // The destination does not change whether the actor is a site admin.
+            Ok(sqlx::query_scalar::<_, bool>(
+                "SELECT is_admin FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE",
+            )
+            .bind(owner.actor_id)
+            .fetch_optional(&mut *connection)
+            .await?
+            .unwrap_or(false))
         }
         _ => Err(RepositoryStorageRefusal::Denied.into()),
     }
@@ -135,7 +143,15 @@ pub async fn insert_repository_with_properties(
     input: NewRepository<'_>,
     properties: &[ValueInput],
 ) -> Result<Option<Repository>> {
-    insert_kind(pool, input, false, properties).await
+    insert_kind(pool, input, false, properties, CreationAdmission::default()).await
+}
+pub async fn insert_repository_with_admission(
+    pool: &PgPool,
+    input: NewRepository<'_>,
+    properties: &[ValueInput],
+    admission: CreationAdmission<'_>,
+) -> Result<Option<Repository>> {
+    insert_kind(pool, input, false, properties, admission).await
 }
 pub async fn insert_gist_repository(
     pool: &PgPool,
@@ -145,17 +161,24 @@ pub async fn insert_gist_repository(
         matches!(input.owner.target, RepositoryTarget::Personal(_)) && !input.is_private,
         RepositoryStorageRefusal::Denied
     );
-    insert_kind(pool, input, true, &[]).await
+    insert_kind(pool, input, true, &[], CreationAdmission::default()).await
 }
 async fn insert_kind(
     pool: &PgPool,
     input: NewRepository<'_>,
     gist: bool,
     properties: &[ValueInput],
+    admission: CreationAdmission<'_>,
 ) -> Result<Option<Repository>> {
     let mut tx = pool.begin().await?;
     super::super::users::transitions::lock_membership_shared(&mut tx).await?;
     let creator = input.owner.actor_id;
+    if let Some(authority) = admission.authority {
+        anyhow::ensure!(
+            authority.user_id == creator,
+            RepositoryStorageRefusal::Denied
+        );
+    }
     // Organizations lock in ascending id order. Otherwise a fork from A into B and one from B
     // into A each hold one organization and wait for the other.
     if let (Some(source), RepositoryTarget::Organization(destination)) =
@@ -215,7 +238,20 @@ async fn insert_kind(
     {
         return Err(RepositoryStorageRefusal::StalePlacement.into());
     }
-    if let Some(source_id) = input.source_id {
+    if let Some(ghsa) = admission.advisory {
+        anyhow::ensure!(
+            !gist && input.is_private && input.owner.target == RepositoryTarget::Personal(creator),
+            RepositoryStorageRefusal::Denied
+        );
+        let source = input.source_id.ok_or(RepositoryStorageRefusal::Denied)?;
+        let advisory =
+            super::super::advisories::administration(&mut tx, creator, source, ghsa).await?;
+        anyhow::ensure!(
+            advisory.state == "draft" && advisory.private_fork_id.is_none(),
+            crate::backend::db::advisories::Refusal::Conflict
+        );
+    }
+    if let Some(source_id) = input.source_id.filter(|_| admission.advisory.is_none()) {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repositories WHERE owner_kind=$1 AND (owner_user_id=$2 OR owner_org_id=$3) AND forked_from_id=$4)")
             .bind(kind).bind(user).bind(org)
             .bind(source_id)
@@ -227,9 +263,13 @@ async fn insert_kind(
     }
     let private = input.is_private || source.as_ref().is_some_and(|repo| repo.is_private);
     validate_creation_visibility(&mut tx, input.owner, private).await?;
+    // Retain the original credential after resource locks, checking expiry after admission waits.
+    if let Some(credential) = admission.authority.and_then(|actor| actor.credential()) {
+        super::super::users::transitions::require_account(&mut tx, creator, &credential).await?;
+    }
     let repository = sqlx::query_as::<_, Repository>(
-        "INSERT INTO repositories (owner_kind,owner_user_id,owner_org_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,storage_node_id,created_by_id,is_gist)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) ON CONFLICT DO NOTHING RETURNING *",
+        "INSERT INTO repositories (owner_kind,owner_user_id,owner_org_id,name,description,is_private,disk_path,is_fork,forked_from_id,default_branch,storage_node_id,created_by_id,is_gist,visibility_locked)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) ON CONFLICT DO NOTHING RETURNING *",
     )
     .bind(kind)
     .bind(user)
@@ -244,10 +284,17 @@ async fn insert_kind(
     .bind(input.storage_node_id)
     .bind(creator)
     .bind(gist)
+    .bind(admission.advisory.is_some())
     .fetch_optional(&mut *tx)
     .await?;
     if let Some(repository) = &repository {
         super::super::code_security::apply_default(&mut tx, repository).await?;
+        if source.is_some() {
+            sqlx::query("INSERT INTO repo_actions_settings(repo_id,enabled) VALUES($1,false)")
+                .bind(repository.id)
+                .execute(&mut *tx)
+                .await?;
+        }
     }
     if let (Some(org), Some(repository)) = (org, repository.as_ref()) {
         super::super::organizations::properties::apply_on(

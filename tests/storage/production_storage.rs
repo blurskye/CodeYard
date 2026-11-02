@@ -570,7 +570,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     let query = query_of(&asset.url);
     assert_eq!(
         query["response-content-disposition"],
-        "attachment; filename*=UTF-8''fixture.txt"
+        "attachment; filename=\"fixture.txt\"; filename*=UTF-8''fixture.txt"
     );
     assert_eq!(query["response-content-type"], "application/octet-stream");
 
@@ -598,7 +598,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     };
     assert_eq!(
         query_of(&remote)["response-content-disposition"],
-        "attachment; filename*=UTF-8''fixture.txt"
+        "attachment; filename=\"fixture.txt\"; filename*=UTF-8''fixture.txt"
     );
 
     // A public avatar image is the one thing displayed inline.
@@ -648,7 +648,7 @@ async fn s3_downloads_are_signed_after_authorization_and_only_avatars_show_inlin
     assert_eq!(
         query_of(response.headers()[header::LOCATION].to_str().unwrap())
             ["response-content-disposition"],
-        "attachment; filename*=UTF-8''r%C3%A9sum%C3%A9%20%22final%22__.txt"
+        "attachment; filename=\"r_sum_ _final___.txt\"; filename*=UTF-8''r%C3%A9sum%C3%A9%20%22final%22__.txt"
     );
 }
 
@@ -988,20 +988,26 @@ async fn s3_object_removal_failures_leave_durable_bounded_cleanup() {
         0
     );
 
-    // Deleting a still-pending upload works the same way.
+    // Deleting a still-pending upload works the same way. Nothing was uploaded yet, so the sweep
+    // finds no object, and the kept tombstone removes one that a late PUT stores.
     let pending = reserve(&db, 7).await.unwrap();
     file_operations::delete_owned_file(&db.pool, &s3.store, db.user, pending.id)
         .await
         .unwrap();
     assert!(!s3.deleted().contains(&s3.path(&pending.object_key)));
-    sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
-        .execute(&db.raw)
-        .await
-        .unwrap();
-    file_operations::remove_expired_uploads(&db.pool, &s3.store)
-        .await
-        .unwrap();
-    assert!(s3.deleted().contains(&s3.path(&pending.object_key)));
+    for late in [false, true] {
+        if late {
+            s3.put(&pending.object_key, b"late-put");
+        }
+        sqlx::query("UPDATE pending_object_deletions SET delete_after=NOW()-INTERVAL '1 second'")
+            .execute(&db.raw)
+            .await
+            .unwrap();
+        file_operations::remove_expired_uploads(&db.pool, &s3.store)
+            .await
+            .unwrap();
+        assert_eq!(s3.deleted().contains(&s3.path(&pending.object_key)), late);
+    }
     assert!(files::get_file_by_id(&db.pool, pending.id)
         .await
         .unwrap()
@@ -1100,9 +1106,16 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
     let new = reserve_avatar(&db, FileVisibility::Public).await;
     activate(&db, new.id).await;
     assert_eq!(
-        db::users::accounts::set_user_avatar(&db.pool, db.user, Some(old.id))
-            .await
-            .unwrap(),
+        db::users::accounts::set_user_avatar(
+            &db.pool,
+            db.user,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&db.pool, db.user).await
+            ),
+            Some(old.id)
+        )
+        .await
+        .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(None)
     );
 
@@ -1115,11 +1128,16 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
         .execute(&db.raw)
         .await
         .unwrap();
-    assert!(
-        db::users::accounts::set_user_avatar(&db.pool, db.user, Some(new.id))
-            .await
-            .is_err()
-    );
+    assert!(db::users::accounts::set_user_avatar(
+        &db.pool,
+        db.user,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(&db.pool, db.user).await
+        ),
+        Some(new.id)
+    )
+    .await
+    .is_err());
     let pointer: Option<Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id = $1")
             .bind(db.user)
@@ -1134,9 +1152,16 @@ async fn pg_a_replaced_picture_is_removed_with_the_change_or_not_at_all() {
 
     // Otherwise the old row goes with the change, and its bytes are queued.
     assert_eq!(
-        db::users::accounts::set_user_avatar(&db.pool, db.user, Some(new.id))
-            .await
-            .unwrap(),
+        db::users::accounts::set_user_avatar(
+            &db.pool,
+            db.user,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(&db.pool, db.user).await
+            ),
+            Some(new.id)
+        )
+        .await
+        .unwrap(),
         db::users::accounts::UserAvatarOutcome::Applied(Some(old.id))
     );
     assert!(files::get_file_by_id(&db.pool, old.id)
@@ -1164,18 +1189,40 @@ async fn pg_a_banned_account_keeps_its_picture() {
         .await
         .unwrap()
         .unwrap();
-    avatars::set_user_avatar(&db.pool, &user, old.id)
-        .await
-        .unwrap();
+    avatars::set_user_avatar(
+        &db.pool,
+        &user,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(&db.pool, user.id).await,
+        ),
+        old.id,
+    )
+    .await
+    .unwrap();
     sqlx::query("UPDATE users SET is_banned = TRUE WHERE id = $1")
         .bind(db.user)
         .execute(&db.raw)
         .await
         .unwrap();
 
-    let changed = avatars::set_user_avatar(&db.pool, &user, new.id).await;
+    let changed = avatars::set_user_avatar(
+        &db.pool,
+        &user,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(&db.pool, user.id).await,
+        ),
+        new.id,
+    )
+    .await;
     assert_eq!(changed, Err(AvatarError::Denied));
-    let cleared = avatars::remove_user_avatar(&db.pool, &user).await;
+    let cleared = avatars::remove_user_avatar(
+        &db.pool,
+        &user,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(&db.pool, user.id).await,
+        ),
+    )
+    .await;
     assert_eq!(cleared, Err(AvatarError::Denied));
     let pointer: Option<Uuid> =
         sqlx::query_scalar("SELECT avatar_file_id FROM users WHERE id = $1")
@@ -1873,7 +1920,7 @@ async fn actual_presigned_put_replay_confirmation_download_and_delete() {
     );
     assert_eq!(
         received.headers()["content-disposition"],
-        "attachment; filename*=UTF-8''fixture.txt",
+        "attachment; filename=\"fixture.txt\"; filename*=UTF-8''fixture.txt",
         "uploaded files download, they are not displayed"
     );
     assert_eq!(received.bytes().await.unwrap().as_ref(), data);

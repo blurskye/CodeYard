@@ -5,6 +5,7 @@ Start with the [README](../README.md) for setup.
 ## Reference
 
 - [Architecture](ARCHITECTURE.md): the high-level code map, request flows, data layout and how clustering works.
+- [Crate split plan](CRATE_SPLIT_PLAN.md): how the root package is to be split into workspace crates, move only.
 - [HTTP API](API.md): the JSON endpoints, account rules, errors and limits.
 - [Gists](GISTS.md): native snippets, Git transport, secret links, limits and recovery.
 - [Running a cluster](CLUSTER.md): roles, pairing nodes, storage nodes, CI workers and limits.
@@ -26,15 +27,15 @@ Start with the [README](../README.md) for setup.
 
 ## Verification
 
-- `cargo fmt --all -- --check`, `cargo clippy --locked --all-targets -- -D warnings` and
-  `cargo test --locked --all-targets` are the format, lint and test checks. PostgreSQL tests
+- `cargo fmt --all -- --check`, `cargo clippy --locked --workspace --all-targets -- -D warnings` and
+  `cargo test --locked --workspace --all-targets` are the format, lint and test checks. PostgreSQL tests
   read `GITSERV_TEST_DATABASE_URL`.
 - `scripts/e2e.sh` starts real servers on SQLite, PostgreSQL and a four-node cluster
   and drives them over HTTP, SSH and Git, including remote storage and database-free CI.
   Its SSR and served JS/WASM checks do not execute hydrated browser navigation.
-- The image ships `act` 0.2.89 (pinned with its checksum in
-  [Containerfile](../Containerfile)). `scripts/e2e.sh` runs the
-  workflow runner named by `E2E_ACT_BINARY`, which should be that same version.
+- The image requires patched `act` 0.2.89-codeyard.1, pinned in
+  [build.nix](../build.nix) with [job-scoped environment support](../patches/act-environment-values.patch).
+  `scripts/e2e.sh` runs the workflow runner named by `E2E_ACT_BINARY`, which must be that same build.
 - `scripts/s3-tests.sh` runs the `#[ignore]`d S3 tests of `tests/storage/production_storage.rs`
   against a throwaway RustFS. It needs `GITSERV_TEST_DATABASE_URL` and `RUSTFS_BIN`.
 - `cargo audit` checks `Cargo.lock`; the advisories we accept are listed with reasons in

@@ -11,6 +11,8 @@ use uuid::Uuid;
 fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
     use codeyard::backend::repositories::store::{CommitInfo, PreparedFile};
     PreparedFile {
+        staging: None,
+        authority: None,
         branch: "main".into(),
         reference: "refs/heads/main".into(),
         expected: Some(sha.into()),
@@ -26,6 +28,8 @@ fn prepared(sha: &str) -> codeyard::backend::repositories::store::PreparedFile {
             committer_email: "tester@example.invalid".into(),
             timestamp: 0,
             committer_timestamp: 0,
+            author_offset_minutes: 0,
+            committer_offset_minutes: 0,
             parents: vec![sha.into()],
             signature: None,
             signature_payload: None,
@@ -62,7 +66,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::GistWrite {
-                credential: codeyard::backend::repositories::store::GistCredential::Token(1),
+                credential: codeyard::backend::repositories::store::GistCredential::Token(1, String::new()),
             },
             false,
         ),
@@ -85,6 +89,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::ConfigureDependencySecurity {
+                credential: codeyard::backend::db::users::accounts::OwnedAccountCredential::Token(1, "hash".into()),
                 feature: codeyard::backend::db::repositories::dependencies::Feature::Alerts,
                 enabled: true,
                 private_consent: false,
@@ -120,6 +125,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (
             Operation::FetchPullHead {
+                token: None,
                 source: Uuid::nil(),
                 number: 1,
                 head: "main".into(),
@@ -129,7 +135,9 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         ),
         (Operation::Exists, false),
         (Operation::SizeBytes, false),
+        (Operation::RefreshStorageSize, false),
         (Operation::Refs, false),
+        (Operation::MatchingRefs { prefix: "refs/pull/".into() }, false),
         (Operation::PrimaryRefs, false),
         (
             Operation::BranchPublication {
@@ -144,14 +152,23 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::GitTree {
                 revision: sha.into(),
                 recursive: true,
+                raw_json: false,
             },
             false,
         ),
-        (Operation::GitTag { sha: sha.into() }, false),
+        (
+            Operation::GitTag {
+                sha: sha.into(),
+                raw_json: false,
+            },
+            false,
+        ),
         (Operation::GitObjectKind { sha: sha.into() }, false),
+        (Operation::IntroducedBlobs { sha: sha.into() }, false),
         (
             Operation::WriteGitObject {
                 input: codeyard::backend::git::objects::ObjectWrite::Blob,
+                token: None,
             },
             false,
         ),
@@ -175,6 +192,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::TemplateTexts {
                 revision: "main".into(),
                 paths: vec![".github/ISSUE_TEMPLATE.md".into()],
+                raw_json: false,
             },
             false,
         ),
@@ -200,6 +218,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             false,
         ),
         (Operation::BlobById { id: sha.into() }, true),
+        (Operation::BlobByIdRange { id: sha.into(), range: BlobRange::Window { offset: 0, length: 0 } }, false),
         (
             Operation::Commits {
                 git_ref: "main".into(),
@@ -236,6 +255,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
             Operation::CommitsBetween {
                 base_ref: "main".into(),
                 head_ref: "main".into(),
+                offset: 0,
                 limit: 10,
                 raw_json: false,
                 pull_request: false,
@@ -330,6 +350,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::CommitStatistics {
                 branch: "main".into(),
+                raw_json: false,
+                mode: Default::default(),
             },
             false,
         ),
@@ -396,12 +418,15 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 },
                 author: "Tester".into(),
                 email: "tester@example.invalid".into(),
+                identities: Default::default(),
             },
             false,
         ),
         (
             Operation::PublishFile {
                 prepared: codeyard::backend::repositories::store::PreparedFile {
+                    staging: None,
+                    authority: None,
                     branch: "main".into(),
                     reference: "refs/heads/main".into(),
                     expected: Some(sha.into()),
@@ -417,6 +442,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                         committer_email: "tester@example.invalid".into(),
                         timestamp: 0,
                         committer_timestamp: 0,
+                        author_offset_minutes: 0,
+                        committer_offset_minutes: 0,
                         parents: vec![sha.into()],
                         signature: None,
                         signature_payload: None,
@@ -487,6 +514,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     base: sha.into(),
                     name: "Tester".into(),
                     email: "tester@example.invalid".into(),
+                    token: None,
                 },
             },
             false,
@@ -494,6 +522,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
         (
             Operation::PublishAsyncMerge {
                 request: codeyard::backend::repositories::store::AsyncMergePublication {
+                    policy: None,
                     uuid: uuid::Uuid::nil().to_string(),
                     token_id: 1,
                     pull_request_id: 1,
@@ -514,6 +543,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base: sha.into(),
                 result: sha.into(),
                 method: MergeMethod::Merge,
+                token: None,
+                policy: None,
             },
             false,
         ),
@@ -525,6 +556,7 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                     head_branch: Some("topic".into()),
                     head: sha.into(),
                     result: sha.into(),
+                    authority: codeyard::backend::db::credentials::Actor::from(1),
                 },
             },
             false,
@@ -535,6 +567,8 @@ pub fn operations(sha: &str) -> Vec<(Operation, bool)> {
                 base_branch: "main".into(),
                 base: sha.into(),
                 result: sha.into(),
+                token: None,
+                policy: None,
             },
             false,
         ),

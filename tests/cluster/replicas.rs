@@ -534,6 +534,12 @@ fn copy_path(node: &cluster::Cluster, uuid: Uuid) -> PathBuf {
         .join(format!("{uuid}.git"))
 }
 
+/// Where a node keeps the unusable copies it moved aside: one directory per copy, holding
+/// each moved copy under a random UUID.
+fn quarantines(mirror: &Path) -> PathBuf {
+    mirror.parent().unwrap().join(".quarantines")
+}
+
 /// The copy's applied version on `node`, or `None` when the node has no copy row.
 async fn applied_on(pool: &DbPool, repository: i64, node: &cluster::Cluster) -> Option<i64> {
     db::cluster::list_replicas(pool, repository)
@@ -854,6 +860,26 @@ async fn only_nodes_holding_a_copy_may_ask_for_its_packs() {
         .await
         .unwrap();
     assert!(status.success(), "the copy holder gets its pack");
+    // A tip the primary no longer has is left out of the pack instead of failing it.
+    let (_, status) = holder
+        .context
+        .git_session(
+            primary.context.node_id,
+            Request {
+                operation: Operation::ReplicaPack {
+                    have: vec!["1".repeat(40)],
+                },
+                ..pack_request()
+            },
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut tokio::io::sink(),
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(status.success(), "an unknown have tip still gets a pack");
 
     outsider.shutdown().await;
     holder.shutdown().await;
@@ -992,7 +1018,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
             };
             let wrapper = root.path().join("git");
             std::fs::write(&wrapper, format!(
-                "#!/bin/sh\ncase \" $* \" in *' gc --auto '*)\n  : > '{root}/packing'\n  while test ! -e '{root}/release'; do '{sleep}' 0.01; done\n;; esac\nexec '{git}' \"$@\"\n",
+                "#!/bin/sh\ncase \" $* \" in *' gc --no-prune '*)\n  : > '{root}/packing'\n  while test ! -e '{root}/release'; do '{sleep}' 0.01; done\n;; esac\nexec '{git}' \"$@\"\n",
                 root = root.path().display(), sleep = executable("sleep").display(),
                 git = executable("git").display(),
             )).unwrap();
@@ -1064,6 +1090,8 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
     assert!(cluster_cli::run(&command, pool, &root, &root)
         .await
         .is_err());
+    // Reads keep working while the copy's maintenance runs: the incomplete copy refuses, and
+    // the reader goes on to the primary.
     let (reply, body) = web
         .context
         .call(
@@ -1079,7 +1107,7 @@ async fn promotion_waits_until_copy_maintenance_releases_the_directory() {
         )
         .await
         .unwrap();
-    assert!(reply.result.is_ok());
+    assert!(reply.result.is_ok(), "{:?}", reply.result);
     assert_eq!(body, b"readable");
     std::fs::write(root.join("release"), b"").unwrap();
     tokio::time::timeout(Duration::from_secs(30), async {
@@ -1657,7 +1685,11 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     .await
     .unwrap();
     let claim = queue
-        .claim(&worker, CiExecutionMode::Local)
+        .claim(
+            &worker,
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .unwrap()
         .unwrap();
@@ -1910,11 +1942,15 @@ async fn keyed_storage_node(pool: &DbPool, name: &str) -> (i64, String) {
 }
 
 async fn report_in(pool: &DbPool, key: &str) {
-    assert!(
-        db::cluster::record_node_heartbeat(pool, key, "test", "{}", None)
-            .await
-            .unwrap()
-    );
+    assert!(db::cluster::record_node_heartbeat(
+        pool,
+        key,
+        "test",
+        "{}",
+        Some(1024 * 1024 * 1024 * 1024)
+    )
+    .await
+    .unwrap());
 }
 
 /// `node` holds a copy of `repo` that has applied `applied` writes.
@@ -2381,18 +2417,9 @@ async fn a_copy_git_cannot_open_is_cleared_and_rebuilt() {
         head
     );
     // Each rebuild removes the damaged directory it replaced.
-    let leftovers = std::fs::read_dir(copy.context.repos_path.join("mirrors"))
-        .unwrap()
-        .filter(|entry| {
-            entry
-                .as_ref()
-                .unwrap()
-                .file_name()
-                .to_string_lossy()
-                .contains(".unusable-")
-        })
-        .count();
-    assert_eq!(leftovers, 0);
+    let aside = quarantines(&mirror).join(format!("{uuid}.git"));
+    let leftovers = std::fs::read_dir(&aside).map_or(0, |entries| entries.count());
+    assert_eq!(leftovers, 0, "{}", aside.display());
     copy.shutdown().await;
     primary.shutdown().await;
 }
@@ -2418,20 +2445,23 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
 
     // The copy is damaged, and its failed rebuild moved it aside before it stopped.
     let mirror = copy_path(&copy, uuid);
-    let mirrors = mirror.parent().unwrap().to_path_buf();
-    let failed = mirrors.join(format!("{uuid}.git.unusable-1000"));
+    let quarantines = quarantines(&mirror);
+    let aside = quarantines.join(format!("{uuid}.git"));
+    std::fs::create_dir_all(&aside).unwrap();
+    let failed = aside.join(Uuid::new_v4().to_string());
     std::fs::rename(&mirror, &failed).unwrap();
     std::fs::write(failed.join("HEAD"), b"").unwrap();
-    let stale = mirrors.join(format!("{uuid}.git.unusable-2000"));
+    let stale = aside.join(Uuid::new_v4().to_string());
     std::fs::create_dir(&stale).unwrap();
     std::fs::write(stale.join("config"), b"[broken").unwrap();
     // These are not the copy's own leftovers.
-    let other_suffix = mirrors.join(format!("{uuid}.git.unusable-abc"));
-    let other_copy = mirrors.join("other.git.unusable-1");
-    let empty_stamp = mirrors.join(format!("{uuid}.git.unusable-"));
-    let regular_file = mirrors.join(format!("{uuid}.git.unusable-3000"));
-    for directory in [&other_suffix, &other_copy, &empty_stamp] {
-        std::fs::create_dir(directory).unwrap();
+    let other_name = aside.join("abc");
+    let other_copy = quarantines
+        .join("other.git")
+        .join(Uuid::new_v4().to_string());
+    let regular_file = aside.join(Uuid::new_v4().to_string());
+    for directory in [&other_name, &other_copy] {
+        std::fs::create_dir_all(directory).unwrap();
         std::fs::write(directory.join("keep"), b"x").unwrap();
     }
     std::fs::write(&regular_file, b"x").unwrap();
@@ -2451,7 +2481,7 @@ async fn a_complete_copy_removes_stale_unusable_directories_only() {
         "the aside directory of the failed rebuild"
     );
     assert!(!stale.exists(), "the second stale directory");
-    for kept in [&other_suffix, &other_copy, &empty_stamp] {
+    for kept in [&other_name, &other_copy] {
         assert!(kept.join("keep").exists(), "{} must stay", kept.display());
     }
     assert!(regular_file.is_file());
@@ -2474,14 +2504,17 @@ async fn an_incremental_copy_clears_stale_unusable_directories_after_it_succeeds
     let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
     let first = repo.save("main", "README.md", "unborn", b"one").await;
     assert_current(&primary, &copy, &repo).await;
-    let mirrors = copy_path(&copy, uuid).parent().unwrap().to_path_buf();
-    let stale = mirrors.join(format!("{uuid}.git.unusable-1000"));
-    std::fs::create_dir(&stale).unwrap();
+    let quarantines = quarantines(&copy_path(&copy, uuid));
+    let aside = quarantines.join(format!("{uuid}.git"));
+    let stale = aside.join(Uuid::new_v4().to_string());
+    std::fs::create_dir_all(&stale).unwrap();
     std::fs::write(stale.join("config"), b"[broken").unwrap();
-    let decoy = mirrors.join(format!("{uuid}.git.unusable-abc"));
-    let other_copy = mirrors.join("other.git.unusable-1");
+    let decoy = aside.join("abc");
+    let other_copy = quarantines
+        .join("other.git")
+        .join(Uuid::new_v4().to_string());
     for directory in [&decoy, &other_copy] {
-        std::fs::create_dir(directory).unwrap();
+        std::fs::create_dir_all(directory).unwrap();
         std::fs::write(directory.join("keep"), b"x").unwrap();
     }
 
@@ -2561,7 +2594,7 @@ async fn manual_promotion_reports_a_fork_inserted_after_its_family_snapshot() {
     lock.commit().await.unwrap();
     let error = task.await.unwrap().unwrap_err().to_string();
     assert!(error.contains("fork family changed"), "{error}");
-    assert_eq!(primary_of(pool, source).await, b);
+    assert_eq!(primary_of(pool, source).await, a);
     assert_eq!(primary_of(pool, fork).await, a);
 }
 
@@ -3642,9 +3675,10 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     let error = codeyard::backend::repositories::pull_requests::reviews::create_pull_request_review(
         &database.pool, Some(&web.context),
         &codeyard::backend::notifications::NotificationBroadcaster::new(&database.pool), repo.actor,
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(&crate::support::live_session(&database.pool, repo.actor).await),
         (actor.username, repo.repository.name.clone(), pull.number),
         codeyard::backend::repositories::pull_requests::reviews::CreatePullRequestReviewRequest {
-            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None,
+            state:Some("commented".into()), body:Some("Old revision".into()), commit_sha:Some(head), review_id:None, token:None,
         },
     ).await.unwrap_err();
     assert!(matches!(
@@ -3686,7 +3720,7 @@ async fn writes_are_refused_while_the_primary_is_down() {
         repository: uuid,
         operation: Operation::CreateBranch {
             name: "after".into(),
-            sha: head.clone(),
+            sha: head.clone().into(),
         },
         actor: Some(repo.actor),
         ci_run: None,
@@ -3718,14 +3752,17 @@ async fn writes_are_refused_while_the_primary_is_down() {
         .unwrap()
         .is_storage_node_unavailable());
 
-    // The copy refuses a write sent to it directly, so nothing moves on the copy.
+    // The copy refuses a write sent to it directly as a node that does not serve it, so
+    // nothing moves on the copy.
     let (reply, _) = web
         .context
         .call(copy_id, create_branch(), b"")
         .await
         .unwrap();
     assert!(
-        matches!(reply.result, Err(Failure::Repository(error)) if error.kind == ErrorKind::Invalid)
+        matches!(&reply.result, Err(Failure::Repository(error)) if error.is_storage_node_unavailable()),
+        "{:?}",
+        reply.result
     );
     let copied = RepoStore::from_disk_path(copy_path(&copy, uuid).to_str().unwrap());
     assert!(!copied
@@ -3749,14 +3786,36 @@ async fn a_node_without_a_copy_row_refuses_reads() {
     let web = web_node(&database.pool, root.path()).await;
     let repo = create_repository(&database.pool, &primary, "outside").await;
     let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
-    repo.save("main", "a.txt", "unborn", b"a").await;
+    let head = repo.save("main", "a.txt", "unborn", b"a").await;
     // Assign the copy while there is only one eligible holder.
     assert_current(&primary, &copy, &repo).await;
     let outsider = start_storage(&database.pool, root.path(), "store-c").await;
     assert_eq!(applied_on(&database.pool, repo.id(), &outsider).await, None);
     primary.shutdown().await;
 
-    // The primary is down, and the outsider holds no copy, so it refuses the read.
+    // The primary is down, and the outsider holds no copy, so it refuses the read as a node
+    // that does not serve the repository, and a reader goes on to the next copy.
+    let (reply, _) = web
+        .context
+        .call(
+            outsider.context.node_id,
+            request(uuid, Operation::Refs),
+            b"",
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        reply
+            .result
+            .as_ref()
+            .ok()
+            .and_then(|refs| refs.get("refs/heads/main")),
+        Some(&serde_json::Value::String(head)),
+        "{:?}",
+        reply.result
+    );
+    // With the copy down too, the outsider's own refusal is the answer.
+    copy.shutdown().await;
     let (reply, _) = web
         .context
         .call(
@@ -3767,12 +3826,13 @@ async fn a_node_without_a_copy_row_refuses_reads() {
         .await
         .unwrap();
     assert!(
-        matches!(reply.result, Err(Failure::Repository(error)) if error.kind == ErrorKind::Invalid)
+        matches!(&reply.result, Err(Failure::Repository(error)) if error.is_storage_node_unavailable()),
+        "{:?}",
+        reply.result
     );
 
     web.shutdown().await;
     outsider.shutdown().await;
-    copy.shutdown().await;
 }
 
 #[tokio::test]

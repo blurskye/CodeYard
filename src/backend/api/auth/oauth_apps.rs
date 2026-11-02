@@ -1,6 +1,9 @@
 //! GitHub's OAuth device and authorization-code flows, including the public CLI client.
 use crate::backend::{
-    api::http::{config::link_origin, context::PageContext, session},
+    api::{
+        http::{config::link_origin, context::PageContext, session},
+        user::responses::field,
+    },
     app::AppState,
     db::{
         self,
@@ -21,9 +24,6 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
 type Fields = HashMap<String, String>;
-fn field<'a>(fields: &'a Fields, key: &str) -> &'a str {
-    fields.get(key).map(String::as_str).unwrap_or("")
-}
 
 pub(super) fn router() -> Router<Arc<AppState>> {
     Router::new()
@@ -110,10 +110,10 @@ async fn admit(state: &AppState, headers: &HeaderMap, key: &str) -> Result<(), R
     {
         return Err(StatusCode::SERVICE_UNAVAILABLE.into_response());
     }
-    admission::admit_login(
+    admission::admit_operation(
         &state.pool,
         session::client_address(headers),
-        None,
+        "device",
         &format!(
             "{key}:{}",
             session::client_address(headers).unwrap_or("local")
@@ -152,7 +152,7 @@ async fn device_code(
         Ok(None) => {}
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     }
-    let value = oauth::random();
+    let value = crate::backend::crypto::random_hex();
     let user_code = oauth::user_code();
     let grant = Grant {
         hash: token_hash(&value),
@@ -215,8 +215,8 @@ async fn access_token(
         );
     }
     let value = match db::github_apps::app(&state.pool, id).await {
-        Ok(Some(_)) => format!("ghu_{}", oauth::random()),
-        Ok(None) => oauth::random(),
+        Ok(Some(_)) => format!("ghu_{}", crate::backend::crypto::random_hex()),
+        Ok(None) => crate::backend::crypto::random_hex(),
         Err(_) => return StatusCode::SERVICE_UNAVAILABLE.into_response(),
     };
     // Device polling has its own durable interval; it must not consume the password-login budget.
@@ -478,11 +478,11 @@ async fn authorize_post(
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let value = oauth::random();
+    let value = crate::backend::crypto::random_hex();
     let grant = Grant {
         hash: token_hash(&value),
         client_id: app.client_id,
-        user_code: oauth::random(),
+        user_code: crate::backend::crypto::random_hex(),
         scopes,
         expires_at: chrono::Utc::now().timestamp() + 600,
         interval: 5,
@@ -520,16 +520,40 @@ async fn applications(
     if let Some(response) = login(&ctx) {
         return response;
     }
-    match db::oauth_apps::applications(&ctx.state.pool, ctx.user.as_ref().unwrap().id).await {
-        Ok(apps) => ctx.page_model(
-            "OAuth applications",
-            Page::Identity(account::Page::OAuthApplications {
-                applications: apps
-                    .into_iter()
-                    .map(|app| (app.name, app.client_id, app.redirect_uri))
-                    .collect(),
-            }),
-        ),
+    let page = ctx
+        .query
+        .get("page")
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(1)
+        .max(1);
+    let size = db::oauth_apps::APPLICATION_PAGE_SIZE;
+    let actor = ctx.database_actor(ctx.user.as_ref().unwrap().id);
+    match db::oauth_apps::applications(
+        &ctx.state.pool,
+        actor,
+        page.saturating_sub(1).saturating_mul(size),
+        size + 1,
+    )
+    .await
+    {
+        Ok(Some(mut apps)) => {
+            let more = apps.len() > size as usize;
+            apps.truncate(size as usize);
+            ctx.page_model(
+                "OAuth applications",
+                Page::Identity(account::Page::OAuthApplications {
+                    applications: apps
+                        .into_iter()
+                        .map(|app| (app.name, app.client_id, app.redirect_uri))
+                        .collect(),
+                    previous: (page > 1)
+                        .then(|| format!("/settings/applications?page={}", page - 1)),
+                    next: more
+                        .then(|| format!("/settings/applications?page={}", page.saturating_add(1))),
+                }),
+            )
+        }
+        Ok(None) => ctx.error(StatusCode::UNAUTHORIZED, "Sign in again"),
         Err(_) => ctx.error(StatusCode::SERVICE_UNAVAILABLE, "Applications unavailable"),
     }
 }
@@ -586,8 +610,8 @@ async fn register_post(
     let Some(session) = session::extract_session_id(&ctx.headers) else {
         return ctx.error(StatusCode::UNAUTHORIZED, "Sign in again");
     };
-    let id = oauth::random();
-    let secret = oauth::random();
+    let id = crate::backend::crypto::random_hex();
+    let secret = crate::backend::crypto::random_hex();
     match db::oauth_apps::register(
         &ctx.state.pool,
         ctx.user.as_ref().unwrap().id,

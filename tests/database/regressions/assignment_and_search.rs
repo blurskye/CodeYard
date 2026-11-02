@@ -77,7 +77,8 @@ async fn organization_assignees_require_scoped_grants_not_public_visibility() {
             .await
             .unwrap()
             .contains(&"assignment_writer".to_owned()));
-        assert!(assignees::assign_user(
+        // An existing assignment survives the lost grant, but a new one is refused.
+        assert!(!assignees::assign_user(
             f.pool(),
             owner,
             r.id,
@@ -85,7 +86,24 @@ async fn organization_assignees_require_scoped_grants_not_public_visibility() {
             writer
         )
         .await
-        .is_err());
+        .unwrap());
+        assert!(assignees::unassign_user(
+            f.pool(),
+            owner,
+            r.id,
+            AssignedItem::Issue(issue.id),
+            "assignment_writer"
+        )
+        .await
+        .unwrap());
+        let error =
+            assignees::assign_user(f.pool(), owner, r.id, AssignedItem::Issue(issue.id), writer)
+                .await
+                .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<AssignmentRefusal>(),
+            Some(&AssignmentRefusal::Unassignable)
+        );
         f.finish().await;
     }
 }
@@ -118,14 +136,15 @@ async fn repository_filters_share_native_search_semantics_and_escape_literals() 
         }
         for q in queries {
             let (owned, count) =
-                records::list_user_repository_page(f.pool(), owner, false, q, 30, 0)
+                records::list_user_repository_page(f.pool(), owner, None, q, true, 30, 0)
                     .await
                     .unwrap();
             assert_eq!(count, 1, "owned {pg} {q}");
             assert_eq!(owned[0].id, r.id);
-            let (shared, count) = records::list_shared_repository_page(f.pool(), reader, q, 30, 0)
-                .await
-                .unwrap();
+            let (shared, count) =
+                records::list_shared_repository_page(f.pool(), reader, q, true, 30, 0)
+                    .await
+                    .unwrap();
             assert_eq!(count, 1, "shared {pg} {q}");
             assert_eq!(shared[0].repository.id, r.id);
             let public = records::search_public_repositories(
@@ -142,14 +161,14 @@ async fn repository_filters_share_native_search_semantics_and_escape_literals() 
         }
         for q in ["missing", "100.*", "100%Xliteral"] {
             assert_eq!(
-                records::list_user_repository_page(f.pool(), owner, false, q, 30, 0)
+                records::list_user_repository_page(f.pool(), owner, None, q, true, 30, 0)
                     .await
                     .unwrap()
                     .1,
                 0
             );
             assert_eq!(
-                records::list_shared_repository_page(f.pool(), reader, q, 30, 0)
+                records::list_shared_repository_page(f.pool(), reader, q, true, 30, 0)
                     .await
                     .unwrap()
                     .1,
@@ -301,9 +320,29 @@ async fn activity_scan_exposes_exhaustion_even_without_visible_rows() {
             .unwrap();
         let (rows, exhausted) = (batch.rows, batch.scanned < 2);
         assert!(rows.is_empty() && exhausted);
-        let batch = db::activity::list_user_activity(f.pool(), owner, Some(owner), 10, 0)
-            .await
-            .unwrap();
+        let session = uuid::Uuid::new_v4().to_string();
+        db::users::sessions::create_session(
+            f.pool(),
+            &session,
+            owner,
+            None,
+            None,
+            chrono::Utc::now() + chrono::Duration::days(1),
+        )
+        .await
+        .unwrap();
+        let batch = db::activity::list_user_activity(
+            f.pool(),
+            owner,
+            Some(db::activity::ActivityViewer {
+                user: owner,
+                session: &session,
+            }),
+            10,
+            0,
+        )
+        .await
+        .unwrap();
         let (rows, exhausted) = (batch.rows, batch.scanned < 10);
         assert_eq!(rows.len(), 3);
         assert!(exhausted);

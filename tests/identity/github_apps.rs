@@ -261,6 +261,20 @@ async fn contract(pg: bool) {
     )
     .await;
     let access = format!("Bearer {}", token["token"].as_str().unwrap());
+    // A malformed body is refused, never read as a request for the whole installation.
+    let response = router
+        .clone()
+        .oneshot(
+            axum::http::Request::builder()
+                .method("POST")
+                .uri(format!("/api/v3/app/installations/{id}/access_tokens"))
+                .header("authorization", &auth)
+                .body(axum::body::Body::from(r#"{"repository_ids":[1"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 400);
     request(
         &router,
         "apps/list-repos-accessible-to-installation",
@@ -288,7 +302,7 @@ async fn contract(pg: bool) {
         "/api/v3/repos/alice/excluded",
         Some(&access),
         Value::Null,
-        403,
+        404,
     )
     .await;
     request(
@@ -381,7 +395,7 @@ async fn contract(pg: bool) {
         "/api/v3/repos/alice/proj",
         Some(&access),
         Value::Null,
-        403,
+        404,
     )
     .await;
     request(
@@ -479,13 +493,13 @@ async fn contract(pg: bool) {
     .await;
     assert_eq!(requests, json!([]));
     // A real OAuth exchange supplies an app-owned user credential for narrowing.
-    let code = oauth_apps::random();
+    let code = codeyard::backend::crypto::random_hex();
     db::oauth_apps::save_grant(
         f.pool(),
         &db::oauth_apps::Grant {
             hash: tokens::token_hash(&code),
             client_id: app.client_id.clone(),
-            user_code: oauth_apps::random(),
+            user_code: codeyard::backend::crypto::random_hex(),
             scopes: "repo".into(),
             expires_at: chrono::Utc::now().timestamp() + 60,
             interval: 5,
@@ -555,6 +569,14 @@ async fn contract(pg: bool) {
     }
     let(_,scoped)=request(&router,"apps/scope-token","POST",&format!("/api/v3/applications/{}/token/scoped",app.client_id),Some(&basic),json!({"access_token":"user-app-token","target":"alice","repository_ids":[excluded],"permissions":{"contents":"read"}}),200).await;
     assert!(scoped["token"].as_str().unwrap().starts_with("ghu_"));
+    // The response names the installation with the scoped token's own bounds, which always
+    // hold the metadata read that every GitHub App token carries.
+    assert_eq!(
+        scoped["installation"]["permissions"],
+        json!({"contents":"read","metadata":"read"})
+    );
+    assert_eq!(scoped["installation"]["repository_selection"], "selected");
+    assert_eq!(scoped["installation"]["account"]["login"], "alice");
     let expiry =
         chrono::DateTime::parse_from_rfc3339(scoped["expires_at"].as_str().unwrap()).unwrap();
     assert!(expiry.with_timezone(&chrono::Utc) <= parent_expiry);
@@ -680,13 +702,25 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
-    // Removing the bot identity must not reclassify its user credentials as classic OAuth.
+    // Removing the bot identity must not reclassify its user credentials as classic OAuth: the
+    // client row stays an App's, and the App's client no longer resolves without its bot.
     f.execute("DELETE FROM users WHERE id=$1", &[app.bot_id])
         .await;
+    assert_eq!(
+        f.scalar(
+            &format!(
+                "SELECT COUNT(*) FROM oauth_applications WHERE client_id='{}' AND is_github_app",
+                app.client_id
+            ),
+            &[]
+        )
+        .await,
+        1
+    );
     assert!(db::oauth_apps::application(f.pool(), &app.client_id)
         .await
         .unwrap()
-        .is_some());
+        .is_none());
     request(
         &router,
         "users/get-authenticated",
@@ -701,6 +735,25 @@ async fn contract(pg: bool) {
         .await
         .unwrap()
         .is_none());
+    // Expired App tokens are swept, and their bounds go with them.
+    assert!(
+        f.scalar("SELECT COUNT(*) FROM github_app_tokens", &[])
+            .await
+            > 0
+    );
+    f.execute(
+        "UPDATE personal_access_tokens SET expires_at='2000-01-01T00:00:00.000000Z' WHERE id IN (SELECT token_id FROM github_app_tokens)",
+        &[],
+    )
+    .await;
+    db::users::sessions::remove_expired_identity_rows(f.pool())
+        .await
+        .unwrap();
+    assert_eq!(
+        f.scalar("SELECT COUNT(*) FROM github_app_tokens", &[])
+            .await,
+        0
+    );
 }
 #[tokio::test]
 async fn github_apps_sqlite() {

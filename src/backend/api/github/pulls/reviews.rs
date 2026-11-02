@@ -93,7 +93,8 @@ async fn dismiss(
 ) -> Result<Json<Value>> {
     let (_, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let actor = auth.ok_or_else(auth::required)?.user;
-    let Json(input) = input.map_err(|_| Error::invalid_simple("Invalid dismissal request"))?;
+    // GitHub documents this 422 with plain string errors.
+    let Json(input) = input.map_err(|error| super::super::json_error(error).simple())?;
     if input.message.trim().is_empty()
         || input
             .event

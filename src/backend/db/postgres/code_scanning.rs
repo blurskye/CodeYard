@@ -1,7 +1,9 @@
 mod list;
 mod pulls;
+mod read;
 pub use list::{alert_page, analyses, analysis, analysis_sarif};
 pub use pulls::{baseline_analysis, new_findings, pull_analyses, pull_processing};
+pub use read::{pull_merge_candidates, pull_snapshot, read_alert_snapshot, security_read_allowed};
 
 use crate::backend::db::code_scanning::*;
 use anyhow::{ensure, Result};
@@ -10,11 +12,19 @@ use sqlx::{PgConnection, PgPool};
 pub async fn enqueue(pool: &PgPool, input: &NewUpload<'_>) -> Result<Upload> {
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, input.actor, input.repo).await?,
+        super::discussions::lock_write_authority(&mut tx, input.actor.user_id, input.repo).await?
+            && super::credentials::repository(
+                &mut tx,
+                &input.actor,
+                input.repo,
+                "security_events",
+                true
+            )
+            .await?,
         Refusal::Denied
     );
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
-        .bind(input.actor ^ 0x4355_0000_0000_0000_i64)
+        .bind(input.actor.user_id ^ 0x4355_0000_0000_0000_i64)
         .execute(&mut *tx)
         .await?;
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
@@ -22,27 +32,33 @@ pub async fn enqueue(pool: &PgPool, input: &NewUpload<'_>) -> Result<Upload> {
         .execute(&mut *tx)
         .await?;
     let recent: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM code_scanning_uploads WHERE actor_id=$1 AND created_at>=$2 AND (repo_id=$3 OR NOT EXISTS(SELECT 1 FROM users WHERE id=$1 AND username=$4))")
-        .bind(input.actor).bind(chrono::Utc::now()-chrono::Duration::hours(1)).bind(input.repo).bind(crate::backend::db::ci_tokens::BOT).fetch_one(&mut *tx).await?;
+        .bind(input.actor.user_id).bind(chrono::Utc::now()-chrono::Duration::hours(1)).bind(input.repo).bind(crate::backend::db::ci_tokens::BOT).fetch_one(&mut *tx).await?;
     ensure!(recent < 1000, Refusal::RateLimited);
     let id = uuid::Uuid::new_v4().to_string();
     let upload = sqlx::query_as("INSERT INTO code_scanning_uploads(id,repo_id,actor_id,ref_name,commit_sha,sarif,checkout_uri,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *")
-        .bind(id).bind(input.repo).bind(input.actor).bind(input.ref_name).bind(input.commit_sha).bind(input.sarif).bind(input.checkout_uri).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
+        .bind(id).bind(input.repo).bind(input.actor.user_id).bind(input.ref_name).bind(input.commit_sha).bind(input.sarif).bind(input.checkout_uri).bind(chrono::Utc::now()).fetch_one(&mut *tx).await?;
     tx.commit().await?;
     Ok(upload)
 }
 
-pub async fn upload(pool: &PgPool, repo: i64, id: &str) -> Result<Option<Upload>> {
-    Ok(
-        sqlx::query_as("SELECT * FROM code_scanning_uploads WHERE repo_id=$1 AND id=$2")
-            .bind(repo)
-            .bind(id)
-            .fetch_optional(pool)
-            .await?,
+pub async fn upload_status(
+    pool: &PgPool,
+    repo: i64,
+    id: &str,
+) -> Result<Option<crate::backend::db::code_scanning::UploadStatus>> {
+    Ok(sqlx::query_as(
+        "SELECT processing_status,error FROM code_scanning_uploads WHERE repo_id=$1 AND id=$2",
     )
+    .bind(repo)
+    .bind(id)
+    .fetch_optional(pool)
+    .await?)
 }
 
 pub async fn pending(pool: &PgPool) -> Result<Option<Upload>> {
-    Ok(sqlx::query_as("SELECT * FROM code_scanning_uploads WHERE processing_status='pending' ORDER BY sequence LIMIT 1").fetch_optional(pool).await?)
+    let claim = uuid::Uuid::new_v4().to_string();
+    Ok(sqlx::query_as("UPDATE code_scanning_uploads SET claim_id=$1,claim_until=NOW()+INTERVAL '10 minutes' WHERE sequence=(SELECT sequence FROM code_scanning_uploads WHERE processing_status='pending' AND (claim_until IS NULL OR claim_until<=NOW()) ORDER BY sequence LIMIT 1 FOR UPDATE SKIP LOCKED) RETURNING *")
+        .bind(claim).fetch_optional(pool).await?)
 }
 
 pub async fn finish(
@@ -57,8 +73,8 @@ pub async fn finish(
         .execute(&mut *tx)
         .await?;
     let status: Option<String> =
-        sqlx::query_scalar("SELECT processing_status FROM code_scanning_uploads WHERE id=$1")
-            .bind(&upload.id)
+        sqlx::query_scalar("SELECT processing_status FROM code_scanning_uploads WHERE id=$1 AND claim_id IS NOT DISTINCT FROM $2 FOR UPDATE")
+            .bind(&upload.id).bind(&upload.claim_id)
             .fetch_optional(&mut *tx)
             .await?;
     if status.as_deref() != Some("pending") {
@@ -109,8 +125,10 @@ pub async fn finish(
         .bind(upload.repo_id).bind(upload.sequence)
         .fetch_all(&mut *tx)
         .await?;
+    let instances = sqlx::query_as("SELECT i.* FROM code_scanning_instances i JOIN code_scanning_alerts a ON a.id=i.alert_id WHERE a.repo_id=$1 AND i.upload_sequence=$2 AND i.ref_name=$3 ORDER BY i.category")
+        .bind(upload.repo_id).bind(upload.sequence).bind(&upload.ref_name).fetch_all(&mut *tx).await?;
     tx.commit().await?;
-    Ok(changes(&before, after))
+    Ok(changes(&before, after, instances))
 }
 
 async fn save_alert(
@@ -154,7 +172,94 @@ pub async fn instance(
     alert: i64,
     reference: Option<&str>,
 ) -> Result<Option<Instance>> {
-    Ok(sqlx::query_as("SELECT * FROM code_scanning_instances WHERE alert_id=$1 AND (CAST($2 AS TEXT) IS NULL OR ref_name=$2) ORDER BY CASE WHEN state='open' THEN 0 ELSE 1 END,upload_sequence DESC,ref_name,category LIMIT 1").bind(alert).bind(reference).fetch_optional(pool).await?)
+    instance_filtered(pool, alert, reference, None).await
+}
+
+pub async fn instance_filtered(
+    pool: &PgPool,
+    alert: i64,
+    reference: Option<&str>,
+    pull_request: Option<i32>,
+) -> Result<Option<Instance>> {
+    let mut connection = pool.acquire().await?;
+    instance_on(&mut connection, alert, reference, pull_request).await
+}
+
+async fn instance_on(
+    connection: &mut PgConnection,
+    alert: i64,
+    reference: Option<&str>,
+    pull_request: Option<i32>,
+) -> Result<Option<Instance>> {
+    ensure!(
+        pull_request.is_none_or(|number| number > 0),
+        "Invalid pull request"
+    );
+    let condition = instance_condition("$2", "$3", "i.ref_name");
+    Ok(sqlx::query_as(&format!("SELECT i.* FROM code_scanning_instances i WHERE i.alert_id=$1 AND {condition} ORDER BY CASE WHEN i.state='open' THEN 0 ELSE 1 END,i.upload_sequence DESC,i.ref_name,i.category LIMIT 1")).bind(alert).bind(reference).bind(pull_request).fetch_optional(connection).await?)
+}
+
+pub async fn organization_alert_page(
+    pool: &PgPool,
+    actor: i64,
+    org: i64,
+    filters: &AlertFilters<'_>,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<OrganizationAlert>> {
+    let mut tx = pool.begin().await?;
+    sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY")
+        .execute(&mut *tx)
+        .await?;
+    let role = super::organizations::authority::read_authority(&mut tx, actor, org).await?;
+    ensure!(
+        matches!(
+            role,
+            crate::backend::db::organizations::OrganizationOutcome::Applied(
+                crate::backend::db::models::OrgRole::Owner
+                    | crate::backend::db::models::OrgRole::Admin
+            )
+        ),
+        Refusal::Denied
+    );
+    let rows = list::alert_page_on(
+        &mut tx,
+        AlertScope::Organization(org),
+        filters,
+        offset,
+        limit,
+    )
+    .await?;
+    let mut result = Vec::with_capacity(rows.len());
+    for alert in rows {
+        let repository: crate::backend::db::models::Repository =
+            sqlx::query_as("SELECT * FROM repositories WHERE id=$1")
+                .bind(alert.repo_id)
+                .fetch_one(&mut *tx)
+                .await?;
+        let default = (filters.pull_request.is_none())
+            .then(|| format!("refs/heads/{}", repository.default_branch));
+        let reference = filters.reference.or(default.as_deref());
+        let instance = instance_on(&mut tx, alert.id, reference, filters.pull_request)
+            .await?
+            .ok_or(Refusal::Missing)?;
+        let dismissed_by = if let Some(user) = alert.dismissed_by {
+            sqlx::query_as("SELECT * FROM users WHERE id=$1")
+                .bind(user)
+                .fetch_optional(&mut *tx)
+                .await?
+        } else {
+            None
+        };
+        result.push(OrganizationAlert {
+            alert,
+            repository,
+            instance,
+            dismissed_by,
+        });
+    }
+    tx.commit().await?;
+    Ok(result)
 }
 
 pub async fn instances(
@@ -164,24 +269,57 @@ pub async fn instances(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Instance>> {
+    instances_filtered(pool, alert, reference, None, offset, limit).await
+}
+
+pub async fn instances_filtered(
+    pool: &PgPool,
+    alert: i64,
+    reference: Option<&str>,
+    pull_request: Option<i32>,
+    offset: i64,
+    limit: i64,
+) -> Result<Vec<Instance>> {
     ensure!(
-        offset >= 0 && (1..=101).contains(&limit),
+        offset >= 0 && (1..=101).contains(&limit) && pull_request.is_none_or(|number| number > 0),
         "Invalid instance page"
     );
-    Ok(sqlx::query_as("SELECT * FROM code_scanning_instances WHERE alert_id=$1 AND (CAST($2 AS TEXT) IS NULL OR ref_name=$2) ORDER BY upload_sequence DESC,ref_name,category LIMIT $3 OFFSET $4").bind(alert).bind(reference).bind(limit).bind(offset).fetch_all(pool).await?)
+    let condition = instance_condition("$2", "$5", "i.ref_name");
+    Ok(sqlx::query_as(&format!("SELECT i.* FROM code_scanning_instances i WHERE i.alert_id=$1 AND {condition} ORDER BY i.upload_sequence DESC,i.ref_name,i.category LIMIT $3 OFFSET $4")).bind(alert).bind(reference).bind(limit).bind(offset).bind(pull_request).fetch_all(pool).await?)
 }
 
 pub async fn dismiss(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     number: i64,
     input: &Dismissal<'_>,
 ) -> Result<Alert> {
     input.validate()?;
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin().await?;
+    super::credentials::require_account(&mut tx, &credential)
+        .await
+        .map_err(|error| {
+            if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+                anyhow::Error::new(Refusal::Denied)
+            } else {
+                error
+            }
+        })?;
+    let mut allowed = super::discussions::lock_write_authority(&mut tx, actor, repo).await?;
+    if !allowed {
+        let org: Option<i64> = sqlx::query_scalar("SELECT owner_org_id FROM repositories WHERE id=$1 AND NOT is_archived AND owner_kind='org'")
+            .bind(repo).fetch_optional(&mut *tx).await?.flatten();
+        if let Some(org) = org {
+            allowed = super::organizations::roles::manages_security(&mut tx, actor, org).await?;
+        }
+    }
     ensure!(
-        super::discussions::lock_write_authority(&mut tx, actor, repo).await?,
+        allowed
+            && super::credentials::repository(&mut tx, &credential, repo, "security_events", true)
+                .await?,
         Refusal::Denied
     );
     sqlx::query("SELECT pg_advisory_xact_lock($1)")
@@ -198,14 +336,18 @@ pub async fn dismiss(
 
 pub async fn delete_analysis(
     pool: &PgPool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     repo: i64,
     id: i64,
     confirm: bool,
 ) -> Result<Option<i64>> {
+    let credential = actor.into();
+    let actor = credential.user_id;
     let mut tx = pool.begin().await?;
     ensure!(
-        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?,
+        super::discussions::lock_admin_authority(&mut tx, actor, repo).await?
+            && super::credentials::repository(&mut tx, &credential, repo, "security_events", true)
+                .await?,
         Refusal::Denied
     );
     sqlx::query("SELECT pg_advisory_xact_lock($1)")

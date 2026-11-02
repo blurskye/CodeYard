@@ -905,10 +905,10 @@ async fn done_is_never_unread_and_search_finds_the_subject(pg: bool) {
         listed(&w.alice, "/api/notifications?view=done").await,
         vec![subject]
     );
-    assert!(
-        listed(&w.alice, "/api/notifications?view=done&unread_only=1")
-            .await
-            .is_empty()
+    // Done items are never unread, so the done view ignores the unread filter.
+    assert_eq!(
+        listed(&w.alice, "/api/notifications?view=done&unread_only=1").await,
+        vec![subject]
     );
     assert_eq!(
         listed(&w.alice, "/api/notifications?unread_only=1").await,

@@ -11,12 +11,14 @@ use OrganizationOutcome::{Applied, Denied, Missing};
 
 pub async fn invite_team_member(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     team: i64,
     target: i64,
     role: TeamRole,
 ) -> Result<OrganizationOutcome<OrgInvitation>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
     if !administers(actor_role) {
@@ -27,7 +29,7 @@ pub async fn invite_team_member(
     }
     let outcome = super::invitations::save_in_transaction(
         &mut tx,
-        actor,
+        grant,
         org,
         &NewInvitation::user(target, OrgRole::Member),
         false,

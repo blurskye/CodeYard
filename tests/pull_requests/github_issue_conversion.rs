@@ -145,6 +145,7 @@ async fn contract(pg: bool) {
     let (reaction, _) = db::reactions::create_reaction(
         f.pool(),
         alice_id,
+        &db::users::accounts::AccountCredential::Session(&alice.session),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: source.id,
@@ -158,6 +159,7 @@ async fn contract(pg: bool) {
     let (description_reaction, _) = db::reactions::create_reaction(
         f.pool(),
         alice_id,
+        &db::users::accounts::AccountCredential::Session(&alice.session),
         db::reactions::Target {
             repo_id: repo.id,
             item_id: source.id,
@@ -206,6 +208,7 @@ async fn contract(pg: bool) {
         alice_id,
         &db::issue_attributes::Definition {
             id: None,
+            expected_updated: None,
             kind: "type".into(),
             name: "Retained type".into(),
             description: None,
@@ -291,13 +294,24 @@ async fn contract(pg: bool) {
     )
     .await
     .unwrap();
-    db::suggestions::set_enabled(f.pool(), repo.id, alice_id, true)
-        .await
-        .unwrap();
+    db::suggestions::set_enabled(
+        f.pool(),
+        repo.id,
+        alice_id,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice_id).await,
+        ),
+        true,
+    )
+    .await
+    .unwrap();
     let suggestion = db::suggestions::propose(
         f.pool(),
         repo.id,
         alice_id,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), alice_id).await,
+        ),
         filler.id,
         &db::suggestions::Proposal {
             action: db::suggestions::Action::CloseIssue,
@@ -306,6 +320,7 @@ async fn contract(pg: bool) {
             rationale: None,
             confidence: None,
         },
+        None,
     )
     .await
     .unwrap();
@@ -334,6 +349,7 @@ async fn contract(pg: bool) {
     db::pins::set_pin(
         f.pool(),
         alice_id,
+        &db::users::accounts::AccountCredential::Session(&alice.session),
         repo.id,
         db::assignees::AssignedItem::Issue(source.id),
         old_id,
@@ -691,16 +707,23 @@ async fn contract(pg: bool) {
     assert_eq!(updated.head_sha, next["sha"].as_str().unwrap());
     assert_eq!(updated.author_id, carol_id);
     let private_url = format!("{collection}/{}", private_source.number);
-    call(
+    // The base owner sees the pull request with its head owner but not the private fork,
+    // as GitHub shows a head repository the viewer cannot read.
+    let opaque = call(
         &router,
         "pulls/get",
         "GET",
         &private_url,
         owner,
         Value::Null,
-        StatusCode::NOT_FOUND,
+        StatusCode::OK,
     )
     .await;
+    assert_eq!(opaque["head"]["label"], "bob:main");
+    assert_eq!(opaque["head"]["user"]["login"], "bob");
+    assert_eq!(opaque["head"]["repo"], Value::Null);
+    assert_eq!(opaque["head"]["sha"], next["sha"]);
+    assert!(!opaque.to_string().contains("private-fork"), "{opaque}");
     call(
         &router,
         "pulls/update",
@@ -772,16 +795,19 @@ async fn contract(pg: bool) {
         .unwrap()
         .unwrap();
     assert_ne!(delegated.head_sha, next["sha"].as_str().unwrap());
-    call(
+    let opaque = call(
         &router,
         "pulls/get",
         "GET",
         &private_url,
         owner,
         Value::Null,
-        StatusCode::NOT_FOUND,
+        StatusCode::OK,
     )
     .await;
+    assert_eq!(opaque["head"]["sha"], delegated.head_sha.as_str());
+    assert_eq!(opaque["head"]["repo"], Value::Null);
+    assert!(!opaque.to_string().contains("private-fork"), "{opaque}");
     // Revoking the real contributor's source access freezes that snapshot even
     // when its historical author and the current source writer can still read it.
     for (repository, actor, name, level) in [
@@ -874,6 +900,8 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     assert_eq!(published.sha, next["sha"].as_str().unwrap());
+    // The fork's own writer may still update the branch on purpose, and publishes the new head
+    // on their own authority, as efe68f63c made it.
     call(
         &router,
         "pulls/update-branch",
@@ -881,9 +909,19 @@ async fn contract(pg: bool) {
         &format!("{collection}/{}/update-branch", source.number),
         reader,
         json!({}),
-        StatusCode::FORBIDDEN,
+        StatusCode::ACCEPTED,
     )
     .await;
+    let updated = db::pull_requests::records::get_pull_request(f.pool(), repo.id, source.number)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_ne!(updated.head_sha, frozen.head_sha);
+    let published = codeyard::backend::repositories::store::repo_store(&repo, None)
+        .commit_from_primary(&format!("refs/pull/{}/head", source.number))
+        .await
+        .unwrap();
+    assert_eq!(published.sha, updated.head_sha);
     f.finish().await;
 }
 

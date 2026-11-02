@@ -31,7 +31,7 @@ pub async fn invite_organization_member(
 }
 pub async fn set_organization_invitation_by_owner(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     role: OrgRole,
@@ -48,7 +48,7 @@ pub async fn set_organization_invitation_by_owner(
 }
 pub async fn create_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -57,7 +57,7 @@ pub async fn create_organization_invitation(
 }
 async fn save(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
@@ -78,14 +78,19 @@ async fn save(
 // The caller holds the write transaction and owns commit or rollback.
 pub(super) async fn save_in_transaction(
     mut tx: &mut SqliteConnection,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     input: &NewInvitation,
     owner_only: bool,
     policy: InvitationOffer,
 ) -> Result<OrganizationOutcome<OrgInvitation>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let replace = matches!(policy, InvitationOffer::Replace);
     let actor_role = require_org!(tx, actor, org);
+    if !credential(tx, &grant, org, "members").await? {
+        return Ok(Denied);
+    }
     if !administers(actor_role)
         || (owner_only && actor_role != OrgRole::Owner)
         || (!input.reinstate && !can_change_member(actor_role, None, Some(input.role)))
@@ -182,7 +187,8 @@ pub(super) async fn save_in_transaction(
             }
         }
     }
-    let mut previous: Vec<OrgInvitation> = sqlx::query_as("SELECT * FROM organization_invitations WHERE org_id=?1 AND ((?2 IS NOT NULL AND user_id=?2) OR (?3 IS NOT NULL AND email=?3)) LIMIT 2")
+    let recipient = RECIPIENT.replace("?1", "?2");
+    let mut previous: Vec<OrgInvitation> = sqlx::query_as(&format!("SELECT i.* FROM organization_invitations i WHERE i.org_id=?1 AND ((?2 IS NOT NULL AND {recipient}) OR (?3 IS NOT NULL AND i.email=?3)) ORDER BY i.id LIMIT 2"))
         .bind(org).bind(target).bind(&input.email).fetch_all(&mut *tx).await?;
     if previous.len() > 1 {
         return Ok(Conflict);
@@ -210,7 +216,50 @@ pub(super) async fn save_in_transaction(
             sqlx::query("INSERT INTO team_invitations(invitation_id,team_id,role) VALUES(?1,?2,'member') ON CONFLICT DO NOTHING").bind(invitation.id).bind(id).execute(&mut *tx).await?;
         }
     }
+    queue_invitation_email(tx, actor, org, target, &invitation).await?;
     Ok(Applied(invitation))
+}
+
+/// Queues the offer's email with the offer, so a saved invitation always has its message. The
+/// address is the invited one, or the invitee's notification address. An invitee who blocks
+/// the inviter, or whom the inviter blocks, gets none, as they get no notification.
+async fn queue_invitation_email(
+    tx: &mut SqliteConnection,
+    actor: i64,
+    org: i64,
+    target: Option<i64>,
+    invitation: &OrgInvitation,
+) -> Result<()> {
+    if let Some(user) = target {
+        if crate::backend::db::sqlite::users::blocks::interaction_blocked(&mut *tx, user, actor)
+            .await?
+        {
+            return Ok(());
+        }
+    }
+    let to = match (&invitation.email, target) {
+        (Some(email), _) => Some(email.clone()),
+        (None, Some(user)) => {
+            crate::backend::db::sqlite::email::notification_address(&mut *tx, user).await?
+        }
+        (None, None) => None,
+    };
+    let Some(to) = to else {
+        return Ok(());
+    };
+    let name: String = sqlx::query_scalar("SELECT name FROM organizations WHERE id=?1")
+        .bind(org)
+        .fetch_one(&mut *tx)
+        .await?;
+    let mail = crate::backend::email::organization_invitation(&name);
+    crate::backend::db::sqlite::email::queue_email(
+        tx,
+        &to,
+        &mail.subject,
+        &mail.body,
+        Some(invitation.id),
+    )
+    .await
 }
 
 pub async fn list_organization_invitations(
@@ -301,23 +350,15 @@ pub async fn invitation_team_counts(
 
 pub async fn cancel_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
 ) -> Result<OrganizationOutcome<()>> {
     cancel(pool, actor, org, target, false, false).await
 }
-pub async fn cancel_organization_invitation_by_owner(
-    pool: &SqlitePool,
-    actor: i64,
-    org: i64,
-    target: i64,
-) -> Result<OrganizationOutcome<()>> {
-    cancel(pool, actor, org, target, false, true).await
-}
 pub async fn cancel_invitation_id(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     id: i64,
     owner_only: bool,
@@ -326,17 +367,39 @@ pub async fn cancel_invitation_id(
 }
 async fn cancel(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     target: i64,
     by_id: bool,
     owner_only: bool,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let actor_role = require_org!(tx, actor, org);
-    if !administers(actor_role) || (owner_only && actor_role != OrgRole::Owner) {
+    if !credential(&mut tx, &grant, org, "members").await?
+        || !administers(actor_role)
+        || (owner_only && actor_role != OrgRole::Owner)
+    {
         return Ok(Denied);
     }
+    let outcome = cancel_offers(&mut tx, actor_role, org, target, by_id).await?;
+    if matches!(outcome, Applied(())) {
+        tx.commit().await?;
+    }
+    Ok(outcome)
+}
+
+/// Deletes the pending offers that match `target` (a recipient account, or an invitation id
+/// when `by_id`) inside the caller's transaction, after checking that `actor_role` may cancel
+/// each of them.
+pub(super) async fn cancel_offers(
+    tx: &mut SqliteConnection,
+    actor_role: OrgRole,
+    org: i64,
+    target: i64,
+    by_id: bool,
+) -> Result<OrganizationOutcome<()>> {
     // A username also matches a verified email offer; an invitation id is exact.
     let matches = if by_id {
         "i.id=?2".to_owned()
@@ -373,7 +436,6 @@ async fn cancel(
             .execute(&mut *tx)
             .await?;
     }
-    tx.commit().await?;
     Ok(Applied(()))
 }
 
@@ -394,12 +456,14 @@ pub async fn list_received_organization_invitations(
 /// organization ends once the account is a member.
 pub async fn accept_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-    let sql = format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3) AND {LIVE} ORDER BY i.id LIMIT 1");
+    let sql = format!("SELECT i.* FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3) AND {LIVE} AND NOT EXISTS(SELECT 1 FROM organization_member_history h WHERE h.org_id=i.org_id AND h.user_id=?1 AND h.removed_at>=i.created_at) ORDER BY i.id LIMIT 1");
     let Some(invitation): Option<OrgInvitation> = sqlx::query_as(&sql)
         .bind(actor)
         .bind(org)
@@ -418,6 +482,9 @@ pub async fn accept_organization_invitation(
     let Ok(role) = invitation.role.parse::<OrgRole>() else {
         return Ok(Denied);
     };
+    if !credential(&mut tx, &grant, org, "members").await? {
+        return Ok(Denied);
+    }
     if membership_role(&mut tx, org, actor).await?.is_some() {
         return Ok(Conflict);
     }
@@ -450,11 +517,16 @@ pub async fn accept_organization_invitation(
 /// Declines `invitation`, or every offer from the organization when it is `None`.
 pub async fn decline_organization_invitation(
     pool: &SqlitePool,
-    actor: i64,
+    actor: impl Into<crate::backend::db::credentials::Actor>,
     org: i64,
     invitation: Option<i64>,
 ) -> Result<OrganizationOutcome<()>> {
+    let grant = actor.into();
+    let actor = grant.user_id;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    if !super::super::credentials::live(&mut tx, &grant, true).await? {
+        return Ok(Denied);
+    }
     let sql = format!("DELETE FROM email_outbox WHERE organization_invitation_id IN (SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=?2 AND (?3 IS NULL OR i.id=?3))");
     sqlx::query(&sql)
         .bind(actor)

@@ -113,11 +113,11 @@ async fn create(
         .await?
         .ok_or_else(auth::required)?;
     actor.require_write()?;
-    let Json(input) = input.map_err(|_| Error::validation("Key", "key", "invalid"))?;
+    let Json(input) = input.map_err(super::json_error)?;
     let key = keys::enroll_signing(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         input
             .title
             .as_deref()
@@ -149,7 +149,7 @@ async fn remove(
     keys::delete_signing(
         &state.pool,
         actor.user.id,
-        &AccountCredential::Token(actor.token.id),
+        &AccountCredential::Token(actor.token.id, &actor.token.token_hash),
         id,
     )
     .await

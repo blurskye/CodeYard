@@ -39,7 +39,7 @@ fn scoped_workflow() -> String {
             "only-environment-private-marker",
         ),
     ] {
-        yaml.push_str(&format!("  {job}:\n    runs-on: linux\n"));
+        yaml.push_str(&format!("  {job}:\n    runs-on: ubuntu-latest\n"));
         if let Some(environment) = environment {
             yaml.push_str(&format!("    environment: '{environment}'\n"));
         }
@@ -139,12 +139,18 @@ async fn real_engines(pg: bool) {
             "TOKEN",
             "repository-private-marker",
             Some(actor),
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(f.pool(), actor).await,
+            ),
         )
         .await
         .unwrap();
         db::variables::save(
             f.pool(),
             actor,
+            &db::users::accounts::AccountCredential::Session(
+                &crate::support::live_session(f.pool(), actor).await,
+            ),
             repo.id,
             None,
             "REGION",
@@ -266,7 +272,17 @@ async fn fork_claims(pg: bool) {
     )
     .await
     .unwrap();
-    workflow_commit(&repo.disk_path,"on: workflow_dispatch\njobs:\n  deploy:\n    runs-on: linux\n    environment: İ\n    steps: [{run: 'true'}]\n");
+    // The claims below include a fork run, which a private repository runs only once allowed.
+    db::action_settings::settings(
+        f.pool(),
+        actor,
+        &db::action_settings::Scope::Repository(repo.id),
+        db::action_settings::Setting::ForkWorkflows,
+        Some(&serde_json::json!({"run_workflows_from_fork_pull_requests": true})),
+    )
+    .await
+    .unwrap();
+    workflow_commit(&repo.disk_path,"on: workflow_dispatch\njobs:\n  deploy:\n    runs-on: ubuntu-latest\n    environment: İ\n    steps: [{run: 'true'}]\n");
     values::create(f.pool(), actor, repo.id, "İ").await.unwrap();
     for (kind, name, value) in [
         (Kind::Secret, "TOKEN", "environment-private-claim-marker"),
@@ -295,12 +311,18 @@ async fn fork_claims(pg: bool) {
         "TOKEN",
         "repository-private-claim-marker",
         Some(actor),
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), actor).await,
+        ),
     )
     .await
     .unwrap();
     db::variables::save(
         f.pool(),
         actor,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(f.pool(), actor).await,
+        ),
         repo.id,
         None,
         "REGION",
@@ -348,7 +370,11 @@ async fn fork_claims(pg: bool) {
             f.execute("UPDATE ci_runs SET is_fork=true WHERE id=$1", &[run.id])
                 .await;
             let claim = queue
-                .claim("worker", CiExecutionMode::Local)
+                .claim(
+                    "worker",
+                    CiExecutionMode::Local,
+                    &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                )
                 .await
                 .unwrap()
                 .unwrap();
@@ -367,12 +393,24 @@ async fn fork_claims(pg: bool) {
                 .finish("worker", run.id, "success", None)
                 .await
                 .unwrap();
-            db::secrets::delete_secret(f.pool(), actor, repo.id, "TOKEN")
-                .await
-                .unwrap();
+            db::secrets::delete_secret(
+                f.pool(),
+                actor,
+                repo.id,
+                "TOKEN",
+                &db::users::accounts::AccountCredential::Session(
+                    &crate::support::live_session(f.pool(), actor).await,
+                ),
+            )
+            .await
+            .unwrap();
         } else {
             let error = queue
-                .claim("worker", CiExecutionMode::Local)
+                .claim(
+                    "worker",
+                    CiExecutionMode::Local,
+                    &codeyard::backend::ci::CiConfig::default().platform_labels(),
+                )
                 .await
                 .err()
                 .expect("environment secret must require the master key");
@@ -400,10 +438,12 @@ async fn postgres_environment_values_fork_claims() {
 }
 
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn sqlite_environment_values_real_engines() {
     real_engines(false).await;
 }
 #[tokio::test]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn postgres_environment_values_real_engines() {
     real_engines(true).await;
 }

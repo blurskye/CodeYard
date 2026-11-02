@@ -11,6 +11,12 @@ use rsa::{
 use serde_json::{Map, Value};
 use sha2::Sha256;
 
+/// The stored form of an App name: trimmed, not empty and at most 100 bytes.
+pub fn valid_name(name: &str) -> Option<&str> {
+    let name = name.trim();
+    (!name.is_empty() && name.len() <= 100).then_some(name)
+}
+
 pub fn valid_slug(slug: &str) -> bool {
     (1..=80).contains(&slug.len())
         && slug.as_bytes().first().is_some_and(u8::is_ascii_lowercase)
@@ -35,6 +41,27 @@ pub async fn generate_key() -> anyhow::Result<(String, String)> {
         ))
     })
     .await?
+}
+
+pub enum RegistrationKeyError {
+    Limited,
+    Unavailable,
+}
+
+/// Native registration and credential recovery share one account key-generation budget.
+pub async fn registration_key(
+    pool: &DbPool,
+    actor: i64,
+) -> Result<(String, String), RegistrationKeyError> {
+    super::admission::admit_operation(pool, None, "app-register", &actor.to_string())
+        .await
+        .map_err(|error| match error {
+            super::admission::AdmissionError::Limited => RegistrationKeyError::Limited,
+            super::admission::AdmissionError::Unavailable => RegistrationKeyError::Unavailable,
+        })?;
+    generate_key()
+        .await
+        .map_err(|_| RegistrationKeyError::Unavailable)
 }
 
 #[derive(Clone)]
@@ -62,13 +89,9 @@ pub fn manifest(value: &Value) -> Option<Manifest> {
     {
         return None;
     }
-    let name = object.get("name")?.as_str()?.trim();
+    let name = valid_name(object.get("name")?.as_str()?)?;
     let homepage = object.get("url")?.as_str()?;
-    if name.is_empty()
-        || name.len() > 100
-        || homepage.len() > 2048
-        || !super::oauth_apps::valid_url(homepage)
-    {
+    if homepage.len() > 2048 || !super::oauth_apps::valid_url(homepage) {
         return None;
     }
     let description = object
@@ -175,7 +198,9 @@ pub fn event_permission(permissions: &Value, event: &str) -> bool {
         "push" | "create" | "delete" | "release" | "commit_comment" => "contents",
         "issues" | "issue_comment" => "issues",
         "pull_request" | "pull_request_review" | "pull_request_review_comment" => "pull_requests",
-        "fork" | "star" => "metadata",
+        "fork" | "star" | "repository" => "metadata",
+        "workflow_run" | "workflow_job" => "actions",
+        "repository_dispatch" => "contents",
         "check_run" | "check_suite" => "checks",
         "deployment" | "deployment_status" => "deployments",
         "deployment_protection_rule" => return allows(permissions, "deployments", true),
@@ -201,7 +226,9 @@ pub fn permissions(value: &Value) -> Option<Map<String, Value>> {
                     | "pages"
                     | "administration"
                     | "workflows"
-            ) || !matches!(value.as_str(), Some("read" | "write"))
+                    | "organization_external_properties_for_repos"
+            ) || !(matches!(value.as_str(), Some("read" | "write"))
+                || key == "organization_external_properties_for_repos" && value == "admin")
                 || (key == "metadata" && value != "read")
                 || (key == "workflows" && value != "write")
         })
@@ -217,9 +244,9 @@ pub fn subset(requested: &Value, granted: &Value) -> Option<Value> {
     requested
         .iter()
         .all(|(key, value)| {
-            granted
-                .get(key)
-                .is_some_and(|grant| grant == "write" || grant == value)
+            granted.get(key).is_some_and(|grant| {
+                grant == "admin" || grant == "write" && value != "admin" || grant == value
+            })
         })
         .then_some(Value::Object(requested))
 }
@@ -227,12 +254,13 @@ pub fn allows(permissions: &Value, key: &str, write: bool) -> bool {
     permissions
         .get(key)
         .and_then(Value::as_str)
-        .is_some_and(|level| level == "write" || (!write && level == "read"))
+        .is_some_and(|level| level == "admin" || level == "write" || (!write && level == "read"))
 }
 pub fn write(permissions: &Value) -> bool {
-    permissions
-        .as_object()
-        .is_some_and(|map| map.values().any(|value| value == "write"))
+    permissions.as_object().is_some_and(|map| {
+        map.values()
+            .any(|value| value == "write" || value == "admin")
+    })
 }
 
 /// Only RS256, with a maximum ten-minute lifetime. Private signing keys never persist.
@@ -277,7 +305,7 @@ pub async fn authenticate(pool: &DbPool, value: &str) -> anyhow::Result<Option<A
         Value::Number(value) => value.to_string(),
         _ => return Ok(None),
     };
-    let Some(app) = db::github_apps::app(pool, &issuer).await? else {
+    let Some(app) = db::github_apps::app_issuer(pool, &issuer).await? else {
         return Ok(None);
     };
     // Slugs are discovery identifiers, not JWT issuers.
@@ -350,23 +378,14 @@ impl Authority {
         if !repositories.is_empty() && !repositories.contains(&repo) {
             return Ok(None);
         }
-        let installations = if let Some(id) = installation {
-            db::github_apps::installation(pool, id)
-                .await?
-                .into_iter()
-                .collect()
-        } else {
-            db::github_apps::installations(pool, Some(app_id), Some(user)).await?
-        };
-        for installation in installations {
-            if installation.app_id == app_id
-                && installation.suspended_at.is_none()
-                && db::github_apps::has_repository(pool, installation.id, repo, true).await?
-            {
-                return Ok(Some(self.permissions.clone()));
-            }
-        }
-        Ok(None)
+        // An installation token names its installation; a user token reaches any installation
+        // of its app that the user reaches.
+        let actor = installation.is_none().then_some(user);
+        let covering =
+            db::github_apps::repository_installation(pool, app_id, repo, true, actor).await?;
+        Ok(covering
+            .is_some_and(|found| installation.is_none_or(|id| id == found.id))
+            .then(|| self.permissions.clone()))
     }
     /// Whether this credential reaches `repo` with permission `key`.
     pub async fn allows(
@@ -427,6 +446,8 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
     match parts.get(3).copied() {
         None => Some(if write { "administration" } else { "metadata" }),
         Some("statuses") => Some("statuses"),
+        Some("autolinks") => Some("administration"),
+        Some("dependency-graph") => Some("contents"),
         // GitHub files these read-only summaries under repository metadata.
         Some("languages" | "contributors" | "stats") if !write => Some("metadata"),
         // Only structural subresources determine authority, never an owner/repo/ref name.
@@ -472,6 +493,14 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         }
         Some("actions") => match parts.get(4).copied() {
             Some("permissions") => Some("administration"),
+            Some("cache")
+                if matches!(
+                    parts.get(5).copied(),
+                    Some("storage-limit" | "retention-limit")
+                ) =>
+            {
+                Some("administration")
+            }
             Some("runs" | "workflows" | "jobs" | "artifacts" | "caches" | "cache") => {
                 Some("actions")
             }
@@ -481,7 +510,10 @@ pub fn repository_permission(path: &str, write: bool) -> Option<&'static str> {
         Some("check-runs" | "check-suites") => Some("checks"),
         Some("deployments") => Some("deployments"),
         Some("pages") => Some("pages"),
-        Some("collaborators" | "teams") => Some("administration"),
+        Some("collaborators") if !write => Some("metadata"),
+        Some("collaborators" | "teams" | "invitations") => Some("administration"),
+        Some("comments" | "codeowners" | "license" | "dispatches") => Some("contents"),
+        Some("traffic") if !write => Some("administration"),
         // Repository hooks need repository_hooks, not administration.
         _ => None,
     }
@@ -526,6 +558,10 @@ mod tests {
         assert_eq!(
             repository_permission("/repos/a/b/actions/runs", false),
             Some("actions")
+        );
+        assert_eq!(
+            repository_permission("/repos/a/b/traffic/clones", false),
+            Some("administration")
         );
         let pending = "/repos/a/b/actions/runs/1/pending_deployments";
         assert_eq!(repository_permission(pending, false), Some("actions"));

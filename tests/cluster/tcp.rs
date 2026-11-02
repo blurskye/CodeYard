@@ -297,7 +297,8 @@ async fn pairing_over_tcp_admits_a_valid_ticket_and_refuses_a_bad_one() {
             tcp: vec![address_of(&core)],
             ..Default::default()
         },
-    );
+    )
+    .unwrap();
     let error = cluster::join(&forged, &stranger, &Relay::Off, "intruder", None)
         .await
         .unwrap_err();
@@ -907,6 +908,7 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
     let queue = RunQueue::Remote {
         context: worker.context.clone(),
         peers: vec![cluster::CorePeer {
+            target: None,
             public_key: core.public_key().to_string(),
             address: NodeAddress {
                 tcp: vec![silent_tcp_address().await, address_of(&core)],
@@ -918,7 +920,11 @@ async fn a_ci_claim_moves_on_from_a_tcp_address_that_never_answers() {
     // With nothing queued, a claim is answered with `None`. Getting that answer proves the
     // request reached the core over the second address.
     let claimed = queue
-        .claim("slot-1", CiExecutionMode::Local)
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .expect("the second TCP address answers");
     assert!(claimed.is_none());
@@ -945,6 +951,7 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
     let queue = RunQueue::Remote {
         context: worker.context.clone(),
         peers: vec![cluster::CorePeer {
+            target: None,
             public_key: core.public_key().to_string(),
             address: NodeAddress {
                 tcp: vec![silent_tcp_address().await],
@@ -955,7 +962,11 @@ async fn a_ci_claim_reaches_the_core_over_iroh_after_a_tcp_address_never_answers
         preferred: Default::default(),
     };
     let claimed = queue
-        .claim("slot-1", CiExecutionMode::Local)
+        .claim(
+            "slot-1",
+            CiExecutionMode::Local,
+            &codeyard::backend::ci::CiConfig::default().platform_labels(),
+        )
         .await
         .expect("iroh answers once TCP gives up");
     assert!(claimed.is_none());
@@ -999,10 +1010,10 @@ async fn many_silent_tcp_addresses_share_one_dial_budget() {
     .await;
     let elapsed = started.elapsed();
     assert!(outcome.is_err(), "a dial to silent addresses connected");
-    // The TCP addresses share two DIAL_TIMEOUTs. Trying each in turn would take over two
-    // minutes.
+    // The TCP attempts run side by side, each for one DIAL_TIMEOUT (5 seconds), so the dial
+    // gives up after about six. Trying each in turn would take over two minutes.
     assert!(
-        elapsed >= Duration::from_secs(9) && elapsed < Duration::from_secs(60),
+        elapsed >= Duration::from_secs(5) && elapsed < Duration::from_secs(60),
         "the dial took {elapsed:?}"
     );
 }
@@ -1032,9 +1043,10 @@ async fn a_dial_reaches_iroh_after_many_silent_tcp_addresses() {
         .await
         .expect("iroh answers once the TCP budget is spent");
     let elapsed = started.elapsed();
-    // TCP is tried first, so the dial waits out the shared budget before iroh answers.
+    // TCP is tried first, so the dial waits until every TCP attempt has timed out before iroh
+    // answers.
     assert!(
-        elapsed >= Duration::from_secs(9) && elapsed < Duration::from_secs(60),
+        elapsed >= Duration::from_secs(5) && elapsed < Duration::from_secs(60),
         "the dial took {elapsed:?}"
     );
 }

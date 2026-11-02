@@ -8,7 +8,7 @@ use uuid::Uuid;
 native_operation!(crate::backend::db::postgres::organizations::profiles::create_organization, crate::backend::db::sqlite::organizations::profiles::create_organization,
     fn create_organization(pool: &DbPool, actor: i64, input: &NewOrganization) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 native_operation!(crate::backend::db::postgres::organizations::profiles::update_organization_profile, crate::backend::db::sqlite::organizations::profiles::update_organization_profile,
-    fn update_organization_profile(pool: &DbPool, actor: i64, org: i64, input: &OrganizationProfile) -> Result<OrganizationOutcome<OrganizationMetadata>>);
+    fn update_organization_profile(pool: &DbPool, actor: i64, credential: &crate::backend::db::users::accounts::AccountCredential<'_>, org: i64, input: &OrganizationProfile) -> Result<OrganizationOutcome<OrganizationMetadata>>);
 // The picture is a file id. Setting one needs an owner or admin, and the file has to
 // be the actor's own confirmed `org_avatar` upload (`Conflict` otherwise); `None`
 // removes the picture. The answer is the picture it replaced, if any.
@@ -32,15 +32,8 @@ native_operation!(crate::backend::db::postgres::organizations::profiles::list_re
 // Exact, case-sensitive namespace, matching the equality and UNIQUE rules of users.username.
 // Do not lowercase identities or conflate routing namespaces.
 pub(super) fn validate_slug(value: &str) -> std::result::Result<(), OrganizationInputError> {
-    if !(3..=1024).contains(&value.len())
-        || value.chars().count() > 255
-        || !value
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
-    {
-        return Err(OrganizationInputError::Slug);
-    }
-    Ok(())
+    crate::backend::identity::credentials::validate_namespace(value, 3)
+        .map_err(|_| OrganizationInputError::Slug)
 }
 pub(super) fn validate_name(value: &str) -> std::result::Result<(), OrganizationInputError> {
     if value.trim().is_empty()
@@ -129,4 +122,5 @@ pub struct OrganizationMetadata {
     pub is_verified: bool,
     /// Derived from usable persisted owners; bans/reset restrictions are not exempted.
     pub governance_suspended: bool,
+    pub avatar_file_id: Option<Uuid>,
 }

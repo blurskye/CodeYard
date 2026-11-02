@@ -55,11 +55,14 @@ impl Project {
                 api.set_path(&format!("/api/v4/projects/{}", path.replace('/', "%2F")))
             }
             Forge::Gitea | Forge::Forgejo => {
-                ensure!(
-                    parts.len() == 2,
-                    "Forge source needs an owner and repository"
-                );
-                api.set_path(&format!("/api/v1/repos/{path}"));
+                let prefix = parts[..parts.len() - 2].join("/");
+                let prefix = if prefix.is_empty() {
+                    prefix
+                } else {
+                    format!("/{prefix}")
+                };
+                let repository = parts[parts.len() - 2..].join("/");
+                api.set_path(&format!("{prefix}/api/v1/repos/{repository}"));
             }
         }
         Ok(Self { forge, api })
@@ -245,19 +248,15 @@ async fn fetch_inner(project: Project, credentials: Option<&Credentials>) -> Res
     )
     .await?
     .map_err(|_| anyhow::anyhow!("Source forge address refused"))?;
-    let mut builder = Client::builder()
-        .no_proxy()
-        .redirect(reqwest::redirect::Policy::none())
+    let client = outbound::pinned_client(&project.api, &addresses)
         .connect_timeout(Duration::from_secs(15))
         .timeout(Duration::from_secs(60))
-        .user_agent("Codeyard repository migration");
-    if let Some(url::Host::Domain(host)) = project.api.host() {
-        builder = builder.resolve_to_addrs(host, &addresses);
-    }
+        .user_agent("Codeyard repository migration")
+        .build()?;
     let forge = project.forge;
     let mut reader = Reader {
         project,
-        client: builder.build()?,
+        client,
         credentials,
         bytes: 0,
         requests: 0,

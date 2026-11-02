@@ -25,16 +25,27 @@ fn new_host_key() -> PrivateKey {
     PrivateKey::from(Ed25519Keypair::from_seed(&seed))
 }
 
-fn secure_host_key_file(path: &str) -> Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
-            .with_context(|| format!("Failed to secure host key file {}", path))?;
+fn open_host_key_file(path: &str) -> Result<std::fs::File> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+    let path = std::path::absolute(path)?;
+    let uid = crate::backend::repositories::git_sessions::private_files::effective_uid();
+    crate::backend::repositories::git_sessions::private_files::ancestors(
+        path.parent().context("Host key parent required")?,
+        uid,
+    )?;
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let meta = file.metadata()?;
+    anyhow::ensure!(
+        meta.is_file() && meta.nlink() == 1 && (meta.uid() == uid || meta.uid() == 0),
+        "Unsafe host key file"
+    );
+    if meta.mode() & 0o077 != 0 {
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
     }
-    #[cfg(not(unix))]
-    let _ = path;
-    Ok(())
+    Ok(file)
 }
 
 fn write_host_key_file(path: &str, key_pem: &str) -> Result<()> {
@@ -46,24 +57,23 @@ fn write_host_key_file(path: &str, key_pem: &str) -> Result<()> {
         }
     }
 
-    let mut options = std::fs::OpenOptions::new();
-    options.write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+    let path_ref = std::path::absolute(path_ref)?;
+    let parent = path_ref.parent().context("Host key parent required")?;
+    let uid = crate::backend::repositories::git_sessions::private_files::effective_uid();
+    crate::backend::repositories::git_sessions::private_files::ancestors(parent, uid)?;
+    match open_host_key_file(path) {
+        Ok(_) => {}
+        Err(error)
+            if error
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) => {}
+        Err(error) => return Err(error),
     }
-    let mut file = options
-        .open(path_ref)
-        .with_context(|| format!("Failed to open host key file {}", path))?;
-
-    secure_host_key_file(path)?;
-
-    file.set_len(0)
-        .with_context(|| format!("Failed to truncate host key file {}", path))?;
-    file.write_all(key_pem.as_bytes())
-        .with_context(|| format!("Failed to write host key file {}", path))?;
-
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(key_pem.as_bytes())?;
+    temporary.as_file().sync_all()?;
+    temporary.persist(&path_ref)?;
+    std::fs::File::open(parent)?.sync_all()?;
     Ok(())
 }
 
@@ -256,6 +266,7 @@ impl PreAuthAdmission {
         Some(PreAuthSlot {
             admission: self.clone(),
             ip: None,
+            global: true,
         })
     }
 }
@@ -263,9 +274,21 @@ impl PreAuthAdmission {
 struct PreAuthSlot {
     admission: PreAuthAdmission,
     ip: Option<IpAddr>,
+    global: bool,
 }
 
 impl PreAuthSlot {
+    fn release_global(&mut self) {
+        if self.global {
+            self.admission
+                .0
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .total -= 1;
+            self.global = false;
+        }
+    }
+
     fn for_ip(mut self, ip: IpAddr) -> Option<Self> {
         let ip = client_key(ip);
         {
@@ -292,7 +315,9 @@ impl Drop for PreAuthSlot {
             .0
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
-        counts.total -= 1;
+        if self.global {
+            counts.total -= 1;
+        }
         if let Some(ip) = self.ip {
             if let Some(from_ip) = counts.per_ip.get_mut(&ip) {
                 *from_ip -= 1;
@@ -361,7 +386,6 @@ async fn serve_connection(
     }
     let (signal, authenticated) = oneshot::channel();
     handler.set_authenticated_signal(signal);
-    let rate_limiter = handler.rate_limiter.clone();
     let session =
         match tokio::time::timeout_at(deadline, russh::server::run_stream(config, stream, handler))
             .await
@@ -386,19 +410,12 @@ async fn serve_connection(
         if !matches!(outcome, Ok(Ok(AuthOutcome::Accepted))) {
             let _ = control_ref.0.shutdown(std::net::Shutdown::Both);
         }
-        drop(slot);
-        !matches!(
-            outcome,
-            Ok(Ok(AuthOutcome::Accepted | AuthOutcome::Unavailable))
-        )
+        // Authentication frees the global budget, not the source's connection budget.
+        let mut slot = slot;
+        slot.release_global();
+        slot
     };
-    let (rejected, result) = tokio::join!(login, session);
-    if rejected && rate_limiter.record_failure(source.ip()).await {
-        warn!(
-            "IP {} banned after too many failed connections",
-            source.ip()
-        );
-    }
+    let (_source_slot, result) = tokio::join!(login, session);
     if let Err(error) = result {
         warn!("SSH session failed: {}", error);
     }
@@ -428,10 +445,13 @@ impl SshServer {
                     .try_exists()
                     .with_context(|| format!("Failed to inspect host key at {}", path))?
                 {
-                    secure_host_key_file(path)?;
+                    use std::io::Read;
+                    let mut key = String::new();
+                    open_host_key_file(path)?
+                        .take(1024 * 1024)
+                        .read_to_string(&mut key)?;
                     info!("Bootstrapping cluster SSH host key from {}", path);
-                    std::fs::read_to_string(path)
-                        .with_context(|| format!("Failed to read host key from {}", path))?
+                    key
                 } else {
                     new_host_key()
                         .to_openssh(russh::keys::ssh_key::LineEnding::LF)?
@@ -445,8 +465,16 @@ impl SshServer {
 
             // Only a usable, unencrypted key may win the first-writer race. A bad
             // configured file must not permanently poison the shared database.
-            russh::keys::decode_secret_key(&bootstrap_key, None)
+            let key = russh::keys::decode_secret_key(&bootstrap_key, None)
                 .context("Failed to decode configured SSH host key")?;
+            anyhow::ensure!(
+                Config::default()
+                    .preferred
+                    .key
+                    .iter()
+                    .any(|algorithm| *algorithm == key.algorithm()),
+                "Unsupported SSH host key algorithm"
+            );
             crate::backend::db::node_config::insert_cluster_ssh_host_key(&pool, &bootstrap_key)
                 .await?;
             let stored_key = crate::backend::db::node_config::get_cluster_ssh_host_key(&pool)
@@ -460,18 +488,33 @@ impl SshServer {
             .context("Failed to decode cluster SSH host key from database")?;
 
         if let Some(path) = host_key_path {
-            let current = std::fs::read_to_string(path).ok();
+            use std::io::Read;
+            let current = match open_host_key_file(path) {
+                Ok(file) => {
+                    let mut bytes = String::new();
+                    file.take(1024 * 1024).read_to_string(&mut bytes)?;
+                    Some(bytes)
+                }
+                Err(error)
+                    if error
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound) =>
+                {
+                    None
+                }
+                Err(error) => return Err(error),
+            };
             if current.as_deref() != Some(cluster_key_pem.as_str()) {
                 write_host_key_file(path, &cluster_key_pem)?;
                 info!("Synchronized SSH host key file at {}", path);
             }
-            // Matching bytes do not imply safe metadata; repair it on every startup.
-            secure_host_key_file(path)?;
+            // Matching bytes do not imply safe metadata; inspect the opened descriptor too.
+            open_host_key_file(path)?;
         }
 
         let config = Config {
             inactivity_timeout: Some(std::time::Duration::from_secs(3600)),
-            window_size: 64 * 1024,
+            window_size: 2 * 1024 * 1024,
             maximum_packet_size: 32 * 1024,
             channel_buffer_size: 2,
             auth_rejection_time: std::time::Duration::from_secs(3),
@@ -496,10 +539,17 @@ impl SshServer {
 
     /// Accepts connections until `stop` is set. Then it closes the listener and returns
     /// once connections and Git tasks have ended, so the caller bounds that wait.
-    pub async fn run(&mut self, addr: SocketAddr, mut stop: watch::Receiver<bool>) -> Result<()> {
-        info!("Starting SSH server on {}", addr);
+    pub async fn run(&mut self, addr: SocketAddr, stop: watch::Receiver<bool>) -> Result<()> {
+        self.run_listener(TcpListener::bind(addr).await?, stop)
+            .await
+    }
 
-        let socket = TcpListener::bind(addr).await?;
+    pub(crate) async fn run_listener(
+        &mut self,
+        socket: TcpListener,
+        mut stop: watch::Receiver<bool>,
+    ) -> Result<()> {
+        info!("Starting SSH server on {}", socket.local_addr()?);
         let mut connections = JoinSet::new();
         loop {
             tokio::select! {
@@ -705,11 +755,10 @@ mod tests {
         let mut server = test_server().await;
         server.trusted_proxy_ips = Arc::new(HashSet::from(["127.0.0.1".parse().unwrap()]));
         let admission = server.admission.clone();
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = probe.local_addr().unwrap();
-        drop(probe);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
         let (stop, stopped) = watch::channel(false);
-        let running = tokio::spawn(async move { server.run(address, stopped).await });
+        let running = tokio::spawn(async move { server.run_listener(listener, stopped).await });
         let slots: Vec<_> = (0..MAX_PREAUTH_CONNECTIONS - 1)
             .map(|_| admission.reserve().unwrap())
             .collect();
@@ -822,11 +871,10 @@ mod tests {
     #[tokio::test]
     async fn per_address_limit_refuses_extra_connections_and_stop_waits_for_open_ones() {
         let mut server = test_server().await;
-        let probe = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = probe.local_addr().unwrap();
-        drop(probe);
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
         let (stop, stopped) = watch::channel(false);
-        let mut running = tokio::spawn(async move { server.run(address, stopped).await });
+        let mut running = tokio::spawn(async move { server.run_listener(listener, stopped).await });
 
         let mut admitted = Vec::new();
         for _ in 0..MAX_PREAUTH_CONNECTIONS_PER_IP {

@@ -8,7 +8,6 @@ use crate::backend::{
         self,
         deployments::{self, Deployment, Filter, NewDeployment, NewStatus, Refusal, Status},
     },
-    identity::oauth_apps,
     repositories::{
         access,
         merges::{self, BranchMerge},
@@ -88,10 +87,11 @@ async fn list(
     Query(filter): Query<Filter>,
     OriginalUri(uri): OriginalUri,
 ) -> Result<Response> {
-    let (repo, _) = repository(&state, &headers, &owner, &name, false).await?;
+    let (repo, auth) = repository(&state, &headers, &owner, &name, false).await?;
     let (offset, limit) = page.window()?;
     let rows = deployments::list(
         &state.pool,
+        auth.as_ref().map(|actor| actor.user.id),
         repo.id,
         &filter,
         offset as i64,
@@ -129,7 +129,7 @@ async fn create(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let (actor, token) = (auth.user, auth.token.id);
+    let actor = &auth.user;
     access::check_write(&state.pool, repo.id, actor.id)
         .await
         .map_err(|error| match error {
@@ -158,7 +158,7 @@ async fn create(
     let payload = input.payload.unwrap_or_else(|| json!({}));
     let environment = input.environment.as_deref().unwrap_or("production");
     let new = NewDeployment {
-        actor: actor.id,
+        actor: auth.database_actor(),
         repo: repo.id,
         sha: &sha,
         reference: &input.reference,
@@ -169,7 +169,7 @@ async fn create(
         transient: input.transient_environment.unwrap_or(false),
         production: input
             .production_environment
-            .unwrap_or(environment == "production"),
+            .unwrap_or(environment.eq_ignore_ascii_case("production")),
         required_contexts: input.required_contexts.as_deref(),
     };
     new.validate().map_err(write_error)?;
@@ -188,22 +188,16 @@ async fn create(
                 .await
                 .map_err(store_error)?
             {
-                // The merge may publish workflow files, so it needs the same credential
-                // permission as a direct merge.
-                if !oauth_apps::allows_workflows(&state.pool, token)
+                // The merge moves the branch like a direct merge, so the credential needs
+                // contents write, and publication checks its workflows permission.
+                auth.repository_scope(&state.pool, repo.id, "contents", true)
                     .await
-                    .map_err(Error::unavailable)?
-                {
-                    return Err(Error::new(
-                        StatusCode::FORBIDDEN,
-                        "Resource not accessible by token",
-                    ));
-                }
+                    .map_err(auth::scope_error)?;
                 merges::merge_branch(
                     &state.pool,
                     state.cluster.as_ref(),
                     &state.ci_runs,
-                    actor.id,
+                    auth.database_actor(),
                     repo.id,
                     &owner,
                     BranchMerge {
@@ -226,7 +220,7 @@ async fn create(
     let value = document(&state, &saved, &owner, &name).await?;
     let deployment = value.clone();
     let snapshot = repo.clone();
-    let sender = payloads::Person::of(&actor);
+    let sender = payloads::Person::of(actor);
     webhooks::emit(&state.pool, &repo, webhooks::events::DEPLOYMENT, vec![actor.id], move |owner, _| json!({"deployment": deployment, "repository": payloads::repository(&snapshot, owner), "sender": payloads::person(&sender)})).await;
     Ok((
         StatusCode::CREATED,
@@ -250,7 +244,7 @@ async fn deployment(
     if write {
         deployments::delete(
             &state.pool,
-            auth.ok_or_else(auth::required)?.user.id,
+            auth.ok_or_else(auth::required)?.database_actor(),
             repo.id,
             id,
         )
@@ -258,10 +252,15 @@ async fn deployment(
         .map_err(write_error)?;
         return Ok(StatusCode::NO_CONTENT.into_response());
     }
-    let saved = deployments::get(&state.pool, repo.id, id)
-        .await
-        .map_err(Error::unavailable)?
-        .ok_or_else(Error::missing)?;
+    let saved = deployments::get(
+        &state.pool,
+        auth.as_ref().map(|actor| actor.user.id),
+        repo.id,
+        id,
+    )
+    .await
+    .map_err(Error::unavailable)?
+    .ok_or_else(Error::missing)?;
     Ok(Json(document(&state, &saved, &owner, &name).await?).into_response())
 }
 
@@ -276,10 +275,11 @@ async fn statuses(
     let read = auth::read_method(request.method());
     let (owner, name) = (&params["owner"], &params["repo"]);
     let (repo, auth) = repository(&state, &headers, owner, name, !read).await?;
+    let viewer = auth.as_ref().map(|actor| actor.user.id);
     let id = params["deployment_id"]
         .parse()
         .map_err(|_| Error::missing())?;
-    let saved = deployments::get(&state.pool, repo.id, id)
+    let saved = deployments::get(&state.pool, viewer, repo.id, id)
         .await
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
@@ -287,6 +287,7 @@ async fn statuses(
         if let Some(status) = params.get("status_id") {
             let row = deployments::get_status(
                 &state.pool,
+                viewer,
                 id,
                 status.parse().map_err(|_| Error::missing())?,
             )
@@ -296,9 +297,10 @@ async fn statuses(
             return Ok(Json(status_document(&state, &row, owner, name).await?).into_response());
         }
         let (offset, limit) = page.window()?;
-        let rows = deployments::statuses(&state.pool, id, offset as i64, (limit + 1) as i64)
-            .await
-            .map_err(Error::unavailable)?;
+        let rows =
+            deployments::statuses(&state.pool, viewer, id, offset as i64, (limit + 1) as i64)
+                .await
+                .map_err(Error::unavailable)?;
         let has_next = rows.len() > limit;
         let mut values = Vec::new();
         for row in rows.into_iter().take(limit) {
@@ -306,24 +308,21 @@ async fn statuses(
         }
         return page.response(&uri, values, has_next);
     }
-    let actor = auth.ok_or_else(auth::required)?.user;
+    let authentication = auth.ok_or_else(auth::required)?;
+    let credential = authentication.database_actor();
+    let actor = authentication.user;
     let Json(input) = Json::<NewStatus>::from_request(request, &state)
         .await
         .map_err(|_| Error::validation("DeploymentStatus", "state", "invalid"))?;
-    let (_, statuses) =
-        deployments::create_status(&state.pool, actor.id, repo.id, saved.id, &input)
-            .await
-            .map_err(write_error)?;
+    let statuses = deployments::create_status(&state.pool, credential, repo.id, saved.id, &input)
+        .await
+        .map_err(write_error)?;
     let mut result = None;
-    for status in statuses {
+    for (deployment, status) in statuses {
         let value = status_document(&state, &status, owner, name).await?;
         if status.deployment_id == saved.id {
             result = Some(value.clone());
         }
-        let deployment = deployments::get(&state.pool, repo.id, status.deployment_id)
-            .await
-            .map_err(Error::unavailable)?
-            .ok_or_else(Error::missing)?;
         let deployment = document(&state, &deployment, owner, name).await?;
         let snapshot = repo.clone();
         let sender = payloads::Person::of(&actor);

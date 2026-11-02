@@ -36,7 +36,7 @@ pub(crate) fn webhook_payload(
     let (diff, commits) = tokio::runtime::Handle::current().block_on(async {
         tokio::join!(
             store.diff_stats(base, &pull.head_sha),
-            store.pull_request_commits(base, &pull.head_sha)
+            store.pull_request_commits(base, &pull.head_sha, 0, 0)
         )
     });
     let document = &mut payload["pull_request"];
@@ -57,6 +57,48 @@ pub(crate) fn webhook_payload(
         }
     }
     payload
+}
+
+/// Sends one `pull_request` webhook for `pull` and returns its document, which is also the
+/// workflow event document. `extra` adds top-level fields such as `changes` or
+/// `requested_reviewer`. Without the cluster context a storage node's repository is sent
+/// without its diff counts.
+pub(crate) async fn emit_pull_request_event(
+    pool: &db::DbPool,
+    cluster: Option<&crate::backend::cluster::NodeContext>,
+    repository: &db::models::Repository,
+    pull: &db::models::PullRequest,
+    action: &'static str,
+    sender_id: i64,
+    extra: serde_json::Map<String, serde_json::Value>,
+) -> serde_json::Value {
+    let (pull_for_hook, repository_for_hook) = (pull.clone(), repository.clone());
+    let author_id = pull.author_id;
+    let store = crate::backend::repositories::store::repo_store(repository, cluster);
+    crate::backend::webhooks::emit(
+        pool,
+        repository,
+        crate::backend::webhooks::events::PULL_REQUEST,
+        vec![author_id, sender_id],
+        move |owner, people| {
+            let mut payload = webhook_payload(
+                action,
+                &pull_for_hook,
+                &people.get(author_id),
+                crate::backend::webhooks::payloads::Scope {
+                    repo: &repository_for_hook,
+                    owner,
+                    sender: &people.get(sender_id),
+                },
+                &store,
+            );
+            if let Some(document) = payload.as_object_mut() {
+                document.extend(extra);
+            }
+            payload
+        },
+    )
+    .await
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -89,6 +131,23 @@ fn database_error<E>(_: E) -> OperationError {
         code: "database_error",
         message: "Collaboration storage is temporarily unavailable".into(),
     }
+}
+
+/// The repository a caller already resolved, read again by ID with its owner's name.
+pub(super) async fn repository(
+    pool: &db::DbPool,
+    id: i64,
+) -> Result<(db::models::Repository, String), OperationError> {
+    use crate::backend::repositories::access::{current_repository_with_owner, AccessError};
+    current_repository_with_owner(pool, id)
+        .await
+        .map_err(|error| match error {
+            AccessError::Unavailable => database_error(()),
+            _ => OperationError::Missing {
+                code: "not_found",
+                message: "Repository not found".to_owned(),
+            },
+        })
 }
 
 pub(super) async fn actor(pool: &db::DbPool, id: i64) -> Result<db::models::User, OperationError> {
@@ -216,6 +275,10 @@ pub(crate) fn write_error(error: anyhow::Error) -> OperationError {
         Some(DiscussionWriteRefusal::ReviewFull) => OperationError::Invalid {
             code: "validation_error",
             message: "A review holds at most 200 comments.".into(),
+        },
+        Some(DiscussionWriteRefusal::EmptyReview) => OperationError::Invalid {
+            code: "validation_error",
+            message: "A review body is required unless the review is approved".into(),
         },
         None => OperationError::Unavailable {
             code: "database_error",

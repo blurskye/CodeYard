@@ -82,7 +82,11 @@ pub fn register(token: &str, credentials: Option<(String, String)>) -> Element {
     } }
 }
 
-pub fn applications(applications: Vec<(String, String, String)>) -> Element {
+pub fn applications(
+    applications: Vec<(String, String, String)>,
+    previous: Option<String>,
+    next: Option<String>,
+) -> Element {
     rsx! { section { class: "identity-auth",
         header { class: "identity-auth-header", h1 { "OAuth applications" } }
         a { href: "/settings/applications/new", class: "btn btn-primary", "New OAuth application" }
@@ -91,6 +95,12 @@ pub fn applications(applications: Vec<(String, String, String)>) -> Element {
                 h2 { class: "font-semibold break-all", "{name}" }
                 p { class: "break-all font-mono", "{client_id}" }
                 p { class: "break-all", "{redirect}" }
+            }
+        }
+        if previous.is_some() || next.is_some() {
+            nav { aria_label: "OAuth application pages", class: "mt-4 flex gap-4",
+                if let Some(previous) = previous { a { href: previous, "Previous" } }
+                if let Some(next) = next { a { href: next, "Next" } }
             }
         }
     } }

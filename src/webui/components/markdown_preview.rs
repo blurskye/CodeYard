@@ -1,25 +1,31 @@
 //! A Markdown body as one plain line, for list rows such as a notification or a search result.
-use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
+use super::markdown_html::{decode_references, pieces, Piece};
+use pulldown_cmark::{Event, Parser, Tag, TagEnd};
 
 const MAX_CHARS: usize = 160;
-// A preview this short never needs more source than this, and parsing less keeps long bodies cheap.
-const MAX_SOURCE_BYTES: usize = 4096;
 
 /// The words of a Markdown body without its markup. List items and table cells are set apart with
 /// " · ", and a long body is cut at a word with an ellipsis.
 pub fn body_preview(body: &str) -> String {
-    let mut end = body.len().min(MAX_SOURCE_BYTES);
-    while !body.is_char_boundary(end) {
-        end -= 1;
-    }
-    let options =
-        Options::ENABLE_TABLES | Options::ENABLE_STRIKETHROUGH | Options::ENABLE_TASKLISTS;
+    let options = super::markdown::markdown_options(false);
     let mut text = String::new();
     let mut set_apart = false;
-    for event in Parser::new_ext(&body[..end], options) {
+    for event in Parser::new_ext(body, options) {
         match event {
             Event::Start(Tag::Item | Tag::TableCell) => set_apart = true,
-            Event::Text(part) | Event::Code(part) | Event::Html(part) | Event::InlineHtml(part) => {
+            Event::Html(part) | Event::InlineHtml(part) => {
+                for piece in pieces(&part) {
+                    match piece {
+                        Piece::Text(part) => text.push_str(&decode_references(part).0),
+                        Piece::Close {
+                            name: "p" | "div" | "li" | "br",
+                            ..
+                        } => text.push(' '),
+                        _ => {}
+                    }
+                }
+            }
+            Event::Text(part) | Event::Code(part) => {
                 if set_apart && !part.trim().is_empty() {
                     if !text.trim().is_empty() {
                         text.push_str(" · ");

@@ -11,7 +11,8 @@ use codeyard::backend::{
 use tower::ServiceExt;
 
 async fn delivery(pool: &db::DbPool, hook: i64, comment: i64) -> Value {
-    for _ in 0..250 {
+    // The hook's host never resolves, so the delivery is recorded after its retries (7 s).
+    for _ in 0..1500 {
         for row in db::webhooks::list_deliveries(pool, hook).await.unwrap() {
             let body: Value = serde_json::from_str(&row.request_body).unwrap();
             if row.event == "commit_comment" && body["comment"]["id"] == comment {
@@ -41,6 +42,9 @@ pub(super) async fn run(
         pool,
         hook_owner,
         alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, alice).await,
+        ),
         &db::webhooks::WebhookFields {
             username: None,
             password: None,
@@ -537,7 +541,7 @@ pub(super) async fn run(
     assert!(mismatch.text().contains("target mismatch draft"));
     let mismatch_html = mismatch.text();
     let composer = mismatch_html
-        .split(&format!("action=\"{native}/comments\""))
+        .split(&format!("action=\"{native}/comments?comments_page="))
         .nth(1)
         .unwrap();
     assert_eq!(
@@ -607,7 +611,7 @@ pub(super) async fn run(
             records::create_comment(
                 pool,
                 records::CommentCreate {
-                    actor_id: alice,
+                    actor: alice.into(),
                     repo_id: repo,
                     sha,
                     body: &format!("page-marker-{number}"),
@@ -646,20 +650,51 @@ pub(super) async fn run(
     assert!(!notices
         .iter()
         .any(|notice| notice.metadata["commit_comment_id"] == second["id"]));
-    assert!(db::webhooks::delete_webhook(pool, hook_owner, alice, hook)
-        .await
-        .unwrap()
-        .unwrap());
+    assert!(db::webhooks::delete_webhook(
+        pool,
+        hook_owner,
+        alice,
+        &db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, alice).await
+        ),
+        hook
+    )
+    .await
+    .unwrap()
+    .unwrap());
     change_collaborator(pool, alice, repo, "bob", None)
         .await
         .unwrap();
     let refused = records::create_comment(
         pool,
         records::CommentCreate {
-            actor_id: bob,
+            actor: bob.into(),
             repo_id: repo,
             sha,
             body: "revoked read access",
+            path: None,
+            position: None,
+            line: None,
+        },
+    )
+    .await
+    .unwrap_err();
+    assert!(matches!(
+        refused.downcast_ref::<records::CommentRefusal>(),
+        Some(records::CommentRefusal::Denied)
+    ));
+    // The owner still has access, but the session that sent the comment has ended.
+    let ended = crate::support::live_session(pool, alice).await;
+    db::users::sessions::delete_session(pool, &ended)
+        .await
+        .unwrap();
+    let refused = records::create_comment(
+        pool,
+        records::CommentCreate {
+            actor: (alice, ended).into(),
+            repo_id: repo,
+            sha,
+            body: "ended session",
             path: None,
             position: None,
             line: None,

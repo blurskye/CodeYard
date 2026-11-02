@@ -156,6 +156,7 @@ fn code_hit_links_encode_each_path_segment() {
                 owner: "alice".into(),
                 repo: "demo".into(),
                 branch: "main".into(),
+                sha: "0123456789abcdef0123456789abcdef01234567".into(),
                 path: "src/a#b?c%d.rs".into(),
                 line_number: 3,
                 line: "needle".into(),
@@ -165,7 +166,7 @@ fn code_hit_links_encode_each_path_segment() {
     });
     assert!(
         html.contains(
-            "/alice/demo/blob/refs/heads/main/src/a%23b%3Fc%25d.rs?view=code&#38;line=3#L3"
+            "/alice/demo/blob/0123456789abcdef0123456789abcdef01234567/src/a%23b%3Fc%25d.rs?view=code&#38;line=3#L3"
         ),
         "{html}"
     );
@@ -238,6 +239,7 @@ fn code_matches_are_marked_and_the_line_stays_escaped() {
                 owner: "alice".into(),
                 repo: "demo".into(),
                 branch: "main".into(),
+                sha: "0123456789abcdef0123456789abcdef01234567".into(),
                 path: "old.rs".into(),
                 line_number: 1,
                 line: "fn old() { <b>OLD</b> }".into(),
@@ -722,7 +724,7 @@ fn dashboard_places_all_owned_repositories_before_secondary_trending() {
     assert!(html.contains("Updated Oct 2, 2026"));
     assert!(html.contains("2 forks"));
     assert!(html[sidebar..].contains("href=\"/explore?sort=stars\""));
-    assert!(html.contains("Most starred of the 100 newest public repositories."));
+    assert!(html.contains("Most starred public repositories of other owners."));
     for rejected_panel in ["Welcome back", "Personal account", "recent activity"] {
         assert!(!html.contains(rejected_panel));
     }

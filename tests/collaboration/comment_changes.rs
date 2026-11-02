@@ -1,5 +1,5 @@
-//! Editing and deleting comments on issues and pull requests, through the native forms. The author
-//! edits. The author or a maintainer deletes. A locked thread and an archived repository refuse
+//! Editing and deleting comments on issues and pull requests, through the native forms. Authors
+//! and repository writers may moderate comments; only writers may respond while locked. Archives refuse
 //! both. Each refusal names the reason, and a change that is refused changes nothing. On SQLite and
 //! PostgreSQL.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
@@ -114,27 +114,19 @@ async fn edit_and_delete_rules(pg: bool) {
     let theirs = comment(bob, "issues/1", "Bob's words").await;
     let at = |id: i64| format!("{issue}/comments/{id}");
 
-    // Only the author edits: the owner and the other users are refused.
+    // Writers can moderate; an unrelated reader still cannot edit.
     let rewrite = [("body", "Rewritten")];
-    refused(
-        bob,
-        &format!("{}/edit", at(own)),
-        &rewrite,
-        "Only the author can edit this comment.",
-    )
-    .await;
-    refused(
-        alice,
-        &format!("{}/edit", at(theirs)),
-        &rewrite,
-        "Only the author can edit this comment.",
-    )
-    .await;
+    for (client, id) in [(bob, own), (alice, theirs)] {
+        let reply = client
+            .form_reply(&format!("{}/edit", at(id)), &rewrite)
+            .await;
+        assert!(reply.status.is_redirection(), "{}", reply.text());
+    }
     refused(
         dave,
         &format!("{}/edit", at(theirs)),
         &rewrite,
-        "Only the author can edit this comment.",
+        "Only the author or a repository writer can edit this comment.",
     )
     .await;
 
@@ -143,10 +135,7 @@ async fn edit_and_delete_rules(pg: bool) {
     let saved = bob
         .form_reply(
             &format!("{}/edit", at(theirs)),
-            &[
-                ("body", "Bob revised"),
-                ("expected_body", "\"Bob's words\""),
-            ],
+            &[("body", "Bob revised"), ("expected_body", "\"Rewritten\"")],
         )
         .await;
     assert!(saved.status.is_redirection(), "{}", saved.text());
@@ -154,14 +143,9 @@ async fn edit_and_delete_rules(pg: bool) {
     assert!(page.contains("Bob revised"), "{page}");
     assert!(page.contains("collaboration-edited\""), "{page}");
 
-    // Only the author and a maintainer delete. A reader's delete is refused and the comment stays.
-    refused(
-        bob,
-        &format!("{}/delete", at(own)),
-        &[],
-        "You cannot delete this comment.",
-    )
-    .await;
+    // A writer may delete another author's comment; a reader is refused.
+    let removed = bob.form_reply(&format!("{}/delete", at(own)), &[]).await;
+    assert!(removed.status.is_redirection(), "{}", removed.text());
     refused(
         dave,
         &format!("{}/delete", at(theirs)),
@@ -170,16 +154,17 @@ async fn edit_and_delete_rules(pg: bool) {
     )
     .await;
     let (_, page) = bob.page(issue).await;
-    assert!(page.contains(&format!("comment-{own}")), "{page}");
+    assert!(!page.contains(&format!("comment-{own}")), "{page}");
 
-    // A maintainer deletes someone else's comment; the author deletes their own.
+    // A maintainer may also delete; the already-deleted comment is not found.
     let removed = carol
         .form_reply(&format!("{}/delete", at(theirs)), &[])
         .await;
     assert!(removed.status.is_redirection(), "{}", removed.text());
     let own_removed = alice.form_reply(&format!("{}/delete", at(own)), &[]).await;
-    assert!(
-        own_removed.status.is_redirection(),
+    assert_eq!(
+        own_removed.status,
+        StatusCode::NOT_FOUND,
         "{}",
         own_removed.text()
     );
@@ -187,40 +172,37 @@ async fn edit_and_delete_rules(pg: bool) {
     assert!(!page.contains(&format!("comment-{theirs}")), "{page}");
     assert!(!page.contains(&format!("comment-{own}")), "{page}");
 
-    // A locked thread refuses both changes, for everyone.
+    // A lock permits writer responses and moderation, but still rejects readers.
     let locked = comment(bob, "issues/1", "Before the lock").await;
-    // A stale form retains its target identities; locked pages no longer offer a composer.
+    // The form retains its target identities.
     let before_lock = bob.page_ok(issue).await;
     let repository_id = pulls::hidden_value(&before_lock, "repository_id");
     let issue_id = pulls::hidden_value(&before_lock, "issue_id");
     database
         .execute("UPDATE issues SET locked=TRUE WHERE number=1", &[])
         .await;
+    let saved = bob
+        .form_reply(&format!("{}/edit", at(locked)), &rewrite)
+        .await;
+    assert!(saved.status.is_redirection(), "{}", saved.text());
     refused(
-        bob,
-        &format!("{}/edit", at(locked)),
-        &rewrite,
-        "This conversation is locked.",
-    )
-    .await;
-    refused(
-        carol,
+        dave,
         &format!("{}/delete", at(locked)),
         &[],
         "This conversation is locked.",
     )
     .await;
-    refused(
-        bob,
-        &format!("{issue}/comments"),
-        &[
-            ("body", "After lock"),
-            ("repository_id", &repository_id),
-            ("issue_id", &issue_id),
-        ],
-        "This conversation is locked.",
-    )
-    .await;
+    let posted = bob
+        .form_reply(
+            &format!("{issue}/comments"),
+            &[
+                ("body", "After lock"),
+                ("repository_id", &repository_id),
+                ("issue_id", &issue_id),
+            ],
+        )
+        .await;
+    assert!(posted.status.is_redirection(), "{}", posted.text());
     let (status, body) = bob
         .api(
             "POST",
@@ -228,20 +210,24 @@ async fn edit_and_delete_rules(pg: bool) {
             json!({"body": "After lock"}),
         )
         .await;
-    assert_eq!(status, StatusCode::FORBIDDEN);
-    assert_eq!(body["error"], "conversation_locked");
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["body"], "After lock");
     let stored = db::issues::get_issue_comment(database.pool(), locked)
         .await
         .unwrap()
         .unwrap();
     assert!(db::issues::add_issue_comment(
         database.pool(),
+        repository_id.parse().unwrap(),
         stored.issue_id,
         stored.author_id,
-        "After lock"
+        "After lock",
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(database.pool(), stored.author_id).await
+        )
     )
     .await
-    .is_err());
+    .is_ok());
     database
         .execute("UPDATE issues SET locked=FALSE WHERE number=1", &[])
         .await;
@@ -300,13 +286,14 @@ async fn pull_request_comment_rules(pg: bool) {
     assert!(theirs.status.is_redirection(), "{}", theirs.text());
     let bobs = theirs.id_after("#comment-");
 
-    refused(
-        &world.bob,
-        &format!("{page}/comments/{alices}/edit"),
-        &[("body", "x"), ("expected_body", "\"Alice's question\"")],
-        "Only the author can edit this comment.",
-    )
-    .await;
+    let moderated = world
+        .bob
+        .form_reply(
+            &format!("{page}/comments/{alices}/edit"),
+            &[("body", "x"), ("expected_body", "\"Alice's question\"")],
+        )
+        .await;
+    assert!(moderated.status.is_redirection(), "{}", moderated.text());
     let saved = world
         .bob
         .form_reply(
@@ -384,11 +371,19 @@ async fn late_notifications_and_long_discussions(pg: bool) {
     db::notifications::records::create_notification(pool, input("mention"))
         .await
         .unwrap();
-    assert!(
-        db::issues::delete_issue_comment(pool, alice_id, repo.id, issue_id, comment_id)
-            .await
-            .unwrap()
-    );
+    assert!(db::issues::delete_issue_comment(
+        pool,
+        alice_id,
+        repo.id,
+        issue_id,
+        comment_id,
+        &codeyard::backend::db::users::accounts::AccountCredential::Session(
+            &crate::support::live_session(pool, alice_id).await
+        )
+    )
+    .await
+    .unwrap()
+    .is_some());
     for kind in ["issue_comment", "mention"] {
         assert!(
             db::notifications::records::create_notification(pool, input(kind))

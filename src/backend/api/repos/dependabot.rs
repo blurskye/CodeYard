@@ -44,13 +44,26 @@ async fn open(
 ) -> Result<(PageContext, Loaded), Response> {
     let ctx = PageContext::load(state, headers, uri).await?;
     let loaded = chrome::load_database(&ctx, owner, name).await?;
-    if ctx.user.is_none() || !loaded.chrome.can_admin {
+    if ctx.user.is_none() {
         return Err(ctx.error(StatusCode::NOT_FOUND, "Dependabot alerts not found."));
     }
     Ok((ctx, loaded))
 }
 fn failure(ctx: &PageContext, error: anyhow::Error) -> Response {
+    if error.is::<db::users::accounts::AccountRestricted>() {
+        return ctx.error(
+            StatusCode::FORBIDDEN,
+            "A live unrestricted credential is required.",
+        );
+    }
     use db::advisories::Refusal;
+    if let Some(
+        graph @ (db::dependency_graph::GraphError::Limit
+        | db::dependency_graph::GraphError::Disabled),
+    ) = error.downcast_ref::<db::dependency_graph::GraphError>()
+    {
+        return ctx.error(StatusCode::UNPROCESSABLE_ENTITY, &graph.to_string());
+    }
     match error.downcast_ref::<Refusal>() {
         Some(Refusal::Denied) => {
             ctx.error(StatusCode::FORBIDDEN, "Dependabot administration denied.")
@@ -87,7 +100,7 @@ async fn list(
     }
     let rows = match store::alerts(
         &ctx.state.pool,
-        ctx.user.as_ref().unwrap().id,
+        ctx.database_actor(ctx.user.as_ref().unwrap().id),
         loaded.repository.id,
     )
     .await
@@ -163,7 +176,7 @@ async fn mutate(
     {
         return ctx.error(StatusCode::CONFLICT, "The repository changed.");
     }
-    let actor = ctx.user.as_ref().unwrap().id;
+    let actor = ctx.database_actor(ctx.user.as_ref().unwrap().id);
     let result = if let Some(number) = number {
         let input = Update {
             state: values.get("state").cloned().unwrap_or_default(),

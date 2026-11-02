@@ -21,6 +21,7 @@ pub struct Model {
 pub enum View {
     List {
         tokens: Vec<Row>,
+        next_before: Option<i64>,
     },
     New {
         draft: Draft,
@@ -30,6 +31,11 @@ pub enum View {
     Show {
         token: Detail,
         value: Option<String>,
+    },
+    /// Committed creation or regeneration reveals its value even if optional metadata fails.
+    Revealed {
+        id: i64,
+        value: String,
     },
 }
 
@@ -67,6 +73,7 @@ pub struct Draft {
     pub description: String,
     /// `user`, or an organization id.
     pub owner: String,
+    pub owners_after: i64,
     /// A number of days, `custom` or `never`.
     pub expiry: String,
     pub expires_at: String,
@@ -80,6 +87,7 @@ pub struct Draft {
 pub struct Choices {
     /// Value and label: `user` and the username, then each organization.
     pub owners: Vec<(String, String)>,
+    pub next_owners: Option<i64>,
     /// The owner's repositories that match the search, and the ones already selected.
     pub repositories: Vec<(i64, String)>,
     pub more_repositories: bool,
@@ -161,12 +169,24 @@ fn expiry_fields(choice: &str, date: &str, never_allowed: bool) -> Element {
 pub fn render(model: Model) -> Element {
     let token = model.csrf_token.clone();
     let body = match &model.view {
-        View::List { tokens } => list(tokens),
+        View::List {
+            tokens,
+            next_before,
+        } => list(tokens, *next_before),
         View::New { draft, choices } => new(&token, draft, choices),
         View::Show {
             token: detail,
             value,
         } => show(&token, detail, value.as_deref()),
+        View::Revealed { id, value } => rsx! {
+            section { class: "identity-settings-section", aria_labelledby: "fine-grained-revealed-title",
+                header { class: "identity-section-header",
+                    h2 { id: "fine-grained-revealed-title", "Copy your token" }
+                    NavLink { href: format!("{BASE}/{id}"), "Return to token details" }
+                }
+                {reveal(value)}
+            }
+        },
     };
     rsx! {
         div { class: "identity-settings page-shell",
@@ -183,17 +203,21 @@ pub fn render(model: Model) -> Element {
     }
 }
 
-fn list(tokens: &[Row]) -> Element {
+fn list(tokens: &[Row], next_before: Option<i64>) -> Element {
     rsx! {
         section { class: "identity-settings-section", aria_labelledby: "fine-grained-title",
             header { class: "identity-section-header",
                 h2 { id: "fine-grained-title", "Fine-grained personal access tokens" }
                 p { "Each token reaches one owner's repositories with only the permissions you choose, and never more than your own access." }
                 NavLink { href: format!("{BASE}/new"), class: SUBMIT, "Generate new token" }
+                NavLink { href: BASE.to_owned(), "First page" }
             }
             div { class: "identity-row-list",
                 if tokens.is_empty() {
-                    div { class: "identity-empty", h3 { "No fine-grained tokens" } p { "Generate one for scripts, the gh CLI or Git over HTTPS." } }
+                    div { class: "identity-empty", h3 { "No fine-grained tokens on this page" } p { "Return to the first page or generate one for scripts, the gh CLI or Git over HTTPS." } }
+                }
+                if let Some(before) = next_before {
+                    NavLink { href: format!("{BASE}?before={before}"), "Older tokens" }
                 }
                 for row in tokens {
                     article { class: "identity-row", key: "{row.id}",
@@ -220,6 +244,7 @@ fn new(token: &str, draft: &Draft, choices: &Choices) -> Element {
             }
             form { method: "post", action: BASE, class: "identity-form",
                 {csrf(token)}
+                input { r#type: "hidden", name: "owners_after", value: "{draft.owners_after}" }
                 {text_field("name", "Token name", draft.name.clone(), "text", true, 100)}
                 {text_field("description", "Description", draft.description.clone(), "text", false, 1024)}
                 div { class: "space-y-2",
@@ -227,6 +252,12 @@ fn new(token: &str, draft: &Draft, choices: &Choices) -> Element {
                     DraftSelect { id: Some("owner".to_owned()), name: "owner", class: FIELD, initial_value: draft.owner.clone(),
                         options: choices.owners.iter().map(|(value, label)| SelectOption::new(value.clone(), label.clone())).collect::<Vec<_>>() }
                     button { r#type: "submit", name: "action", value: "refresh", formnovalidate: true, class: "identity-button", "Show this owner's repositories and permissions" }
+                    if let Some(after) = choices.next_owners {
+                        button { r#type: "submit", name: "action", value: "owners:{after}", formnovalidate: true, class: "identity-button", "More organizations" }
+                    }
+                    if draft.owners_after > 0 {
+                        button { r#type: "submit", name: "action", value: "owners:0", formnovalidate: true, class: "identity-button", "First organizations" }
+                    }
                 }
                 {expiry_fields(&draft.expiry, &draft.expires_at, choices.never_allowed)}
                 fieldset { class: "identity-fieldset",
@@ -288,6 +319,16 @@ fn level_label(level: &str) -> &'static str {
     }
 }
 
+fn reveal(value: &str) -> Element {
+    rsx! {
+        div { class: "identity-token-reveal", role: "status",
+            strong { "Copy this token now" }
+            p { "You won't be able to see it again." }
+            code { "{value}" }
+        }
+    }
+}
+
 fn show(token: &str, detail: &Detail, value: Option<&str>) -> Element {
     let row = &detail.row;
     let repositories = detail.repositories.join(", ");
@@ -299,11 +340,7 @@ fn show(token: &str, detail: &Detail, value: Option<&str>) -> Element {
                 NavLink { href: BASE.to_owned(), "Back to tokens" }
             }
             if let Some(value) = value {
-                div { class: "identity-token-reveal", role: "status",
-                    strong { "Copy this token now" }
-                    p { "You won't be able to see it again." }
-                    code { "{value}" }
-                }
+                {reveal(value)}
             }
             dl { class: "org-facts",
                 dt { "Resource owner" } dd { "{row.owner}" }

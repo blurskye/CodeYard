@@ -4,6 +4,18 @@ use crate::webui::pages::fields::csrf;
 use dioxus::prelude::*;
 
 pub(super) const FIELD: &str = "org-field";
+
+pub(super) fn draft_checked(page: &Page, action: &str, key: &str, stored: bool) -> bool {
+    if page
+        .draft
+        .get("action")
+        .is_some_and(|value| value == action)
+    {
+        page.draft.get(key).is_some_and(|value| value == "true")
+    } else {
+        stored
+    }
+}
 /// What a field starts with: the rejected submission's value when that form was posted,
 /// otherwise the stored value.
 pub(super) fn field_value(page: &Page, action: &str, name: &str) -> String {

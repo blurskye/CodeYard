@@ -16,6 +16,17 @@ use crate::backend::db::{
 use sha2::{Digest, Sha256};
 use subtle::ConstantTimeEq;
 
+/// Only an absent variable disables setup-secret protection.
+pub fn configured_admin_secret() -> anyhow::Result<Option<String>> {
+    match std::env::var("ADMIN_SECRET") {
+        Ok(secret) => Ok(Some(secret.trim().to_owned()).filter(|secret| !secret.is_empty())),
+        Err(std::env::VarError::NotPresent) => Ok(None),
+        Err(std::env::VarError::NotUnicode(_)) => {
+            anyhow::bail!("ADMIN_SECRET must be valid Unicode")
+        }
+    }
+}
+
 pub struct SetupStatus {
     pub setup_completed: bool,
     pub node_mode: String,

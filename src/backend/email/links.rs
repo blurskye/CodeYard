@@ -5,8 +5,7 @@ use super::{config, messages};
 use crate::backend::api::http::config::public_origin;
 use crate::backend::db::{self, models::User, DbPool};
 use crate::backend::identity::admission::{self, AdmissionError};
-use rand::{rngs::OsRng, RngCore};
-use sha2::{Digest, Sha256};
+use crate::backend::identity::tokens::token_hash as hash;
 use tracing::warn;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -49,16 +48,6 @@ impl From<AdmissionError> for LinkError {
     }
 }
 
-fn new_token() -> String {
-    let mut bytes = [0u8; 32];
-    OsRng.fill_bytes(&mut bytes);
-    hex::encode(bytes)
-}
-
-fn hash(token: &str) -> String {
-    hex::encode(Sha256::digest(token.as_bytes()))
-}
-
 fn unavailable(error: anyhow::Error) -> LinkError {
     warn!(%error, "could not use an email link");
     LinkError::Unavailable
@@ -70,7 +59,7 @@ async fn queue_link(
     user: &User,
     email: &str,
 ) -> Result<(), LinkError> {
-    let token = new_token();
+    let token = crate::backend::crypto::random_hex();
     let origin = public_origin();
     let mail = match purpose {
         Purpose::Verify => messages::verify_email(&origin, &user.username, &token),
@@ -139,7 +128,7 @@ pub async fn send_secondary_verifications(
     }
     admission::admit_mail(pool, None, &format!("user:{}", user.id)).await?;
     for email in pending {
-        let token = new_token();
+        let token = crate::backend::crypto::random_hex();
         let mail = messages::verify_email(&public_origin(), &user.username, &token);
         db::users::emails::save_verification(
             pool,
@@ -166,7 +155,7 @@ pub async fn send_password_reset(
     if !config::is_configured(pool).await {
         return Err(LinkError::NotConfigured);
     }
-    let key = hex::encode(Sha256::digest(address.to_lowercase().as_bytes()));
+    let key = hash(&address.to_lowercase());
     admission::admit_mail(pool, client, &key).await?;
     let user = db::users::accounts::get_user_by_email(pool, address)
         .await
@@ -196,16 +185,35 @@ pub async fn is_valid(pool: &DbPool, purpose: Purpose, token: &str) -> Result<bo
     Ok(valid)
 }
 
+pub(crate) async fn password_reset_account(
+    pool: &DbPool,
+    token: &str,
+) -> Result<Option<User>, LinkError> {
+    db::users::transitions::password_reset_account(pool, &hash(token))
+        .await
+        .map_err(unavailable)
+}
+
 /// Uses up a reset link and sets the account's new password hash, in one transaction. Returns the
 /// account the link was for, or None when the link is no longer usable.
 pub async fn use_reset_link(
     pool: &DbPool,
     token: &str,
     password_hash: &str,
+    expected: &User,
 ) -> Result<Option<i64>, LinkError> {
-    db::users::transitions::reset_password_with_link(pool, &hash(token), password_hash)
-        .await
-        .map_err(unavailable)
+    let Some(expected_hash) = expected.password_hash.as_deref() else {
+        return Ok(None);
+    };
+    db::users::transitions::reset_password_with_link(
+        pool,
+        &hash(token),
+        password_hash,
+        expected_hash,
+        expected.must_change_password,
+    )
+    .await
+    .map_err(unavailable)
 }
 
 /// Uses up a verification link and marks the address verified. False when the link is unknown,

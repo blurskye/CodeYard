@@ -99,10 +99,16 @@ async fn dispatch_contract(pg: bool) {
         assert_eq!(event["repository"]["full_name"], "alice/proj");
         assert_eq!(event["sender"]["login"], "alice");
     }
-    let claimed = db::ci::claim_ci_run(f.pool(), "dispatch-worker", "local", &[])
-        .await
-        .unwrap()
-        .unwrap();
+    let claimed = db::ci::claim_ci_run(
+        f.pool(),
+        "dispatch-worker",
+        "local",
+        &[],
+        &codeyard::backend::ci::CiConfig::default().platform_labels(),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     assert_eq!(claimed.repo_id, repo.id);
     assert_eq!(claimed.event, "repository_dispatch");
     assert_eq!(claimed.status, "running");

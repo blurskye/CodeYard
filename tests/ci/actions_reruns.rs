@@ -109,7 +109,7 @@ on: workflow_dispatch
 permissions: {contents: read}
 jobs:
   context:
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - run: |
           test '${{ github.actor }}' = alice
@@ -399,7 +399,7 @@ async fn partial(
 on: workflow_dispatch
 jobs:
   producer:
-    runs-on: linux
+    runs-on: ubuntu-latest
     outputs:
       safe: ${{ steps.values.outputs.safe }}
     steps:
@@ -407,7 +407,7 @@ jobs:
         run: echo safe=observed >> "$GITHUB_OUTPUT"
   build:
     needs: producer
-    runs-on: linux
+    runs-on: ubuntu-latest
     strategy:
       max-parallel: 1
       matrix:
@@ -431,7 +431,7 @@ jobs:
           fi
   dependent:
     needs: build
-    runs-on: linux
+    runs-on: ubuntu-latest
     steps:
       - run: test '${{ needs.build.outputs.value }}' = one
 "#,
@@ -604,6 +604,7 @@ jobs:
             &[bob],
         )
         .await;
+    let hash = codeyard::backend::identity::tokens::token_hash(writer);
     f.execute(
         "DELETE FROM personal_access_tokens WHERE id=$1",
         &[credential],
@@ -611,7 +612,17 @@ jobs:
     .await;
     let denied = state
         .ci_runs
-        .rerun_workflow_run(repo.id, first.id, bob, false, Some(credential))
+        .rerun_workflow_run(
+            repo.id,
+            first.id,
+            bob,
+            false,
+            Some(codeyard::backend::db::ci::CiCredential::Token {
+                id: credential,
+                hash,
+                permission: "actions",
+            }),
+        )
         .await
         .unwrap_err();
     assert!(denied.to_string().contains("credential"), "{denied}");
@@ -623,10 +634,12 @@ jobs:
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn sqlite_real_actions_reruns() {
     contract(false).await;
 }
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
 async fn postgres_real_actions_reruns() {
     contract(true).await;
 }

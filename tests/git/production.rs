@@ -115,6 +115,47 @@ async fn divergent_merge_retains_both_contents_and_both_parents() {
         base,
         "preparation must not publish"
     );
+    let revision = db::pull_requests::merge_policy::revision(&database.pool, repo_id)
+        .await
+        .unwrap();
+    repositories::protection::upsert_branch_protection_rule(
+        &database.pool,
+        repositories::protection::BranchProtectionRuleUpsert {
+            actor_id: actor,
+            repo_id,
+            pattern: "main",
+            required_approving_reviews: 1,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let error = store(temp.path())
+        .publish_merge_as(
+            &database.pool,
+            repo_id,
+            actor,
+            "feature",
+            "main",
+            &head.to_string(),
+            &base.to_string(),
+            &result,
+            MergeMethod::Merge,
+            Some(db::pull_requests::merge_policy::Snapshot {
+                revision,
+                auto_merge: None,
+            }),
+        )
+        .await
+        .unwrap_err();
+    assert_eq!(
+        error.kind,
+        codeyard::backend::repositories::store::ErrorKind::Conflict
+    );
+    assert_eq!(tip(temp.path(), "main"), base);
+    repositories::protection::delete_branch_protection_rule(&database.pool, actor, repo_id, "main")
+        .await
+        .unwrap();
     store(temp.path())
         .publish_merge_as(
             &database.pool,
@@ -126,6 +167,7 @@ async fn divergent_merge_retains_both_contents_and_both_parents() {
             &base.to_string(),
             &result,
             MergeMethod::Merge,
+            None,
         )
         .await
         .unwrap();
@@ -188,7 +230,8 @@ async fn movement_after_preparation_cannot_publish_h2_or_overwrite_b2() {
                 &head.to_string(),
                 &base.to_string(),
                 &result,
-                MergeMethod::Merge
+                MergeMethod::Merge,
+                None,
             )
             .await
             .is_err());
@@ -238,6 +281,7 @@ async fn competing_merge_publications_have_one_winner() {
                     &base.to_string(),
                     &result,
                     MergeMethod::Merge,
+                    None,
                 )
                 .await
         })
@@ -282,6 +326,7 @@ async fn up_to_date_merge_makes_a_merge_commit_and_conflicts_are_honest() {
             &base.to_string(),
             &result,
             MergeMethod::Merge,
+            None,
         )
         .await
         .unwrap();
