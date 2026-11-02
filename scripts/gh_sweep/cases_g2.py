@@ -8,7 +8,7 @@ import base64
 import re
 import threading
 
-from gh_sweep.harness import HOST, case, expect_error, expect_json, expect_ok
+from gh_sweep.harness import HOST, case, expect_json, expect_ok
 
 
 def failure(result, *messages):
@@ -65,11 +65,11 @@ def clone(ctx, branch=None):
     git(ctx, directory, "init")
     git(ctx, directory, "config", "user.name", ctx.account.name)
     git(ctx, directory, "config", "user.email", ctx.account.name + "@example.test")
-    # Keep a GHES remote for gh's repository discovery; rewrite Git transport only
-    # to the disposable loopback server. Credentials stay out of remote URLs.
+    # The GHES remote URL reaches the server through the sweep's TLS tunnel (HTTPS_PROXY and
+    # GIT_SSL_CAINFO), as gh's own traffic does. No insteadOf rewrite: git remote -v would show
+    # the loopback URL, which gh cannot match to GH_HOST. Credentials stay out of remote URLs.
     git(ctx, directory, "config", "http.extraHeader", "Authorization: Basic " +
         base64.b64encode((ctx.account.name + ":" + ctx.account.token).encode()).decode())
-    git(ctx, directory, "config", "url." + ctx.sweep.base.rstrip("/") + "/.insteadOf", "https://" + HOST + "/")
     git(ctx, directory, "remote", "add", "origin", "https://" + HOST + "/" + ctx.repo + ".git")
     git(ctx, directory, "fetch", "origin")
     base = branch or ctx.api("GET", f"repos/{ctx.repo}")["default_branch"]
@@ -99,8 +99,11 @@ def milestone(ctx):
 
 
 def collaborator(ctx):
+    # As on GitHub, adding a collaborator sends an invitation that the user must accept.
     account = other(ctx)
-    ctx.api("PUT", f"repos/{ctx.repo}/collaborators/{account.name}", {"permission": "push"})
+    invitation = ctx.api("PUT", f"repos/{ctx.repo}/collaborators/{account.name}", {"permission": "push"})
+    if invitation:
+        ctx.sweep.api(account, "PATCH", "user/repository_invitations/" + str(invitation["id"]))
     return account
 
 
@@ -199,8 +202,10 @@ def checks_states(ctx):
     number, name = str(ctx.pr["number"]), ctx.name("check")
     failure(ctx.gh("pr", "checks", number, "--repo", ctx.repo, ok=None), "no checks reported")
     ctx.api("POST", f"repos/{ctx.repo}/statuses/{ctx.pr['head']['sha']}", {"state": "pending", "context": name})
-    result = ctx.gh("pr", "checks", number, "--repo", ctx.repo, "--json", "name,bucket", ok=(8,))
-    assert result.rc == 8 and {"name": name, "bucket": "pending"} in result.json(), result
+    # With --json gh prints the checks and exits 0; only the table exits 8 for pending checks.
+    result = expect_ok(ctx.gh("pr", "checks", number, "--repo", ctx.repo, "--json", "name,bucket"))
+    assert {"name": name, "bucket": "pending"} in result.json(), result
+    ctx.gh("pr", "checks", number, "--repo", ctx.repo, ok=(8,))
     ctx.api("POST", f"repos/{ctx.repo}/statuses/{ctx.pr['head']['sha']}", {"state": "failure", "context": name})
     result = ctx.gh("pr", "checks", number, "--repo", ctx.repo, "--watch", "--fail-fast", "--interval", "1", ok=(1,), timeout=15)
     assert result.rc == 1 and name in result.stdout + result.stderr, result
@@ -313,7 +318,7 @@ def create_invalid(ctx):
     failure(ctx.gh("pr", "create", "--repo", ctx.repo, "--head", ctx.pr["head"]["ref"], "--title", title,
                    "--body", "x", ok=None), "already exists", "already open")
     directory = clone(ctx, ctx.pr["head"]["ref"])
-    failure(ctx.gh("pr", "create", "--repo", ctx.repo, "--recover", str(ctx.directory / ctx.name("missing")), cwd=directory, ok=None), "no such file", "failed to read", "could not read", "could not open")
+    failure(ctx.gh("pr", "create", "--repo", ctx.repo, "--recover", str(ctx.directory / ctx.name("missing")), cwd=directory, ok=None), "only supported when running interactively")
     base, head = new_head(ctx)
     failure(ctx.gh("pr", "create", "--repo", ctx.repo, "--head", head, "--title", title, "--body", "x",
                    "--attach", str(ctx.directory / (ctx.name("missing") + ".png")), ok=None), "no such file", "does not exist")
@@ -432,11 +437,12 @@ def lock_reasons(ctx):
     # A fresh PR for each reason keeps the command, not an unlock helper, under test.
     expect_ok(ctx.gh("pr", "lock", number, "--repo", ctx.repo))
     assert pull(ctx)["locked"] is True
-    for reason in ("off_topic", "resolved", "spam", "too_heated"):
+    # REST spells the reasons "off-topic" and "too heated".
+    for reason, rest in (("off_topic", "off-topic"), ("resolved", "resolved"), ("spam", "spam"), ("too_heated", "too heated")):
         row = new_pull(ctx)
         expect_ok(ctx.gh("pr", "lock", str(row["number"]), "--repo", ctx.repo, "--reason", reason))
         saved = ctx.api("GET", f"repos/{ctx.repo}/pulls/{row['number']}")
-        assert saved["locked"] is True and saved["active_lock_reason"] == reason, saved
+        assert saved["locked"] is True and saved["active_lock_reason"] == rest, saved
     failure(ctx.gh("pr", "lock", number, "--repo", ctx.repo, "--reason", "invalid", ok=None), "invalid", "reason")
 
 
@@ -537,7 +543,7 @@ def revert_merged(ctx):
 
 @case(command="pr revert", variant="body-file and unmerged rejection", needs=("pr",))
 def revert_file(ctx):
-    failure(ctx.gh("pr", "revert", str(ctx.pr["number"]), "--repo", ctx.repo, ok=None), "not merged", "must be merged", "hasn't been merged")
+    failure(ctx.gh("pr", "revert", str(ctx.pr["number"]), "--repo", ctx.repo, ok=None), "not merged", "must be merged", "has not been merged")
     ctx.api("PUT", f"repos/{ctx.repo}/pulls/{ctx.pr['number']}/merge", {"merge_method": "merge"})
     path, title, body = ctx.directory / ctx.name("body"), ctx.name("revert"), ctx.name("body")
     path.write_text(body)
@@ -602,11 +608,11 @@ def update_branch(ctx):
             {"branch": base, "message": "advance base", "content": base64.b64encode(b"base\n").decode()})
     expect_ok(ctx.gh("pr", "update-branch", str(ctx.pr["number"]), "--repo", ctx.repo))
     row = pull(ctx)
-    assert row["head"]["sha"] != before and row["state"] == "open"
+    assert row["head"]["sha"] != before and row["state"] == "open", row
     commit = ctx.api("GET", f"repos/{ctx.repo}/commits/{row['head']['sha']}")
-    assert len(commit["parents"]) == 2 and before in [parent["sha"] for parent in commit["parents"]]
+    assert len(commit["parents"]) == 2 and before in [parent["sha"] for parent in commit["parents"]], commit["parents"]
     result = expect_ok(ctx.gh("pr", "update-branch", str(ctx.pr["number"]), "--repo", ctx.repo))
-    assert "up to date" in (result.stdout + result.stderr).lower()
+    assert "already up-to-date" in result.stdout + result.stderr, result
 
 
 @case(command="pr update-branch", variant="rebase onto newer base (GHES parity)", needs=("pr",))
@@ -644,7 +650,7 @@ def view_formats(ctx):
 def co_errors(ctx):
     directory = clone(ctx)
     missing(ctx.gh("co", "1", "--repo", ctx.account.name + "/" + ctx.name("missing"), cwd=directory, ok=None))
-    failure(ctx.gh("co", str(ctx.pr["number"]), "--repo", ctx.repo, "--branch", ctx.name("branch"), "--detach", cwd=directory, ok=None), "cannot", "not allowed", "mutually exclusive")
+    failure(ctx.gh("co", str(ctx.pr["number"]), "--repo", ctx.repo, "--worktree", "", cwd=directory, ok=None), "cannot be blank")
     ctx.api("PATCH", f"repos/{ctx.repo}", {"private": True})
     missing(ctx.sweep.gh(other(ctx), "co", str(ctx.pr["number"]), "--repo", ctx.repo, cwd=directory, ok=None))
 
@@ -653,7 +659,7 @@ def co_errors(ctx):
 def checkout_errors(ctx):
     directory = clone(ctx)
     missing(ctx.gh("pr", "checkout", "1", "--repo", ctx.account.name + "/" + ctx.name("missing"), cwd=directory, ok=None))
-    failure(ctx.gh("pr", "checkout", str(ctx.pr["number"]), "--repo", ctx.repo, "--branch", ctx.name("branch"), "--detach", cwd=directory, ok=None), "cannot", "not allowed", "mutually exclusive")
+    failure(ctx.gh("pr", "checkout", str(ctx.pr["number"]), "--repo", ctx.repo, "--worktree", "", cwd=directory, ok=None), "cannot be blank")
     ctx.api("PATCH", f"repos/{ctx.repo}", {"private": True})
     missing(ctx.sweep.gh(other(ctx), "pr", "checkout", str(ctx.pr["number"]), "--repo", ctx.repo, cwd=directory, ok=None))
 
@@ -698,10 +704,11 @@ def create_errors(ctx):
 
 @case(command="pr diff", variant="missing repo pull and private repo", needs=("pr",))
 def diff_errors(ctx):
-    expect_error(ctx.gh("pr", "diff", "1", "--repo", ctx.account.name + "/" + ctx.name("missing"), ok=None), status=404)
-    expect_error(ctx.gh("pr", "diff", "999999999", "--repo", ctx.repo, ok=None), status=404)
+    # gh finds the pull request through GraphQL before it asks REST for the diff.
+    missing(ctx.gh("pr", "diff", "1", "--repo", ctx.account.name + "/" + ctx.name("missing"), ok=None))
+    missing(ctx.gh("pr", "diff", "999999999", "--repo", ctx.repo, ok=None))
     ctx.api("PATCH", f"repos/{ctx.repo}", {"private": True})
-    expect_error(ctx.sweep.gh(other(ctx), "pr", "diff", str(ctx.pr["number"]), "--repo", ctx.repo, ok=None), status=404)
+    missing(ctx.sweep.gh(other(ctx), "pr", "diff", str(ctx.pr["number"]), "--repo", ctx.repo, ok=None))
 
 
 @case(command="pr edit", variant="missing repo pull and non-owner denied", needs=("pr",))
@@ -877,11 +884,15 @@ def checkout_force_worktree(ctx):
     assert git(ctx, worktree, "rev-parse", "HEAD") == pull(ctx)["head"]["sha"]
 
 
+GHES_ATTACH = "attaching files is not supported on GitHub Enterprise Server"
+
+
 @case(command="pr comment", variant="valid attachment reaches GHES missing upload endpoint", needs=("pr",))
 def comment_upload(ctx):
+    # gh refuses attachments for a GHES host before uploading anything.
     path = png(ctx)
-    expect_error(ctx.gh("pr", "comment", str(ctx.pr["number"]), "--repo", ctx.repo, "--body", "image",
-                        "--attach", path + "#Sweep pixel", ok=None), status=404)
+    failure(ctx.gh("pr", "comment", str(ctx.pr["number"]), "--repo", ctx.repo, "--body", "image",
+                   "--attach", path + "#Sweep pixel", ok=None), GHES_ATTACH)
     assert comments(ctx) == []
 
 
@@ -891,7 +902,7 @@ def create_upload(ctx):
     title, body, path = ctx.name("title"), ctx.name("body"), png(ctx)
     result = ctx.gh("pr", "create", "--repo", ctx.repo, "--base", base, "--head", head,
                     "--title", title, "--body", body, "--attach", path, ok=None)
-    expect_error(result, status=404)
+    failure(result, GHES_ATTACH)
     # gh documents partial creation despite upload failure. Any saved PR must
     # retain the user's text and must not contain a broken local file reference.
     rows = ctx.api("GET", f"repos/{ctx.repo}/pulls?state=all")
@@ -903,7 +914,7 @@ def create_upload(ctx):
 @case(command="pr edit", variant="valid attachment clean upload error preserves body", needs=("pr",))
 def edit_upload(ctx):
     path = png(ctx)
-    expect_error(ctx.gh("pr", "edit", str(ctx.pr["number"]), "--repo", ctx.repo, "--attach", path, ok=None), status=404)
+    failure(ctx.gh("pr", "edit", str(ctx.pr["number"]), "--repo", ctx.repo, "--attach", path, ok=None), GHES_ATTACH)
     assert pull(ctx)["body"] == "sweep fixture"
 
 
@@ -949,7 +960,7 @@ def merge_body_stdin(ctx):
 def review_bad_input(ctx):
     account = other(ctx)
     failure(ctx.sweep.gh(account, "pr", "review", str(ctx.pr["number"]), "--repo", ctx.repo,
-                         "--approve", "--request-changes", "--body", "x", ok=None), "only one", "cannot", "not allowed")
+                         "--approve", "--request-changes", "--body", "x", ok=None), "need exactly one")
     failure(ctx.sweep.gh(account, "pr", "review", str(ctx.pr["number"]), "--repo", ctx.repo,
                          "--request-changes", "--body", "", ok=None), "body", "required", "empty")
     assert ctx.api("GET", f"repos/{ctx.repo}/pulls/{ctx.pr['number']}/reviews") == []
@@ -982,7 +993,10 @@ def status_empty(ctx):
 @case(command="pr diff", variant="invalid color and incompatible output flags", needs=("pr",))
 def diff_bad_input(ctx):
     failure(ctx.gh("pr", "diff", str(ctx.pr["number"]), "--repo", ctx.repo, "--color", "invalid", ok=None), "color", "invalid")
-    failure(ctx.gh("pr", "diff", str(ctx.pr["number"]), "--repo", ctx.repo, "--patch", "--name-only", ok=None), "cannot", "not allowed", "only one")
+    # --name-only overrides --patch rather than conflicting with it.
+    names = [item["filename"] for item in ctx.api("GET", f"repos/{ctx.repo}/pulls/{ctx.pr['number']}/files")]
+    result = expect_ok(ctx.gh("pr", "diff", str(ctx.pr["number"]), "--repo", ctx.repo, "--patch", "--name-only"))
+    assert result.stdout.splitlines() == names, result
 
 
 @case(command="pr edit", variant="body and body-file conflict", needs=("pr",))
@@ -998,9 +1012,10 @@ def create_bad_input(ctx):
     failure(ctx.gh("pr", "create", "--repo", ctx.repo, "--head", head, ok=None), "--title", "--body", "not a terminal", "not running interactively")
     failure(ctx.gh("pr", "create", "--repo", ctx.repo, "--head", head, "--base", ctx.name("absent-base"),
                    "--title", title, "--body", "x", ok=None), "base", "not found", "Could not resolve")
-    failure(ctx.gh("pr", "create", "--repo", ctx.repo, "--head", head, "--title", title,
-                   "--body", "x", "--body-file", "-", input="y", ok=None), "cannot", "not allowed", "only one")
     assert ctx.api("GET", f"repos/{ctx.repo}/pulls?state=all") == []
+    # --body-file replaces --body instead of conflicting with it.
+    created(ctx, ctx.gh("pr", "create", "--repo", ctx.repo, "--head", head, "--title", title,
+                        "--body", "x", "--body-file", "-", input="y"), title, "y")
 
 
 @case(command="pr checks", variant="watch polls pending to success", needs=("pr",), timeout=60)
