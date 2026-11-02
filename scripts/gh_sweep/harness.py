@@ -385,7 +385,25 @@ class Sweep:
         with self.lock:
             self.records.append({"case": ctx.id if ctx else None, "account": account.name,
                                  "argv": [self.redact(str(a)) for a in args]})
-        return self.execute(account, [self.binary, *args], input=input, cwd=cwd, ok=ok, timeout=timeout)
+        # Search allows 30 requests a minute per user, as on GitHub, and several cases share
+        # each account: wait for the window to reset and run the command again, twice at most.
+        for attempt in range(3):
+            result = self.execute(account, [self.binary, *args], input=input, cwd=cwd, ok=None, timeout=timeout)
+            if attempt == 2 or "HTTP 403: API rate limit exceeded" not in result.stderr:
+                break
+            self.wait_for_search(account)
+        if ok is not None and result.rc not in ok:
+            raise AssertionError(self.redact(f"exit {result.rc}: {result.stderr}"))
+        return result
+
+    def wait_for_search(self, account):
+        reset = self.api(account, "GET", "rate_limit")["resources"]["search"]["reset"]
+        ctx = getattr(LOCAL, "ctx", None)
+        delay = min(max(reset - time.time(), 0) + 1, 61)
+        if ctx:
+            delay = min(delay, ctx.deadline - time.monotonic() - 5)
+        if delay > 0:
+            time.sleep(delay)
 
     def native(self, account, *args):
         ctx = getattr(LOCAL, "ctx", None)
