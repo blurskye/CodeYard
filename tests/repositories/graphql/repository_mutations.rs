@@ -53,26 +53,27 @@ pub(super) async fn exercise(router: &Router, tokens: (&str, &str), repository: 
     .await;
     assert_eq!(status, StatusCode::OK, "{rest}");
     assert_eq!(rest["node_id"], id);
-    let mut unsupported = input.clone();
-    unsupported["name"] = json!("unsupported-issues");
-    unsupported["hasIssuesEnabled"] = json!(false);
-    let (_, denied) = call(
+    // As on GitHub, a repository may be created with issues turned off.
+    let mut no_issues = input.clone();
+    no_issues["name"] = json!("no-issues");
+    no_issues["hasIssuesEnabled"] = json!(false);
+    query(
         router,
-        Some(owner),
+        owner,
         include_str!("gh-repository-create.graphql"),
-        json!({"input":unsupported}),
+        json!({"input":no_issues}),
     )
     .await;
-    assert!(denied["errors"].is_array());
-    let (status, _) = request(
+    let (status, rest) = request(
         router,
         Some(owner),
         "GET",
-        "/api/v3/repos/graphql-alice/unsupported-issues",
+        "/api/v3/repos/graphql-alice/no-issues",
         json!(null),
     )
     .await;
-    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(status, StatusCode::OK, "{rest}");
+    assert_eq!(rest["has_issues"], false, "{rest}");
     let org = query(
         router,
         owner,

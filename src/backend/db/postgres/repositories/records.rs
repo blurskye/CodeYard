@@ -519,6 +519,12 @@ async fn patch_core(
         Refusal::Denied
     );
     anyhow::ensure!(private || !locked, Refusal::VisibilityLocked);
+    anyhow::ensure!(
+        changes.internal != Some(true) || previous.owner_kind == "org",
+        Refusal::InternalNeedsOrganization
+    );
+    let internal = private && changes.internal.unwrap_or(previous.is_internal);
+    changes.features.validate()?;
     if previous.is_archived {
         sqlx::query("UPDATE repositories SET is_archived=FALSE WHERE id=$1")
             .bind(repo_id)
@@ -527,8 +533,9 @@ async fn patch_core(
     }
     apply_merge_methods(&mut tx, repo_id, changes.merge_methods).await?;
     features_on(&mut tx, repo_id, changes.wiki, changes.discussions).await?;
-    let updated=sqlx::query_as::<_,Repository>("UPDATE repositories SET name=COALESCE($2,name),description=CASE WHEN $3 THEN $4 ELSE description END,website=CASE WHEN $5 THEN $6 ELSE website END,is_private=$7,is_archived=$8,is_template=COALESCE($9,is_template),default_branch=COALESCE($10,default_branch),updated_at=NOW() WHERE id=$1 AND NOT is_archived RETURNING *")
-        .bind(repo_id).bind(changes.name).bind(changes.description.is_some()).bind(changes.description.flatten()).bind(website.is_some()).bind(website.as_ref().and_then(|value|value.as_deref())).bind(private).bind(changes.archived.unwrap_or(previous.is_archived)).bind(changes.is_template).bind(default_branch).fetch_one(&mut *tx).await.map_err(name_conflict_error)?;
+    apply_features(&mut tx, repo_id, &changes.features).await?;
+    let updated=sqlx::query_as::<_,Repository>("UPDATE repositories SET name=COALESCE($2,name),description=CASE WHEN $3 THEN $4 ELSE description END,website=CASE WHEN $5 THEN $6 ELSE website END,is_private=$7,is_archived=$8,is_template=COALESCE($9,is_template),default_branch=COALESCE($10,default_branch),is_internal=$11,updated_at=NOW() WHERE id=$1 AND NOT is_archived RETURNING *")
+        .bind(repo_id).bind(changes.name).bind(changes.description.is_some()).bind(changes.description.flatten()).bind(website.is_some()).bind(website.as_ref().and_then(|value|value.as_deref())).bind(private).bind(changes.archived.unwrap_or(previous.is_archived)).bind(changes.is_template).bind(default_branch).bind(internal).fetch_one(&mut *tx).await.map_err(name_conflict_error)?;
     if private != previous.is_private {
         super::super::secrets::delivery_budget(&mut tx, repo_id).await?;
     }
@@ -1139,14 +1146,46 @@ pub(crate) async fn features_on(
     Ok(())
 }
 
-pub async fn repository_wiki(pool: &PgPool, repo_id: i64) -> Result<bool> {
-    Ok(
-        sqlx::query_scalar("SELECT wiki_enabled FROM repository_features WHERE repo_id=$1")
-            .bind(repo_id)
-            .fetch_optional(pool)
-            .await?
-            .unwrap_or_default(),
+pub async fn repository_features(
+    pool: &PgPool,
+    repo_id: i64,
+) -> Result<crate::backend::db::repositories::records::RepositoryFeatures> {
+    Ok(sqlx::query_as(&format!(
+        "SELECT {} FROM repositories r LEFT JOIN repository_features f ON f.repo_id=r.id WHERE r.id=$1",
+        crate::backend::db::repositories::records::FEATURES
+    ))
+    .bind(repo_id)
+    .fetch_one(pool)
+    .await?)
+}
+
+async fn apply_features(
+    tx: &mut Transaction<'_, Postgres>,
+    repo: i64,
+    features: &crate::backend::db::repositories::records::FeatureUpdate,
+) -> Result<()> {
+    if features.is_empty() {
+        return Ok(());
+    }
+    sqlx::query(
+        "INSERT INTO repository_features(repo_id) VALUES($1) ON CONFLICT(repo_id) DO NOTHING",
     )
+    .bind(repo)
+    .execute(&mut **tx)
+    .await?;
+    sqlx::query("UPDATE repository_features SET has_issues=COALESCE($2,has_issues),has_projects=COALESCE($3,has_projects),allow_forking=COALESCE($4,allow_forking),delete_branch_on_merge=COALESCE($5,delete_branch_on_merge),allow_update_branch=COALESCE($6,allow_update_branch),allow_auto_merge=COALESCE($7,allow_auto_merge),squash_merge_commit_title=COALESCE($8,squash_merge_commit_title),squash_merge_commit_message=COALESCE($9,squash_merge_commit_message) WHERE repo_id=$1")
+        .bind(repo)
+        .bind(features.has_issues)
+        .bind(features.has_projects)
+        .bind(features.allow_forking)
+        .bind(features.delete_branch_on_merge)
+        .bind(features.allow_update_branch)
+        .bind(features.allow_auto_merge)
+        .bind(features.squash_merge_commit_title.as_deref())
+        .bind(features.squash_merge_commit_message.as_deref())
+        .execute(&mut **tx)
+        .await?;
+    Ok(())
 }
 
 pub async fn set_repository_wiki(

@@ -8,11 +8,11 @@ use serde_json::json;
 pub(super) fn object(repo: &db::models::Repository) -> Value {
     json!({"__typename":"Repository","id":node_id::encode("R",repo.id),"databaseId":repo.id,
         "name":repo.name,"description":repo.description,"isPrivate":repo.is_private,"isFork":repo.is_fork,
-        "isArchived":repo.is_archived,"visibility":if repo.is_private {"PRIVATE"} else {"PUBLIC"},
+        "isArchived":repo.is_archived,
+        "visibility":crate::backend::webhooks::payloads::visibility(repo).to_ascii_uppercase(),
         "createdAt":repo.created_at,"updatedAt":repo.updated_at,
         "stargazerCount":repo.stars_count,
-        "homepageUrl":repo.website,"isInOrganization":repo.owner_kind=="org","hasIssuesEnabled":true,
-        "hasProjectsEnabled":true,"autoMergeAllowed":true,"deleteBranchOnMerge":false,
+        "homepageUrl":repo.website,"isInOrganization":repo.owner_kind=="org",
         "mergeCommitAllowed":repo.allow_merge_commit,"squashMergeAllowed":repo.allow_squash_merge,
         "rebaseMergeAllowed":repo.allow_rebase_merge})
 }
@@ -177,11 +177,30 @@ pub(super) async fn resolve(
         )
         .await
         .map_err(unavailable)?)),
-        "hasWikiEnabled" => Ok(json!(db::repositories::records::repository_wiki(
-            pool, repo.id
-        )
-        .await
-        .map_err(unavailable)?)),
+        "hasWikiEnabled"
+        | "hasIssuesEnabled"
+        | "hasProjectsEnabled"
+        | "forkingAllowed"
+        | "autoMergeAllowed"
+        | "deleteBranchOnMerge"
+        | "allowUpdateBranch"
+        | "squashMergeCommitTitle"
+        | "squashMergeCommitMessage" => {
+            let features = db::repositories::records::repository_features(pool, repo.id)
+                .await
+                .map_err(unavailable)?;
+            Ok(match field {
+                "hasWikiEnabled" => json!(features.wiki),
+                "hasIssuesEnabled" => json!(features.has_issues),
+                "hasProjectsEnabled" => json!(features.has_projects),
+                "forkingAllowed" => json!(features.allow_forking),
+                "autoMergeAllowed" => json!(features.allow_auto_merge),
+                "deleteBranchOnMerge" => json!(features.delete_branch_on_merge),
+                "allowUpdateBranch" => json!(features.allow_update_branch),
+                "squashMergeCommitTitle" => json!(features.squash_merge_commit_title),
+                _ => json!(features.squash_merge_commit_message),
+            })
+        }
         "isTemplate" => Ok(json!(repo.is_template)),
         "pushedAt" => Ok(json!(db::repositories::github::repository_pushed_at(
             pool, id

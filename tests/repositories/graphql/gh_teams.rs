@@ -475,7 +475,7 @@ async fn contract(pg: bool) {
             "homepageUrl":"https://example.test", "isInOrganization":false, "isTemplate":false,
             "mergeCommitAllowed":true, "rebaseMergeAllowed":true, "squashMergeAllowed":true,
             "repositoryTopics":{"nodes":[{"topic":{"name":"rust"}}]}, "stargazerCount":0,
-            "watchers":{"totalCount":0}, "visibility":"PUBLIC", "autoMergeAllowed":true,
+            "watchers":{"totalCount":0}, "visibility":"PUBLIC", "autoMergeAllowed":false,
         })
     );
     for (credential, expected) in [(token, true), (outsider, false)] {

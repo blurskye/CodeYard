@@ -107,19 +107,23 @@ async fn create(
 ) -> Result<Response> {
     let (repo, auth) = repository(&state, &headers, &owner, &name, true).await?;
     let auth = auth.ok_or_else(auth::required)?;
-    let title = input.title.unwrap_or_else(|| {
-        let comment = input
-            .key
-            .split_whitespace()
-            .skip(2)
-            .collect::<Vec<_>>()
-            .join(" ");
-        if comment.is_empty() {
-            "Deploy key".to_owned()
-        } else {
-            comment
-        }
-    });
+    // gh sends an empty title when none was given; GitHub treats that as no title.
+    let title = input
+        .title
+        .filter(|title| !title.trim().is_empty())
+        .unwrap_or_else(|| {
+            let comment = input
+                .key
+                .split_whitespace()
+                .skip(2)
+                .collect::<Vec<_>>()
+                .join(" ");
+            if comment.is_empty() {
+                "Deploy key".to_owned()
+            } else {
+                comment
+            }
+        });
     let key = keys::add_key(
         &state.pool,
         &auth.user,

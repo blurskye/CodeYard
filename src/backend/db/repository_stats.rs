@@ -32,7 +32,8 @@ pub struct RepositoryDocumentMetadata {
     #[sqlx(flatten)]
     pub facts: RepositoryDocumentFacts,
     pub last_pushed_at: chrono::DateTime<chrono::Utc>,
-    pub wiki: bool,
+    #[sqlx(flatten)]
+    pub features: crate::backend::db::repositories::records::RepositoryFeatures,
     pub discussions: bool,
 }
 

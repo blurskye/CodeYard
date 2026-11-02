@@ -305,6 +305,9 @@ CREATE TABLE repositories (
     contribution_version INTEGER NOT NULL DEFAULT 0,
     actions_engine TEXT CHECK (actions_engine IN ('codeyard-actions','act')),
     is_template INTEGER NOT NULL DEFAULT 0 CHECK (is_template IN (0,1)),
+    -- GitHub Enterprise internal visibility. Access stays private: members and collaborators only.
+    is_internal INTEGER NOT NULL DEFAULT 0 CHECK (is_internal IN (0,1)),
+    CONSTRAINT repo_internal_private CHECK (NOT is_internal OR is_private),
     CONSTRAINT repo_owner_check CHECK (
         (owner_kind = 'user' AND owner_user_id IS NOT NULL AND owner_org_id IS NULL) OR
         (owner_kind = 'org' AND owner_org_id IS NOT NULL AND owner_user_id IS NULL)
@@ -3134,10 +3137,18 @@ CREATE TABLE secret_scanning_pattern_configs (
     document TEXT NOT NULL
 );
 
--- Repository wiki setting.
+-- Repository feature switches with GitHub's defaults; a repository without a row has them all.
 CREATE TABLE repository_features (
     repo_id INTEGER PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
-    wiki_enabled BOOLEAN NOT NULL DEFAULT FALSE
+    wiki_enabled BOOLEAN NOT NULL DEFAULT FALSE,
+    has_issues BOOLEAN NOT NULL DEFAULT TRUE,
+    has_projects BOOLEAN NOT NULL DEFAULT TRUE,
+    allow_forking BOOLEAN NOT NULL DEFAULT TRUE,
+    delete_branch_on_merge BOOLEAN NOT NULL DEFAULT FALSE,
+    allow_update_branch BOOLEAN NOT NULL DEFAULT FALSE,
+    allow_auto_merge BOOLEAN NOT NULL DEFAULT FALSE,
+    squash_merge_commit_title TEXT NOT NULL DEFAULT 'COMMIT_OR_PR_TITLE' CHECK (squash_merge_commit_title IN ('PR_TITLE','COMMIT_OR_PR_TITLE')),
+    squash_merge_commit_message TEXT NOT NULL DEFAULT 'COMMIT_MESSAGES' CHECK (squash_merge_commit_message IN ('PR_BODY','COMMIT_MESSAGES','BLANK'))
 );
 
 -- discussions

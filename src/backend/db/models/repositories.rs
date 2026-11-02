@@ -47,6 +47,10 @@ pub struct Repository {
     pub description: Option<String>,
     pub website: Option<String>,
     pub is_private: bool,
+    /// GitHub Enterprise internal visibility; such a repository is also private.
+    #[serde(default)]
+    #[sqlx(default)]
+    pub is_internal: bool,
     #[serde(default)]
     pub is_gist: bool,
     pub is_archived: bool,

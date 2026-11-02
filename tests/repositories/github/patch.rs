@@ -106,6 +106,8 @@ fn github_repository_patch_preserves_nullable_presence_over_rpc() {
         wiki: None,
         discussions: None,
         merge_methods: MergeMethodUpdate::default(),
+        internal: None,
+        features: Default::default(),
     };
     let operation = Operation::PatchRepository {
         default_branch: "dev".into(),

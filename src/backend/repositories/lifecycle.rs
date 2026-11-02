@@ -106,6 +106,18 @@ pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
                         message: "Invalid repository website.",
                     }
                 }
+                Some(
+                    db::repositories::records::RepositorySettingsRefusal::InternalNeedsOrganization,
+                ) => StorageError {
+                    kind: LifecycleFailure::Invalid,
+                    message: "Only organization repositories can be internal.",
+                },
+                Some(
+                    db::repositories::records::RepositorySettingsRefusal::InvalidSquashMessage,
+                ) => StorageError {
+                    kind: LifecycleFailure::Invalid,
+                    message: "Invalid squash merge commit title or message.",
+                },
                 None if matches!(
                     error.downcast_ref::<db::secrets::SecretsError>(),
                     Some(
@@ -1021,6 +1033,18 @@ pub async fn fork_into(
             },
             message: "Repository is not available for forking.",
         })?;
+    // As on GitHub, the switch only governs forks of private and internal repositories.
+    if source.is_private
+        && !db::repositories::records::repository_features(pool, source.id)
+            .await
+            .map_err(|_| unavailable())?
+            .allow_forking
+    {
+        return Err(StorageError {
+            kind: LifecycleFailure::Denied,
+            message: "Forking is disabled for this repository.",
+        });
+    }
     let same_owner = match options.owner.target {
         repo_lifecycle::RepositoryTarget::Personal(id) => source.is_personal_owner(id),
         repo_lifecycle::RepositoryTarget::Organization(id) => source.owner_org_id == Some(id),

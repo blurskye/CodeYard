@@ -178,7 +178,9 @@ async fn document_with(
     value["open_issues"] = json!(facts.facts.open_items);
     value["pushed_at"] = json!(facts.last_pushed_at);
     value["topics"] = json!(topics);
-    value["has_wiki"] = json!(facts.wiki);
+    if let Some(document) = value.as_object_mut() {
+        payloads::set_features(document, &facts.features);
+    }
     value["has_discussions"] = json!(facts.discussions);
     if repo.is_fork {
         let mut parent = repo.forked_from_id;
@@ -264,6 +266,8 @@ struct Create {
     allow_merge_commit: Option<bool>,
     allow_squash_merge: Option<bool>,
     allow_rebase_merge: Option<bool>,
+    #[serde(flatten)]
+    features: records::FeatureUpdate,
     custom_properties:
         Option<HashMap<String, Option<db::organizations::properties::PropertyValue>>>,
 }
@@ -303,12 +307,16 @@ async fn create(
     } else {
         creation::RepositoryTarget::Personal(actor.user.id)
     };
-    let private = match input.visibility.as_deref() {
-        Some("public") => false,
-        Some("private") => true,
-        None => input.private,
-        _ => return Err(Error::invalid("Invalid visibility")),
+    let (private, internal) = match input.visibility.as_deref() {
+        Some(name) => visibility(name)?,
+        None => (input.private, false),
     };
+    if internal && matches!(target, creation::RepositoryTarget::Personal(_)) {
+        return Err(settings_error(
+            records::RepositorySettingsRefusal::InternalNeedsOrganization.into(),
+        ));
+    }
+    input.features.validate().map_err(settings_error)?;
     let gitignore = input
         .gitignore_template
         .as_deref()
@@ -370,6 +378,8 @@ async fn create(
             wiki: Some(input.has_wiki.unwrap_or(true)),
             discussions: input.has_discussions,
             merge_methods,
+            internal: internal.then_some(true),
+            features: input.features,
             ..Default::default()
         },
     )
@@ -402,6 +412,18 @@ struct Update {
     is_template: Option<bool>,
     has_wiki: Option<bool>,
     has_discussions: Option<bool>,
+    #[serde(flatten)]
+    features: records::FeatureUpdate,
+}
+
+/// GitHub's visibility names as (private, internal).
+fn visibility(name: &str) -> Result<(bool, bool)> {
+    match name {
+        "public" => Ok((false, false)),
+        "private" => Ok((true, false)),
+        "internal" => Ok((true, true)),
+        _ => Err(Error::invalid("Invalid visibility")),
+    }
 }
 
 async fn update(
@@ -415,13 +437,7 @@ async fn update(
     let input: Update = serde_json::from_value(value.clone())
         .map_err(|_| Error::invalid("Invalid repository fields"))?;
     for (field, enabled) in [
-        ("has_issues", true),
         ("has_pull_requests", true),
-        ("has_projects", false),
-        ("allow_forking", true),
-        ("allow_update_branch", true),
-        ("allow_auto_merge", true),
-        ("delete_branch_on_merge", false),
         ("web_commit_signoff_required", false),
     ] {
         if value
@@ -447,11 +463,9 @@ async fn update(
         lifecycle::validate_description(input.description.as_deref().unwrap_or(""))
             .map_err(lifecycle_error)?;
     }
-    let private = match input.visibility.as_deref() {
-        Some("public") => Some(false),
-        Some("private") => Some(true),
-        None => input.private,
-        _ => return Err(Error::invalid("Invalid visibility")),
+    let (private, internal) = match input.visibility.as_deref().map(visibility).transpose()? {
+        Some((private, internal)) => (Some(private), Some(internal)),
+        None => (input.private, None),
     };
     let branch_changed = input
         .default_branch
@@ -486,6 +500,8 @@ async fn update(
             squash: input.allow_squash_merge,
             rebase: input.allow_rebase_merge,
         },
+        internal,
+        features: input.features,
         ..Default::default()
     };
     let repo = if branch_changed {

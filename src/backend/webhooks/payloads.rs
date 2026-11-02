@@ -762,6 +762,44 @@ pub fn set_fork_counts(repository: &mut Value, count: i32) {
     }
 }
 
+/// GitHub's repository switches, as REST documents and webhook payloads report them.
+pub fn set_features(
+    repository: &mut serde_json::Map<String, Value>,
+    features: &crate::backend::db::repositories::records::RepositoryFeatures,
+) {
+    for (key, value) in [
+        ("has_wiki", json!(features.wiki)),
+        ("has_issues", json!(features.has_issues)),
+        ("has_projects", json!(features.has_projects)),
+        ("allow_forking", json!(features.allow_forking)),
+        (
+            "delete_branch_on_merge",
+            json!(features.delete_branch_on_merge),
+        ),
+        ("allow_update_branch", json!(features.allow_update_branch)),
+        ("allow_auto_merge", json!(features.allow_auto_merge)),
+        (
+            "squash_merge_commit_title",
+            json!(features.squash_merge_commit_title),
+        ),
+        (
+            "squash_merge_commit_message",
+            json!(features.squash_merge_commit_message),
+        ),
+    ] {
+        repository.insert(key.into(), value);
+    }
+}
+
+/// GitHub's lowercase visibility name for a repository.
+pub fn visibility(repo: &Repository) -> &'static str {
+    match (repo.is_internal, repo.is_private) {
+        (true, _) => "internal",
+        (false, true) => "private",
+        (false, false) => "public",
+    }
+}
+
 pub fn repository(repo: &Repository, owner: &str) -> Value {
     let full_name = format!("{owner}/{}", repo.name);
     let html_url = repository_url(owner, &repo.name);
@@ -800,7 +838,7 @@ pub fn repository(repo: &Repository, owner: &str) -> Value {
         "open_issues_count": repo.open_issues_count,
         "created_at": time(repo.created_at),
         "updated_at": time(repo.updated_at),
-        "visibility": if repo.is_private { "private" } else { "public" },
+        "visibility": visibility(repo),
         "allow_merge_commit": repo.allow_merge_commit,
         "allow_squash_merge": repo.allow_squash_merge,
         "allow_rebase_merge": repo.allow_rebase_merge,
@@ -2451,6 +2489,7 @@ mod tests {
             description: None,
             website: None,
             is_private: false,
+            is_internal: false,
             is_gist: false,
             is_archived: false,
             is_fork: false,

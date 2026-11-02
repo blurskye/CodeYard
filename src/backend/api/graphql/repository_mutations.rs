@@ -28,9 +28,7 @@ fn partial(message: &str) -> Error {
 }
 fn capabilities(input: &Value) -> Result<()> {
     for (name, enabled) in [
-        ("hasIssuesEnabled", true),
         ("hasPullRequestsEnabled", true),
-        ("hasProjectsEnabled", true),
         ("hasSponsorshipsEnabled", false),
     ] {
         if input[name].as_bool().is_some_and(|value| value != enabled) {
@@ -113,10 +111,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         }
         // Checked before provisioning, which commits the repository.
         request.require_oauth_scope("repo")?;
-        let private = match text(input, "visibility")? {
-            "PUBLIC" => false,
-            "PRIVATE" => true,
-            _ => return Err(Error::new("Codeyard has no internal repository visibility")),
+        let (private, internal) = match text(input, "visibility")? {
+            "PUBLIC" => (false, false),
+            "PRIVATE" => (true, false),
+            "INTERNAL" => (true, true),
+            _ => return Err(Error::new("visibility must be PUBLIC, PRIVATE or INTERNAL")),
         };
         let owner = if let Some(id) = input["ownerId"].as_str() {
             match node_id::decode(id).ok_or_else(missing)? {
@@ -127,6 +126,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
         } else {
             RepositoryTarget::Personal(actor)
         };
+        if internal && matches!(owner, RepositoryTarget::Personal(_)) {
+            return Err(settings(
+                records::RepositorySettingsRefusal::InternalNeedsOrganization.into(),
+            ));
+        }
         if request.personal.is_some() {
             use crate::backend::identity::fine_grained;
             let owner = match owner {
@@ -226,6 +230,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 wiki: Some(input["hasWikiEnabled"].as_bool().unwrap_or(false)),
                 is_template: input["template"].as_bool(),
                 website: website.as_ref().map(|value| value.as_deref()),
+                internal: internal.then_some(true),
+                features: records::FeatureUpdate {
+                    has_issues: input["hasIssuesEnabled"].as_bool(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         )
@@ -263,6 +272,11 @@ pub(super) async fn resolve(field: &str, input: &Value, request: &RequestContext
                 wiki: input["hasWikiEnabled"].as_bool(),
                 discussions: input["hasDiscussionsEnabled"].as_bool(),
                 is_template: input["template"].as_bool(),
+                features: records::FeatureUpdate {
+                    has_issues: input["hasIssuesEnabled"].as_bool(),
+                    has_projects: input["hasProjectsEnabled"].as_bool(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
         )

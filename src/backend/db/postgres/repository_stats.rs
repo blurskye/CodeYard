@@ -36,7 +36,7 @@ pub async fn repository_document_metadata(
         repos.len() <= 100,
         "Repository document page exceeds 100 rows"
     );
-    Ok(sqlx::query_as(&format!("SELECT r.id AS repo_id,{DOCUMENT_FACTS},COALESCE((SELECT MAX(created_at) FROM repository_pushes WHERE repo_id=r.id),r.created_at) AS last_pushed_at,COALESCE((SELECT wiki_enabled FROM repository_features WHERE repo_id=r.id),false) AS wiki,COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=r.id),false) AS discussions FROM repositories r WHERE r.id=ANY($1)")).bind(repos).fetch_all(pool).await?)
+    Ok(sqlx::query_as(&format!("SELECT r.id AS repo_id,{DOCUMENT_FACTS},COALESCE((SELECT MAX(created_at) FROM repository_pushes WHERE repo_id=r.id),r.created_at) AS last_pushed_at,{features},COALESCE((SELECT enabled FROM repository_discussion_settings WHERE repo_id=r.id),false) AS discussions FROM repositories r LEFT JOIN repository_features f ON f.repo_id=r.id WHERE r.id=ANY($1)", features = crate::backend::db::repositories::records::FEATURES)).bind(repos).fetch_all(pool).await?)
 }
 
 pub async fn language_source(pool: &PgPool, repo_id: i64) -> Result<Option<LanguageSource>> {

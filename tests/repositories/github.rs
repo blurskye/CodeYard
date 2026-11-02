@@ -2842,13 +2842,54 @@ async fn update_contract(pg: bool) {
     )
     .await;
     assert_eq!(wiki["has_wiki"], true);
+    // The settings `gh repo edit` sends are stored and read back, as on GitHub.
+    let settings = json!({"has_issues":false,"has_projects":false,"allow_forking":false,
+        "delete_branch_on_merge":true,"allow_update_branch":true,"allow_auto_merge":true,
+        "squash_merge_commit_title":"PR_TITLE","squash_merge_commit_message":"PR_BODY"});
     checked(
         &router,
         "repos/update",
         "PATCH",
         base,
         Some(&writer),
-        json!({"has_projects":true}),
+        settings.clone(),
+        StatusCode::OK,
+    )
+    .await;
+    let (_, read) = checked(
+        &router,
+        "repos/get",
+        "GET",
+        base,
+        Some(&writer),
+        Value::Null,
+        StatusCode::OK,
+    )
+    .await;
+    for (key, value) in settings.as_object().unwrap() {
+        assert_eq!(&read[key], value, "{key}");
+    }
+    // GitHub pairs COMMIT_OR_PR_TITLE only with COMMIT_MESSAGES.
+    let mismatched = json!({"squash_merge_commit_title":"COMMIT_OR_PR_TITLE","squash_merge_commit_message":"BLANK"});
+    checked(
+        &router,
+        "repos/update",
+        "PATCH",
+        base,
+        Some(&writer),
+        mismatched,
+        StatusCode::UNPROCESSABLE_ENTITY,
+    )
+    .await;
+    // Only an organization's repository can be internal.
+    let internal = json!({"name":"inside","visibility":"internal"});
+    checked(
+        &router,
+        "repos/create-for-authenticated-user",
+        "POST",
+        "/api/v3/user/repos",
+        Some(&writer),
+        internal,
         StatusCode::UNPROCESSABLE_ENTITY,
     )
     .await;

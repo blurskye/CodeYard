@@ -202,6 +202,7 @@ mod tests {
             description: Some("Fixture description".into()),
             website: None,
             is_private: false,
+            is_internal: false,
             is_gist: false,
             is_archived: false,
             is_fork: false,

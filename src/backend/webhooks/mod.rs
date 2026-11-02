@@ -527,8 +527,8 @@ pub(crate) async fn set_open_issues(pool: &DbPool, repo_id: i64, payload: &mut V
     let Some(repository) = payload.get_mut("repository").and_then(Value::as_object_mut) else {
         return;
     };
-    if let Ok(enabled) = db::repositories::records::repository_wiki(pool, repo_id).await {
-        repository.insert("has_wiki".into(), enabled.into());
+    if let Ok(features) = db::repositories::records::repository_features(pool, repo_id).await {
+        payloads::set_features(repository, &features);
     }
     if let Ok(enabled) = db::repository_discussions::enabled(pool, repo_id).await {
         repository.insert("has_discussions".into(), enabled.into());

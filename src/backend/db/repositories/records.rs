@@ -179,6 +179,10 @@ pub enum RepositorySettingsRefusal {
     InvalidTopics,
     #[error("Invalid repository website")]
     InvalidWebsite,
+    #[error("Only organization repositories can be internal")]
+    InternalNeedsOrganization,
+    #[error("Invalid squash merge commit title or message")]
+    InvalidSquashMessage,
 }
 
 pub(crate) fn validate_repository_alias(name: &str) -> Result<()> {
@@ -202,9 +206,61 @@ native_operation!(crate::backend::db::postgres::repositories::records::update_re
     merge_methods: MergeMethodUpdate,
 ) -> Result<()>);
 
-native_operation!(crate::backend::db::postgres::repositories::records::repository_wiki,
-    crate::backend::db::sqlite::repositories::records::repository_wiki,
-    fn repository_wiki(pool: &DbPool, repo_id: i64) -> Result<bool>);
+/// GitHub's per-repository switches, with GitHub's defaults when nothing is stored.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct RepositoryFeatures {
+    pub wiki: bool,
+    pub has_issues: bool,
+    pub has_projects: bool,
+    pub allow_forking: bool,
+    pub delete_branch_on_merge: bool,
+    pub allow_update_branch: bool,
+    pub allow_auto_merge: bool,
+    pub squash_merge_commit_title: String,
+    pub squash_merge_commit_message: String,
+}
+
+/// The `RepositoryFeatures` columns of `repositories r LEFT JOIN repository_features f`.
+pub(crate) const FEATURES: &str = "COALESCE(f.wiki_enabled,FALSE) AS wiki,COALESCE(f.has_issues,TRUE) AS has_issues,COALESCE(f.has_projects,TRUE) AS has_projects,COALESCE(f.allow_forking,TRUE) AS allow_forking,COALESCE(f.delete_branch_on_merge,FALSE) AS delete_branch_on_merge,COALESCE(f.allow_update_branch,FALSE) AS allow_update_branch,COALESCE(f.allow_auto_merge,FALSE) AS allow_auto_merge,COALESCE(f.squash_merge_commit_title,'COMMIT_OR_PR_TITLE') AS squash_merge_commit_title,COALESCE(f.squash_merge_commit_message,'COMMIT_MESSAGES') AS squash_merge_commit_message";
+
+native_operation!(crate::backend::db::postgres::repositories::records::repository_features,
+    crate::backend::db::sqlite::repositories::records::repository_features,
+    fn repository_features(pool: &DbPool, repo_id: i64) -> Result<RepositoryFeatures>);
+
+/// A change to GitHub's repository switches. A field left as `None` keeps its stored value.
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct FeatureUpdate {
+    pub has_issues: Option<bool>,
+    pub has_projects: Option<bool>,
+    pub allow_forking: Option<bool>,
+    pub delete_branch_on_merge: Option<bool>,
+    pub allow_update_branch: Option<bool>,
+    pub allow_auto_merge: Option<bool>,
+    pub squash_merge_commit_title: Option<String>,
+    pub squash_merge_commit_message: Option<String>,
+}
+
+impl FeatureUpdate {
+    pub fn is_empty(&self) -> bool {
+        *self == Self::default()
+    }
+
+    /// Accepts GitHub's documented values only. As on GitHub, COMMIT_OR_PR_TITLE goes only with
+    /// COMMIT_MESSAGES.
+    pub fn validate(&self) -> Result<()> {
+        let title = self.squash_merge_commit_title.as_deref();
+        let message = self.squash_merge_commit_message.as_deref();
+        anyhow::ensure!(
+            title.is_none_or(|value| matches!(value, "PR_TITLE" | "COMMIT_OR_PR_TITLE"))
+                && message
+                    .is_none_or(|value| matches!(value, "PR_BODY" | "COMMIT_MESSAGES" | "BLANK"))
+                && !(title == Some("COMMIT_OR_PR_TITLE")
+                    && message.is_some_and(|value| value != "COMMIT_MESSAGES")),
+            RepositorySettingsRefusal::InvalidSquashMessage
+        );
+        Ok(())
+    }
+}
 
 native_operation!(crate::backend::db::postgres::repositories::records::set_repository_wiki,
     crate::backend::db::sqlite::repositories::records::set_repository_wiki,
@@ -234,6 +290,10 @@ pub struct RepositoryChanges<T> {
     pub wiki: Option<bool>,
     pub discussions: Option<bool>,
     pub merge_methods: MergeMethodUpdate,
+    /// GitHub Enterprise internal visibility; only applies while the repository is private.
+    pub internal: Option<bool>,
+    #[serde(default)]
+    pub features: FeatureUpdate,
 }
 
 pub(crate) fn nullable_change<'de, D, T>(
@@ -260,6 +320,8 @@ impl RepositoryChanges<&str> {
             archived: self.archived,
             is_template: self.is_template,
             merge_methods: self.merge_methods,
+            internal: self.internal,
+            features: self.features.clone(),
         }
     }
 }
@@ -277,6 +339,8 @@ impl RepositoryChanges<String> {
             archived: self.archived,
             is_template: self.is_template,
             merge_methods: self.merge_methods,
+            internal: self.internal,
+            features: self.features.clone(),
         }
     }
 }
@@ -293,6 +357,8 @@ impl<T> RepositoryChanges<T> {
             || self.merge_methods.merge.is_some()
             || self.merge_methods.squash.is_some()
             || self.merge_methods.rebase.is_some()
+            || self.internal.is_some()
+            || !self.features.is_empty()
     }
 }
 

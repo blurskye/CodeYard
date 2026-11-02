@@ -108,6 +108,16 @@ pub(crate) fn repository_settings_error(
             "validation_error",
             "Website must be an http or https address of at most 255 characters without spaces.",
         ),
+        Some(Refusal::InternalNeedsOrganization) => (
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "Only organization repositories can be internal",
+        ),
+        Some(Refusal::InvalidSquashMessage) => (
+            StatusCode::BAD_REQUEST,
+            "validation_error",
+            "Invalid squash merge commit title or message",
+        ),
         None if matches!(error.downcast_ref::<crate::backend::db::secrets::SecretsError>(), Some(crate::backend::db::secrets::SecretsError::TotalTooLarge | crate::backend::db::secrets::SecretsError::TooManySecrets)) => (
             StatusCode::BAD_REQUEST,
             "validation_error",

@@ -124,12 +124,12 @@ fn repository(value: &Value) {
     for key in ["created_at", "updated_at", "pushed_at"] {
         timestamp(&value[key]);
     }
-    for key in ["has_downloads", "has_issues"] {
+    // GitHub turns issues and projects on for a new repository.
+    for key in ["has_downloads", "has_issues", "has_projects"] {
         assert_eq!(value[key], true, "{key}");
     }
     for key in [
         "has_pages",
-        "has_projects",
         "has_wiki",
         "archived",
         "disabled",
