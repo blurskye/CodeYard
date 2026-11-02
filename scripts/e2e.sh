@@ -1674,8 +1674,11 @@ t_ci_api_save() {
 # table of cases goes to $RUN/gh-sweep.txt, which gh_sweep_step prints after the step line.
 t_gh_sweep() {
     local rc=0
+    local -a skip=()
+    # Cases that need a finished CI run report SKIP where local runs cannot execute.
+    [[ -z $CI_RUNS_UNAVAILABLE ]] || skip=(--skip-runs "$CI_RUNS_UNAVAILABLE")
     "$GITHUB_PYTHON" -I "$ROOT/scripts/gh_sweep/harness.py" --base "$BASE" --workers "${E2E_GH_SWEEP_WORKERS:-4}" \
-        --per-account 2 --record-output "$RUN/gh-sweep-argv.json" >"$RUN/gh-sweep.txt" 2>&1 || rc=$?
+        --per-account 2 --record-output "$RUN/gh-sweep-argv.json" "${skip[@]}" >"$RUN/gh-sweep.txt" 2>&1 || rc=$?
     grep '^SWEEP ' "$RUN/gh-sweep.txt" || echo "the sweep printed no totals; see $RUN/gh-sweep.txt"
     "$GITHUB_PYTHON" -I "$ROOT/scripts/gh_sweep/harness.py" --check --records "$RUN/gh-sweep-argv.json" \
         | "$GITHUB_PYTHON" -I -c 'import json, sys; r = json.load(sys.stdin); print("gh sweep flags not exercised:", len(r["missing_flags"]), "waived:", r["waived"])'

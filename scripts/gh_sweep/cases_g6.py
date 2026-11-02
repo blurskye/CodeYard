@@ -128,12 +128,14 @@ def _workflow(ctx, *, outcome="success", objects=False, dispatch=True):
 
 
 def _dispatch(ctx, workflow):
+    ctx.needs_runs()
     result = ctx.api("POST", f"repos/{ctx.repo}/actions/workflows/{workflow['id']}/dispatches",
                      {"ref": workflow["branch"], "return_run_details": True})
     return str(result["workflow_run_id"])
 
 
 def _wait(ctx, run_id):
+    ctx.needs_runs()
     # Bounded independently of the harness deadline, including queue starvation.
     deadline = min(ctx.deadline - 5, time.monotonic() + 100)
     while time.monotonic() < deadline:
@@ -154,6 +156,7 @@ def _finished(ctx, *, outcome="success", objects=False):
 
 def _foreign_finished(ctx):
     """An existing public run with a different owner, for write-denial tests."""
+    ctx.needs_runs()
     template = _workflow(ctx)
     other, repo = _other(ctx), _foreign(ctx)
     filename = ctx.name("foreign-workflow") + ".yml"

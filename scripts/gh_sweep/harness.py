@@ -28,6 +28,8 @@ interactive_only requires expected {rc, contains}; local_only runs offline, not 
 Every kind still needs a registered case. --check fails missing classifications/cases.
 waivers_<lane>.json (merged): {"version":1,"flags":{"repo view":{"--web":"reason"}}}; only flags
 may be waived. coverage_report(records=sweep.records) reports all inventory flags.
+ctx.needs_runs() raises Skip when --skip-runs says this host cannot execute CI runs; a skipped
+case is reported as SKIP with that reason, never as a pass.
 """
 import argparse
 import base64
@@ -57,6 +59,10 @@ ROOT = HERE.parent.parent
 HOST = "codeyard-e2e.test"
 CASES = []
 LOCAL = threading.local()
+
+
+class Skip(Exception):
+    """The case cannot run on this host; the message says why."""
 
 
 @dataclass(frozen=True)
@@ -262,13 +268,13 @@ class Account:
 
 
 class Sweep:
-    def __init__(self, base, *, accounts=3, gh="gh", directory=None):
+    def __init__(self, base, *, accounts=3, gh="gh", directory=None, skip_runs=None):
         if accounts < 1:
             raise ValueError("accounts must be positive")
         origin = urlsplit(base or "")
         if base and (origin.scheme != "http" or origin.hostname != "127.0.0.1" or origin.path not in ("", "/") or origin.username or origin.query or origin.fragment):
             raise ValueError("base must be the disposable e2e HTTP loopback origin")
-        self.base, self.binary = base, str(gh)
+        self.base, self.binary, self.skip_runs = base, str(gh), skip_runs
         self.temporary = tempfile.TemporaryDirectory(prefix="gh-sweep-", dir=directory)
         self.directory = Path(self.temporary.name)
         self.accounts = [Account(f"sw-a{i:02}", self.directory / f"sw-a{i:02}") for i in range(1, accounts + 1)]
@@ -483,7 +489,7 @@ class Sweep:
                 started = time.monotonic()
                 row = classification.get(definition.command, {})
                 ctx = Ctx(self, self.accounts[slot], definition, offline=row.get("kind") == "local_only")
-                errors = []
+                errors, skipped = [], []
 
                 def invoke():
                     LOCAL.ctx = ctx
@@ -492,6 +498,8 @@ class Sweep:
                             getattr(ctx, fixture)
                         definition.function(ctx)
                         ctx.check_deadline()
+                    except Skip as skip:
+                        skipped.append(str(skip))
                     except BaseException as error:
                         # Bounded, so the last-gh note below always fits on the case's line.
                         errors.append(self.redact(str(error) or type(error).__name__)[:1200])
@@ -513,20 +521,23 @@ class Sweep:
                                 self.kill(process)
                     errors = ["case timeout"]
                 return {"case": definition.command + " [" + definition.variant + "]", "passed": not errors,
-                        "duration": time.monotonic() - started, "error": " | ".join(errors)}
+                        "skipped": not errors and bool(skipped), "duration": time.monotonic() - started,
+                        "error": " | ".join(errors or skipped)}
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             self.results = list(pool.map(run_one, enumerate(cases)))
         print("RESULT  SECONDS  CASE")
         for row in self.results:
             # One line per case: a multi-line error keeps its line breaks as \n.
-            print(f"{'PASS' if row['passed'] else 'FAIL':6}  {row['duration']:7.2f}  {row['case']}" +
+            status = "SKIP" if row["skipped"] else "PASS" if row["passed"] else "FAIL"
+            print(f"{status:6}  {row['duration']:7.2f}  {row['case']}" +
                   (f"  {row['error']}".replace("\n", "\\n") if row["error"] else ""), flush=True)
         report = coverage_report(cases=cases, records=self.records)
         (self.directory / "argv.json").write_text(json.dumps(self.records, indent=2) + "\n")
-        passed = sum(row["passed"] for row in self.results)
-        print(f"SWEEP passed={passed} failed={len(cases) - passed} waived={report['waived']}", flush=True)
-        return int(passed != len(cases))
+        skipped = sum(row["skipped"] for row in self.results)
+        failed = sum(not row["passed"] for row in self.results)
+        print(f"SWEEP passed={len(cases) - failed - skipped} failed={failed} skipped={skipped} waived={report['waived']}", flush=True)
+        return int(failed > 0)
 
 
 class Ctx:
@@ -542,6 +553,10 @@ class Ctx:
     def check_deadline(self):
         if self.cancelled.is_set() or time.monotonic() >= self.deadline:
             raise TimeoutError("case timeout")
+
+    def needs_runs(self):
+        if self.sweep.skip_runs:
+            raise Skip(self.sweep.skip_runs)
 
     def name(self, label="fixture"):
         return self.id + "-" + re.sub(r"[^a-z0-9-]", "-", label.lower())[:25] + "-" + uuid.uuid4().hex[:6]
@@ -608,6 +623,7 @@ def main(argv=None):
     parser.add_argument("--accounts", type=int, default=3)
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--per-account", type=int, default=1)
+    parser.add_argument("--skip-runs", metavar="REASON", help="this host cannot execute CI runs; skip cases that need one")
     args = parser.parse_args(argv)
     for module in args.module or [f"gh_sweep.{path.stem}" for path in sorted(HERE.glob("cases_*.py"))]:
         importlib.import_module(module)
@@ -617,7 +633,7 @@ def main(argv=None):
         return int(not report["ok"])
     if not args.base:
         parser.error("--base is required to run real server cases")
-    with Sweep(args.base, accounts=args.accounts) as sweep:
+    with Sweep(args.base, accounts=args.accounts, skip_runs=args.skip_runs) as sweep:
         result = sweep.run(workers=args.workers, per_account=args.per_account)
         if args.record_output:
             args.record_output.write_text(json.dumps(sweep.records, indent=2) + "\n")
