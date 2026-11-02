@@ -1321,7 +1321,7 @@ t_pr_review_pages() {
         --submit intent=submit --set state=approved --set 'body=Approved by the end-to-end check' \
         --location "/alice/proj/pulls/$pr#review-*"
     as bob form "/alice/proj/pulls/$pr/diff?path=review-page.txt&side=RIGHT&line=1" \
-        --action "/alice/proj/pulls/$pr/comments" --has path \
+        --action "/alice/proj/pulls/$pr/comments" --has path_json \
         --set 'body=Please check this line' --location "/alice/proj/pulls/$pr/diff#thread-*"
     cid=$(as alice req GET "/api/repos/alice/proj/pulls/$pr/comments" --accept json --print json:0.id)
     as alice req GET "/alice/proj/pulls/$pr/diff" --contains 'Please check this line' \
