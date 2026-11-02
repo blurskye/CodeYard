@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "commands": {
+    "licenses": {
+      "kind": "local_only",
+      "reason": "Prints dependency license notices bundled in gh; there is no server request or GHES-specific behavior. The case asserts the real offline output."
+    },
+    "org list": {"kind": "covered"},
+    "repo archive": {"kind": "covered"},
+    "repo autolink create": {"kind": "covered"},
+    "repo autolink delete": {"kind": "covered"},
+    "repo autolink list": {"kind": "covered"},
+    "repo autolink view": {"kind": "covered"},
+    "repo clone": {"kind": "covered"},
+    "repo create": {
+      "kind": "covered",
+      "reason": "Includes initialized, source/push, clone, team, template, and internal-visibility paths. Ordinary GHES features remain success assertions even where Codeyard currently lacks implementation; these are compatibility failures, not unsupported-on-GHES exceptions."
+    },
+    "repo delete": {"kind": "covered"},
+    "repo deploy-key add": {"kind": "covered"},
+    "repo deploy-key delete": {"kind": "covered"},
+    "repo deploy-key list": {"kind": "covered"},
+    "repo edit": {
+      "kind": "covered",
+      "reason": "Ordinary repository settings assert persisted changes, not merely exit zero. Security-analysis enablement separately asserts the explicit HTTP 422 refusal of this host without those services; GHES can refuse unlicensed security features. No ordinary settings are waived for Codeyard implementation gaps."
+    },
+    "repo fork": {"kind": "covered"},
+    "repo gitignore list": {"kind": "covered"},
+    "repo gitignore view": {"kind": "covered"},
+    "repo license list": {"kind": "covered"},
+    "repo license view": {"kind": "covered"},
+    "repo list": {"kind": "covered"},
+    "repo read-dir": {"kind": "covered"},
+    "repo read-file": {"kind": "covered"},
+    "repo rename": {"kind": "covered"},
+    "repo set-default": {
+      "kind": "covered",
+      "reason": "Uses a case-owned Git checkout/config and a live repository for the explicit default selection; view/unset verify the local config without changing shared account configuration."
+    },
+    "repo sync": {"kind": "covered"},
+    "repo unarchive": {"kind": "covered"},
+    "repo view": {"kind": "covered"},
+    "ruleset check": {"kind": "covered"},
+    "ruleset list": {"kind": "covered"},
+    "ruleset view": {"kind": "covered"}
+  }
+}

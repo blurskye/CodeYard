@@ -1,0 +1,2779 @@
+{
+ "": {
+  "flags": [
+   "--help",
+   "--version"
+  ],
+  "children": [
+   "auth",
+   "browse",
+   "codespace",
+   "discussion",
+   "gist",
+   "issue",
+   "org",
+   "pr",
+   "project",
+   "release",
+   "repo",
+   "skill",
+   "cache",
+   "run",
+   "workflow",
+   "co",
+   "agent-task",
+   "alias",
+   "api",
+   "attestation",
+   "completion",
+   "config",
+   "copilot",
+   "extension",
+   "gpg-key",
+   "label",
+   "licenses",
+   "preview",
+   "ruleset",
+   "search",
+   "secret",
+   "ssh-key",
+   "status",
+   "variable"
+  ]
+ },
+ "auth": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "login",
+   "logout",
+   "refresh",
+   "setup-git",
+   "status",
+   "switch",
+   "token"
+  ]
+ },
+ "auth login": {
+  "flags": [
+   "--clipboard",
+   "--git-protocol",
+   "--help",
+   "--hostname",
+   "--insecure-storage",
+   "--scopes",
+   "--skip-ssh-key",
+   "--web",
+   "--with-token"
+  ],
+  "children": []
+ },
+ "auth logout": {
+  "flags": [
+   "--help",
+   "--hostname",
+   "--user"
+  ],
+  "children": []
+ },
+ "auth refresh": {
+  "flags": [
+   "--clipboard",
+   "--help",
+   "--hostname",
+   "--insecure-storage",
+   "--remove-scopes",
+   "--reset-scopes",
+   "--scopes"
+  ],
+  "children": []
+ },
+ "auth setup-git": {
+  "flags": [
+   "--force",
+   "--help",
+   "--hostname"
+  ],
+  "children": []
+ },
+ "auth status": {
+  "flags": [
+   "--active",
+   "--help",
+   "--hostname",
+   "--jq",
+   "--json",
+   "--show-token",
+   "--template"
+  ],
+  "children": []
+ },
+ "auth switch": {
+  "flags": [
+   "--help",
+   "--hostname",
+   "--user"
+  ],
+  "children": []
+ },
+ "auth token": {
+  "flags": [
+   "--help",
+   "--hostname",
+   "--user"
+  ],
+  "children": []
+ },
+ "browse": {
+  "flags": [
+   "--actions",
+   "--blame",
+   "--branch",
+   "--commit",
+   "--help",
+   "--no-browser",
+   "--projects",
+   "--releases",
+   "--repo",
+   "--settings",
+   "--wiki"
+  ],
+  "children": []
+ },
+ "codespace": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "code",
+   "cp",
+   "create",
+   "delete",
+   "edit",
+   "jupyter",
+   "list",
+   "logs",
+   "ports",
+   "rebuild",
+   "ssh",
+   "stop",
+   "view"
+  ]
+ },
+ "codespace code": {
+  "flags": [
+   "--codespace",
+   "--help",
+   "--insiders",
+   "--repo",
+   "--repo-owner",
+   "--web"
+  ],
+  "children": []
+ },
+ "codespace cp": {
+  "flags": [
+   "--codespace",
+   "--expand",
+   "--help",
+   "--profile",
+   "--recursive",
+   "--repo",
+   "--repo-owner"
+  ],
+  "children": []
+ },
+ "codespace create": {
+  "flags": [
+   "--branch",
+   "--default-permissions",
+   "--devcontainer-path",
+   "--display-name",
+   "--help",
+   "--idle-timeout",
+   "--location",
+   "--machine",
+   "--repo",
+   "--retention-period",
+   "--status",
+   "--web"
+  ],
+  "children": []
+ },
+ "codespace delete": {
+  "flags": [
+   "--all",
+   "--codespace",
+   "--days",
+   "--force",
+   "--help",
+   "--org",
+   "--repo",
+   "--repo-owner",
+   "--user"
+  ],
+  "children": []
+ },
+ "codespace edit": {
+  "flags": [
+   "--codespace",
+   "--display-name",
+   "--help",
+   "--machine",
+   "--repo",
+   "--repo-owner"
+  ],
+  "children": []
+ },
+ "codespace jupyter": {
+  "flags": [
+   "--codespace",
+   "--help",
+   "--repo",
+   "--repo-owner"
+  ],
+  "children": []
+ },
+ "codespace list": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--org",
+   "--repo",
+   "--template",
+   "--user",
+   "--web"
+  ],
+  "children": []
+ },
+ "codespace logs": {
+  "flags": [
+   "--codespace",
+   "--follow",
+   "--help",
+   "--repo",
+   "--repo-owner"
+  ],
+  "children": []
+ },
+ "codespace ports": {
+  "flags": [
+   "--codespace",
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--repo-owner",
+   "--template"
+  ],
+  "children": [
+   "forward",
+   "visibility"
+  ]
+ },
+ "codespace ports forward": {
+  "flags": [
+   "--all-interfaces",
+   "--codespace",
+   "--help",
+   "--repo",
+   "--repo-owner"
+  ],
+  "children": []
+ },
+ "codespace ports visibility": {
+  "flags": [
+   "--codespace",
+   "--help",
+   "--repo",
+   "--repo-owner"
+  ],
+  "children": []
+ },
+ "codespace rebuild": {
+  "flags": [
+   "--codespace",
+   "--full",
+   "--help",
+   "--repo",
+   "--repo-owner"
+  ],
+  "children": []
+ },
+ "codespace ssh": {
+  "flags": [
+   "--codespace",
+   "--config",
+   "--debug",
+   "--debug-file",
+   "--help",
+   "--profile",
+   "--repo",
+   "--repo-owner",
+   "--server-port"
+  ],
+  "children": []
+ },
+ "codespace stop": {
+  "flags": [
+   "--codespace",
+   "--help",
+   "--org",
+   "--repo",
+   "--repo-owner",
+   "--user"
+  ],
+  "children": []
+ },
+ "codespace view": {
+  "flags": [
+   "--codespace",
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--repo-owner",
+   "--template"
+  ],
+  "children": []
+ },
+ "discussion": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "create",
+   "list",
+   "comment",
+   "edit",
+   "view"
+  ]
+ },
+ "discussion create": {
+  "flags": [
+   "--body",
+   "--body-file",
+   "--category",
+   "--help",
+   "--label",
+   "--repo",
+   "--title"
+  ],
+  "children": []
+ },
+ "discussion list": {
+  "flags": [
+   "--after",
+   "--answered",
+   "--author",
+   "--category",
+   "--help",
+   "--jq",
+   "--json",
+   "--label",
+   "--limit",
+   "--order",
+   "--repo",
+   "--search",
+   "--sort",
+   "--state",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "discussion comment": {
+  "flags": [
+   "--body",
+   "--body-file",
+   "--delete",
+   "--edit",
+   "--help",
+   "--repo",
+   "--yes"
+  ],
+  "children": []
+ },
+ "discussion edit": {
+  "flags": [
+   "--add-label",
+   "--body",
+   "--body-file",
+   "--category",
+   "--help",
+   "--remove-label",
+   "--repo",
+   "--title"
+  ],
+  "children": []
+ },
+ "discussion view": {
+  "flags": [
+   "--after",
+   "--comments",
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--order",
+   "--repo",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "gist": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "clone",
+   "create",
+   "delete",
+   "edit",
+   "list",
+   "rename",
+   "view"
+  ]
+ },
+ "gist clone": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "gist create": {
+  "flags": [
+   "--desc",
+   "--filename",
+   "--help",
+   "--public",
+   "--web"
+  ],
+  "children": []
+ },
+ "gist delete": {
+  "flags": [
+   "--help",
+   "--yes"
+  ],
+  "children": []
+ },
+ "gist edit": {
+  "flags": [
+   "--add",
+   "--desc",
+   "--filename",
+   "--help",
+   "--remove"
+  ],
+  "children": []
+ },
+ "gist list": {
+  "flags": [
+   "--filter",
+   "--help",
+   "--include-content",
+   "--limit",
+   "--public",
+   "--secret"
+  ],
+  "children": []
+ },
+ "gist rename": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "gist view": {
+  "flags": [
+   "--allow-escape-sequences",
+   "--filename",
+   "--files",
+   "--help",
+   "--raw",
+   "--web"
+  ],
+  "children": []
+ },
+ "issue": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "create",
+   "list",
+   "status",
+   "close",
+   "comment",
+   "delete",
+   "develop",
+   "edit",
+   "lock",
+   "pin",
+   "reopen",
+   "transfer",
+   "unlock",
+   "unpin",
+   "view"
+  ]
+ },
+ "issue create": {
+  "flags": [
+   "--assignee",
+   "--attach",
+   "--blocked-by",
+   "--blocking",
+   "--body",
+   "--body-file",
+   "--editor",
+   "--help",
+   "--label",
+   "--milestone",
+   "--parent",
+   "--project",
+   "--recover",
+   "--repo",
+   "--template",
+   "--title",
+   "--type",
+   "--web"
+  ],
+  "children": []
+ },
+ "issue list": {
+  "flags": [
+   "--app",
+   "--assignee",
+   "--author",
+   "--help",
+   "--jq",
+   "--json",
+   "--label",
+   "--limit",
+   "--mention",
+   "--milestone",
+   "--repo",
+   "--search",
+   "--state",
+   "--template",
+   "--type",
+   "--web"
+  ],
+  "children": []
+ },
+ "issue status": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "issue close": {
+  "flags": [
+   "--comment",
+   "--duplicate-of",
+   "--help",
+   "--reason",
+   "--repo"
+  ],
+  "children": []
+ },
+ "issue comment": {
+  "flags": [
+   "--attach",
+   "--body",
+   "--body-file",
+   "--create-if-none",
+   "--delete-last",
+   "--edit-last",
+   "--editor",
+   "--help",
+   "--repo",
+   "--web",
+   "--yes"
+  ],
+  "children": []
+ },
+ "issue delete": {
+  "flags": [
+   "--help",
+   "--repo",
+   "--yes"
+  ],
+  "children": []
+ },
+ "issue develop": {
+  "flags": [
+   "--base",
+   "--branch-repo",
+   "--checkout",
+   "--help",
+   "--list",
+   "--name",
+   "--repo",
+   "--worktree"
+  ],
+  "children": []
+ },
+ "issue edit": {
+  "flags": [
+   "--add-assignee",
+   "--add-blocked-by",
+   "--add-blocking",
+   "--add-label",
+   "--add-project",
+   "--add-sub-issue",
+   "--attach",
+   "--body",
+   "--body-file",
+   "--help",
+   "--milestone",
+   "--parent",
+   "--remove-assignee",
+   "--remove-blocked-by",
+   "--remove-blocking",
+   "--remove-label",
+   "--remove-milestone",
+   "--remove-parent",
+   "--remove-project",
+   "--remove-sub-issue",
+   "--remove-type",
+   "--repo",
+   "--title",
+   "--type"
+  ],
+  "children": []
+ },
+ "issue lock": {
+  "flags": [
+   "--help",
+   "--reason",
+   "--repo"
+  ],
+  "children": []
+ },
+ "issue pin": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "issue reopen": {
+  "flags": [
+   "--comment",
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "issue transfer": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "issue unlock": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "issue unpin": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "issue view": {
+  "flags": [
+   "--comments",
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "org": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "list"
+  ]
+ },
+ "org list": {
+  "flags": [
+   "--help",
+   "--limit"
+  ],
+  "children": []
+ },
+ "pr": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "create",
+   "list",
+   "status",
+   "checkout",
+   "checks",
+   "close",
+   "comment",
+   "diff",
+   "edit",
+   "lock",
+   "merge",
+   "ready",
+   "reopen",
+   "revert",
+   "review",
+   "unlock",
+   "update-branch",
+   "view"
+  ]
+ },
+ "pr create": {
+  "flags": [
+   "--assignee",
+   "--attach",
+   "--base",
+   "--body",
+   "--body-file",
+   "--draft",
+   "--dry-run",
+   "--editor",
+   "--fill",
+   "--fill-first",
+   "--fill-verbose",
+   "--head",
+   "--help",
+   "--label",
+   "--milestone",
+   "--no-maintainer-edit",
+   "--project",
+   "--recover",
+   "--repo",
+   "--reviewer",
+   "--template",
+   "--title",
+   "--web"
+  ],
+  "children": []
+ },
+ "pr list": {
+  "flags": [
+   "--app",
+   "--assignee",
+   "--author",
+   "--base",
+   "--draft",
+   "--head",
+   "--help",
+   "--jq",
+   "--json",
+   "--label",
+   "--limit",
+   "--repo",
+   "--search",
+   "--state",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "pr status": {
+  "flags": [
+   "--conflict-status",
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "pr checkout": {
+  "flags": [
+   "--branch",
+   "--detach",
+   "--force",
+   "--help",
+   "--recurse-submodules",
+   "--repo",
+   "--worktree"
+  ],
+  "children": []
+ },
+ "pr checks": {
+  "flags": [
+   "--fail-fast",
+   "--help",
+   "--interval",
+   "--jq",
+   "--json",
+   "--repo",
+   "--required",
+   "--template",
+   "--watch",
+   "--web"
+  ],
+  "children": []
+ },
+ "pr close": {
+  "flags": [
+   "--comment",
+   "--delete-branch",
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "pr comment": {
+  "flags": [
+   "--attach",
+   "--body",
+   "--body-file",
+   "--create-if-none",
+   "--delete-last",
+   "--edit-last",
+   "--editor",
+   "--help",
+   "--repo",
+   "--web",
+   "--yes"
+  ],
+  "children": []
+ },
+ "pr diff": {
+  "flags": [
+   "--allow-escape-sequences",
+   "--color",
+   "--exclude",
+   "--help",
+   "--name-only",
+   "--patch",
+   "--repo",
+   "--web"
+  ],
+  "children": []
+ },
+ "pr edit": {
+  "flags": [
+   "--add-assignee",
+   "--add-label",
+   "--add-project",
+   "--add-reviewer",
+   "--attach",
+   "--base",
+   "--body",
+   "--body-file",
+   "--help",
+   "--milestone",
+   "--remove-assignee",
+   "--remove-label",
+   "--remove-milestone",
+   "--remove-project",
+   "--remove-reviewer",
+   "--repo",
+   "--title"
+  ],
+  "children": []
+ },
+ "pr lock": {
+  "flags": [
+   "--help",
+   "--reason",
+   "--repo"
+  ],
+  "children": []
+ },
+ "pr merge": {
+  "flags": [
+   "--admin",
+   "--author-email",
+   "--auto",
+   "--body",
+   "--body-file",
+   "--delete-branch",
+   "--disable-auto",
+   "--help",
+   "--match-head-commit",
+   "--merge",
+   "--rebase",
+   "--repo",
+   "--squash",
+   "--subject"
+  ],
+  "children": []
+ },
+ "pr ready": {
+  "flags": [
+   "--help",
+   "--repo",
+   "--undo"
+  ],
+  "children": []
+ },
+ "pr reopen": {
+  "flags": [
+   "--comment",
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "pr revert": {
+  "flags": [
+   "--body",
+   "--body-file",
+   "--draft",
+   "--help",
+   "--repo",
+   "--title"
+  ],
+  "children": []
+ },
+ "pr review": {
+  "flags": [
+   "--approve",
+   "--body",
+   "--body-file",
+   "--comment",
+   "--help",
+   "--repo",
+   "--request-changes"
+  ],
+  "children": []
+ },
+ "pr unlock": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "pr update-branch": {
+  "flags": [
+   "--help",
+   "--rebase",
+   "--repo"
+  ],
+  "children": []
+ },
+ "pr view": {
+  "flags": [
+   "--comments",
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "project": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "close",
+   "copy",
+   "create",
+   "delete",
+   "edit",
+   "field-create",
+   "field-delete",
+   "field-list",
+   "item-add",
+   "item-archive",
+   "item-create",
+   "item-delete",
+   "item-edit",
+   "item-list",
+   "link",
+   "list",
+   "mark-template",
+   "unlink",
+   "view"
+  ]
+ },
+ "project close": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--owner",
+   "--template",
+   "--undo"
+  ],
+  "children": []
+ },
+ "project copy": {
+  "flags": [
+   "--drafts",
+   "--format",
+   "--help",
+   "--jq",
+   "--source-owner",
+   "--target-owner",
+   "--template",
+   "--title"
+  ],
+  "children": []
+ },
+ "project create": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--owner",
+   "--template",
+   "--title"
+  ],
+  "children": []
+ },
+ "project delete": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--owner",
+   "--template"
+  ],
+  "children": []
+ },
+ "project edit": {
+  "flags": [
+   "--description",
+   "--format",
+   "--help",
+   "--jq",
+   "--owner",
+   "--readme",
+   "--template",
+   "--title",
+   "--visibility"
+  ],
+  "children": []
+ },
+ "project field-create": {
+  "flags": [
+   "--data-type",
+   "--format",
+   "--help",
+   "--jq",
+   "--name",
+   "--owner",
+   "--single-select-options",
+   "--template"
+  ],
+  "children": []
+ },
+ "project field-delete": {
+  "flags": [
+   "--format",
+   "--help",
+   "--id",
+   "--jq",
+   "--template"
+  ],
+  "children": []
+ },
+ "project field-list": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--limit",
+   "--owner",
+   "--template"
+  ],
+  "children": []
+ },
+ "project item-add": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--owner",
+   "--template",
+   "--url"
+  ],
+  "children": []
+ },
+ "project item-archive": {
+  "flags": [
+   "--format",
+   "--help",
+   "--id",
+   "--jq",
+   "--owner",
+   "--template",
+   "--undo"
+  ],
+  "children": []
+ },
+ "project item-create": {
+  "flags": [
+   "--body",
+   "--format",
+   "--help",
+   "--jq",
+   "--owner",
+   "--template",
+   "--title"
+  ],
+  "children": []
+ },
+ "project item-delete": {
+  "flags": [
+   "--format",
+   "--help",
+   "--id",
+   "--jq",
+   "--owner",
+   "--template"
+  ],
+  "children": []
+ },
+ "project item-edit": {
+  "flags": [
+   "--body",
+   "--clear",
+   "--date",
+   "--field",
+   "--field-id",
+   "--format",
+   "--help",
+   "--id",
+   "--iteration-id",
+   "--jq",
+   "--number",
+   "--owner",
+   "--project-id",
+   "--single-select-option-id",
+   "--template",
+   "--text",
+   "--title",
+   "--url",
+   "--value"
+  ],
+  "children": []
+ },
+ "project item-list": {
+  "flags": [
+   "--field",
+   "--field-id",
+   "--format",
+   "--help",
+   "--jq",
+   "--limit",
+   "--owner",
+   "--query",
+   "--template"
+  ],
+  "children": []
+ },
+ "project link": {
+  "flags": [
+   "--help",
+   "--owner",
+   "--repo",
+   "--team"
+  ],
+  "children": []
+ },
+ "project list": {
+  "flags": [
+   "--closed",
+   "--format",
+   "--help",
+   "--jq",
+   "--limit",
+   "--owner",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "project mark-template": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--owner",
+   "--template",
+   "--undo"
+  ],
+  "children": []
+ },
+ "project unlink": {
+  "flags": [
+   "--help",
+   "--owner",
+   "--repo",
+   "--team"
+  ],
+  "children": []
+ },
+ "project view": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--owner",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "release": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "create",
+   "list",
+   "delete",
+   "delete-asset",
+   "download",
+   "edit",
+   "upload",
+   "verify",
+   "verify-asset",
+   "view"
+  ]
+ },
+ "release create": {
+  "flags": [
+   "--discussion-category",
+   "--draft",
+   "--fail-on-no-commits",
+   "--generate-notes",
+   "--help",
+   "--latest",
+   "--notes",
+   "--notes-file",
+   "--notes-from-tag",
+   "--notes-start-tag",
+   "--prerelease",
+   "--repo",
+   "--target",
+   "--title",
+   "--verify-tag"
+  ],
+  "children": []
+ },
+ "release list": {
+  "flags": [
+   "--exclude-drafts",
+   "--exclude-pre-releases",
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--order",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "release delete": {
+  "flags": [
+   "--cleanup-tag",
+   "--help",
+   "--repo",
+   "--yes"
+  ],
+  "children": []
+ },
+ "release delete-asset": {
+  "flags": [
+   "--help",
+   "--repo",
+   "--yes"
+  ],
+  "children": []
+ },
+ "release download": {
+  "flags": [
+   "--allow-escape-sequences",
+   "--archive",
+   "--clobber",
+   "--dir",
+   "--help",
+   "--output",
+   "--pattern",
+   "--repo",
+   "--skip-existing"
+  ],
+  "children": []
+ },
+ "release edit": {
+  "flags": [
+   "--discussion-category",
+   "--draft",
+   "--help",
+   "--latest",
+   "--notes",
+   "--notes-file",
+   "--prerelease",
+   "--repo",
+   "--tag",
+   "--target",
+   "--title",
+   "--verify-tag"
+  ],
+  "children": []
+ },
+ "release upload": {
+  "flags": [
+   "--clobber",
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "release verify": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "release verify-asset": {
+  "flags": [
+   "--format",
+   "--help",
+   "--jq",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "release view": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "repo": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "create",
+   "list",
+   "archive",
+   "autolink",
+   "clone",
+   "delete",
+   "deploy-key",
+   "edit",
+   "fork",
+   "gitignore",
+   "license",
+   "read-dir",
+   "read-file",
+   "rename",
+   "set-default",
+   "sync",
+   "unarchive",
+   "view"
+  ]
+ },
+ "repo create": {
+  "flags": [
+   "--add-readme",
+   "--clone",
+   "--description",
+   "--disable-issues",
+   "--disable-wiki",
+   "--gitignore",
+   "--help",
+   "--homepage",
+   "--include-all-branches",
+   "--internal",
+   "--license",
+   "--private",
+   "--public",
+   "--push",
+   "--remote",
+   "--source",
+   "--team",
+   "--template"
+  ],
+  "children": []
+ },
+ "repo list": {
+  "flags": [
+   "--archived",
+   "--fork",
+   "--help",
+   "--jq",
+   "--json",
+   "--language",
+   "--limit",
+   "--no-archived",
+   "--source",
+   "--template",
+   "--topic",
+   "--visibility"
+  ],
+  "children": []
+ },
+ "repo archive": {
+  "flags": [
+   "--help",
+   "--yes"
+  ],
+  "children": []
+ },
+ "repo autolink": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "create",
+   "delete",
+   "list",
+   "view"
+  ]
+ },
+ "repo autolink create": {
+  "flags": [
+   "--help",
+   "--numeric",
+   "--repo"
+  ],
+  "children": []
+ },
+ "repo autolink delete": {
+  "flags": [
+   "--help",
+   "--repo",
+   "--yes"
+  ],
+  "children": []
+ },
+ "repo autolink list": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "repo autolink view": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "repo clone": {
+  "flags": [
+   "--help",
+   "--no-upstream",
+   "--upstream-remote-name"
+  ],
+  "children": []
+ },
+ "repo delete": {
+  "flags": [
+   "--help",
+   "--yes"
+  ],
+  "children": []
+ },
+ "repo deploy-key": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "add",
+   "delete",
+   "list"
+  ]
+ },
+ "repo deploy-key add": {
+  "flags": [
+   "--allow-write",
+   "--help",
+   "--repo",
+   "--title"
+  ],
+  "children": []
+ },
+ "repo deploy-key delete": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "repo deploy-key list": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "repo edit": {
+  "flags": [
+   "--accept-visibility-change-consequences",
+   "--add-topic",
+   "--allow-forking",
+   "--allow-update-branch",
+   "--default-branch",
+   "--delete-branch-on-merge",
+   "--description",
+   "--enable-advanced-security",
+   "--enable-auto-merge",
+   "--enable-discussions",
+   "--enable-issues",
+   "--enable-merge-commit",
+   "--enable-projects",
+   "--enable-rebase-merge",
+   "--enable-secret-scanning",
+   "--enable-secret-scanning-push-protection",
+   "--enable-squash-merge",
+   "--enable-wiki",
+   "--help",
+   "--homepage",
+   "--remove-topic",
+   "--squash-merge-commit-message",
+   "--template",
+   "--visibility"
+  ],
+  "children": []
+ },
+ "repo fork": {
+  "flags": [
+   "--clone",
+   "--default-branch-only",
+   "--fork-name",
+   "--help",
+   "--org",
+   "--remote",
+   "--remote-name"
+  ],
+  "children": []
+ },
+ "repo gitignore": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "list",
+   "view"
+  ]
+ },
+ "repo gitignore list": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "repo gitignore view": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "repo license": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "list",
+   "view"
+  ]
+ },
+ "repo license list": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "repo license view": {
+  "flags": [
+   "--help",
+   "--web"
+  ],
+  "children": []
+ },
+ "repo read-dir": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--ref",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "repo read-file": {
+  "flags": [
+   "--allow-escape-sequences",
+   "--clobber",
+   "--help",
+   "--jq",
+   "--json",
+   "--output",
+   "--ref",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "repo rename": {
+  "flags": [
+   "--help",
+   "--repo",
+   "--yes"
+  ],
+  "children": []
+ },
+ "repo set-default": {
+  "flags": [
+   "--help",
+   "--unset",
+   "--view"
+  ],
+  "children": []
+ },
+ "repo sync": {
+  "flags": [
+   "--branch",
+   "--force",
+   "--help",
+   "--source"
+  ],
+  "children": []
+ },
+ "repo unarchive": {
+  "flags": [
+   "--help",
+   "--yes"
+  ],
+  "children": []
+ },
+ "repo view": {
+  "flags": [
+   "--branch",
+   "--help",
+   "--jq",
+   "--json",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "skill": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "install",
+   "list",
+   "preview",
+   "publish",
+   "search",
+   "update"
+  ]
+ },
+ "skill install": {
+  "flags": [
+   "--agent",
+   "--all",
+   "--allow-hidden-dirs",
+   "--dir",
+   "--force",
+   "--from-local",
+   "--help",
+   "--pin",
+   "--scope",
+   "--upstream"
+  ],
+  "children": []
+ },
+ "skill list": {
+  "flags": [
+   "--agent",
+   "--dir",
+   "--help",
+   "--jq",
+   "--json",
+   "--scope",
+   "--template"
+  ],
+  "children": []
+ },
+ "skill preview": {
+  "flags": [
+   "--allow-hidden-dirs",
+   "--help"
+  ],
+  "children": []
+ },
+ "skill publish": {
+  "flags": [
+   "--dry-run",
+   "--fix",
+   "--help",
+   "--tag"
+  ],
+  "children": []
+ },
+ "skill search": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--owner",
+   "--page",
+   "--template"
+  ],
+  "children": []
+ },
+ "skill update": {
+  "flags": [
+   "--all",
+   "--dir",
+   "--dry-run",
+   "--force",
+   "--help",
+   "--unpin"
+  ],
+  "children": []
+ },
+ "cache": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "delete",
+   "list"
+  ]
+ },
+ "cache delete": {
+  "flags": [
+   "--all",
+   "--help",
+   "--ref",
+   "--repo",
+   "--succeed-on-no-caches"
+  ],
+  "children": []
+ },
+ "cache list": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--key",
+   "--limit",
+   "--order",
+   "--ref",
+   "--repo",
+   "--sort",
+   "--template"
+  ],
+  "children": []
+ },
+ "run": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "cancel",
+   "delete",
+   "download",
+   "list",
+   "rerun",
+   "view",
+   "watch"
+  ]
+ },
+ "run cancel": {
+  "flags": [
+   "--force",
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "run delete": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "run download": {
+  "flags": [
+   "--dir",
+   "--help",
+   "--name",
+   "--pattern",
+   "--repo"
+  ],
+  "children": []
+ },
+ "run list": {
+  "flags": [
+   "--all",
+   "--branch",
+   "--commit",
+   "--created",
+   "--event",
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--repo",
+   "--status",
+   "--template",
+   "--user",
+   "--workflow"
+  ],
+  "children": []
+ },
+ "run rerun": {
+  "flags": [
+   "--debug",
+   "--failed",
+   "--help",
+   "--job",
+   "--repo"
+  ],
+  "children": []
+ },
+ "run view": {
+  "flags": [
+   "--attempt",
+   "--exit-status",
+   "--help",
+   "--job",
+   "--jq",
+   "--json",
+   "--log",
+   "--log-failed",
+   "--repo",
+   "--template",
+   "--verbose",
+   "--web"
+  ],
+  "children": []
+ },
+ "run watch": {
+  "flags": [
+   "--compact",
+   "--exit-status",
+   "--help",
+   "--interval",
+   "--repo"
+  ],
+  "children": []
+ },
+ "workflow": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "disable",
+   "enable",
+   "list",
+   "run",
+   "view"
+  ]
+ },
+ "workflow disable": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "workflow enable": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "workflow list": {
+  "flags": [
+   "--all",
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "workflow run": {
+  "flags": [
+   "--field",
+   "--help",
+   "--json",
+   "--raw-field",
+   "--ref",
+   "--repo"
+  ],
+  "children": []
+ },
+ "workflow view": {
+  "flags": [
+   "--help",
+   "--ref",
+   "--repo",
+   "--web",
+   "--yaml"
+  ],
+  "children": []
+ },
+ "co": {
+  "flags": [
+   "--branch",
+   "--detach",
+   "--force",
+   "--help",
+   "--recurse-submodules",
+   "--repo",
+   "--worktree"
+  ],
+  "children": []
+ },
+ "agent-task": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "create",
+   "list",
+   "view"
+  ]
+ },
+ "agent-task create": {
+  "flags": [
+   "--base",
+   "--custom-agent",
+   "--follow",
+   "--from-file",
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "agent-task list": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "agent-task view": {
+  "flags": [
+   "--follow",
+   "--help",
+   "--jq",
+   "--json",
+   "--log",
+   "--repo",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "alias": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "delete",
+   "import",
+   "list",
+   "set"
+  ]
+ },
+ "alias delete": {
+  "flags": [
+   "--all",
+   "--help"
+  ],
+  "children": []
+ },
+ "alias import": {
+  "flags": [
+   "--clobber",
+   "--help",
+   "--label"
+  ],
+  "children": []
+ },
+ "alias list": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "alias set": {
+  "flags": [
+   "--clobber",
+   "--help",
+   "--shell"
+  ],
+  "children": []
+ },
+ "api": {
+  "flags": [
+   "--allow-escape-sequences",
+   "--cache",
+   "--field",
+   "--header",
+   "--help",
+   "--hostname",
+   "--include",
+   "--input",
+   "--jq",
+   "--method",
+   "--paginate",
+   "--preview",
+   "--raw-field",
+   "--silent",
+   "--slurp",
+   "--template",
+   "--verbose"
+  ],
+  "children": []
+ },
+ "attestation": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "download",
+   "trusted-root",
+   "verify"
+  ]
+ },
+ "attestation download": {
+  "flags": [
+   "--digest-alg",
+   "--help",
+   "--hostname",
+   "--limit",
+   "--owner",
+   "--predicate-type",
+   "--repo"
+  ],
+  "children": []
+ },
+ "attestation trusted-root": {
+  "flags": [
+   "--help",
+   "--hostname",
+   "--tuf-root",
+   "--tuf-url",
+   "--verify-only"
+  ],
+  "children": []
+ },
+ "attestation verify": {
+  "flags": [
+   "--bundle",
+   "--bundle-from-oci",
+   "--cert-identity",
+   "--cert-identity-regex",
+   "--cert-oidc-issuer",
+   "--custom-trusted-root",
+   "--deny-self-hosted-runners",
+   "--digest-alg",
+   "--format",
+   "--help",
+   "--hostname",
+   "--jq",
+   "--limit",
+   "--no-public-good",
+   "--owner",
+   "--predicate-type",
+   "--repo",
+   "--signer-digest",
+   "--signer-repo",
+   "--signer-workflow",
+   "--source-digest",
+   "--source-ref",
+   "--template"
+  ],
+  "children": []
+ },
+ "completion": {
+  "flags": [
+   "--help",
+   "--shell"
+  ],
+  "children": []
+ },
+ "config": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "clear-cache",
+   "get",
+   "list",
+   "set"
+  ]
+ },
+ "config clear-cache": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "config get": {
+  "flags": [
+   "--help",
+   "--host"
+  ],
+  "children": []
+ },
+ "config list": {
+  "flags": [
+   "--help",
+   "--host"
+  ],
+  "children": []
+ },
+ "config set": {
+  "flags": [
+   "--help",
+   "--host"
+  ],
+  "children": []
+ },
+ "copilot": {
+  "flags": [
+   "--help",
+   "--remove"
+  ],
+  "children": []
+ },
+ "extension": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "browse",
+   "create",
+   "exec",
+   "install",
+   "list",
+   "remove",
+   "search",
+   "upgrade"
+  ]
+ },
+ "extension browse": {
+  "flags": [
+   "--debug",
+   "--help",
+   "--single-column"
+  ],
+  "children": []
+ },
+ "extension create": {
+  "flags": [
+   "--help",
+   "--precompiled"
+  ],
+  "children": []
+ },
+ "extension exec": {
+  "flags": [],
+  "children": []
+ },
+ "extension install": {
+  "flags": [
+   "--force",
+   "--help",
+   "--pin"
+  ],
+  "children": []
+ },
+ "extension list": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "extension remove": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "extension search": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--license",
+   "--limit",
+   "--order",
+   "--owner",
+   "--sort",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "extension upgrade": {
+  "flags": [
+   "--all",
+   "--dry-run",
+   "--force",
+   "--help"
+  ],
+  "children": []
+ },
+ "gpg-key": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "add",
+   "delete",
+   "list"
+  ]
+ },
+ "gpg-key add": {
+  "flags": [
+   "--help",
+   "--title"
+  ],
+  "children": []
+ },
+ "gpg-key delete": {
+  "flags": [
+   "--help",
+   "--yes"
+  ],
+  "children": []
+ },
+ "gpg-key list": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "label": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "clone",
+   "create",
+   "delete",
+   "edit",
+   "list"
+  ]
+ },
+ "label clone": {
+  "flags": [
+   "--force",
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "label create": {
+  "flags": [
+   "--color",
+   "--description",
+   "--force",
+   "--help",
+   "--repo"
+  ],
+  "children": []
+ },
+ "label delete": {
+  "flags": [
+   "--help",
+   "--repo",
+   "--yes"
+  ],
+  "children": []
+ },
+ "label edit": {
+  "flags": [
+   "--color",
+   "--description",
+   "--help",
+   "--name",
+   "--repo"
+  ],
+  "children": []
+ },
+ "label list": {
+  "flags": [
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--order",
+   "--repo",
+   "--search",
+   "--sort",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "licenses": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "preview": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "prompter"
+  ]
+ },
+ "preview prompter": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "ruleset": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "check",
+   "list",
+   "view"
+  ]
+ },
+ "ruleset check": {
+  "flags": [
+   "--default",
+   "--help",
+   "--repo",
+   "--web"
+  ],
+  "children": []
+ },
+ "ruleset list": {
+  "flags": [
+   "--help",
+   "--limit",
+   "--org",
+   "--parents",
+   "--repo",
+   "--web"
+  ],
+  "children": []
+ },
+ "ruleset view": {
+  "flags": [
+   "--help",
+   "--org",
+   "--parents",
+   "--repo",
+   "--web"
+  ],
+  "children": []
+ },
+ "search": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "code",
+   "commits",
+   "issues",
+   "prs",
+   "repos"
+  ]
+ },
+ "search code": {
+  "flags": [
+   "--extension",
+   "--filename",
+   "--help",
+   "--jq",
+   "--json",
+   "--language",
+   "--limit",
+   "--match",
+   "--owner",
+   "--repo",
+   "--size",
+   "--template",
+   "--web"
+  ],
+  "children": []
+ },
+ "search commits": {
+  "flags": [
+   "--author",
+   "--author-date",
+   "--author-email",
+   "--author-name",
+   "--committer",
+   "--committer-date",
+   "--committer-email",
+   "--committer-name",
+   "--hash",
+   "--help",
+   "--jq",
+   "--json",
+   "--limit",
+   "--merge",
+   "--order",
+   "--owner",
+   "--parent",
+   "--repo",
+   "--sort",
+   "--template",
+   "--tree",
+   "--visibility",
+   "--web"
+  ],
+  "children": []
+ },
+ "search issues": {
+  "flags": [
+   "--app",
+   "--archived",
+   "--assignee",
+   "--author",
+   "--closed",
+   "--commenter",
+   "--comments",
+   "--created",
+   "--help",
+   "--include-prs",
+   "--interactions",
+   "--involves",
+   "--jq",
+   "--json",
+   "--label",
+   "--language",
+   "--limit",
+   "--locked",
+   "--match",
+   "--mentions",
+   "--milestone",
+   "--no-assignee",
+   "--no-label",
+   "--no-milestone",
+   "--no-project",
+   "--order",
+   "--owner",
+   "--project",
+   "--reactions",
+   "--repo",
+   "--search-type",
+   "--sort",
+   "--state",
+   "--team-mentions",
+   "--template",
+   "--updated",
+   "--visibility",
+   "--web"
+  ],
+  "children": []
+ },
+ "search prs": {
+  "flags": [
+   "--app",
+   "--archived",
+   "--assignee",
+   "--author",
+   "--base",
+   "--checks",
+   "--closed",
+   "--commenter",
+   "--comments",
+   "--created",
+   "--draft",
+   "--head",
+   "--help",
+   "--interactions",
+   "--involves",
+   "--jq",
+   "--json",
+   "--label",
+   "--language",
+   "--limit",
+   "--locked",
+   "--match",
+   "--mentions",
+   "--merged",
+   "--merged-at",
+   "--milestone",
+   "--no-assignee",
+   "--no-label",
+   "--no-milestone",
+   "--no-project",
+   "--order",
+   "--owner",
+   "--project",
+   "--reactions",
+   "--repo",
+   "--review",
+   "--review-requested",
+   "--reviewed-by",
+   "--sort",
+   "--state",
+   "--team-mentions",
+   "--template",
+   "--updated",
+   "--visibility",
+   "--web"
+  ],
+  "children": []
+ },
+ "search repos": {
+  "flags": [
+   "--archived",
+   "--created",
+   "--followers",
+   "--forks",
+   "--good-first-issues",
+   "--help",
+   "--help-wanted-issues",
+   "--include-forks",
+   "--jq",
+   "--json",
+   "--language",
+   "--license",
+   "--limit",
+   "--match",
+   "--number-topics",
+   "--order",
+   "--owner",
+   "--size",
+   "--sort",
+   "--stars",
+   "--template",
+   "--topic",
+   "--updated",
+   "--visibility",
+   "--web"
+  ],
+  "children": []
+ },
+ "secret": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "delete",
+   "list",
+   "set"
+  ]
+ },
+ "secret delete": {
+  "flags": [
+   "--app",
+   "--env",
+   "--help",
+   "--org",
+   "--repo",
+   "--user"
+  ],
+  "children": []
+ },
+ "secret list": {
+  "flags": [
+   "--app",
+   "--env",
+   "--help",
+   "--jq",
+   "--json",
+   "--org",
+   "--repo",
+   "--template",
+   "--user"
+  ],
+  "children": []
+ },
+ "secret set": {
+  "flags": [
+   "--app",
+   "--body",
+   "--env",
+   "--env-file",
+   "--help",
+   "--no-repos-selected",
+   "--no-store",
+   "--org",
+   "--repo",
+   "--repos",
+   "--user",
+   "--visibility"
+  ],
+  "children": []
+ },
+ "ssh-key": {
+  "flags": [
+   "--help"
+  ],
+  "children": [
+   "add",
+   "delete",
+   "list"
+  ]
+ },
+ "ssh-key add": {
+  "flags": [
+   "--help",
+   "--title",
+   "--type"
+  ],
+  "children": []
+ },
+ "ssh-key delete": {
+  "flags": [
+   "--help",
+   "--yes"
+  ],
+  "children": []
+ },
+ "ssh-key list": {
+  "flags": [
+   "--help"
+  ],
+  "children": []
+ },
+ "status": {
+  "flags": [
+   "--exclude",
+   "--help",
+   "--org"
+  ],
+  "children": []
+ },
+ "variable": {
+  "flags": [
+   "--help",
+   "--repo"
+  ],
+  "children": [
+   "delete",
+   "get",
+   "list",
+   "set"
+  ]
+ },
+ "variable delete": {
+  "flags": [
+   "--env",
+   "--help",
+   "--org",
+   "--repo"
+  ],
+  "children": []
+ },
+ "variable get": {
+  "flags": [
+   "--env",
+   "--help",
+   "--jq",
+   "--json",
+   "--org",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "variable list": {
+  "flags": [
+   "--env",
+   "--help",
+   "--jq",
+   "--json",
+   "--org",
+   "--repo",
+   "--template"
+  ],
+  "children": []
+ },
+ "variable set": {
+  "flags": [
+   "--body",
+   "--env",
+   "--env-file",
+   "--help",
+   "--org",
+   "--repo",
+   "--repos",
+   "--visibility"
+  ],
+  "children": []
+ }
+}

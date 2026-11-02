@@ -1,0 +1,26 @@
+{
+  "version": 1,
+  "commands": {
+    "cache delete": {"kind": "covered"},
+    "cache list": {"kind": "covered"},
+    "run cancel": {"kind": "covered"},
+    "run delete": {"kind": "covered"},
+    "run download": {"kind": "covered"},
+    "run list": {"kind": "covered"},
+    "run rerun": {"kind": "covered"},
+    "run view": {"kind": "covered"},
+    "run watch": {"kind": "covered"},
+    "secret delete": {"kind": "covered"},
+    "secret list": {"kind": "covered"},
+    "secret set": {"kind": "covered"},
+    "variable delete": {"kind": "covered"},
+    "variable get": {"kind": "covered"},
+    "variable list": {"kind": "covered"},
+    "variable set": {"kind": "covered"},
+    "workflow disable": {"kind": "covered"},
+    "workflow enable": {"kind": "covered"},
+    "workflow list": {"kind": "covered"},
+    "workflow run": {"kind": "covered"},
+    "workflow view": {"kind": "covered"}
+  }
+}

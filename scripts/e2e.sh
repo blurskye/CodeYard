@@ -360,6 +360,9 @@ configure_node() {
         "CI_EXECUTION_MODE=local" "CI_ACT_BINARY=$ACT" "CI_ACTIONS_BINARY=$ACTIONS_BIN"
         "CI_MAX_ACTIVE_RUNS=2" "CI_RUN_TIMEOUT_SECONDS=300" "WEBHOOKS_ALLOW_PRIVATE=true"
     )
+    # The gh sweep's accounts start CI runs and register after the server starts, so this
+    # disposable server trusts every account to run CI.
+    if [[ ${E2E_GH_SWEEP:-0} == 1 ]]; then NODE_ENV+=("CI_TRUSTED_ACTOR_IDS=$(seq -s, 1 500)"); fi
     if [[ -n $DATABASE_URL ]] && ! is_runner "$node"; then NODE_ENV+=("DATABASE_URL=$DATABASE_URL"); fi
     if ! is_runner "$node"; then NODE_ENV+=("SECRETS_MASTER_KEY=$(get master_key)"); fi
     # A single server opens the node connection only for runners on other processes.
@@ -1667,6 +1670,28 @@ t_ci_api_save() {
     wait_ci_run "$id" "$deadline"
 }
 
+# Every gh command and flag against this round's server; opt in with E2E_GH_SWEEP=1. The
+# table of cases goes to $RUN/gh-sweep.txt, which gh_sweep_step prints after the step line.
+t_gh_sweep() {
+    local rc=0
+    local -a skip=()
+    # Cases that need a finished CI run report SKIP where local runs cannot execute.
+    [[ -z $CI_RUNS_UNAVAILABLE ]] || skip=(--skip-runs "$CI_RUNS_UNAVAILABLE")
+    "$GITHUB_PYTHON" -I "$ROOT/scripts/gh_sweep/harness.py" --base "$BASE" --workers "${E2E_GH_SWEEP_WORKERS:-4}" \
+        --per-account 2 --record-output "$RUN/gh-sweep-argv.json" "${skip[@]}" >"$RUN/gh-sweep.txt" 2>&1 || rc=$?
+    grep '^SWEEP ' "$RUN/gh-sweep.txt" || echo "the sweep printed no totals; see $RUN/gh-sweep.txt"
+    "$GITHUB_PYTHON" -I "$ROOT/scripts/gh_sweep/harness.py" --check --records "$RUN/gh-sweep-argv.json" \
+        | "$GITHUB_PYTHON" -I -c 'import json, sys; r = json.load(sys.stdin); print("gh sweep flags not exercised:", len(r["missing_flags"]), "waived:", r["waived"])'
+    return $rc
+}
+
+gh_sweep_step() {
+    [[ ${E2E_GH_SWEEP:-0} == 1 ]] || return 0
+    step 'real gh sweep: every gh command and flag, several accounts at once' t_gh_sweep
+    # Every case line, each cut at 2000 characters.
+    [[ ! -f $RUN/gh-sweep.txt ]] || head -n 3000 "$RUN/gh-sweep.txt" | cut -c1-2000 | sed 's/^/        | /'
+}
+
 # The GHES TLS tunnel and webhook receiver belong to this helper and stop before it returns.
 t_github_clients() {
     local token id engine rc=0
@@ -2474,6 +2499,7 @@ run_round() {
         step -f 'organization: created for real GitHub clients' t_org
         step -f 'tokens: created for real GitHub clients' t_tokens
         step 'real clients: GHES gh commands, native github-script and schema-checked webhooks' t_github_clients
+        gh_sweep_step
         ROUND_BLOCKED=0
         step 'log: the server log has no panic' t_log_clean
         step -i 'shutdown: SIGTERM exits with status 0' stop_server
@@ -2515,6 +2541,7 @@ run_round() {
     step 'ci: act ran the workflow, run succeeded, logs contain hello' t_ci_result
     step 'ci: an API file save queues the push workflow' t_ci_api_save
     step 'real clients: GHES gh commands, native github-script and schema-checked webhooks' t_github_clients
+    gh_sweep_step
     step -i 'restart: SIGTERM stops the server cleanly' stop_server
     step -f -i 'restart: server starts again on the same data' start_server
     step 'restart: sessions, repositories, CI history and SSH host key survive' t_after_restart

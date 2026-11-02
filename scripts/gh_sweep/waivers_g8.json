@@ -1,0 +1,23 @@
+{
+  "version": 1,
+  "flags": {
+    "agent-task list": {
+      "--web": "Opens the cloud agent-task page in a browser instead of issuing a forge API request; ctx.gh has no interactive browser. Non-browser GHES refusal is tested."
+    },
+    "agent-task view": {
+      "--web": "Opens an agent-task page in a browser; no cloud session or browser is provisioned. Non-browser session/PR selectors and log/follow refusals are tested."
+    },
+    "codespace code": {
+      "--web": "Launches the browser-based VS Code client for a cloud codespace. GHES cannot supply a running codespace or browser; normal and insiders modes test the auth guard."
+    },
+    "codespace create": {
+      "--web": "Delegates creation to a browser and is incompatible with display-name/idle-timeout/retention-period. No browser or cloud workspace may be provisioned by this sweep."
+    },
+    "codespace list": {
+      "--web": "Opens github.com/codespaces in a browser rather than listing via the GHES API, and cannot combine with org/user selection. Normal output modes and live GHES HTTP errors are tested."
+    },
+    "extension search": {
+      "--web": "Opens search results in a browser instead of returning searchable API output. The harness deliberately disables browser launches; all non-browser search output and filter flags are exercised."
+    }
+  }
+}

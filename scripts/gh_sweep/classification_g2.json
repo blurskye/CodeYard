@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "commands": {
+    "co": {"kind": "covered"},
+    "pr checkout": {"kind": "covered"},
+    "pr checks": {"kind": "covered"},
+    "pr close": {"kind": "covered"},
+    "pr comment": {"kind": "covered"},
+    "pr create": {"kind": "covered"},
+    "pr diff": {"kind": "covered"},
+    "pr edit": {"kind": "covered"},
+    "pr list": {"kind": "covered"},
+    "pr lock": {"kind": "covered"},
+    "pr merge": {"kind": "covered"},
+    "pr ready": {"kind": "covered"},
+    "pr reopen": {"kind": "covered"},
+    "pr revert": {"kind": "covered"},
+    "pr review": {"kind": "covered"},
+    "pr status": {"kind": "covered"},
+    "pr unlock": {"kind": "covered"},
+    "pr update-branch": {
+      "kind": "covered",
+      "reason": "GHES supports merge and rebase updates. The rebase parity case intentionally exposes Codeyard's current GraphQL rejection rather than classifying that implementation gap as cloud-only."
+    },
+    "pr view": {"kind": "covered"}
+  }
+}

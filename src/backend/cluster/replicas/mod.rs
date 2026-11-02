@@ -14,7 +14,7 @@ use crate::backend::db::{
     models::{HeldReplica, ReplicaSetting},
     DbPool,
 };
-use crate::backend::git::{locks, maintenance, mirror};
+use crate::backend::git::{maintenance, mirror};
 use crate::backend::repositories::store::RepoError;
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
@@ -24,10 +24,7 @@ use std::{
     str::FromStr,
     time::{Duration, Instant},
 };
-use tokio::{
-    sync::{watch, OwnedMutexGuard, OwnedRwLockWriteGuard},
-    task::JoinSet,
-};
+use tokio::{sync::watch, task::JoinSet};
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
@@ -189,9 +186,6 @@ const PARALLEL: usize = 2;
 /// outage, so it is short; a failed attempt against a dead node is one quick request.
 const RETRY_FIRST: Duration = Duration::from_secs(5);
 const RETRY_CAP: Duration = Duration::from_secs(30);
-/// How long moving or retiring a directory waits for the Git sessions using it. A directory
-/// that stays busy is left for a later pass, so a long clone holds nothing else up.
-pub(crate) const MOVE_WAIT: Duration = Duration::from_millis(500);
 /// Copies are kept here, under the repositories root, never at a primary's location.
 pub(crate) const MIRRORS: &str = "mirrors";
 pub(crate) const QUARANTINES: &str = ".quarantines";
@@ -497,7 +491,26 @@ async fn move_directory(
     to: &Path,
 ) -> Result<()> {
     let (primary_path, mirror_path) = if primary { (to, from) } else { (from, to) };
-    let guards = tokio::time::timeout(MOVE_WAIT, moving(primary_path, mirror_path)).await?;
+    let _primary = tokio::time::timeout(
+        Duration::from_millis(1),
+        crate::backend::git::locks::lock(primary_path),
+    )
+    .await?;
+    let _mirror = tokio::time::timeout(
+        Duration::from_millis(1),
+        crate::backend::git::locks::lock(mirror_path),
+    )
+    .await?;
+    let primary_readers = tokio::time::timeout(
+        Duration::from_millis(1),
+        crate::backend::git::locks::exclusive(primary_path),
+    )
+    .await?;
+    let mirror_readers = tokio::time::timeout(
+        Duration::from_millis(1),
+        crate::backend::git::locks::exclusive(mirror_path),
+    )
+    .await?;
     let row = db::repositories::records::get_repository_by_id(pool, repository)
         .await?
         .context("repository was deleted before relocation")?;
@@ -516,7 +529,7 @@ async fn move_directory(
     let from = from.to_owned();
     let to = to.to_owned();
     tokio::task::spawn_blocking(move || {
-        let _guards = guards;
+        let _guards = (_primary, _mirror, primary_readers, mirror_readers);
         anyhow::ensure!(!to.try_exists()?, "relocation target already exists");
         if let Some(parent) = to.parent() {
             std::fs::create_dir_all(parent)?;
@@ -525,27 +538,6 @@ async fn move_directory(
         Ok::<_, anyhow::Error>(())
     })
     .await?
-}
-
-/// Keeps writers and readers out of a repository's primary and copy directories while one
-/// of them is replaced or moved.
-pub(crate) struct Moving {
-    _writers: (OwnedMutexGuard<()>, OwnedMutexGuard<()>),
-    _readers: (OwnedRwLockWriteGuard<()>, OwnedRwLockWriteGuard<()>),
-}
-
-/// Takes both writer locks, then waits for the readers of both directories to finish. Every
-/// mover takes them in this order.
-pub(crate) async fn moving(primary: &Path, mirror: &Path) -> Moving {
-    let writers = (locks::lock(primary).await, locks::lock(mirror).await);
-    let readers = (
-        locks::exclusive(primary).await,
-        locks::exclusive(mirror).await,
-    );
-    Moving {
-        _writers: writers,
-        _readers: readers,
-    }
 }
 
 /// Copies that are running, at most `PARALLEL`. Each one brings a copy up to its primary. A
@@ -767,10 +759,19 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
                 continue;
             }
             let path = entry.path();
-            // Never wait long behind an admitted Git session in the maintenance loop.
-            let Ok(guards) = tokio::time::timeout(MOVE_WAIT, async {
-                (locks::lock(&path).await, locks::exclusive(&path).await)
-            })
+            // Never wait behind an admitted Git session in the maintenance loop.
+            let Ok(_reader_guard) = tokio::time::timeout(
+                Duration::from_millis(1),
+                crate::backend::git::locks::lock(&path),
+            )
+            .await
+            else {
+                continue;
+            };
+            let Ok(readers) = tokio::time::timeout(
+                Duration::from_millis(1),
+                crate::backend::git::locks::exclusive(&path),
+            )
             .await
             else {
                 continue;
@@ -786,7 +787,7 @@ async fn remove_surplus(context: &NodeContext, pool: &DbPool, copying: &Copying)
             // Rename only. The expiry worker owns recursive deletion outside the
             // takeover loop; its restore window also protects recoverable retired bytes.
             match tokio::task::spawn_blocking(move || {
-                let _guards = guards;
+                let _guards = (_reader_guard, readers);
                 mirror::retire(&path)
             })
             .await

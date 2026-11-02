@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "flags": {
+    "project list": {
+      "--web": "Opens the projects page in an external browser, not a server API operation. The harness deliberately sets GH_BROWSER=false; JSON, jq, template and terminal listing are exercised instead."
+    },
+    "project view": {
+      "--web": "Opens the project URL in an external browser. Browser launching is outside this API sweep and is deliberately disabled by the harness; project fetching and terminal/JSON output are covered."
+    }
+  }
+}

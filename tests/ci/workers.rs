@@ -2589,10 +2589,8 @@ async fn workflow_discovery_keeps_http_workers_responsive() {
         assert_eq!(workflows.len(), 64);
         assert_eq!(workflows[0]["path"], ".github/workflows/ci-00.yml");
         assert_eq!(workflows[63]["path"], ".github/workflows/ci-63.yml");
-        // Parsing the 64 files inline would hold the worker for seconds in a debug build; a
-        // busy machine alone can stall one poll for a few hundred milliseconds.
         assert!(
-            longest_poll < Duration::from_millis(1000),
+            longest_poll < Duration::from_millis(250),
             "workflow discovery blocked the HTTP worker for {longest_poll:?}"
         );
     }
