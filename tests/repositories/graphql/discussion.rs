@@ -572,8 +572,14 @@ async fn discussions(
     )
     .await;
     assert_eq!(deleted["discussion"]["id"], discussion);
-    let missing=query(router,token,"query($owner:String!,$name:String!){repository(owner:$owner,name:$name){discussion(number:1){id}}}",vars.clone()).await;
-    assert!(missing["repository"]["discussion"].is_null());
+    // As on GitHub, a deleted discussion is a NOT_FOUND error beside a null field.
+    let (status, missing) = call(router, Some(token), "query($owner:String!,$name:String!){repository(owner:$owner,name:$name){discussion(number:1){id}}}", vars.clone()).await;
+    assert_eq!(status, StatusCode::OK, "{missing}");
+    assert_eq!(missing["errors"][0]["type"], "NOT_FOUND", "{missing}");
+    assert!(
+        missing["data"]["repository"]["discussion"].is_null(),
+        "{missing}"
+    );
     // Private node and search reads repeat repository authority.
     f.execute(
         "UPDATE repositories SET is_private=true WHERE id=$1",

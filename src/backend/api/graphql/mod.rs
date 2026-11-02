@@ -299,6 +299,17 @@ pub(super) fn error(message: impl Into<String>, kind: &str) -> Error {
     Error::new(message).extend_with(|_, e| e.set("type", kind))
 }
 
+fn error_kind(error: &Error) -> Option<&str> {
+    match error.extensions.as_ref()?.get("type")? {
+        async_graphql::Value::String(kind) => Some(kind),
+        _ => None,
+    }
+}
+
+fn is_not_found(error: &Error) -> bool {
+    error_kind(error) == Some("NOT_FOUND")
+}
+
 fn unavailable<E>(_: E) -> Error {
     error("Service unavailable", "INTERNAL")
 }

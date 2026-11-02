@@ -137,7 +137,12 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
             .await
             .map_err(unavailable)?
             .filter(|user| !user.is_banned)
-            .ok_or_else(missing)?;
+            .ok_or_else(|| {
+                super::error(
+                    format!("Could not resolve to a User with the login of '{login}'."),
+                    "NOT_FOUND",
+                )
+            })?;
         Ok(object(&user, request.auth.user.id))
     } else if field == "repositoryOwner" {
         if let Some(user) = db::users::accounts::get_user_by_username(&request.state.pool, &login)
@@ -156,10 +161,16 @@ pub(super) async fn query(field: &str, ctx: &Arguments, request: &RequestContext
         Ok(organization(&org))
     } else {
         request.require_oauth_scope("read:org")?;
+        // gh skips the classic-projects lookup only on GitHub's exact wording.
         let org = db::organizations::profiles::get_public_organization(&request.state.pool, &login)
             .await
             .map_err(unavailable)?
-            .ok_or_else(missing)?;
+            .ok_or_else(|| {
+                super::error(
+                    format!("Could not resolve to an Organization with the login of '{login}'."),
+                    "NOT_FOUND",
+                )
+            })?;
         request.authorize_organization(org.id).await?;
         Ok(organization(&org))
     }

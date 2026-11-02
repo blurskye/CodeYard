@@ -25,8 +25,7 @@ pub(super) async fn optional_authority(
     match request.authorize(id, scope, false).await {
         Ok(()) => Ok(true),
         Err(error)
-            if matches!(error.extensions.as_ref().and_then(|e| e.get("type")),
-            Some(async_graphql::Value::String(kind)) if kind == "NOT_FOUND" || kind == "FORBIDDEN") =>
+            if super::is_not_found(&error) || super::error_kind(&error) == Some("FORBIDDEN") =>
         {
             Ok(false)
         }
@@ -84,15 +83,23 @@ pub(super) async fn owner(
 }
 
 pub(super) async fn query(ctx: &Arguments, request: &RequestContext) -> Result<Value> {
-    let repo = db::repositories::records::get_repository(
-        &request.state.pool,
-        &arg(ctx, "owner")?,
-        &arg(ctx, "name")?,
-    )
-    .await
-    .map_err(unavailable)?
-    .ok_or_else(missing)?;
-    Ok(object(&check(repo, request).await?))
+    let (owner, name) = (arg(ctx, "owner")?, arg(ctx, "name")?);
+    // gh matches GitHub's wording, so a hidden repository reads exactly like a missing one.
+    let unresolved = || {
+        super::error(
+            format!("Could not resolve to a Repository with the name '{owner}/{name}'."),
+            "NOT_FOUND",
+        )
+    };
+    let repo = db::repositories::records::get_repository(&request.state.pool, &owner, &name)
+        .await
+        .map_err(unavailable)?
+        .ok_or_else(unresolved)?;
+    match check(repo, request).await {
+        Ok(repo) => Ok(object(&repo)),
+        Err(error) if super::is_not_found(&error) => Err(unresolved()),
+        Err(error) => Err(error),
+    }
 }
 
 pub(super) fn label(label: &db::models::Label) -> Value {
@@ -353,13 +360,16 @@ pub(super) async fn resolve(
         }
         "pullRequest" => {
             let number = ctx.args.try_get("number")?.i64()? as i32;
-            Ok(
-                db::pull_requests::records::get_pull_request(pool, id, number)
-                    .await
-                    .map_err(unavailable)?
-                    .map(|item| issue::pull_object(&item))
-                    .unwrap_or(Value::Null),
-            )
+            let pull = db::pull_requests::records::get_pull_request(pool, id, number)
+                .await
+                .map_err(unavailable)?
+                .ok_or_else(|| {
+                    super::error(
+                        format!("Could not resolve to a PullRequest with the number of {number}."),
+                        "NOT_FOUND",
+                    )
+                })?;
+            Ok(issue::pull_object(&pull))
         }
         "issues" | "pullRequests" => issue::list(field, ctx, request, id).await,
         "labels" => {

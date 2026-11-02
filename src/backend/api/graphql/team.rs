@@ -29,8 +29,11 @@ pub(super) async fn by_slug(org: i64, slug: &str, request: &RequestContext) -> R
         db::organizations::teams::TeamIdentity::Slug(org, slug),
     )
     .await
-    .map_err(unavailable)?
-    .ok_or_else(missing)?;
+    .map_err(unavailable)?;
+    // GitHub answers `team: null` for a slug that names no team.
+    let Some(team) = team else {
+        return Ok(Value::Null);
+    };
     request.authorize_organization(org).await?;
     super::review_requests::team_object(&team, request).await
 }

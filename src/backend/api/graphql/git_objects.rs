@@ -1,6 +1,6 @@
 //! Immutable Git node lookup and refs use RepoStore, including remote repositories.
 use super::{db, git, missing, node_id, repository, unavailable, RequestContext, Result, Value};
-use crate::backend::repositories::store::{repo_store, ErrorKind};
+use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,
@@ -96,6 +96,17 @@ pub(super) async fn load(
             )
         }
         _ => Err(missing()),
+    }
+}
+
+/// GitHub answers `object: null` when an expression names no object.
+fn absent<T>(result: std::result::Result<T, RepoError>) -> Result<Option<T>> {
+    match result {
+        Ok(value) => Ok(Some(value)),
+        Err(error) if matches!(error.kind, ErrorKind::NotFound | ErrorKind::MissingPath) => {
+            Ok(None)
+        }
+        Err(error) => Err(unavailable(error)),
     }
 }
 
@@ -355,26 +366,19 @@ pub(super) async fn resolve(
                 return Ok(Value::Null);
             };
             let expression = expression.string()?;
-            let oid = if let Some((revision, path)) = expression.split_once(':') {
+            let mut path = "";
+            let oid = if let Some((revision, tree_path)) = expression.split_once(':') {
+                path = tree_path.trim_end_matches('/');
                 if path.is_empty() {
-                    store
-                        .git_tree(revision, false)
-                        .await
-                        .map_err(unavailable)?
-                        .sha
+                    absent(store.git_tree(revision, false).await)?.map(|tree| tree.sha)
                 } else {
                     let parent = path.rsplit_once('/').map_or("", |(parent, _)| parent);
-                    store
-                        .tree_metadata(revision, parent)
-                        .await
-                        .map_err(unavailable)?
-                        .into_iter()
-                        .find(|entry| entry.path == path)
-                        .ok_or_else(missing)?
-                        .sha
+                    absent(store.tree_metadata(revision, parent).await)?
+                        .and_then(|entries| entries.into_iter().find(|entry| entry.path == path))
+                        .map(|entry| entry.sha)
                 }
             } else if crate::backend::git::is_full_commit_id(expression) {
-                expression.to_owned()
+                Some(expression.to_owned())
             } else {
                 let refs = loaded_refs(repo, request).await?;
                 if let Some(oid) = refs
@@ -382,12 +386,30 @@ pub(super) async fn resolve(
                     .or_else(|| refs.get(&format!("refs/heads/{expression}")))
                     .or_else(|| refs.get(&format!("refs/tags/{expression}")))
                 {
-                    oid.clone()
+                    Some(oid.clone())
                 } else {
-                    store.commit(expression).await.map_err(unavailable)?.sha
+                    absent(store.commit(expression).await)?.map(|commit| commit.sha)
                 }
             };
-            load(repo, &oid, request).await
+            let Some(oid) = oid else {
+                return Ok(Value::Null);
+            };
+            let mut value = load(repo, &oid, request).await?;
+            // TreeEntry.path is the full path from the repository root, as on GitHub.
+            if !path.is_empty() {
+                if let Some(entries) = value["entries"].as_array_mut() {
+                    for entry in entries {
+                        let name = entry["name"].as_str().unwrap_or_default();
+                        let raw = STANDARD
+                            .decode(entry["nameRaw"].as_str().unwrap_or_default())
+                            .unwrap_or_default();
+                        entry["path"] = json!(format!("{path}/{name}"));
+                        entry["pathRaw"] =
+                            json!(STANDARD.encode([path.as_bytes(), b"/", &raw].concat()));
+                    }
+                }
+            }
+            Ok(value)
         }
         "refs" => {
             super::connection::validate(args)?;

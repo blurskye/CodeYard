@@ -5,6 +5,7 @@ mod gh_issues;
 mod gh_teams;
 mod git_lane_nodes;
 mod job_tokens;
+mod lookups;
 mod maintainers;
 mod metadata_mutations;
 mod node_id;
@@ -480,6 +481,13 @@ async fn contract(pg: bool) {
     ] {
         let (_, body) = call(&router, Some(&credentials[1]), &query_text, json!({})).await;
         assert_eq!(body["errors"][0]["type"], "NOT_FOUND", "{body}");
+        // A hidden repository reads exactly like a missing one.
+        if query_text.contains("repository(") {
+            assert_eq!(
+                body["errors"][0]["message"],
+                "Could not resolve to a Repository with the name 'graphql-alice/proj'."
+            );
+        }
     }
     for (mutation, input) in [
         (
@@ -986,6 +994,7 @@ async fn contract(pg: bool) {
         node_id::encode("R", repo.id).into(),
     )
     .await;
+    lookups::exercise(&router, token).await;
     f.execute(
         "UPDATE graphql_rate_limits SET used=5000 WHERE token_id=$1",
         &[token_ids[0]],

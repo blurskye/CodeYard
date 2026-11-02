@@ -112,14 +112,19 @@ pub(super) async fn repository_field(
                     .collect(),
             )
         }
-        "discussion" => Ok(
-            store::by_number(pool, repo, ctx.args.try_get("number")?.i64()? as i32)
+        "discussion" => {
+            let number = ctx.args.try_get("number")?.i64()? as i32;
+            let discussion = store::by_number(pool, repo, number)
                 .await
                 .map_err(unavailable)?
-                .as_ref()
-                .map(object)
-                .unwrap_or(Value::Null),
-        ),
+                .ok_or_else(|| {
+                    super::error(
+                        format!("Could not resolve to a Discussion with the number of {number}."),
+                        "NOT_FOUND",
+                    )
+                })?;
+            Ok(object(&discussion))
+        }
         "discussions" => {
             let mut filter = Filter {
                 repo: Some(repo),

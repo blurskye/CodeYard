@@ -77,10 +77,10 @@ fn query<'a>(
     }
     if let Some(value) = ctx.args.get("ownerAffiliations").filter(|v| !v.is_null()) {
         let values: Value = value.deserialize()?;
-        if super::metadata_mutations::list(&values)
-            .iter()
-            .any(|v| v.as_str() != Some("OWNER"))
-        {
+        let organization = matches!(list, RepositoryList::Organization(_));
+        if super::metadata_mutations::list(&values).iter().any(|v| {
+            v.as_str() != Some("OWNER") && !(organization && v.as_str() == Some("COLLABORATOR"))
+        }) {
             return Err(async_graphql::Error::new(
                 "Codeyard only supports OWNER ownerAffiliations",
             ));
@@ -149,7 +149,12 @@ async fn connection(
 ) -> Result<Value> {
     connection::validate(ctx)?;
     if let Some(value) = ctx.args.get("ownerAffiliations").filter(|v| !v.is_null()) {
-        if value.deserialize::<Vec<Option<String>>>()?.is_empty() {
+        let values = value.deserialize::<Vec<Option<String>>>()?;
+        // An organization is never a collaborator, so GitHub's default [OWNER, COLLABORATOR]
+        // lists what it owns and [COLLABORATOR] alone lists nothing.
+        if !values.iter().any(|v| v.as_deref() == Some("OWNER"))
+            && (values.is_empty() || matches!(list, RepositoryList::Organization(_)))
+        {
             return connection::slice(ctx, vec![]);
         }
     }
