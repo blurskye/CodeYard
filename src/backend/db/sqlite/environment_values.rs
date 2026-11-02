@@ -34,6 +34,7 @@ async fn authorize_read(
     if super::discussions::lock_settings_read_authority(connection, actor, repo, admin)
         .await
         .map_err(ValueError::Authority)?
+        && (admin || super::variables::is_collaborator(connection, actor, repo).await?)
     {
         Ok(())
     } else {

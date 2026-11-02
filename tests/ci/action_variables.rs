@@ -405,10 +405,13 @@ pub(super) async fn gh_empty_value(
     assert_eq!(cleared["created_at"], empty["created_at"]);
     if let Some(visibility) = visibility {
         assert_eq!(cleared["visibility"], visibility);
-        assert!(cleared["selected_repositories_url"]
-            .as_str()
-            .unwrap()
-            .ends_with("/GH_EMPTY/repositories"));
+        // gh follows this link, so GitHub sends it only for selected visibility.
+        assert_eq!(
+            cleared["selected_repositories_url"]
+                .as_str()
+                .is_some_and(|url| url.ends_with("/GH_EMPTY/repositories")),
+            visibility == "selected"
+        );
     }
     request(
         router,

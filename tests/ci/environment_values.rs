@@ -589,6 +589,43 @@ async fn contract(pg: bool) {
         404,
     )
     .await;
+    // As on GitHub, someone who can read a public repository but is not a collaborator may
+    // not read its environment variables, like its repository variables.
+    let open = lifecycle::provision(
+        (f.pool(), None),
+        root.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(owner),
+        "open",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    values::create(f.pool(), owner, open.id, "Production")
+        .await
+        .unwrap();
+    let open_base = "/api/v3/repos/alice/open/environments/Production/variables";
+    request(
+        &router,
+        "actions/list-environment-variables",
+        "GET",
+        open_base,
+        Some(&outside),
+        Value::Null,
+        403,
+    )
+    .await;
+    request(
+        &router,
+        "actions/get-environment-variable",
+        "GET",
+        &format!("{open_base}/NAME"),
+        Some(&outside),
+        Value::Null,
+        403,
+    )
+    .await;
     f.finish().await;
 }
 

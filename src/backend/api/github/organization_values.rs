@@ -150,11 +150,14 @@ fn document(org: &str, kind: Kind, row: &OrganizationValue) -> Value {
         &row.updated_at,
     );
     value["visibility"] = json!(row.visibility);
-    value["selected_repositories_url"] = json!(super::api_url(&format!(
-        "/orgs/{org}/actions/{}/{}/repositories",
-        plural(kind),
-        crate::webui::encode_component(&row.name)
-    )));
+    // As on GitHub, only a value shared with selected repositories links to that list.
+    if row.visibility == "selected" {
+        value["selected_repositories_url"] = json!(super::api_url(&format!(
+            "/orgs/{org}/actions/{}/{}/repositories",
+            plural(kind),
+            crate::webui::encode_component(&row.name)
+        )));
+    }
     value
 }
 fn page(page: &Pagination, uri: &Uri, key: &str, rows: Vec<Value>) -> Result<Response> {

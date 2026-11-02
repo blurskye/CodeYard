@@ -1,6 +1,20 @@
 use super::super::variables::{ensure_room, validate, Variable, VariableError};
 use sqlx::PgPool;
 
+/// Collaborator access, leaving out the read access a public repository gives everyone: as on
+/// GitHub, only collaborators read Actions variables.
+pub(crate) async fn is_collaborator(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    actor: i64,
+    repo: i64,
+) -> sqlx::Result<bool> {
+    sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,TRUE AS is_private FROM repositories WHERE id=$2) r JOIN users u ON u.id=$1 WHERE NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", super::repositories::access::USER_REPO_ACCESS_SQL))
+        .bind(actor)
+        .bind(repo)
+        .fetch_one(&mut **tx)
+        .await
+}
+
 // Repository/account authority is already retained; do not upgrade the account lock here.
 async fn credential_authority(
     tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
@@ -51,8 +65,7 @@ pub async fn list(
         return Err(VariableError::Denied);
     }
     // Suppress visibility-only access while retaining the canonical grant calculation.
-    let collaborator: bool = sqlx::query_scalar(&format!("SELECT EXISTS(SELECT 1 FROM (SELECT id,owner_kind,owner_user_id,owner_org_id,is_gist,TRUE AS is_private FROM repositories WHERE id=$2) r JOIN users u ON u.id=$1 WHERE NOT u.is_banned AND NOT u.must_change_password AND ((r.owner_kind='user' AND u.is_admin) OR ({})>=1))", super::repositories::access::USER_REPO_ACCESS_SQL))
-        .bind(actor).bind(repo).fetch_one(&mut *tx).await?;
+    let collaborator = is_collaborator(&mut tx, actor, repo).await?;
     if !collaborator {
         return Err(VariableError::Denied);
     }
