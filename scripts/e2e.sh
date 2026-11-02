@@ -746,7 +746,16 @@ t_push() {
 }
 
 t_git_streaming() {
-    local source=$RUN/work/stream-source transport name url auth a b large expected node peak
+    local source=$RUN/work/stream-source transport name url auth a b large expected node peak growth
+    local nodes=(server)
+    local -A before=()
+    [[ $ROUND == cluster ]] && nodes=(web1 store1 store2)
+    # Measure what the transfers add: a debug server already holds about 240 MiB after the
+    # earlier steps. Writing 5 to clear_refs resets the peak (VmHWM) to the current size.
+    for node in "${nodes[@]}"; do
+        echo 5 >"/proc/${SERVER_PIDS[$node]}/clear_refs"
+        before[$node]=$(awk '/^VmHWM:/ {print $2}' "/proc/${SERVER_PIDS[$node]}/status")
+    done
     mkdir -p "$source"
     git_as alice -C "$source" init -q -b main
     printf 'streaming\n' >"$source/README"
@@ -788,12 +797,13 @@ PY
         [[ $(git_as alice -C "$large" rev-parse 'HEAD^{tree}') == "$expected" ]]
         find "$large/.git/objects/pack" -name '*.pack' -size +128M | grep -q .
     done
-    local nodes=(server)
-    [[ $ROUND == cluster ]] && nodes=(web1 store1 store2)
+    # Buffering one 150 MiB pack would add more than 150 MiB; streaming adds a few.
     for node in "${nodes[@]}"; do
         peak=$(awk '/^VmHWM:/ {print $2}' "/proc/${SERVER_PIDS[$node]}/status")
-        [[ -n $peak && $peak -lt 196608 ]] || { echo "$node peak memory: ${peak:-missing} KiB" >&2; return 1; }
-        echo "$node peak memory after Git transfers: $peak KiB"
+        [[ -n $peak && -n ${before[$node]} ]] || { echo "$node peak memory missing" >&2; return 1; }
+        growth=$((peak - before[$node]))
+        ((growth < 65536)) || { echo "$node memory grew $growth KiB during Git transfers, to $peak KiB" >&2; return 1; }
+        echo "$node memory grew $growth KiB during Git transfers, to $peak KiB"
     done
 }
 
