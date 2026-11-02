@@ -1399,6 +1399,62 @@ async fn ci_repository_claim_checks_match_on_postgres_and_sqlite() {
 }
 
 #[tokio::test]
+async fn the_servers_own_workers_take_self_hosted_jobs_in_local_mode() {
+    let postgres = native::PostgresDatabase::new().await;
+    let sqlite = native::NativeDatabase::new().await;
+    let platforms = CiConfig::default().platform_labels();
+    for pool in [&postgres.pool, &sqlite.pool] {
+        let owner = db::users::accounts::create_user(pool, "label_owner", None)
+            .await
+            .unwrap();
+        let repo = db::repositories::records::create_repository(
+            pool,
+            owner.id,
+            "labels",
+            None,
+            true,
+            "/labels.git",
+        )
+        .await
+        .unwrap();
+        let run = enqueue(pool, repo.id, owner.id, &"1".repeat(40), &"2".repeat(40)).await;
+        // What admission stores for `runs-on: self-hosted`.
+        let labels = r#"["self-hosted"]"#;
+        match pool {
+            db::DbPool::Postgres(raw) => {
+                sqlx::query("UPDATE ci_runs SET runner_labels=$1 WHERE id=$2")
+                    .bind(labels)
+                    .bind(run.id)
+                    .execute(raw)
+                    .await
+                    .unwrap();
+            }
+            db::DbPool::Sqlite(raw) => {
+                sqlx::query("UPDATE ci_runs SET runner_labels=$1 WHERE id=$2")
+                    .bind(labels)
+                    .bind(run.id)
+                    .execute(raw)
+                    .await
+                    .unwrap();
+            }
+        }
+        // A Podman worker has no image for the label, so the run waits for one that runs it.
+        assert!(
+            db::ci::claim_ci_run(pool, "podman-worker", "podman", &[owner.id], &platforms)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        let claimed = db::ci::claim_ci_run(pool, "local-worker", "local", &[owner.id], &platforms)
+            .await
+            .unwrap()
+            .expect("the local worker left a self-hosted run queued");
+        assert_eq!(claimed.id, run.id);
+    }
+    sqlite.close().await;
+}
+
+#[tokio::test]
 async fn sqlite_log_batches_check_ownership_and_bounds() {
     let database = native::NativeDatabase::new().await;
     let owner = db::users::accounts::create_user(&database.pool, "ci_owner", None)
