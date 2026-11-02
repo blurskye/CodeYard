@@ -7,7 +7,7 @@ are explicitly waived, not counted as successful API coverage.
 import base64
 import re
 
-from gh_sweep.harness import case, expect_error, expect_json, expect_ok
+from gh_sweep.harness import HOST, case, expect_error, expect_json, expect_ok
 
 
 def _failure(result, *messages):
@@ -66,15 +66,18 @@ def _project(ctx):
     return title, path
 
 
+def _git_auth(ctx):
+    # Git over HTTPS takes the token as a Basic password, as on GitHub.
+    return "Authorization: Basic " + base64.b64encode((ctx.account.name + ":" + ctx.account.token).encode()).decode()
+
+
 def _clone(ctx):
-    # Use the disposable loopback Git endpoint, not an external remote. The
+    # Clone the GHES URL through the sweep's TLS tunnel, so the remote matches GH_HOST. The
     # credential is passed in an argument that the harness redacts on failure.
     path = ctx.directory / "clone"
     expect_ok(ctx.sweep.execute(ctx.account, [
-        "git", "-c", "http.extraHeader=Authorization: Bearer " + ctx.account.token,
-        "clone", ctx.sweep.base + "/" + ctx.repo + ".git", str(path)]))
-    expect_ok(ctx.sweep.execute(ctx.account, ["git", "remote", "set-url", "origin",
-                                              "https://codeyard-e2e.test/" + ctx.repo + ".git"], cwd=path))
+        "git", "-c", "http.extraHeader=" + _git_auth(ctx),
+        "clone", "https://codeyard-e2e.test/" + ctx.repo + ".git", str(path)]))
     return path
 
 
@@ -154,27 +157,33 @@ def discussion_comment(ctx):
                             "--body", "thread", "--category", "General"))
     created = expect_ok(ctx.gh("discussion", "comment", number, "--repo", ctx.repo, "--body", "top-level"))
     assert "discussioncomment-" in created.stdout, created.stdout
+    # gh exports comments and their replies as {nodes, totalCount}.
     rows = expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--json", "comments"),
-                       {"comments": [{"id": str, "body": str}]})["comments"]
+                       {"comments": {"nodes": [{"id": str, "body": str}]}})["comments"]["nodes"]
     assert len(rows) == 1 and rows[0]["body"] == "top-level", rows
     comment = rows[0]["id"]
     expect_ok(ctx.gh("discussion", "comment", comment, "--repo", ctx.repo, "--body-file", "-", input="reply"))
     expect_ok(ctx.gh("discussion", "comment", comment, "--repo", ctx.repo, "--edit", "--body", "edited"))
     rows = expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--json", "comments"),
-                       {"comments": [{"body": str}]})["comments"]
+                       {"comments": {"nodes": [{"body": str}]}})["comments"]["nodes"]
     assert rows[0]["body"] == "edited", rows
-    assert rows[0]["replies"][0]["body"] == "reply", rows
-    reply = rows[0]["replies"][0]["id"]
+    assert rows[0]["replies"]["nodes"][0]["body"] == "reply", rows
+    reply = rows[0]["replies"]["nodes"][0]["id"]
     path = ctx.directory / "comment.md"
     path.write_text("file reply")
     expect_ok(ctx.gh("discussion", "comment", reply, "--repo", ctx.repo, "--edit", "--body-file", str(path)))
     rows = expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--json", "comments"),
-                       {"comments": list})["comments"]
-    assert rows[0]["replies"][0]["body"] == "file reply", rows
+                       {"comments": {"nodes": list}})["comments"]["nodes"]
+    assert rows[0]["replies"]["nodes"][0]["body"] == "file reply", rows
     _failure(ctx.sweep.gh(_other(ctx), "discussion", "comment", comment, "--repo", ctx.repo,
                           "--edit", "--body", "forbidden", ok=None), "denied", "permission", "not accessible")
-    expect_ok(ctx.gh("discussion", "comment", created.stdout.strip(), "--repo", ctx.repo, "--delete", "--yes"))
-    expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--json", "comments"), {"comments": []})
+    # The server links to its loopback origin; gh reaches it only as the GHES host.
+    url = re.sub(r"^https?://[^/]+", "https://" + HOST, created.stdout.strip())
+    expect_ok(ctx.gh("discussion", "comment", url, "--repo", ctx.repo, "--delete", "--yes"))
+    # A deleted comment that has replies stays as an empty placeholder, as on GitHub (deletedAt).
+    rows = expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--json", "comments"),
+                       {"comments": {"nodes": list}})["comments"]["nodes"]
+    assert [(row["id"], row["body"]) for row in rows] == [(comment, "")], rows
     _failure(ctx.gh("discussion", "comment", "999999", "--repo", ctx.repo, "--body", "missing", ok=None),
              "Could not resolve", "not found")
     _failure(ctx.gh("discussion", "comment", number, "--repo", _missing(ctx), "--body", "missing", ok=None),
@@ -188,29 +197,30 @@ def discussion_list(ctx):
     title = ctx.name("discussion")
     number = _number(ctx.gh("discussion", "create", "--repo", ctx.repo, "--title", title,
                             "--body", "body", "--category", "Q&A", "--label", label))
+    # gh exports the list as {discussions: [...], totalCount}.
     rows = expect_json(ctx.gh("discussion", "list", "--repo", ctx.repo, "--state", "all", "--author", ctx.account.name,
                               "--category", "Q&A", "--label", label, "--limit", "1", "--order", "asc",
                               "--sort", "created", "--json", "number,title,answered"),
-                       [{"number": int, "title": str, "answered": bool}])
+                       {"discussions": [{"number": int, "title": str, "answered": bool}]})["discussions"]
     assert rows == [{"number": int(number), "title": title, "answered": False}], rows
-    expect_json(ctx.gh("discussion", "list", "--repo", ctx.repo, "--answered", "--json", "number"), [])
-    expect_json(ctx.gh("discussion", "list", "--repo", ctx.repo, "--state", "closed", "--json", "number"), [])
+    expect_json(ctx.gh("discussion", "list", "--repo", ctx.repo, "--answered", "--json", "number"), {"discussions": []})
+    expect_json(ctx.gh("discussion", "list", "--repo", ctx.repo, "--state", "closed", "--json", "number"), {"discussions": []})
     found = expect_ok(ctx.gh("discussion", "list", "--repo", ctx.repo, "--search", title,
-                             "--json", "title", "--jq", ".[0].title"))
+                             "--json", "title", "--jq", ".discussions[0].title"))
     assert found.stdout.strip() == title, found
     formatted = expect_ok(ctx.gh("discussion", "list", "--repo", ctx.repo, "--sort", "updated", "--order", "desc",
-                                 "--json", "title", "--template", "{{range .}}{{.title}}{{end}}"))
+                                 "--json", "title", "--template", "{{range .discussions}}{{.title}}{{end}}"))
     assert formatted.stdout == title, formatted
     owner, repo = ctx.repo.split("/")
     page = expect_json(ctx.gh("api", "graphql", "-f", "owner=" + owner, "-f", "repo=" + repo,
                               "-f", 'query=query($owner:String!,$repo:String!){repository(owner:$owner,name:$repo){discussions(first:1){pageInfo{endCursor}}}}'),
                        {"data": {"repository": {"discussions": {"pageInfo": {"endCursor": str}}}}})
     cursor = page["data"]["repository"]["discussions"]["pageInfo"]["endCursor"]
-    expect_json(ctx.gh("discussion", "list", "--repo", ctx.repo, "--after", cursor, "--json", "number"), [])
+    expect_json(ctx.gh("discussion", "list", "--repo", ctx.repo, "--after", cursor, "--json", "number"), {"discussions": []})
     plain = expect_ok(ctx.gh("discussion", "list", "--repo", ctx.repo))
     assert title in plain.stdout, plain
     unanswered = expect_json(ctx.gh("discussion", "list", "--repo", ctx.repo, "--answered=false", "--json", "number"),
-                             [{"number": int(number)}])
+                             {"discussions": [{"number": int(number)}]})["discussions"]
     assert unanswered == [{"number": int(number)}], unanswered
     _failure(ctx.gh("discussion", "list", "--repo", ctx.repo, "--order", "invalid", ok=None), "order")
     _failure(ctx.gh("discussion", "list", "--repo", ctx.repo, "--after", "invalid-cursor", ok=None), "cursor")
@@ -228,10 +238,12 @@ def discussion_view(ctx):
     number = _number(ctx.gh("discussion", "create", "--repo", ctx.repo, "--title", title,
                             "--body", "view body", "--category", "General"))
     expect_ok(ctx.gh("discussion", "comment", number, "--repo", ctx.repo, "--body", "first comment"))
-    row = expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--comments", "--order", "oldest",
+    # --comments is the text view; JSON output takes --order, --limit and --after on its own.
+    row = expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--order", "oldest",
                              "--limit", "1", "--json", "number,title,body,comments"),
-                      {"number": int(number), "title": title, "body": "view body", "comments": [{"body": "first comment"}]})
-    assert len(row["comments"]) == 1, row
+                      {"number": int(number), "title": title, "body": "view body",
+                       "comments": {"nodes": [{"body": "first comment"}]}})
+    assert len(row["comments"]["nodes"]) == 1, row
     assert expect_ok(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--json", "title",
                             "--jq", ".title")).stdout.strip() == title
     assert expect_ok(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--json", "body",
@@ -243,8 +255,8 @@ def discussion_view(ctx):
                               "-f", 'query=query($owner:String!,$repo:String!,$n:Int!){repository(owner:$owner,name:$repo){discussion(number:$n){comments(first:1){pageInfo{endCursor}}}}}'),
                        {"data": {"repository": {"discussion": {"comments": {"pageInfo": {"endCursor": str}}}}}})
     cursor = page["data"]["repository"]["discussion"]["comments"]["pageInfo"]["endCursor"]
-    expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--comments", "--after", cursor,
-                       "--json", "comments"), {"comments": []})
+    expect_json(ctx.gh("discussion", "view", number, "--repo", ctx.repo, "--after", cursor,
+                       "--json", "comments"), {"comments": {"nodes": []}})
     _failure(ctx.gh("discussion", "view", "999999", "--repo", ctx.repo, "--json", "title", ok=None),
              "Could not resolve", "not found")
     _failure(ctx.gh("discussion", "view", number, "--repo", _missing(ctx), "--json", "title", ok=None),
@@ -279,10 +291,11 @@ def issue_create_relationships(ctx):
     number = _number(ctx.gh("issue", "create", "--repo", ctx.repo, "--title", ctx.name("child"), "--body", "relationships",
                             "--parent", str(parent["number"]), "--blocked-by", str(blocker["number"]),
                             "--blocking", str(blocked["number"])))
+    # gh exports subIssues, blockedBy and blocking as {nodes, totalCount}.
     row = expect_json(ctx.gh("issue", "view", number, "--repo", ctx.repo, "--json", "parent,blockedBy,blocking"),
                       {"parent": {"number": parent["number"]}})
-    assert [v["number"] for v in row["blockedBy"]] == [blocker["number"]], row
-    assert [v["number"] for v in row["blocking"]] == [blocked["number"]], row
+    assert [v["number"] for v in row["blockedBy"]["nodes"]] == [blocker["number"]], row
+    assert [v["number"] for v in row["blocking"]["nodes"]] == [blocked["number"]], row
 
 
 @case(command="issue create", variant="missing repo and invalid metadata", needs=("repo",))
@@ -387,14 +400,14 @@ def issue_edit_relationships(ctx):
                      "--add-blocking", str(blocked["number"])))
     row = expect_json(ctx.gh("issue", "view", number, "--repo", ctx.repo, "--json", "parent,subIssues,blockedBy,blocking"),
                       {"parent": {"number": parent["number"]}})
-    assert [v["number"] for v in row["subIssues"]] == [child["number"]], row
-    assert [v["number"] for v in row["blockedBy"]] == [blocker["number"]], row
-    assert [v["number"] for v in row["blocking"]] == [blocked["number"]], row
+    assert [v["number"] for v in row["subIssues"]["nodes"]] == [child["number"]], row
+    assert [v["number"] for v in row["blockedBy"]["nodes"]] == [blocker["number"]], row
+    assert [v["number"] for v in row["blocking"]["nodes"]] == [blocked["number"]], row
     expect_ok(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--remove-parent",
                      "--remove-sub-issue", str(child["number"]), "--remove-blocked-by", str(blocker["number"]),
                      "--remove-blocking", str(blocked["number"])))
     expect_json(ctx.gh("issue", "view", number, "--repo", ctx.repo, "--json", "parent,subIssues,blockedBy,blocking"),
-                {"parent": None, "subIssues": [], "blockedBy": [], "blocking": []})
+                {"parent": None, "subIssues": {"nodes": []}, "blockedBy": {"nodes": []}, "blocking": {"nodes": []}})
     _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--parent", number, ok=None),
              "itself", "cycle", "invalid", "own")
 
@@ -415,10 +428,11 @@ def issue_edit_type(ctx):
 @case(command="issue edit", variant="missing metadata, issue, repository and permission", needs=("issue",))
 def issue_edit_errors(ctx):
     number = str(ctx.issue["number"])
-    _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--add-project", ctx.name("absent"), ok=None), "project")
-    _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--remove-project", ctx.name("absent"), ok=None), "project")
-    _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--type", ctx.name("absent"), ok=None), "type")
-    _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--add-label", ctx.name("absent"), ok=None), "label")
+    # gh names the missing project, type or label: "'<name>' not found".
+    _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--add-project", ctx.name("absent"), ok=None), "not found")
+    _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--remove-project", ctx.name("absent"), ok=None), "not found")
+    _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--type", ctx.name("absent"), ok=None), "not found", "type")
+    _failure(ctx.gh("issue", "edit", number, "--repo", ctx.repo, "--add-label", ctx.name("absent"), ok=None), "not found")
     _failure(ctx.gh("issue", "edit", "999999", "--repo", ctx.repo, "--body", "absent", ok=None), "Could not resolve", "not found")
     _failure(ctx.gh("issue", "edit", number, "--repo", _missing(ctx), "--body", "absent", ok=None), "Could not resolve", "Not Found")
     _failure(ctx.sweep.gh(_other(ctx), "issue", "edit", number, "--repo", ctx.repo, "--title", ctx.name("denied"), ok=None),
@@ -485,8 +499,9 @@ def issue_delete(ctx):
     number = str(ctx.issue["number"])
     _failure(ctx.sweep.gh(_other(ctx), "issue", "delete", number, "--repo", ctx.repo, "--yes", ok=None),
              "denied", "permission", "not permitted", "not accessible", "write access")
-    result = expect_ok(ctx.gh("issue", "delete", number, "--repo", ctx.repo, "--yes"))
-    assert "deleted" in (result.stdout + result.stderr).lower(), result
+    assert ctx.api("GET", f"repos/{ctx.repo}/issues/{number}")["number"] == int(number), "deleted by a non-owner"
+    # Off a terminal gh deletes silently.
+    expect_ok(ctx.gh("issue", "delete", number, "--repo", ctx.repo, "--yes"))
     assert ctx.api("GET", f"repos/{ctx.repo}/issues") == []
     _failure(ctx.gh("issue", "delete", number, "--repo", ctx.repo, "--yes", ok=None), "Could not resolve", "not found")
     _failure(ctx.gh("issue", "delete", number, "--repo", _missing(ctx), "--yes", ok=None), "Could not resolve", "Not Found")
@@ -495,30 +510,34 @@ def issue_delete(ctx):
 @case(command="issue lock", variant="reason, default, invalid and permission", needs=("issue",))
 def issue_lock(ctx):
     number = str(ctx.issue["number"])
-    expect_error(ctx.sweep.gh(_other(ctx), "issue", "lock", number, "--repo", ctx.repo, ok=None), status=403)
-    for reason in ("off_topic", "resolved", "spam", "too_heated"):
+    # gh locks through GraphQL lockLockable, so errors are GraphQL messages, not HTTP statuses.
+    _failure(ctx.sweep.gh(_other(ctx), "issue", "lock", number, "--repo", ctx.repo, ok=None),
+             "denied", "permission", "not accessible", "not permitted")
+    # REST spells the reasons "off-topic" and "too heated".
+    for reason, rest in (("off_topic", "off-topic"), ("resolved", "resolved"), ("spam", "spam"), ("too_heated", "too heated")):
         expect_ok(ctx.gh("issue", "lock", number, "--repo", ctx.repo, "--reason", reason))
         row = ctx.api("GET", f"repos/{ctx.repo}/issues/{number}")
-        assert row["locked"] is True and row["active_lock_reason"] == reason, row
+        assert row["locked"] is True and row["active_lock_reason"] == rest, row
         ctx.api("DELETE", f"repos/{ctx.repo}/issues/{number}/lock")
     expect_ok(ctx.gh("issue", "lock", number, "--repo", ctx.repo))
     assert ctx.api("GET", f"repos/{ctx.repo}/issues/{number}")["locked"] is True
     _failure(ctx.gh("issue", "lock", number, "--repo", ctx.repo, "--reason", "invalid", ok=None), "reason")
-    expect_error(ctx.gh("issue", "lock", "999999", "--repo", ctx.repo, ok=None), status=404, contains="Not Found")
-    expect_error(ctx.gh("issue", "lock", number, "--repo", _missing(ctx), ok=None), status=404, contains="Not Found")
+    _failure(ctx.gh("issue", "lock", "999999", "--repo", ctx.repo, ok=None), "Could not resolve", "not found")
+    _failure(ctx.gh("issue", "lock", number, "--repo", _missing(ctx), ok=None), "Could not resolve", "Not Found")
 
 
 @case(command="issue unlock", variant="unlock, idempotence, missing and permission", needs=("issue",))
 def issue_unlock(ctx):
     number = str(ctx.issue["number"])
     ctx.api("PUT", f"repos/{ctx.repo}/issues/{number}/lock", {"lock_reason": "resolved"})
-    expect_error(ctx.sweep.gh(_other(ctx), "issue", "unlock", number, "--repo", ctx.repo, ok=None), status=403)
+    _failure(ctx.sweep.gh(_other(ctx), "issue", "unlock", number, "--repo", ctx.repo, ok=None),
+             "denied", "permission", "not accessible", "not permitted")
     expect_ok(ctx.gh("issue", "unlock", number, "--repo", ctx.repo))
     row = ctx.api("GET", f"repos/{ctx.repo}/issues/{number}")
     assert row["locked"] is False and row["active_lock_reason"] is None, row
     expect_ok(ctx.gh("issue", "unlock", number, "--repo", ctx.repo))
-    expect_error(ctx.gh("issue", "unlock", "999999", "--repo", ctx.repo, ok=None), status=404, contains="Not Found")
-    expect_error(ctx.gh("issue", "unlock", number, "--repo", _missing(ctx), ok=None), status=404, contains="Not Found")
+    _failure(ctx.gh("issue", "unlock", "999999", "--repo", ctx.repo, ok=None), "Could not resolve", "not found")
+    _failure(ctx.gh("issue", "unlock", number, "--repo", _missing(ctx), ok=None), "Could not resolve", "Not Found")
 
 
 @case(command="issue pin", variant="pin, permission, three-pin capacity and missing", needs=("issue",))
@@ -573,7 +592,11 @@ def issue_develop(ctx):
     assert not empty.stdout.strip(), empty
     destination = ctx.sweep.create_repo(ctx.account, ctx.name("branch-repo"))["full_name"]
     base = ctx.api("GET", f"repos/{destination}")["default_branch"]
-    expect_ok(ctx.gh("issue", "develop", number, "--repo", ctx.repo, "--branch-repo", destination, "--base", base, "--name", name))
+    # With --base gh records the base in the local git config, so it needs a git directory.
+    local = ctx.directory / "local"
+    expect_ok(ctx.sweep.execute(ctx.account, ["git", "init", str(local)]))
+    expect_ok(ctx.gh("issue", "develop", number, "--repo", ctx.repo, "--branch-repo", destination, "--base", base,
+                     "--name", name, cwd=local))
     result = expect_ok(ctx.gh("issue", "develop", number, "--repo", ctx.repo, "--list"))
     assert name in result.stdout, result
     sha = ctx.api("GET", f"repos/{destination}/git/ref/heads/{name}")["object"]["sha"]
@@ -583,7 +606,7 @@ def issue_develop(ctx):
     _failure(ctx.gh("issue", "develop", number, "--repo", ctx.repo, "--branch-repo", _missing(ctx),
                     "--name", ctx.name("missing-target"), ok=None), "Could not resolve", "Not Found")
     _failure(ctx.gh("issue", "develop", number, "--repo", ctx.repo, "--base", ctx.name("absent"), "--name", ctx.name("bad-base"), ok=None),
-             "Could not resolve", "not found", "reference", "base")
+             "Could not resolve", "not found", "reference", "base", "could not find branch")
     _failure(ctx.sweep.gh(_other(ctx), "issue", "develop", number, "--repo", ctx.repo, "--name", ctx.name("denied"), ok=None),
              "write access", "denied", "not accessible", "permission", "not permitted")
 
@@ -593,7 +616,7 @@ def issue_develop_checkout(ctx):
     number, name = str(ctx.issue["number"]), ctx.name("checkout")
     clone = _clone(ctx)
     # Configure loopback fetch authentication only in this private clone.
-    expect_ok(ctx.sweep.execute(ctx.account, ["git", "config", "http.extraHeader", "Authorization: Bearer " + ctx.account.token], cwd=clone))
+    expect_ok(ctx.sweep.execute(ctx.account, ["git", "config", "http.extraHeader", _git_auth(ctx)], cwd=clone))
     expect_ok(ctx.gh("issue", "develop", number, "--repo", ctx.repo, "--name", name, "--checkout", cwd=clone))
     branch = expect_ok(ctx.sweep.execute(ctx.account, ["git", "branch", "--show-current"], cwd=clone))
     assert branch.stdout.strip() == name, branch
@@ -651,13 +674,13 @@ def issue_status(ctx):
     title = ctx.name("status")
     issue = _issue(ctx, title, body="hello @" + ctx.account.name, assignees=[ctx.account.name])
     row = expect_json(ctx.gh("issue", "status", "--repo", ctx.repo, "--json", "number,title"),
-                      {"assignedToYou": list, "createdByYou": list, "mentioningYou": list})
-    for key in ("assignedToYou", "createdByYou", "mentioningYou"):
+                      {"assigned": list, "createdBy": list, "mentioned": list})
+    for key in ("assigned", "createdBy", "mentioned"):
         assert {"number": issue["number"], "title": title} in row[key], row
     assert expect_ok(ctx.gh("issue", "status", "--repo", ctx.repo, "--json", "title",
-                            "--jq", ".createdByYou[0].title")).stdout.strip() == title
+                            "--jq", ".createdBy[0].title")).stdout.strip() == title
     assert expect_ok(ctx.gh("issue", "status", "--repo", ctx.repo, "--json", "title",
-                            "--template", "{{range .createdByYou}}{{.title}}{{end}}")).stdout == title
+                            "--template", "{{range .createdBy}}{{.title}}{{end}}")).stdout == title
     plain = expect_ok(ctx.gh("issue", "status", "--repo", ctx.repo))
     assert title in plain.stdout, plain
     _failure(ctx.gh("issue", "status", "--repo", _missing(ctx), ok=None), "Could not resolve", "Not Found")
@@ -692,8 +715,8 @@ def label_edit(ctx):
     assert (row["name"], row["color"], row["description"]) == (renamed, "abcdef", "new description"), row
     existing = _label(ctx)["name"]
     expect_error(ctx.gh("label", "edit", renamed, "--repo", ctx.repo, "--name", existing, ok=None), status=422)
-    expect_ok(ctx.gh("label", "edit", renamed, "--repo", ctx.repo, "--description", ""))
-    assert ctx.api("GET", f"repos/{ctx.repo}/labels/{renamed}")["description"] in (None, "")
+    # gh cannot clear a description: an empty --description alone counts as no change.
+    _failure(ctx.gh("label", "edit", renamed, "--repo", ctx.repo, "--description", "", ok=None), "specify at least one")
     expect_error(ctx.gh("label", "edit", name, "--repo", ctx.repo, "--description", "missing", ok=None), status=404, contains="Not Found")
     expect_error(ctx.gh("label", "edit", renamed, "--repo", _missing(ctx), "--description", "missing", ok=None), status=404, contains="Not Found")
     _failure(ctx.gh("label", "edit", renamed, "--repo", ctx.repo, "--color", "xyz", ok=None), "color", "hex")
@@ -845,7 +868,8 @@ def issue_comment_authors(ctx):
 
 @case(command="issue create", variant="conflicting body flags", needs=("repo",))
 def issue_create_bad_flags(ctx):
-    _failure(ctx.gh("issue", "create", "--repo", ctx.repo, "--title", ctx.name("conflict"),
-                    "--body", "body", "--body-file", "-", input="body", ok=None),
-             "cannot", "mutually exclusive", "only one")
+    # --body-file replaces --body instead of conflicting with it.
+    number = _number(ctx.gh("issue", "create", "--repo", ctx.repo, "--title", ctx.name("conflict"),
+                            "--body", "body", "--body-file", "-", input="from stdin"))
+    assert ctx.api("GET", f"repos/{ctx.repo}/issues/{number}")["body"] == "from stdin"
 
