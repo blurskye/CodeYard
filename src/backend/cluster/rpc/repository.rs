@@ -1,6 +1,6 @@
 use super::{wire::*, RpcHandler};
 use crate::backend::{
-    cluster::replicas::{copy_path, moving, MOVE_WAIT},
+    cluster::replicas::copy_path,
     db,
     repositories::{
         access,
@@ -274,11 +274,32 @@ impl RpcHandler {
             if !primary.exists() && copy.exists() {
                 // Promotion changes the row before periodic relocation. Never move a
                 // mirror underneath an admitted reader, including a second authorization
-                // pass which already owns a read guard. Refuse after a short wait instead of
-                // nesting the same mutex or waiting behind a long clone.
-                let guards = tokio::time::timeout(MOVE_WAIT, moving(&primary, &copy))
-                    .await
-                    .map_err(|_| unavailable())?;
+                // pass which already owns a read guard. Refuse briefly instead of nesting
+                // the same mutex or waiting behind a long clone.
+                let primary_guard = tokio::time::timeout(
+                    std::time::Duration::from_millis(1),
+                    crate::backend::git::locks::lock(&primary),
+                )
+                .await
+                .map_err(|_| unavailable())?;
+                let mirror_guard = tokio::time::timeout(
+                    std::time::Duration::from_millis(1),
+                    crate::backend::git::locks::lock(&copy),
+                )
+                .await
+                .map_err(|_| unavailable())?;
+                let primary_readers = tokio::time::timeout(
+                    std::time::Duration::from_millis(1),
+                    crate::backend::git::locks::exclusive(&primary),
+                )
+                .await
+                .map_err(|_| unavailable())?;
+                let mirror_readers = tokio::time::timeout(
+                    std::time::Duration::from_millis(1),
+                    crate::backend::git::locks::exclusive(&copy),
+                )
+                .await
+                .map_err(|_| unavailable())?;
                 let current = db::repositories::records::get_repository_by_id(pool, repo.id)
                     .await
                     .map_err(|_| unavailable())?
@@ -288,7 +309,7 @@ impl RpcHandler {
                 }
                 let target = primary.clone();
                 tokio::task::spawn_blocking(move || {
-                    let _guards = guards;
+                    let _guards = (primary_guard, mirror_guard, primary_readers, mirror_readers);
                     if !target.exists() {
                         std::fs::rename(&copy, &target)?;
                     }

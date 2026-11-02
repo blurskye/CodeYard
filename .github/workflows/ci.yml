@@ -65,7 +65,7 @@ jobs:
         # in-house workflow runner.
         run: cargo build --locked -p codeyard -p codeyard-actions --bin codeyard --bin codeyard-actions
       - name: Build the pinned patched act
-        # The engine tests need the pinned act version, with the patch that scopes
+        # The engine tests need the act version that build.nix pins, with the patch that scopes
         # environment values to each job. The tarball must match the pinned SHA-256 digest.
         run: |
           work="$RUNNER_TEMP/act"

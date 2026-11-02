@@ -5,11 +5,10 @@ Start with the [README](../README.md) for setup.
 ## Reference
 
 - [Architecture](ARCHITECTURE.md): the high-level code map, request flows, data layout and how clustering works.
+- [Crate split plan](CRATE_SPLIT_PLAN.md): how the root package is to be split into workspace crates, move only.
 - [HTTP API](API.md): the JSON endpoints, account rules, errors and limits.
 - [Gists](GISTS.md): native snippets, Git transport, secret links, limits and recovery.
 - [Running a cluster](CLUSTER.md): roles, pairing nodes, storage nodes, CI workers and limits.
-- [Cluster readiness plan](CLUSTER_PLAN.md): checks on the cluster that exists, what is still missing, and the decision for each open question.
-- [Crate split plan](CRATE_SPLIT_PLAN.md): how the one big crate becomes crates under `backend/`, with the order and the circles to cut.
 - [CI API](CI_API.md): workflow runs, who may start them, statuses and known gaps.
 - [GitHub API plan](GITHUB_API_PLAN.md): making `/api/v3` and GraphQL match GitHub, what stays unsupported, and the worker split.
 - [Pages and repository security](PAGES_AND_SECURITY.md): Pages control-plane limits, pinned dependency/SBOM reports and confidential advisory workflows.
@@ -32,9 +31,8 @@ Start with the [README](../README.md) for setup.
 - `scripts/e2e.sh` starts real servers on SQLite, PostgreSQL and a four-node cluster
   and drives them over HTTP, SSH and Git, including remote storage and database-free CI.
   Its SSR and served JS/WASM checks do not execute hydrated browser navigation.
-- The image requires patched `act` 0.2.89-codeyard.1: the pinned v0.2.89 source with
-  [job-scoped environment support](../patches/act-environment-values.patch), built as in
-  [the CI workflow](../.github/workflows/ci.yml).
+- The image requires patched `act` 0.2.89-codeyard.1, pinned in
+  [build.nix](../build.nix) with [job-scoped environment support](../patches/act-environment-values.patch).
   `scripts/e2e.sh` runs the workflow runner named by `E2E_ACT_BINARY`, which must be that same build.
 - `scripts/s3-tests.sh` runs the `#[ignore]`d S3 tests of `tests/storage/production_storage.rs`
   against a throwaway RustFS. It needs `GITSERV_TEST_DATABASE_URL` and `RUSTFS_BIN`.
