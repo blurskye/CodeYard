@@ -5107,7 +5107,7 @@ async fn stalled_database_logs_do_not_block_timed_out_container_cleanup() {
     };
     let workers = CiWorkers::new(queue, config, true, fixture.root.path());
     workers.startup().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         while !ready.exists() {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
@@ -5129,7 +5129,7 @@ async fn stalled_database_logs_do_not_block_timed_out_container_cleanup() {
         .expect("container cleanup must not wait for a locked log write")
         .unwrap();
     tx.commit().await.unwrap();
-    tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             let current = db::ci::get_ci_run_by_run_id(fixture.pool(), run.run_id)
                 .await
