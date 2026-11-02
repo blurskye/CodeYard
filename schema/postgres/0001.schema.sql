@@ -3356,6 +3356,14 @@ ALTER TABLE discussions ADD FOREIGN KEY(answer_id) REFERENCES discussion_comment
 CREATE INDEX discussion_comments_thread ON discussion_comments(discussion_id,reply_to_id,id);
 CREATE UNIQUE INDEX discussion_one_answer ON discussion_comments(discussion_id) WHERE is_answer;
 
+-- The discussion category a release asked for (discussion_category_name), and the discussion
+-- it started once published. Deleting that discussion removes the link.
+CREATE TABLE release_discussions (
+    release_id BIGINT PRIMARY KEY REFERENCES releases(id) ON DELETE CASCADE,
+    category_id BIGINT NOT NULL REFERENCES discussion_categories(id) ON DELETE CASCADE,
+    discussion_id BIGINT UNIQUE REFERENCES discussions(id) ON DELETE CASCADE
+);
+
 CREATE TABLE discussion_labels (
     discussion_id BIGINT NOT NULL REFERENCES discussions(id) ON DELETE CASCADE,
     label_id BIGINT NOT NULL REFERENCES labels(id) ON DELETE CASCADE,

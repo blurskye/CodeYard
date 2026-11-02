@@ -609,3 +609,40 @@ pub async fn count_asset_download(pool: &SqlitePool, asset_id: i64) -> Result<()
         .await?;
     Ok(())
 }
+
+pub async fn release_discussion(
+    pool: &SqlitePool,
+    release_id: i64,
+) -> Result<Option<crate::backend::db::releases::ReleaseDiscussion>> {
+    Ok(sqlx::query_as("SELECT l.category_id, d.number FROM release_discussions l LEFT JOIN discussions d ON d.id = l.discussion_id WHERE l.release_id = ?1")
+        .bind(release_id)
+        .fetch_optional(pool)
+        .await?)
+}
+
+pub async fn set_release_discussion_category(
+    pool: &SqlitePool,
+    release_id: i64,
+    category_id: i64,
+) -> Result<()> {
+    sqlx::query("INSERT INTO release_discussions (release_id, category_id) VALUES (?1, ?2) ON CONFLICT (release_id) DO UPDATE SET category_id = excluded.category_id WHERE release_discussions.discussion_id IS NULL")
+        .bind(release_id)
+        .bind(category_id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
+pub async fn link_release_discussion(
+    pool: &SqlitePool,
+    release_id: i64,
+    discussion_id: i64,
+) -> Result<bool> {
+    Ok(sqlx::query("UPDATE release_discussions SET discussion_id = ?2 WHERE release_id = ?1 AND discussion_id IS NULL")
+        .bind(release_id)
+        .bind(discussion_id)
+        .execute(pool)
+        .await?
+        .rows_affected()
+        == 1)
+}

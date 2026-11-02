@@ -3642,6 +3642,83 @@ async fn releases_contract(pg: bool) {
         StatusCode::NOT_FOUND,
     )
     .await;
+    // discussion_category_name: an unknown category is refused before anything is saved, and
+    // publishing a draft starts the discussion its category asked for.
+    let category = json!({"tag_name":"v3.0","discussion_category_name":"General"});
+    checked(
+        &router,
+        "repos/create-release",
+        "POST",
+        base,
+        Some(writer),
+        category.clone(),
+        StatusCode::UNPROCESSABLE_ENTITY,
+    )
+    .await;
+    checked(
+        &router,
+        "repos/update",
+        "PATCH",
+        "/api/v3/repos/alice/public",
+        Some(writer),
+        json!({"has_discussions":true}),
+        StatusCode::OK,
+    )
+    .await;
+    let missing = json!({"tag_name":"v3.0","discussion_category_name":"Missing"});
+    checked(
+        &router,
+        "repos/create-release",
+        "POST",
+        base,
+        Some(writer),
+        missing,
+        StatusCode::UNPROCESSABLE_ENTITY,
+    )
+    .await;
+    let (_, started) = checked(
+        &router,
+        "repos/create-release",
+        "POST",
+        base,
+        Some(writer),
+        category,
+        StatusCode::CREATED,
+    )
+    .await;
+    assert!(
+        started["discussion_url"]
+            .as_str()
+            .is_some_and(|url| url.contains("/alice/public/discussions/")),
+        "{started}"
+    );
+    let (_, draft) = checked(
+        &router,
+        "repos/create-release",
+        "POST",
+        base,
+        Some(writer),
+        json!({"tag_name":"v3.1","draft":true,"discussion_category_name":"ideas"}),
+        StatusCode::CREATED,
+    )
+    .await;
+    assert!(draft["discussion_url"].is_null(), "{draft}");
+    let (_, published) = checked(
+        &router,
+        "repos/update-release",
+        "PATCH",
+        &format!("{base}/{}", draft["id"]),
+        Some(writer),
+        json!({"draft":false}),
+        StatusCode::OK,
+    )
+    .await;
+    assert!(
+        published["discussion_url"]
+            .as_str()
+            .is_some_and(|url| url.contains("/alice/public/discussions/")),
+        "{published}"
+    );
 }
 
 #[tokio::test]

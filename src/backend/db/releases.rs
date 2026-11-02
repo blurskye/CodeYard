@@ -248,6 +248,27 @@ native_operation!(crate::backend::db::postgres::releases::get_release,
     crate::backend::db::sqlite::releases::get_release,
     fn get_release(pool: &DbPool, repo_id: i64, release_id: i64) -> Result<Option<ReleaseRow>>);
 
+/// The discussion category a release asked for, and the number of the discussion it started.
+#[derive(Clone, Copy, Debug, sqlx::FromRow)]
+pub struct ReleaseDiscussion {
+    pub category_id: i64,
+    pub number: Option<i32>,
+}
+
+native_operation!(crate::backend::db::postgres::releases::release_discussion,
+    crate::backend::db::sqlite::releases::release_discussion,
+    fn release_discussion(pool: &DbPool, release_id: i64) -> Result<Option<ReleaseDiscussion>>);
+
+// A release keeps the category until it has started its discussion.
+native_operation!(crate::backend::db::postgres::releases::set_release_discussion_category,
+    crate::backend::db::sqlite::releases::set_release_discussion_category,
+    fn set_release_discussion_category(pool: &DbPool, release_id: i64, category_id: i64) -> Result<()>);
+
+// Links the discussion a release started; false when another request linked one first.
+native_operation!(crate::backend::db::postgres::releases::link_release_discussion,
+    crate::backend::db::sqlite::releases::link_release_discussion,
+    fn link_release_discussion(pool: &DbPool, release_id: i64, discussion_id: i64) -> Result<bool>);
+
 // Newest first. Drafts are left out unless `include_drafts` is set.
 #[derive(Clone, Copy)]
 pub enum ReleaseOrder {

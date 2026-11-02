@@ -96,6 +96,16 @@ async fn contract(pg: bool) {
         403,
     )
     .await;
+    // gh prints "a gist file cannot be blank" on this 422.
+    send(
+        &router,
+        "POST",
+        "/api/v3/gists",
+        write,
+        Some(json!({"files":{"blank.txt":{"content":" \n"}}})),
+        422,
+    )
+    .await;
     let (_, public) = send(&router, "POST", "/api/v3/gists", write, Some(input), 201).await;
     let id = public["id"].as_str().unwrap();
     assert!(public["html_url"]

@@ -143,8 +143,14 @@ pub async fn create(
     credential: GistCredential,
     input: CreateGist,
 ) -> Result<LoadedGist> {
+    // As on GitHub, a new gist file cannot be blank.
     ensure!(
-        !input.files.is_empty() && input.files.len() <= MAX_GIST_FILES,
+        !input.files.is_empty()
+            && input.files.len() <= MAX_GIST_FILES
+            && input
+                .files
+                .values()
+                .all(|content| !content.trim().is_empty()),
         GistRefusal::Invalid
     );
     let edit = GistEdit {

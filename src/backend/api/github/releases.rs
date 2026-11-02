@@ -72,6 +72,18 @@ pub(super) async fn document(
         assets.push(asset_document(state, owner, name, release, asset).await?);
     }
     let mut value = payloads::release_json(release, &author, owner, name, Some(assets));
+    if let Some(number) = db::releases::release_discussion(&state.pool, release.id)
+        .await
+        .map_err(Error::unavailable)?
+        .and_then(|discussion| discussion.number)
+    {
+        value["discussion_url"] = Value::String(format!(
+            "{}/{}/{}/discussions/{number}",
+            crate::backend::api::http::config::link_origin(),
+            crate::webui::encode_component(owner),
+            crate::webui::encode_component(name)
+        ));
+    }
     let counts = db::reactions::reaction_counts(&state.pool, "release", &[release.id], 0)
         .await
         .map_err(Error::unavailable)?;
@@ -163,6 +175,7 @@ struct Create {
     make_latest: Option<String>,
     #[serde(default)]
     generate_release_notes: bool,
+    discussion_category_name: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -207,6 +220,93 @@ async fn may_create_tag(state: &AppState, auth: &auth::Authentication) -> Result
             .map_err(Error::unavailable)?)
 }
 
+/// The category `discussion_category_name` names. As on GitHub, an unknown category, or any
+/// category while discussions are off, is refused before the release is saved.
+async fn discussion_category(
+    state: &AppState,
+    repo_id: i64,
+    name: Option<&str>,
+) -> Result<Option<i64>> {
+    let Some(name) = name.filter(|name| !name.is_empty()) else {
+        return Ok(None);
+    };
+    let pool = &state.pool;
+    let category = if db::repository_discussions::enabled(pool, repo_id)
+        .await
+        .map_err(Error::unavailable)?
+    {
+        db::repository_discussions::categories(pool, repo_id)
+            .await
+            .map_err(Error::unavailable)?
+            .into_iter()
+            .find(|category| {
+                category.name.eq_ignore_ascii_case(name) || category.slug.eq_ignore_ascii_case(name)
+            })
+    } else {
+        None
+    };
+    category
+        .map(|category| Some(category.id))
+        .ok_or_else(|| Error::validation("Release", "discussion_category_name", "invalid"))
+}
+
+/// Records the requested category and, once the release is published, starts its discussion.
+async fn start_discussion(
+    state: &AppState,
+    auth: &auth::Authentication,
+    release: &db::models::Release,
+    category: Option<i64>,
+) -> Result<()> {
+    let pool = &state.pool;
+    if let Some(category) = category {
+        db::releases::set_release_discussion_category(pool, release.id, category)
+            .await
+            .map_err(Error::unavailable)?;
+    }
+    if release.is_draft {
+        return Ok(());
+    }
+    let Some(pending) = db::releases::release_discussion(pool, release.id)
+        .await
+        .map_err(Error::unavailable)?
+        .filter(|pending| pending.number.is_none())
+    else {
+        return Ok(());
+    };
+    let title = release
+        .name
+        .as_deref()
+        .filter(|name| !name.trim().is_empty())
+        .unwrap_or(&release.tag_name);
+    let id = db::repository_discussions::write(
+        pool,
+        auth.user.id,
+        &auth.credential(),
+        release.repo_id,
+        None,
+        &db::repository_discussions::Write::Create {
+            category: pending.category_id,
+            title,
+            body: release.body.as_deref().unwrap_or_default(),
+        },
+    )
+    .await
+    .map_err(|error| {
+        use db::repository_discussions::Refusal;
+        match error.downcast_ref::<Refusal>() {
+            Some(Refusal::Denied) => Error::new(StatusCode::FORBIDDEN, "Discussion write denied"),
+            Some(Refusal::Invalid | Refusal::Missing) => {
+                Error::validation("Release", "discussion_category_name", "invalid")
+            }
+            None => Error::unavailable(error),
+        }
+    })?;
+    db::releases::link_release_discussion(pool, release.id, id)
+        .await
+        .map_err(Error::unavailable)?;
+    Ok(())
+}
+
 async fn create(
     State(state): State<Arc<AppState>>,
     headers: HeaderMap,
@@ -217,7 +317,9 @@ async fn create(
     let auth = auth.ok_or_else(auth::required)?;
     // The release code refuses a new tag where the tag is made.
     let new_tag_denied = !may_create_tag(&state, &auth).await?;
-    let actor = auth.user;
+    let category =
+        discussion_category(&state, repo.id, input.discussion_category_name.as_deref()).await?;
+    let actor = &auth.user;
     let latest = match input.make_latest.as_deref() {
         Some("false") => releases::LatestSelection::Keep,
         Some("legacy") => releases::LatestSelection::Legacy,
@@ -274,6 +376,7 @@ async fn create(
     )
     .await
     .map_err(release_error)?;
+    start_discussion(&state, &auth, &release, category).await?;
     let detail = releases::detail_by_id(&state.pool, Some(actor.id), repo.id, release.id)
         .await
         .map_err(release_error)?;
@@ -293,6 +396,7 @@ struct Update {
     make_latest: Option<String>,
     tag_name: Option<String>,
     target_commitish: Option<String>,
+    discussion_category_name: Option<String>,
 }
 
 async fn update(
@@ -307,7 +411,9 @@ async fn update(
         .map_err(|_| Error::invalid("Invalid release fields"))?;
     // Publishing a draft creates its tag when the tag is missing.
     let new_tag_denied = !may_create_tag(&state, &auth).await?;
-    let actor = auth.user;
+    let category =
+        discussion_category(&state, repo.id, input.discussion_category_name.as_deref()).await?;
+    let actor = &auth.user;
     let latest = match input.make_latest.as_deref() {
         None => None,
         Some("true") => Some(releases::LatestSelection::Promote),
@@ -341,6 +447,7 @@ async fn update(
     let detail = releases::detail_by_id(&state.pool, Some(actor.id), repo.id, id)
         .await
         .map_err(release_error)?;
+    start_discussion(&state, &auth, &detail.release.release, category).await?;
     Ok(Json(document(&state, &owner, &name, &detail).await?))
 }
 
