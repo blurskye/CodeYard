@@ -230,6 +230,38 @@ fn store_at(path: &Path, node_id: i64) -> Result<RepoStore, RepoError> {
 }
 
 impl RpcHandler {
+    async fn admitted_store(
+        &self,
+        repo_id: Option<i64>,
+        path: &Path,
+        read_only: bool,
+    ) -> Result<RepoStore, RepoError> {
+        let pool = self.context.database()?;
+        if let Some(id) = repo_id {
+            let repository = db::repositories::records::get_repository_by_id(pool, id)
+                .await
+                .map_err(|_| unavailable())?
+                .ok_or_else(unavailable)?;
+            if repository.storage_node_id.is_some()
+                && db::cluster::writes::write_settings(pool)
+                    .await
+                    .map_err(|_| unavailable())?
+                    .write_quorum
+                    .is_some()
+            {
+                let store = self
+                    .context
+                    .repository_store(&repository, read_only)
+                    .await?;
+                if Path::new(store.location()) != path {
+                    return Err(unavailable());
+                }
+                return Ok(store);
+            }
+        }
+        store_at(path, self.context.node_id)
+    }
+
     async fn initialize_copy(
         &self,
         store: &RepoStore,
@@ -239,7 +271,7 @@ impl RpcHandler {
         options: &crate::backend::repositories::store::CopyOptions,
     ) -> Result<(), RepoError> {
         let (source_repo_id, path) = self.check_repository(source, false, false).await?;
-        let source = store_at(&path, self.context.node_id)?;
+        let source = self.admitted_store(source_repo_id, &path, false).await?;
         store
             .initialize_copy(
                 self.context.database()?,
@@ -274,6 +306,19 @@ impl RpcHandler {
             }
             return Err(RepoError::storage_node_unavailable());
         };
+        if repo.storage_node_id.is_some()
+            && db::cluster::writes::write_settings(pool)
+                .await
+                .map_err(|_| unavailable())?
+                .write_quorum
+                .is_some()
+        {
+            let (path, _) = self
+                .context
+                .repository_path(repo.id, uuid, read_only, None)
+                .await?;
+            return Ok((Some(repo.id), path));
+        }
         // A repository from before the cluster has no node; it is on the node that
         // has its directory.
         let primary_here = repo.storage_node_id == Some(self.context.node_id)
@@ -452,7 +497,11 @@ impl RpcHandler {
                 return Err(invalid("Git credential required"));
             }
         }
-        Ok((store_at(&directory, self.context.node_id)?, repo_id))
+        Ok((
+            self.admitted_store(repo_id, &directory, request.operation.is_read_only())
+                .await?,
+            repo_id,
+        ))
     }
 
     async fn write_admission(
@@ -514,8 +563,24 @@ impl RpcHandler {
         {
             return Err(unavailable());
         }
-        let (_, path) = self
-            .check_repository(request.repository, false, !pack)
+        // Write RPCs must reach a voter whose applied version is still the batch's base.
+        // Ordinary serving admission correctly refuses that copy after the SQL decision.
+        let local = db::cluster::get_node_by_id(pool, self.context.node_id)
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+        if local.status != "active"
+            || local.public_key != self.context.key.public_hex()
+            || !local.roles.iter().any(|role| role == "storage")
+        {
+            return Err(unavailable());
+        }
+        let path = crate::backend::cluster::context::term_path(
+            &self.context.repos_path,
+            request.repository,
+            write.term,
+        );
+        crate::backend::cluster::context::literal_directory(&self.context.repos_path, &path)
             .await?;
         Ok((store_at(&path, self.context.node_id)?, Some(repo.id)))
     }
@@ -707,7 +772,9 @@ impl RpcHandler {
                     self.check_repository(source, false, false).await?;
                 let source_repo_id =
                     source_repo_id.ok_or_else(|| invalid("repository unavailable"))?;
-                let source = store_at(&source_path, self.context.node_id)?;
+                let source = self
+                    .admitted_store(Some(source_repo_id), &source_path, false)
+                    .await?;
                 json!(store.fetch_pull_head(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -726,7 +793,9 @@ impl RpcHandler {
             Operation::UpdatePullBranch { source, request } => {
                 let (source_repo_id, source_path) =
                     self.check_repository(source, false, false).await?;
-                let source = store_at(&source_path, self.context.node_id)?;
+                let source = self
+                    .admitted_store(source_repo_id, &source_path, false)
+                    .await?;
                 json!(store.update_pull_branch_as(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
@@ -1006,14 +1075,8 @@ impl RpcHandler {
                 base_ref,
                 head_ref,
             } => {
-                self.check_repository(source, false, false).await?;
-                let source = store_at(
-                    &crate::backend::repositories::store::primary_path(
-                        &self.context.repos_path,
-                        source,
-                    ),
-                    self.context.node_id,
-                )?;
+                let (source_id, path) = self.check_repository(source, false, false).await?;
+                let source = self.admitted_store(source_id, &path, false).await?;
                 json!(store.diff_from(&source, &base_ref, &head_ref))
             }
             Operation::ComparisonFrom {
@@ -1024,14 +1087,8 @@ impl RpcHandler {
                 limit,
                 raw_json,
             } => {
-                self.check_repository(source, false, false).await?;
-                let source = store_at(
-                    &crate::backend::repositories::store::primary_path(
-                        &self.context.repos_path,
-                        source,
-                    ),
-                    self.context.node_id,
-                )?;
+                let (source_id, path) = self.check_repository(source, false, false).await?;
+                let source = self.admitted_store(source_id, &path, false).await?;
                 let comparison = store
                     .comparison_from(&source, &base_ref, &head_ref, offset, limit)
                     .await?;
@@ -1129,14 +1186,8 @@ impl RpcHandler {
                 branch,
                 token,
             } => {
-                let (source_id, _) = self.check_repository(source, false, false).await?;
-                let from = store_at(
-                    &crate::backend::repositories::store::primary_path(
-                        &self.context.repos_path,
-                        source,
-                    ),
-                    self.context.node_id,
-                )?;
+                let (source_id, path) = self.check_repository(source, false, false).await?;
+                let from = self.admitted_store(source_id, &path, false).await?;
                 json!(store.merge_upstream_as(
                     pool,
                     repo_id.ok_or_else(|| invalid("repository unavailable"))?,
