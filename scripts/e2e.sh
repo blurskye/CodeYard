@@ -355,8 +355,9 @@ def quote(value):
     if any(c in value for c in '\r\n\x00'):
         raise ValueError('invalid PgBouncer connection setting')
     return "'" + value.replace('\\', '\\\\').replace("'", "\\'") + "'"
-sslmode = query.get('sslmode', query.get('ssl-mode', 'prefer')).replace('-', '')
-if sslmode not in ('disable', 'allow', 'prefer', 'require', 'verifyca', 'verifyfull'):
+sslmode = query.get('sslmode', query.get('ssl-mode', 'prefer'))
+sslmode = {'verifyca': 'verify-ca', 'verifyfull': 'verify-full'}.get(sslmode, sslmode)
+if sslmode not in ('disable', 'allow', 'prefer', 'require', 'verify-ca', 'verify-full'):
     raise ValueError('unsupported PgBouncer TLS mode')
 # Forced backend credentials are private; clients use separate throwaway credentials.
 client_password = secrets.token_hex(32)

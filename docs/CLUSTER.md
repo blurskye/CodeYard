@@ -253,11 +253,11 @@ Reads go to the primary. When the primary gives no reply, a read-only request (a
 API read, or a clone or fetch over HTTP or SSH) is answered by a copy instead. The copies
 are tried in turn: only online storage nodes whose copy has applied the repository's current
 write version are eligible. A primary that answers, even with "not found", is never
-bypassed, and a Git session is retried only before the node's first reply. The serving node checks that version again before admitting the read, so pages, clones and
-fetches never fall back to a copy that is behind. If no current copy can answer, the read
-fails rather than returning older data. After a
-dial to a node fails, requests for it skip the wait for five seconds and go straight to
-the copies. A web node that also holds the copy reads it directly.
+bypassed, and a Git session is retried only before the node's first reply. The serving node
+checks that version again before admitting the read, so pages, clones and fetches never
+fall back to a copy that is behind. If no current copy can answer, the read fails rather
+than returning older data. After a dial to a node fails, requests for it skip the wait for
+five seconds and go straight to the copies. A web node that also holds the copy reads it directly.
 
 `codeyard cluster replicas` shows, for each node, its primaries, its copies, how many of
 them are current and how many are behind.

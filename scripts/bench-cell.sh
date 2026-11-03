@@ -183,8 +183,7 @@ try:
             org = f'bench-org-{index % 50}'
             for kind, path in [('api', f'/api/v3/repos/{org}/bench/issues?per_page=10'),
                                ('page', f'/{org}/bench/issues')]:
-                config.write(f'url = "{base}{path}"\noutput = "/dev/null"\n'
-                             f'write-out = "{kind} %{{http_code}} %{{time_total}}\\n"\n')
+                config.write(f'url = "{base}{path}"\noutput = "/dev/null"\n')
     samples = {'push': [], 'clone': [], 'api': [], 'page': []}
     clone_bytes = 0
     started = time.monotonic()
@@ -198,7 +197,8 @@ try:
             with (work / 'read-times').open('wb') as output, (work / 'curl.log').open('ab') as errors:
                 read_process = subprocess.Popen(['curl', '-q', '--noproxy', '*', '-fsS', '--parallel',
                     '--parallel-immediate', '--parallel-max', '500', '--max-time', '30',
-                    '--max-filesize', '2097152', '--config', str(reads)], stdout=output, stderr=errors)
+                    '--max-filesize', '2097152', '--write-out', '%{url_effective} %{http_code} %{time_total}\\n',
+                    '--config', str(reads)], stdout=output, stderr=errors)
                 try:
                     code = read_process.wait(timeout=45)
                 except subprocess.TimeoutExpired:
@@ -210,7 +210,8 @@ try:
             if len(lines) != 1000:
                 raise RuntimeError('Incomplete reader batch')
             for line in lines:
-                kind, status, seconds = line.split()
+                read_url, status, seconds = line.split()
+                kind = 'api' if u.urlsplit(read_url).path.startswith('/api/v3/') else 'page'
                 if status != '200':
                     raise RuntimeError(f'{kind} read returned HTTP {status}')
                 samples[kind].append(float(seconds))
