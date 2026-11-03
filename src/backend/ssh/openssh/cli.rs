@@ -91,6 +91,9 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
         } => {
             use protocol::TransactionPhase;
             let phase = match phase.as_str() {
+                // Newer Git runs the hook once before it locks the references; only the
+                // later phases carry the final old and new values.
+                "preparing" => return Ok(0),
                 "prepared" => TransactionPhase::Prepared,
                 "committed" => TransactionPhase::Committed,
                 "aborted" => TransactionPhase::Aborted,

@@ -160,7 +160,7 @@ impl Broker {
         let config = Arc::new(config.unwrap_or_default());
         let queued = Arc::new(tokio::sync::Notify::new());
         let notifications = Arc::new(NotificationBroadcaster::new(&pool));
-        notifications.start().await;
+        notifications.start().await.unwrap();
         let ci = CiRuns::new(
             pool.clone(),
             config.clone(),

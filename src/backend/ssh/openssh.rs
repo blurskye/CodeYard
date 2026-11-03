@@ -46,7 +46,7 @@ pub enum Commands {
         key_id: i64,
         #[arg(long, value_parser = positive_id)]
         repo_id: i64,
-        #[arg(value_parser = ["prepared", "committed", "aborted"])]
+        #[arg(value_parser = ["preparing", "prepared", "committed", "aborted"])]
         phase: String,
     },
     PostReceive {
