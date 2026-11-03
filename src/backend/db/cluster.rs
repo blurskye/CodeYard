@@ -212,6 +212,9 @@ native_operation!(crate::backend::db::postgres::cluster::list_primary_paths,
 native_operation!(crate::backend::db::postgres::cluster::read_candidates,
     crate::backend::db::sqlite::cluster::read_candidates,
     fn read_candidates(pool: &DbPool, uuid: &str, previous: i64) -> Result<Vec<(i64, bool)>>);
+native_operation!(crate::backend::db::postgres::cluster::replica_is_current,
+    crate::backend::db::sqlite::cluster::replica_is_current,
+    fn replica_is_current(pool: &DbPool, repository: i64, node: i64) -> Result<bool>);
 native_operation!(crate::backend::db::postgres::cluster::replica_applied_version,
     crate::backend::db::sqlite::cluster::replica_applied_version,
     fn replica_applied_version(pool: &DbPool, repository: i64, node: i64) -> Result<Option<i64>>);

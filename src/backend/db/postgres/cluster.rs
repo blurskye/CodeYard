@@ -451,6 +451,11 @@ pub async fn read_candidates(pool: &PgPool, uuid: &str, previous: i64) -> Result
         .bind(uuid).bind(previous).fetch_all(pool).await?)
 }
 
+pub async fn replica_is_current(pool: &PgPool, repository: i64, node: i64) -> Result<bool> {
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_replicas rr JOIN repositories r ON r.id=rr.repository_id WHERE rr.repository_id=$1 AND rr.node_id=$2 AND rr.node_id IS DISTINCT FROM r.storage_node_id AND rr.applied_version>=0 AND rr.applied_version=r.write_version)")
+        .bind(repository).bind(node).fetch_one(pool).await?)
+}
+
 pub async fn replica_applied_version(
     pool: &PgPool,
     repository: i64,

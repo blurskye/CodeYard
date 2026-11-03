@@ -159,6 +159,10 @@ async fn check_replica_rules(pool: &DbPool) {
         Some(0)
     );
 
+    assert!(!db::cluster::replica_is_current(pool, repo, b)
+        .await
+        .unwrap());
+
     // Only the primary adds copies, and a primary never holds a copy of itself.
     assert!(db::cluster::insert_replica(pool, repo, b, a).await.unwrap());
     assert!(!db::cluster::insert_replica(pool, repo, b, a).await.unwrap());
@@ -181,9 +185,21 @@ async fn check_replica_rules(pool: &DbPool) {
     );
     assert!(db::cluster::insert_replica(pool, repo, c, a).await.unwrap());
 
+    db::cluster::set_applied_version(pool, repo, b, a, 1)
+        .await
+        .unwrap();
+    assert!(!db::cluster::replica_is_current(pool, repo, b)
+        .await
+        .unwrap());
     db::cluster::set_applied_version(pool, repo, b, a, 2)
         .await
         .unwrap();
+    assert!(db::cluster::replica_is_current(pool, repo, b)
+        .await
+        .unwrap());
+    assert!(!db::cluster::replica_is_current(pool, repo, c)
+        .await
+        .unwrap());
     let held = db::cluster::list_held_replicas(pool, b).await.unwrap();
     assert_eq!(held.len(), 1);
     assert_eq!(held[0].repository_id, repo);
@@ -3310,13 +3326,19 @@ async fn a_commit_a_database_write_depends_on_is_not_read_from_a_copy() {
     let base = repo.save("main", "README.md", "unborn", b"# base\n").await;
     repo.branch("topic", &base).await;
     assert_current(&primary, &copy, &repo).await;
-    // The primary moves `topic` on and the copy keeps the older commit.
-    repo.save("topic", "topic.txt", &base, b"topic\n").await;
+    // A write makes the existing copy ineligible, even for the user who just wrote.
+    let head = repo.save("topic", "topic.txt", &base, b"topic\n").await;
+    assert!(
+        !db::cluster::replica_is_current(pool, repo.id(), copy.context.node_id)
+            .await
+            .unwrap()
+    );
+    let store = repo_store(&repo.repository, Some(&web.context));
+    assert_eq!(store.commit("topic").await.unwrap().sha, head);
     primary.shutdown().await;
 
-    let store = repo_store(&repo.repository, Some(&web.context));
-    // A page read may be answered by the copy, so it sees the older commit.
-    assert_eq!(store.commit("topic").await.unwrap().sha, base);
+    // Availability must not turn a successful write into an older page.
+    assert!(store.commit("topic").await.is_err());
     // A commit that is written to the database must come from the primary, which is down.
     assert!(store.commit_from_primary("topic").await.is_err());
 

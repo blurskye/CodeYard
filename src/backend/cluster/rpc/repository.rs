@@ -395,6 +395,20 @@ impl RpcHandler {
                 request.operation.is_read_only(),
             )
             .await?;
+        // Recheck at the serving node, not just when choosing a fallback: a write may
+        // have completed while the request was waiting for a connection or read guard.
+        if request.operation.is_read_only()
+            && directory == copy_path(&self.context.repos_path, request.repository)
+            && !db::cluster::replica_is_current(
+                pool,
+                repo_id.ok_or_else(unavailable)?,
+                self.context.node_id,
+            )
+            .await
+            .map_err(|_| unavailable())?
+        {
+            return Err(RepoError::storage_node_unavailable());
+        }
         if matches!(request.operation, Operation::ReplicaPack { .. }) {
             let copy_held = match repo_id {
                 Some(repo_id) => db::cluster::replica_applied_version(pool, repo_id, node.id)
