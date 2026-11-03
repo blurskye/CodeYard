@@ -1,5 +1,6 @@
 //! Cluster membership on SQLite. Roles are a JSON array in a TEXT column.
 //! Clustering itself needs PostgreSQL; these keep the two engines interchangeable.
+pub(crate) mod writes;
 use super::models::{
     ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
 };

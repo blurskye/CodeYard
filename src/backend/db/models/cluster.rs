@@ -152,6 +152,69 @@ impl fmt::Display for ReplicaSetting {
     }
 }
 
+/// One canonical Git reference, including symbolic HEAD and retention refs.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+pub struct RefValue {
+    pub name: String,
+    pub kind: String,
+    pub target: String,
+}
+
+/// One immutable reference-transaction change. None means absent or deleted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
+pub struct RefChange {
+    pub name: String,
+    pub kind: String,
+    pub old_target: Option<String>,
+    pub new_target: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct WriteVote {
+    pub node_id: i64,
+    pub durable_at: DateTime<Utc>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct WriteRecord {
+    pub id: String,
+    pub repository_id: i64,
+    pub term: i64,
+    pub primary_id: i64,
+    pub base_version: i64,
+    pub required_votes: i64,
+    pub deadline: DateTime<Utc>,
+    /// pending, commit or abort; a decided write never changes its decision.
+    pub decision: String,
+    pub committed_version: Option<i64>,
+    pub finished: bool,
+    pub manifest_hash: String,
+    #[sqlx(skip)]
+    pub changes: Vec<RefChange>,
+    #[sqlx(skip)]
+    pub votes: Vec<WriteVote>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct WriteVoter {
+    pub node_id: i64,
+    pub term: i64,
+    pub applied_version: i64,
+}
+
+/// A consistent database snapshot used to reconstruct a term's Git directory.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecoveryView {
+    pub repository_id: i64,
+    pub primary_id: i64,
+    pub term: i64,
+    pub committed_version: i64,
+    pub serving: bool,
+    pub voters: Vec<WriteVoter>,
+    pub refs: Vec<RefValue>,
+    pub unfinished: Option<WriteRecord>,
+}
+
 /// What a membership status change did.
 #[derive(Debug, Clone, PartialEq)]
 pub enum NodeStatusChange {

@@ -63,6 +63,8 @@ CREATE TABLE node_configuration (
     -- all, and 'all' keeps a copy on every storage node.
     replicas TEXT NOT NULL DEFAULT '1'
         CHECK (replicas = 'all' OR (replicas GLOB '[1-9]*' AND replicas NOT GLOB '*[^0-9]*' AND length(replicas) <= 3)),
+    write_quorum TEXT NOT NULL DEFAULT 'majority'
+        CHECK (write_quorum = 'majority' OR (write_quorum GLOB '[1-9]*' AND write_quorum NOT GLOB '*[^0-9]*' AND length(write_quorum) <= 3)),
     -- Whether robots.txt and ai.txt block AI training crawlers, and whether HTML pages say so.
     -- Blocked until an administrator allows them.
     ai_crawlers TEXT NOT NULL DEFAULT 'block' CHECK (ai_crawlers IN ('allow', 'block')),
@@ -918,6 +920,64 @@ CREATE TABLE repository_replicas (
 CREATE INDEX idx_repository_replicas_node ON repository_replicas(node_id);
 CREATE INDEX idx_repository_replicas_pending ON repository_replicas(node_id, repository_id)
 WHERE applied_version < 0 AND synced_at IS NULL;
+
+-- Quorum decisions are independent of the attempted-write cache version.
+CREATE TABLE repository_write_control (
+    repository_id INTEGER NOT NULL PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    term INTEGER NOT NULL DEFAULT 1 CHECK (typeof(term)='integer' AND term > 0),
+    committed_version INTEGER NOT NULL DEFAULT 0 CHECK (typeof(committed_version)='integer' AND committed_version >= 0),
+    serving INTEGER NOT NULL DEFAULT 0 CHECK (serving IN (0,1))
+);
+
+CREATE TABLE repository_voters (
+    repository_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    term INTEGER NOT NULL CHECK (typeof(term)='integer' AND term > 0),
+    applied_version INTEGER NOT NULL DEFAULT -1 CHECK (typeof(applied_version)='integer' AND applied_version >= -1),
+    PRIMARY KEY (repository_id, node_id)
+);
+
+CREATE TABLE repository_writes (
+    id TEXT NOT NULL PRIMARY KEY,
+    repository_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    term INTEGER NOT NULL CHECK (typeof(term)='integer'),
+    primary_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    base_version INTEGER NOT NULL CHECK (typeof(base_version)='integer'),
+    required_votes INTEGER NOT NULL CHECK (typeof(required_votes)='integer' AND required_votes > 0),
+    deadline TEXT NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('pending','commit','abort')),
+    committed_version INTEGER CHECK (committed_version IS NULL OR typeof(committed_version)='integer'),
+    finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0,1)),
+    manifest_hash TEXT NOT NULL,
+    UNIQUE (repository_id, committed_version)
+);
+
+CREATE UNIQUE INDEX idx_repository_writes_unfinished ON repository_writes(repository_id)
+WHERE finished = 0;
+
+CREATE TABLE repository_write_refs (
+    write_id TEXT NOT NULL REFERENCES repository_writes(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('oid','symbolic')),
+    old_target TEXT,
+    new_target TEXT,
+    PRIMARY KEY (write_id, name)
+);
+
+CREATE TABLE repository_write_votes (
+    write_id TEXT NOT NULL REFERENCES repository_writes(id) ON DELETE CASCADE,
+    node_id INTEGER NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    durable_at TEXT NOT NULL,
+    PRIMARY KEY (write_id, node_id)
+);
+
+CREATE TABLE repository_committed_refs (
+    repository_id INTEGER NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('oid','symbolic')),
+    target TEXT NOT NULL,
+    PRIMARY KEY (repository_id, name)
+);
 
 CREATE INDEX idx_files_user_id ON files(user_id);
 

@@ -1,5 +1,6 @@
 //! Cluster membership: the `nodes` table and the join tokens that admit new nodes.
 pub(crate) mod replicas;
+pub mod writes;
 use super::models::{
     ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
 };

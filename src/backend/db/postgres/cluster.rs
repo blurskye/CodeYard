@@ -1,4 +1,5 @@
 //! Cluster membership on PostgreSQL. Roles are a `TEXT[]` column.
+pub(crate) mod writes;
 use super::models::{
     ClusterNode, HeldReplica, JoinInvite, JoinOutcome, NodeReplicaCounts, NodeStatusChange,
 };
