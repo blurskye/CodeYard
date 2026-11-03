@@ -268,6 +268,19 @@ hints to other nodes, and socket delivery rereads live authority/content. Hints
 can be missed, so they are not a durable delivery guarantee or proof of browser
 execution. Runtime explicitly starts/joins the broadcaster listener.
 
+## Cache and artifact services
+
+The server provides the Results API used by cache v2 and artifact v4 actions; the
+standalone `codeyard-actions` CLI does not provide these services. Bytes use the
+configured object store, so separate web nodes need the same S3 bucket rather than
+node-local storage. The Results URL must be reachable from every runner.
+
+The pinned upstream toolkits classify other forge hosts as GHES: cache falls back
+to v1 and artifact v4 refuses to run. `E2E_ACTIONS_ONLY=1 bash scripts/e2e.sh` checks
+SQLite and PostgreSQL using their supported `.localhost` test origin for workflow
+metadata and the real server listener for Results requests. This does not establish
+upstream action support for arbitrary production hostnames.
+
 ## Known gaps
 
 - The run page has a Cancel run button for queued and running runs, for users with write

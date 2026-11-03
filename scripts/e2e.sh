@@ -31,6 +31,7 @@
 #   E2E_SKIP_BUILD  1: use the artifacts of an earlier run, build nothing.
 #   E2E_BUILD_ONLY  1: build, then stop.
 #   E2E_GITHUB_ONLY 1: run only the real GitHub clients and their single-node fixtures.
+#   E2E_ACTIONS_ONLY 1: run only real cache/artifact actions on SQLite and PostgreSQL.
 #   E2E_KEEP        1: keep the temporary directory (server log, repositories).
 #   E2E_VERBOSE     1: print the log of passing steps as well.
 #   E2E_TIMEOUT     seconds after which the whole run is stopped (default 1500), so a
@@ -355,9 +356,10 @@ configure_node() {
         "GITSERV_STATE_DIR=$NODE_DIR/state" "REPOS_PATH=$NODE_DIR/repos" "HOST_KEY_PATH=$NODE_DIR/host_key"
         "HTTP_ADDR=127.0.0.1:${HTTP_PORTS[$node]:-0}" "SSH_ADDR=127.0.0.1:${SSH_PORTS[$node]:-0}" "SSH_MODE=builtin"
         "GITSERV_NODE_ROLES=$roles"
-        "PUBLIC_URL=$BASE" "PUBLIC_HTTP_CLONE_BASE=$BASE" "COOKIE_SECURE=false"
+        "PUBLIC_URL=${ACTION_OBJECTS_ORIGIN:-$BASE}" "PUBLIC_HTTP_CLONE_BASE=$BASE" "COOKIE_SECURE=false"
         "WEBUI_DIST=$WEBUI_DIST"
         "CI_EXECUTION_MODE=local" "CI_ACT_BINARY=$ACT" "CI_ACTIONS_BINARY=$ACTIONS_BIN"
+        "CI_GITHUB_ACTION_FALLBACK=true"
         "CI_MAX_ACTIVE_RUNS=2" "CI_RUN_TIMEOUT_SECONDS=300" "WEBHOOKS_ALLOW_PRIVATE=true"
     )
     # The gh sweep's accounts start CI runs and register after the server starts, so this
@@ -1719,6 +1721,151 @@ PY
     needs_ci_runs || return
 }
 
+actions_restart_server() {
+    # The upstream toolkits reserve non-GitHub hosts for GHES (v1 caches, no v4 artifacts).
+    # Their .localhost test origin changes metadata only; Results traffic uses the real listener.
+    as alice form /admin/actions --action /admin/actions --has results_url \
+        --set "results_url=$BASE" --set default_engine=codeyard-actions \
+        --location '/admin/actions?saved=1' || return 1
+    stop_server || return 1
+    ACTION_OBJECTS_ORIGIN=http://codeyard.localhost:$HTTP_PORT
+    start_server
+}
+
+t_action_objects() {
+    needs_ci_runs || return
+    local repo directory sha id expected deadline
+    # Each round owns a new database: identical keys test repository isolation too.
+    for repo in action-objects action-isolation; do
+        as alice req POST /api/repos --accept json --status 201 \
+            --json "{\"name\":\"$repo\",\"is_private\":true}"
+        directory=$RUN/$repo
+        mkdir -p "$directory/.github/workflows"
+        git_as alice -C "$directory" init -q -b main
+        git_as alice -C "$directory" remote add origin "$BASE/alice/$repo.git"
+        cat >"$directory/.github/workflows/objects.yml" <<'YAML'
+name: Real cache and artifact actions
+on: push
+env:
+  EXPECT_HIT: 'false'
+jobs:
+  upload:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          mkdir expected
+          printf 'Codeyard actions bytes\n\000\377\n' > expected/payload.bin
+      - id: restore
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: saved-cache
+          key: e2e-saved
+      - env:
+          HIT: ${{ steps.restore.outputs.cache-hit }}
+        run: |
+          if [ "$EXPECT_HIT" = true ]; then
+            test "$HIT" = true
+            cmp expected/payload.bin saved-cache/payload.bin
+            echo CACHE_RESTORE_HIT
+          else
+            test "$HIT" != true
+            test ! -e saved-cache/payload.bin
+            mkdir saved-cache
+            cp expected/payload.bin saved-cache/payload.bin
+            echo CACHE_RESTORE_MISS
+          fi
+      - if: env.EXPECT_HIT == 'false'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: saved-cache
+          key: e2e-saved
+      - id: unknown
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: unknown-cache
+          key: e2e-never-saved
+      - env:
+          HIT: ${{ steps.unknown.outputs.cache-hit }}
+        run: |
+          test "$HIT" != true
+          test ! -e unknown-cache
+          echo CACHE_UNKNOWN_MISS
+      - id: combined
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: combined-cache
+          key: e2e-combined
+      - env:
+          HIT: ${{ steps.combined.outputs.cache-hit }}
+        run: |
+          if [ "$EXPECT_HIT" = true ]; then
+            test "$HIT" = true
+            cmp expected/payload.bin combined-cache/payload.bin
+            echo CACHE_COMBINED_HIT
+          else
+            test "$HIT" != true
+            test ! -e combined-cache/payload.bin
+            mkdir combined-cache
+            cp expected/payload.bin combined-cache/payload.bin
+          fi
+      - id: artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: real-bytes
+          path: expected/payload.bin
+          if-no-files-found: error
+      - env:
+          ARTIFACT_ID: ${{ steps.artifact.outputs.artifact-id }}
+        run: test -n "$ARTIFACT_ID"
+  download:
+    needs: upload
+    runs-on: self-hosted
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: real-bytes
+          path: downloaded
+      - run: |
+          printf 'Codeyard actions bytes\n\000\377\n' > expected.bin
+          cmp expected.bin downloaded/payload.bin
+          echo ARTIFACT_BYTES_OK
+YAML
+        for expected in false true; do
+            [[ $repo != action-isolation || $expected == false ]] || continue
+            if [[ $expected == true ]]; then
+                "$PYTHON" -I - "$directory/.github/workflows/objects.yml" <<'PY'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+path.write_text(path.read_text().replace("EXPECT_HIT: 'false'", "EXPECT_HIT: 'true'"))
+PY
+            fi
+            git_as alice -C "$directory" add .github
+            git_as alice -C "$directory" commit -q -m "Check cache hit $expected"
+            # Use the same authenticated HTTP push as the other CI fixture.
+            git_with_token write -C "$directory" push -q origin main
+            sha=$(git_as alice -C "$directory" rev-parse HEAD)
+            deadline=$((SECONDS + 300))
+            until id=$(as alice req GET "/api/ci/jobs?owner=alice&repo=$repo" --accept json \
+                --json-eq "jobs.0.head_sha=$sha" --print json:jobs.0.id 2>/dev/null); do
+                ((SECONDS < deadline)) || { echo "no run queued for $repo $sha" >&2; return 1; }
+                sleep 1
+            done
+            if ! wait_ci_run "$id" "$deadline"; then
+                as alice req GET "/alice/$repo/actions?job=$id&view=logs&log_limit=5000" >&2 || true
+                return 1
+            fi
+            as alice req GET "/alice/$repo/actions?job=$id&view=logs&log_limit=5000" \
+                --contains ARTIFACT_BYTES_OK --contains CACHE_UNKNOWN_MISS
+            if [[ $expected == true ]]; then
+                as alice req GET "/alice/$repo/actions?job=$id&view=logs&log_limit=5000" \
+                    --contains CACHE_RESTORE_HIT --contains CACHE_COMBINED_HIT
+            else
+                as alice req GET "/alice/$repo/actions?job=$id&view=logs&log_limit=5000" --contains CACHE_RESTORE_MISS
+            fi
+        done
+    done
+}
+
 t_after_restart() {
     local head
     # Sessions, accounts, repositories and CI history live in the database/disk.
@@ -2485,6 +2632,7 @@ run_round() {
     DATABASE_URL=''
     SERVER_ROLES=''
     SERVER_IROH=''
+    ACTION_OBJECTS_ORIGIN=''
     mkdir -p "$RUN/home" "$RUN/keys" "$RUN/work" "$STATE"
     PW_ALICE=Alice-e2e-$(random_hex)
     PW_BOB=Bob-e2e-$(random_hex)
@@ -2495,6 +2643,17 @@ run_round() {
     step -f 'ssh and test keys are generated' t_keys
     step -f 'setup: first-run admin through the HTML form' t_setup
     step -f 'users: sign up, sign out and sign in through HTML forms' t_users
+    if [[ ${E2E_ACTIONS_ONLY:-0} == 1 ]]; then
+        step -f 'tokens: created for real actions' t_tokens
+        step -f -i 'actions: restart with the upstream local test origin and real Results URL' actions_restart_server
+        step 'actions: real cache save, restore, miss, repository isolation and cross-job artifacts' t_action_objects
+        ROUND_BLOCKED=0
+        step 'log: the server log has no panic' t_log_clean
+        step -i 'shutdown: SIGTERM exits with status 0' stop_server
+        terminate_servers
+        step -i 'disposable database removed' drop_pg
+        return
+    fi
     if [[ ${E2E_GITHUB_ONLY:-0} == 1 ]]; then
         step -f 'organization: created for real GitHub clients' t_org
         step -f 'tokens: created for real GitHub clients' t_tokens
@@ -2542,6 +2701,9 @@ run_round() {
     step 'ci: an API file save queues the push workflow' t_ci_api_save
     step 'real clients: GHES gh commands, native github-script and schema-checked webhooks' t_github_clients
     gh_sweep_step
+    step -f -i 'actions: restart with the upstream local test origin and real Results URL' actions_restart_server
+    step 'actions: real cache save, restore, miss, repository isolation and cross-job artifacts' t_action_objects
+    ACTION_OBJECTS_ORIGIN=''
     step -i 'restart: SIGTERM stops the server cleanly' stop_server
     step -f -i 'restart: server starts again on the same data' start_server
     step 'restart: sessions, repositories, CI history and SSH host key survive' t_after_restart
@@ -2719,7 +2881,7 @@ fi
 if [[ $E2E_BUILD_ONLY != 1 && $ROUND_BLOCKED == 0 ]]; then
     for database in $E2E_DATABASES; do
         if [[ $database == cluster ]]; then
-            [[ ${E2E_GITHUB_ONLY:-0} == 1 ]] || run_cluster_round
+            [[ ${E2E_GITHUB_ONLY:-0} == 1 || ${E2E_ACTIONS_ONLY:-0} == 1 ]] || run_cluster_round
         else
             run_round "$database"
         fi
