@@ -841,7 +841,7 @@ CREATE TABLE ci_log_chunks (
     request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
     first_line INTEGER NOT NULL CHECK (first_line > 0),
     line_count INTEGER NOT NULL CHECK (line_count BETWEEN 1 AND 64),
-    byte_size INTEGER NOT NULL CHECK (byte_size BETWEEN 0 AND 262144),
+    byte_size INTEGER NOT NULL CHECK (byte_size BETWEEN 0 AND 262656),
     data BLOB NOT NULL CHECK (length(data) <= 2097152),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
     PRIMARY KEY (run_id, sequence),

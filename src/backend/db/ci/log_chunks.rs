@@ -7,6 +7,8 @@ use sha2::{Digest, Sha256};
 use std::io::{Read, Write};
 
 const MAX_ENCODED_BYTES: usize = 2 * 1024 * 1024;
+// A truncation marker can be longer than the line it replaces in an otherwise full batch.
+const MAX_STORED_BATCH_BYTES: i64 = 256 * 1024 + 512;
 
 #[derive(sqlx::FromRow)]
 pub(crate) struct Chunk {
@@ -47,6 +49,10 @@ pub(crate) fn encode(lines: &[LogLine]) -> Result<(Vec<u8>, i64)> {
         .iter()
         .map(|line| line.stage.len() + line.line.len())
         .sum::<usize>();
+    ensure!(
+        size as i64 <= MAX_STORED_BATCH_BYTES,
+        "CI chunk exceeds byte limit"
+    );
     Ok((data, size as i64))
 }
 
@@ -114,6 +120,7 @@ impl Chunk {
             (1..=100_000).contains(&self.first_line)
                 && (1..=64).contains(&self.line_count)
                 && self.first_line + self.line_count <= 100_001
+                && (0..=MAX_STORED_BATCH_BYTES).contains(&self.byte_size)
                 && self.data.len() <= MAX_ENCODED_BYTES,
             "invalid CI chunk metadata"
         );
@@ -130,7 +137,11 @@ impl Chunk {
             lines.len() as i64 == self.line_count,
             "CI chunk line count differs"
         );
-        let lines = crate::backend::ci::queue::prepare_logs(&lines)?;
+        let mut prepared = Vec::with_capacity(lines.len());
+        for line in lines {
+            prepared.extend(crate::backend::ci::queue::prepare_logs(&[line])?);
+        }
+        let lines = prepared;
         ensure!(
             batch_job(&lines) == self.job_id
                 && lines

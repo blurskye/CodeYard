@@ -413,6 +413,62 @@ async fn kill_mid_job(pg: bool) {
     f.db.finish().await;
 }
 
+async fn truncation_marker_can_extend_a_full_batch(pg: bool) {
+    let mut f = Fixture::new(pg).await;
+    f.db.execute(
+        "UPDATE ci_runs SET log_lines=99983 WHERE id=$1",
+        &[f.run.id],
+    )
+    .await;
+    let mut batch = vec![
+        LogLine {
+            stage: String::new(),
+            line: "x".repeat(16 * 1024),
+            ..f.line(1)
+        };
+        16
+    ];
+    batch.push(LogLine {
+        stage: String::new(),
+        line: String::new(),
+        ..f.line(2)
+    });
+    assert!(!f.append(0, &batch).await);
+    let lines = db::ci::list_ci_logs(f.db.pool(), f.run.id, 100)
+        .await
+        .unwrap();
+    assert_eq!(lines.len(), 17);
+    assert!(lines[..16]
+        .iter()
+        .all(|line| line.line == "x".repeat(16 * 1024)));
+    assert_eq!(lines[16].id, 100_000);
+    assert_eq!(lines[16].level, "warn");
+    assert!(lines[16].line.starts_with("Log output truncated:"));
+    assert!(
+        f.db.scalar(
+            "SELECT byte_size FROM ci_log_chunks WHERE run_id=$1",
+            &[f.run.id]
+        )
+        .await
+            > 256 * 1024
+    );
+    assert_eq!(
+        f.db.scalar("SELECT log_lines FROM ci_runs WHERE id=$1", &[f.run.id])
+            .await,
+        100_000
+    );
+    assert!(!f.append(1, &[f.line(3)]).await);
+    assert_eq!(
+        f.db.scalar(
+            "SELECT COUNT(*) FROM ci_log_chunks WHERE run_id=$1",
+            &[f.run.id]
+        )
+        .await,
+        1
+    );
+    f.db.finish().await;
+}
+
 async fn expiry(pg: bool) {
     let mut f = Fixture::new(pg).await;
     f.append(0, &[f.line(1), f.line(2)]).await;
@@ -526,6 +582,14 @@ async fn sqlite_kill_mid_job() {
 #[tokio::test]
 async fn postgres_kill_mid_job() {
     kill_mid_job(true).await;
+}
+#[tokio::test]
+async fn sqlite_truncation_marker_can_extend_a_full_batch() {
+    truncation_marker_can_extend_a_full_batch(false).await;
+}
+#[tokio::test]
+async fn postgres_truncation_marker_can_extend_a_full_batch() {
+    truncation_marker_can_extend_a_full_batch(true).await;
 }
 #[tokio::test]
 async fn sqlite_expiry() {
