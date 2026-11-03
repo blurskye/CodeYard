@@ -1,4 +1,4 @@
-//! SQL quorum contracts run unchanged on both engines; no Git or network coordinator.
+//! SQL and coordinator contracts run unchanged on both engines; no Git or network transfer.
 #![cfg(not(target_arch = "wasm32"))]
 use crate::support::native_database as native;
 use chrono::{DateTime, Utc};
@@ -904,7 +904,8 @@ async fn coordinator_missing_vote(pool: &DbPool) {
 }
 
 async fn coordinator_admission(pool: &DbPool) {
-    let f = setup(pool, 2, "1").await;
+    let f = setup(pool, 2, "2").await;
+    configure(pool, "1").await.unwrap();
     assert!(coordinator::begin(
         pool,
         f.repo,
