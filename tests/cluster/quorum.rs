@@ -163,8 +163,8 @@ impl Stores {
         let mut pack = Vec::new();
         let status = primary
             .replica_pack(
-                &[self.new.clone()],
-                &[self.old.clone()],
+                std::slice::from_ref(&self.new),
+                std::slice::from_ref(&self.old),
                 GitStreams {
                     input: &mut tokio::io::empty(),
                     output: &mut pack,
