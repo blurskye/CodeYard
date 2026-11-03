@@ -24,7 +24,7 @@
 # build done, the SQLite round takes a few minutes and the PostgreSQL round about ten.
 #
 # Settings (environment):
-#   E2E_DATABASES   rounds to run, default "sqlite postgres cluster". PostgreSQL
+#   E2E_DATABASES   rounds to run, default "sqlite postgres pgbouncer cluster". PostgreSQL
 #                   rounds need GITSERV_TEST_DATABASE_URL; if it
 #                   is missing the round fails, it is not skipped.
 #   E2E_PROFILE     release (default) or debug, for the server and the bundle.
@@ -55,7 +55,7 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 cd "$ROOT" || exit 2
 HELPER=$ROOT/scripts/e2e-web.py
 
-E2E_DATABASES=${E2E_DATABASES:-sqlite postgres cluster}
+E2E_DATABASES=${E2E_DATABASES:-sqlite postgres pgbouncer cluster}
 E2E_PROFILE=${E2E_PROFILE:-release}
 E2E_SKIP_BUILD=${E2E_SKIP_BUILD:-0}
 E2E_BUILD_ONLY=${E2E_BUILD_ONLY:-0}
@@ -100,6 +100,7 @@ declare -A SERVER_PIDS=() HTTP_PORTS=() SSH_PORTS=() IROH_PORTS=()
 CLUSTER_NODES=(web1 store1 store2 ci1)
 PG_DB=''
 PG_OWNED=()
+PGBOUNCER_PID=''
 RUN=''
 STARTED=$SECONDS
 
@@ -123,6 +124,7 @@ cleanup() {
     trap - EXIT
     terminate_operators
     terminate_servers
+    stop_pgbouncer
     drop_pg || rc=1
     if [[ $E2E_KEEP == 1 ]]; then
         echo "kept $WORK"
@@ -315,7 +317,7 @@ prepare_database() {
     DATABASE_URL=''
     case $ROUND in
         sqlite) echo "SQLite database in the state directory (DATABASE_URL unset)" ;;
-        postgres | cluster)
+        postgres | pgbouncer | cluster)
             if [[ -z ${GITSERV_TEST_DATABASE_URL:-} ]]; then
                 echo "GITSERV_TEST_DATABASE_URL is not set: point it at a PostgreSQL server" >&2
                 return 1
@@ -332,6 +334,92 @@ prepare_database() {
             ;;
         *) echo "unknown database '$ROUND'" >&2; return 1 ;;
     esac
+}
+
+start_pgbouncer() { # inline: a private transaction pool for this round's database
+    local port binary
+    binary=$(command -v pgbouncer) || { echo 'pgbouncer not found' >&2; return 1; }
+    port=$(free_ports 1) || return 1
+    E2E_POOL_UPSTREAM=$DATABASE_URL E2E_POOL_PORT=$port "$PYTHON" -I - "$RUN" <<'PY'
+import os, pathlib, secrets, sys, urllib.parse as u
+root = pathlib.Path(sys.argv[1]) / 'pgbouncer'
+root.mkdir(mode=0o700)
+parts = u.urlsplit(os.environ['E2E_POOL_UPSTREAM'])
+query = dict(u.parse_qsl(parts.query))
+host = query.get('host', parts.hostname or '127.0.0.1')
+port = query.get('port', str(parts.port or 5432))
+user = query.get('user', u.unquote(parts.username or os.environ.get('USER', '')))
+password = query.get('password', u.unquote(parts.password or ''))
+database = u.unquote(parts.path.lstrip('/'))
+def quote(value):
+    if any(c in value for c in '\r\n\x00'):
+        raise ValueError('invalid PgBouncer connection setting')
+    return "'" + value.replace('\\', '\\\\').replace("'", "\\'") + "'"
+sslmode = query.get('sslmode', query.get('ssl-mode', 'prefer')).replace('-', '')
+if sslmode not in ('disable', 'allow', 'prefer', 'require', 'verifyca', 'verifyfull'):
+    raise ValueError('unsupported PgBouncer TLS mode')
+# Forced backend credentials are private; clients use separate throwaway credentials.
+client_password = secrets.token_hex(32)
+(root / 'users.txt').write_text(f'"pool_client" "{client_password}"\n')
+backend = ' '.join(f'{key}={quote(value)}' for key, value in
+                   [('host', host), ('port', port), ('dbname', database),
+                    ('user', user), ('password', password)])
+config = f'''[databases]
+fixture = {backend}
+[pgbouncer]
+listen_addr = 127.0.0.1
+listen_port = {int(os.environ['E2E_POOL_PORT'])}
+unix_socket_dir =
+auth_type = scram-sha-256
+auth_file = {root / 'users.txt'}
+pool_mode = transaction
+default_pool_size = 2
+max_client_conn = 100
+max_prepared_statements = 200
+ignore_startup_parameters = extra_float_digits,options
+server_tls_sslmode = {sslmode}
+server_connect_timeout = 5
+client_login_timeout = 10
+query_wait_timeout = 30
+'''
+for option, setting in [('sslrootcert', 'server_tls_ca_file'), ('sslcert', 'server_tls_cert_file'),
+                        ('sslkey', 'server_tls_key_file')]:
+    if option in query:
+        value = query[option]
+        quote(value)
+        config += f'{setting} = {value}\n'
+(root / 'pool.ini').write_text(config)
+(root / 'url').write_text(f"postgres://pool_client:{client_password}@127.0.0.1:{int(os.environ['E2E_POOL_PORT'])}/fixture?sslmode=disable")
+for path in root.iterdir():
+    path.chmod(0o600)
+PY
+    [[ $? == 0 ]] || return 1
+    "$binary" "$RUN/pgbouncer/pool.ini" >"$RUN/pgbouncer/pool.log" 2>&1 &
+    PGBOUNCER_PID=$!
+    local attempt
+    for attempt in $(seq 1 50); do
+        kill -0 "$PGBOUNCER_PID" 2>/dev/null || { echo 'PgBouncer exited during startup' >&2; return 1; }
+        if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
+            DATABASE_URL=$(<"$RUN/pgbouncer/url")
+            return 0
+        fi
+        sleep 0.1
+    done
+    echo 'PgBouncer did not open its listener' >&2
+    return 1
+}
+
+stop_pgbouncer() {
+    [[ -n $PGBOUNCER_PID ]] || return 0
+    kill -TERM "$PGBOUNCER_PID" 2>/dev/null || true
+    local attempt
+    for attempt in $(seq 1 50); do
+        kill -0 "$PGBOUNCER_PID" 2>/dev/null || break
+        sleep 0.1
+    done
+    kill -KILL "$PGBOUNCER_PID" 2>/dev/null || true
+    wait "$PGBOUNCER_PID" 2>/dev/null || true
+    PGBOUNCER_PID=''
 }
 
 server_dir() {
@@ -2653,10 +2741,28 @@ run_round() {
     put master_key "$("$PYTHON" -I -c 'import secrets; print(secrets.token_hex(32))')"
 
     step -f -i 'database is ready' prepare_database
+    if [[ $db == pgbouncer ]]; then
+        step -f -i 'PgBouncer starts with transaction pooling and two backend connections' start_pgbouncer
+    fi
     step -f -i 'server starts and /health answers' start_server
     step -f 'ssh and test keys are generated' t_keys
     step -f 'setup: first-run admin through the HTML form' t_setup
     step -f 'users: sign up, sign out and sign in through HTML forms' t_users
+    if [[ $db == pgbouncer ]]; then
+        step -f 'repositories: create public and private repositories behind PgBouncer' t_repos
+        step -f 'ssh keys: created behind PgBouncer' t_ssh_keys
+        step -f 'tokens: created behind PgBouncer' t_tokens
+        step 'git: push through the transaction pool' t_push
+        step 'git: clone and HTTP push through the transaction pool' t_clone
+        step 'issues: create, read and comment through the transaction pool' t_issues
+        ROUND_BLOCKED=0
+        step 'log: the server log has no panic' t_log_clean
+        step -i 'shutdown: SIGTERM exits with status 0' stop_server
+        terminate_servers
+        stop_pgbouncer
+        step -i 'disposable database removed' drop_pg
+        return
+    fi
     if [[ ${E2E_ACTIONS_ONLY:-0} == 1 ]]; then
         step -f 'tokens: created for real actions' t_tokens
         step -f -i 'actions: restart with the upstream local test origin and real Results URL' actions_restart_server

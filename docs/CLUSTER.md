@@ -410,6 +410,15 @@ that was streaming to a dead storage node can hang that long over TCP.
   seconds, the listeners and background loops share 30, and CI workers get 30, so
   `compose.yaml` gives the server a 100-second `stop_grace_period`.
 
+## PgBouncer check
+
+With release artifacts already built, PostgreSQL client tools and PgBouncer 1.21 or newer
+on `PATH`, run `GITSERV_TEST_DATABASE_URL=postgres://... E2E_SKIP_BUILD=1 E2E_DATABASES=pgbouncer bash scripts/e2e.sh`.
+The database role must be able to create disposable databases. This starts a private,
+two-connection transaction pool and checks login, issues, SSH/HTTP push and clone. The
+round also runs by default. It stops both processes and drops its database on exit; set
+`E2E_KEEP=1` to retain logs (the private pool configuration contains database credentials).
+
 ## Limits
 
 The cluster assumes one PostgreSQL primary shared by every web, SSH and storage node.
