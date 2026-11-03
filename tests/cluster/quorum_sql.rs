@@ -17,11 +17,11 @@ const OLD: &str = "1111111111111111111111111111111111111111";
 const NEW: &str = "2222222222222222222222222222222222222222";
 const MAIN: &str = "refs/heads/main";
 
-struct Fixture {
-    repo: i64,
-    owner: i64,
-    primary: i64,
-    voters: Vec<i64>,
+pub(super) struct Fixture {
+    pub(super) repo: i64,
+    pub(super) owner: i64,
+    pub(super) primary: i64,
+    pub(super) voters: Vec<i64>,
 }
 
 fn initial_refs() -> Vec<RefValue> {
@@ -101,7 +101,12 @@ async fn setup(pool: &DbPool, count: usize, setting: &str) -> Fixture {
     setup_with_refs(pool, count, setting, &initial_refs()).await
 }
 
-async fn setup_with_refs(pool: &DbPool, count: usize, setting: &str, refs: &[RefValue]) -> Fixture {
+pub(super) async fn setup_with_refs(
+    pool: &DbPool,
+    count: usize,
+    setting: &str,
+    refs: &[RefValue],
+) -> Fixture {
     db::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
@@ -816,7 +821,7 @@ async fn input_and_config(pool: &DbPool) {
     );
 }
 
-async fn set_timeout(pool: &DbPool, seconds: i64) -> Result<(), sqlx::Error> {
+pub(super) async fn set_timeout(pool: &DbPool, seconds: i64) -> Result<(), sqlx::Error> {
     let sql = "UPDATE node_configuration SET write_timeout_seconds=$1 WHERE id=1";
     match pool {
         DbPool::Postgres(raw) => {
@@ -1065,7 +1070,7 @@ async fn coordinator_recovery(pool: &DbPool) {
         .unwrap());
 }
 
-async fn replace_node_key(pool: &DbPool, node: i64) -> NodeKey {
+pub(super) async fn replace_node_key(pool: &DbPool, node: i64) -> NodeKey {
     let key = NodeKey::generate();
     match pool {
         DbPool::Postgres(raw) => {

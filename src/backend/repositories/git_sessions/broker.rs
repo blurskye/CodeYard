@@ -697,9 +697,16 @@ impl Gateway {
     /// repositories root. Git sessions run against this path.
     pub(super) async fn bare_path(&self, repo: &Repository) -> Result<PathBuf> {
         let root = self.repos_root.clone();
-        let path = repo_store(repo, self.ci.cluster.as_ref())
-            .local_path_for_spawning_git()?
-            .to_owned();
+        let store = match self
+            .ci
+            .cluster
+            .as_ref()
+            .filter(|_| repo.storage_node_id.is_some())
+        {
+            Some(context) => context.repository_store(repo, true).await?,
+            None => repo_store(repo, self.ci.cluster.as_ref()),
+        };
+        let path = store.local_path_for_spawning_git()?.to_owned();
         tokio::task::spawn_blocking(move || {
             let path = std::fs::canonicalize(path)?;
             ensure!(
