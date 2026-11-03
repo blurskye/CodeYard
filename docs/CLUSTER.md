@@ -419,6 +419,23 @@ two-connection transaction pool and checks login, issues, SSH/HTTP push and clon
 round also runs by default. It stops both processes and drops its database on exit; set
 `E2E_KEEP=1` to retain logs (the private pool configuration contains database credentials).
 
+## One-cell benchmark
+
+Run `GITSERV_TEST_DATABASE_URL=postgres://... bash scripts/bench-cell.sh` with an already
+built `target/release/codeyard`, its web bundle, Python 3, curl, Git and PostgreSQL client
+tools. The database role needs `CREATEDB`. `BENCH_BINARY` and `WEBUI_DIST` override artifact
+paths; `BENCH_SECONDS` sets the measurement duration (10–300, default 30).
+
+The script starts one disposable server without CI workers, creates 50 organizations via
+the native form (there is no REST creation endpoint), and creates public repositories and
+issues through REST. It runs 500 concurrent anonymous reader slots against issue pages
+and REST issue lists alongside 1 MiB clones and small pushes. It prints p50/p95/p99
+latencies, operation rates and clone object throughput, not wire throughput. These are
+client slots, not 500 new accounts. Record the server and PostgreSQL CPU, RAM, disk and
+network alongside results; this is a small workload, not a proven cell capacity.
+It drops its database and removes temporary files on exit. `BENCH_KEEP=1` retains private
+logs and fixture credentials for diagnosis. Neither script should target production.
+
 ## Limits
 
 The cluster assumes one PostgreSQL primary shared by every web, SSH and storage node.
