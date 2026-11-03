@@ -1,0 +1,53 @@
+{{- $fullname := include "codeyard.fullname" . -}}
+{{- range $role := list "web" "storage" "ssh" }}
+{{- if or (ne $role "ssh") $.Values.ssh.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $fullname }}-{{ $role }}
+  labels:
+    {{- include "codeyard.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+  {{- if eq $role "ssh" }}
+  {{- with $.Values.ssh.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+  {{- end }}
+spec:
+  {{- if eq $role "storage" }}
+  clusterIP: None
+  {{- else if eq $role "ssh" }}
+  type: {{ $.Values.ssh.service.type }}
+  externalTrafficPolicy: {{ $.Values.ssh.service.externalTrafficPolicy }}
+  {{- if and (eq $.Values.ssh.service.type "LoadBalancer") $.Values.ssh.service.loadBalancerSourceRanges }}
+  loadBalancerSourceRanges:
+    {{- toYaml $.Values.ssh.service.loadBalancerSourceRanges | nindent 4 }}
+  {{- end }}
+  {{- else }}
+  type: ClusterIP
+  {{- end }}
+  selector:
+    {{- include "codeyard.selectorLabels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+  ports:
+    {{- if eq $role "ssh" }}
+    - name: ssh
+      port: {{ $.Values.ssh.service.port }}
+      targetPort: ssh
+      {{- with $.Values.ssh.service.nodePort }}
+      nodePort: {{ . }}
+      {{- end }}
+    {{- else }}
+    - name: http
+      port: {{ ternary $.Values.web.service.port 3000 (eq $role "web") }}
+      targetPort: http
+    {{- if eq $role "storage" }}
+    - name: cluster
+      port: 7445
+      targetPort: cluster
+    {{- end }}
+    {{- end }}
+{{- end }}
+{{- end }}

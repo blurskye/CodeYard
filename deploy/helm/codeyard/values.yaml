@@ -1,0 +1,297 @@
+# Override the chart's short resource name.
+nameOverride: ""
+# Override the release-qualified resource name (keep at most 35 characters).
+fullnameOverride: ""
+image:
+  # Publish the Containerfile image to a registry your nodes can reach.
+  repository: localhost/codeyard-backend
+  # Use an immutable release tag; defaults to Chart.appVersion.
+  tag: ""
+  # Pin a digest instead of a tag when set (sha256:...).
+  digest: ""
+  # Kubernetes image pull policy.
+  pullPolicy: IfNotPresent
+# Registry credential Secret references.
+imagePullSecrets: []
+serviceAccount:
+  # Create a dedicated account without Kubernetes API credentials.
+  create: true
+  # Use this account name, or the release name if empty.
+  name: ""
+  # Annotations for workload identity, if needed.
+  annotations: {}
+secrets:
+  # Existing Secret with DATABASE_URL, SECRETS_MASTER_KEY, S3_ACCESS_KEY and S3_SECRET_KEY.
+  existingSecret: ""
+  # External PostgreSQL URL; used only when existingSecret is empty.
+  databaseUrl: ""
+  # Durable 64-hex key shared by core nodes; never regenerate on upgrade.
+  masterKey: ""
+  # S3 access key; used only when existingSecret is empty.
+  s3AccessKey: ""
+  # S3 secret key; used only when existingSecret is empty.
+  s3SecretKey: ""
+  # Optional setup/admin secret; sessions themselves are stored in PostgreSQL.
+  adminSecret: ""
+  # Bearer for /metrics; required when serviceMonitor is enabled.
+  metricsToken: ""
+config:
+  # Exact public HTTPS origin; TLS terminates at the ingress, not the application.
+  publicUrl: ""
+  # Optional public Git-over-HTTP base URL.
+  publicHttpCloneBase: ""
+  # Public SSH clone base, including an explicit port for NodePort.
+  publicSshCloneBase: ""
+  # Cookie domain, normally empty for host-only cookies.
+  cookieDomain: ""
+  # Keep session cookies Secure behind TLS termination.
+  cookieSecure: true
+  # Session lifetime in days (1–365).
+  sessionDurationDays: 30
+  # Comma-separated ingress proxy IPs (not CIDRs); never trust arbitrary clients.
+  httpTrustedProxyIps: ""
+  # Explicit allowed CORS origins, normally empty.
+  corsOrigins: ""
+  # Opt in to the currently experimental cluster implementation.
+  experimentalCluster: true
+  # Storage readiness reserve in bytes (1 GiB).
+  storageMinFreeBytes: "1073741824"
+  s3:
+    # Internal S3-compatible API origin.
+    endpoint: ""
+    # Browser-reachable origin outside the session cookie scope.
+    publicEndpoint: ""
+    # Existing bucket for shared uploads, packages and CI objects.
+    bucket: codeyard-files
+    # S3 signing region.
+    region: us-east-1
+  # Additional non-secret environment variables, shared only by core nodes.
+  extraEnv: []
+# Allow the server's bounded SIGTERM shutdown to finish; no drain HTTP endpoint exists.
+terminationGracePeriodSeconds: 100
+# Temporary /data capacity for stateless nodes, not storage repository disks.
+scratchSizeLimit: 4Gi
+# Temporary /tmp capacity per pod.
+tmpSizeLimit: 1Gi
+# Labels and annotations applied to all pods.
+podLabels: {}
+# Additional annotations applied to all pods.
+podAnnotations: {}
+# Non-root identity; fsGroup makes mounted data writable.
+podSecurityContext:
+  # Require a non-root runtime user.
+  runAsNonRoot: true
+  # Runtime uid in the Debian image.
+  runAsUser: 1000
+  # Runtime gid in the Debian image.
+  runAsGroup: 1000
+  # Volume group for writable state.
+  fsGroup: 1000
+# Harden the application and join containers.
+securityContext:
+  # Do not allow privilege escalation.
+  allowPrivilegeEscalation: false
+  # Keep the image immutable; writable paths are mounted separately.
+  readOnlyRootFilesystem: true
+  capabilities:
+    # No Linux capabilities are needed for the unprivileged listeners.
+    drop: [ALL]
+  seccompProfile:
+    # Use the container runtime's syscall profile.
+    type: RuntimeDefault
+probes:
+  # HTTP readiness/startup/liveness path for web and storage (requires cluster/a).
+  path: /ready
+  # Probe interval in seconds.
+  periodSeconds: 10
+  # Allow the bounded database and storage checks to finish.
+  timeoutSeconds: 5
+  # Startup attempts before restarting (ten minutes by default).
+  startupFailureThreshold: 60
+  # Failed readiness attempts before removing a pod from endpoints.
+  readinessFailureThreshold: 3
+  # Failed liveness attempts before restarting (two minutes by default).
+  livenessFailureThreshold: 12
+web:
+  # Fixed replica count when HPA is disabled.
+  replicas: 1
+  # CPU/memory/ephemeral-storage requests and limits for each web pod.
+  resources:
+    # Scheduler reservations; CPU HPA uses this CPU request.
+    requests: {cpu: 250m, memory: 512Mi, ephemeral-storage: 1Gi}
+    # Per-pod resource ceilings.
+    limits: {cpu: "2", memory: 2Gi, ephemeral-storage: 8Gi}
+  # Optional node selection labels.
+  nodeSelector: {}
+  # Optional scheduling tolerations.
+  tolerations: []
+  # Optional affinity, such as spreading across zones.
+  affinity: {}
+  service:
+    # Internal plain-HTTP Service port.
+    port: 3000
+  pdb:
+    # Enable after adding replicas if voluntary eviction must preserve availability.
+    enabled: false
+    # Maximum unavailable web pods during voluntary disruptions.
+    maxUnavailable: 1
+  autoscaling:
+    # Enable CPU HPA (requires metrics-server).
+    enabled: false
+    # Minimum web replicas.
+    minReplicas: 2
+    # Upper cost/capacity bound.
+    maxReplicas: 10
+    # Target CPU as a percentage of requested CPU.
+    targetCPUUtilizationPercentage: 70
+ssh:
+  # Run the built-in SSH listener separately from web nodes.
+  enabled: false
+  # Number of SSH pods; host identity is shared through PostgreSQL.
+  replicas: 1
+  # Per-pod requests and limits.
+  resources:
+    # Scheduler reservations.
+    requests: {cpu: 100m, memory: 256Mi, ephemeral-storage: 1Gi}
+    # Per-pod resource ceilings.
+    limits: {cpu: "2", memory: 1Gi, ephemeral-storage: 8Gi}
+  # Optional node selection labels.
+  nodeSelector: {}
+  # Optional scheduling tolerations.
+  tolerations: []
+  # Optional pod affinity.
+  affinity: {}
+  service:
+    # Public SSH exposure: LoadBalancer or NodePort.
+    type: LoadBalancer
+    # Public SSH Service port, forwarded to container port 2222.
+    port: 22
+    # Fixed NodePort, or null to let Kubernetes allocate one.
+    nodePort: null
+    # Provider-specific load balancer annotations.
+    annotations: {}
+    # Use Local only when traffic is routed to nodes with a ready SSH pod.
+    externalTrafficPolicy: Cluster
+    # Optional LoadBalancer source CIDR restrictions.
+    loadBalancerSourceRanges: []
+  pdb:
+    # Protect SSH against voluntary disruptions when needed.
+    enabled: false
+    # Maximum unavailable SSH pods.
+    maxUnavailable: 1
+storage:
+  # StatefulSet size; scale down only after moving all repository assignments.
+  replicas: 1
+  # Per-pod requests and limits; repository data lives on the PVC, not ephemeral storage.
+  resources:
+    # Scheduler reservations.
+    requests: {cpu: 500m, memory: 1Gi, ephemeral-storage: 1Gi}
+    # Per-pod resource ceilings.
+    limits: {cpu: "4", memory: 4Gi, ephemeral-storage: 8Gi}
+  # Optional node selection labels.
+  nodeSelector: {}
+  # Optional scheduling tolerations.
+  tolerations: []
+  # Optional affinity; use zone-aware persistent storage when spreading replicas.
+  affinity: {}
+  persistence:
+    # Requested repository capacity per pod; PVCs survive scale-down and uninstall.
+    size: 100Gi
+    # StorageClass name; null uses the default, empty string disables dynamic provisioning.
+    storageClass: null
+    # Access modes for each pod's private repository volume.
+    accessModes: [ReadWriteOnce]
+  join:
+    # Optional Secret containing a reusable storage-only ticket from a reachable core.
+    existingSecret: ""
+    # Secret key holding CLUSTER_JOIN_TOKEN for the one-time join init container.
+    tokenKey: CLUSTER_JOIN_TOKEN
+  pdb:
+    # Protect storage pods from voluntary eviction when enough replicas exist.
+    enabled: false
+    # Maximum unavailable storage pods; this is not a write-quorum guarantee.
+    maxUnavailable: 1
+runner:
+  # Trusted-workflow runners require a configured Podman socket and workspace on each host.
+  enabled: false
+  # Fixed count when KEDA is disabled.
+  replicas: 1
+  # Secret with a reusable runner-only CLUSTER_JOIN_TOKEN (no database or master key).
+  existingSecret: ""
+  # Core public-key addresses, e.g. <key>@tcp://stable-core.example:7445.
+  peers: ""
+  # Per-pod requests and limits; job-container limits are configured in CI separately.
+  resources:
+    # Scheduler reservations.
+    requests: {cpu: 500m, memory: 1Gi, ephemeral-storage: 1Gi}
+    # Per-pod resource ceilings.
+    limits: {cpu: "4", memory: 4Gi, ephemeral-storage: 8Gi}
+  # Select dedicated trusted runner hosts.
+  nodeSelector: {}
+  # Optional dedicated-host tolerations.
+  tolerations: []
+  # Optional pod affinity.
+  affinity: {}
+  podman:
+    # Absolute host socket path mounted at the same path; empty does not mount a host socket.
+    socketHostPath: ""
+    # Absolute host workspace path mounted identically for act bind mounts.
+    workRoot: /var/lib/codeyard-runner
+  # Concurrent runs per runner pod; tune KEDA threshold accordingly.
+  maxActiveRuns: 1
+  # Maximum run duration in seconds.
+  runTimeoutSeconds: 3600
+  # Optional trusted actor IDs; see CI_LOCAL_RUNNER.md before enabling execution.
+  trustedActorIds: ""
+  # Additional runner-only environment entries (Secret references are supported).
+  extraEnv: []
+  pdb:
+    # Only limits voluntary disruptions; does not drain jobs on scale-down.
+    enabled: false
+    # Maximum unavailable runner pods.
+    maxUnavailable: 1
+  keda:
+    # Enable queue-based autoscaling (requires the KEDA CRDs and controller).
+    enabled: false
+    # Prometheus API base URL reachable by KEDA.
+    prometheusAddress: ""
+    # Deduplicate the global queue gauge across scrape targets; scope to this release.
+    query: 'max(codeyard_ci_queued_runs{namespace="default",service="codeyard-web"})'
+    # Queued runs per desired runner replica.
+    threshold: "1"
+    # Minimum replicas; zero allows scaling to zero.
+    minReplicaCount: 0
+    # Maximum runner replica cost bound.
+    maxReplicaCount: 10
+    # Queue polling period in seconds.
+    pollingInterval: 30
+    # Idle seconds before scaling to zero; does not drain active runs.
+    cooldownPeriod: 900
+    # Existing KEDA TriggerAuthentication, for authenticated Prometheus APIs.
+    authenticationRef: ""
+    # Prometheus authentication modes used with authenticationRef (bearer, basic, tls).
+    authModes: bearer
+ingress:
+  # Enable HTTP routing through an installed ingress controller.
+  enabled: false
+  # IngressClass used by the controller.
+  className: ""
+  # Controller annotations, such as Git body-size and request-timeout settings.
+  annotations: {}
+  # Public hostname (without scheme).
+  host: ""
+  # Route the entire application.
+  path: /
+  # Kubernetes path matching policy.
+  pathType: Prefix
+  # Existing TLS Secret; empty renders no TLS stanza.
+  tlsSecretName: ""
+serviceMonitor:
+  # Enable authenticated web/storage scrapes (requires Prometheus Operator).
+  enabled: false
+  # Labels matching the Prometheus serviceMonitorSelector.
+  labels: {}
+  # Scrape interval; gauges are installation-wide except DB pool size.
+  interval: 30s
+  # Scrape timeout above the application's two-second collection timeout.
+  scrapeTimeout: 10s

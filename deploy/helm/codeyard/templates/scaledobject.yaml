@@ -1,0 +1,35 @@
+{{- if and .Values.runner.enabled .Values.runner.keda.enabled }}
+apiVersion: keda.sh/v1alpha1
+kind: ScaledObject
+metadata:
+  name: {{ include "codeyard.fullname" . }}-runner
+  labels:
+    {{- include "codeyard.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runner
+spec:
+  scaleTargetRef:
+    name: {{ include "codeyard.fullname" . }}-runner
+  pollingInterval: {{ .Values.runner.keda.pollingInterval }}
+  cooldownPeriod: {{ .Values.runner.keda.cooldownPeriod }}
+  minReplicaCount: {{ .Values.runner.keda.minReplicaCount }}
+  maxReplicaCount: {{ .Values.runner.keda.maxReplicaCount }}
+  advanced:
+    horizontalPodAutoscalerConfig:
+      behavior:
+        scaleDown:
+          stabilizationWindowSeconds: 900
+  triggers:
+    - type: prometheus
+      metadata:
+        serverAddress: {{ .Values.runner.keda.prometheusAddress | quote }}
+        query: {{ .Values.runner.keda.query | quote }}
+        threshold: {{ .Values.runner.keda.threshold | quote }}
+        ignoreNullValues: "false"
+        {{- if .Values.runner.keda.authenticationRef }}
+        authModes: {{ .Values.runner.keda.authModes | quote }}
+        {{- end }}
+      {{- with .Values.runner.keda.authenticationRef }}
+      authenticationRef:
+        name: {{ . }}
+      {{- end }}
+{{- end }}
