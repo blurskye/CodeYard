@@ -17,13 +17,13 @@ use crate::backend::{
         commit_comments::{self as comments, CommentError},
     },
 };
-use crate::webui::pages::repos::commits::comments::{Comment, Discussion, Draft};
 use axum::{
     extract::{MatchedPath, OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
     response::Response,
     Form,
 };
+use codeyard_webui::pages::repos::commits::comments::{Comment, Discussion, Draft};
 use std::{collections::HashMap, sync::Arc};
 const PER_PAGE: usize = 20;
 
@@ -148,7 +148,7 @@ pub(super) async fn discussion(
                 reactions: counts
                     .iter()
                     .filter(|count| count.subject_id == comment.id)
-                    .map(|count| crate::webui::pages::repos::issues::Reaction {
+                    .map(|count| codeyard_webui::pages::repos::issues::Reaction {
                         content: count.content.clone(),
                         count: count.count,
                         mine: count.mine,
@@ -450,8 +450,8 @@ pub(super) async fn submit(
         Err(response) => {
             let fallback = ctx.page_model(
                 "Commit comment draft",
-                crate::webui::app::Page::Repositories(
-                    crate::webui::pages::repos::page::Page::CommitCommentDraft {
+                codeyard_webui::app::Page::Repositories(
+                    codeyard_webui::pages::repos::page::Page::CommitCommentDraft {
                         repo: loaded.chrome.clone(),
                         sha: sha.clone(),
                         draft: Box::new(draft),

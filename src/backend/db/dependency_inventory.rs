@@ -38,11 +38,11 @@ pub fn package_parts(purl: &str) -> Option<(&str, &str, &str)> {
             return None;
         }
     }
-    if crate::webui::decode_component(version).len() > MAX_VERSION_BYTES {
+    if codeyard_webui::decode_component(version).len() > MAX_VERSION_BYTES {
         return None;
     }
     for part in [name, version] {
-        if crate::webui::decode_component(part)
+        if codeyard_webui::decode_component(part)
             .chars()
             .any(char::is_control)
         {

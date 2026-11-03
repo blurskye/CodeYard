@@ -179,8 +179,8 @@ async fn reactions(pg: bool) {
         .contains("&view=split#commitcomment-"));
     let (status, model) = browser.model(&format!("/alice/pulls/commit/{sha}")).await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Repositories(
-        codeyard::webui::pages::repos::page::Page::CommitDetail { discussion, .. },
+    let codeyard_webui::app::Page::Repositories(
+        codeyard_webui::pages::repos::page::Page::CommitDetail { discussion, .. },
     ) = model
     else {
         panic!("commit discussion")

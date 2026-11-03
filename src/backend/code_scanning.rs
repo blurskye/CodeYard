@@ -268,7 +268,7 @@ fn artifact_path(run: &SarifRun, physical: &Value, checkout: Option<&str>) -> Re
         !uri.starts_with('/') && !uri.contains("://") && !uri.contains('\\'),
         "Artifact is outside the checkout"
     );
-    let path = crate::webui::decode_component(uri);
+    let path = codeyard_webui::decode_component(uri);
     ensure!(
         !path.is_empty()
             && path.len() <= 4096

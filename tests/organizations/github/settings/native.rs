@@ -27,8 +27,8 @@ pub(super) async fn contract(
         .model(&format!("/new?owner_org_id={org}"))
         .await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Discovery(
-        codeyard::webui::pages::discovery::Page::NewRepository { form, choices, .. },
+    let codeyard_webui::app::Page::Discovery(
+        codeyard_webui::pages::discovery::Page::NewRepository { form, choices, .. },
     ) = creation
     else {
         panic!("expected native creation page")
@@ -64,7 +64,7 @@ pub(super) async fn contract(
     );
     let (status, profile) = member_browser.model("/acme").await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::OrganizationProfile(profile) = profile else {
+    let codeyard_webui::app::Page::OrganizationProfile(profile) = profile else {
         panic!("expected native organization profile")
     };
     assert!(profile.can_create);

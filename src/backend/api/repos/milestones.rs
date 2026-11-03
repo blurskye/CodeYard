@@ -16,11 +16,11 @@ use crate::backend::db::discussions::{ListFilter, Pick};
 use crate::backend::db::milestones::MilestoneWriteRefusal;
 use crate::backend::db::models::MilestoneSummary;
 use crate::backend::issues::{parse_due_date, validate_milestone};
-use crate::webui::pages::repos::issues::{self as view, ListCounts, MilestoneDraft};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos::issues::{self as view, ListCounts, MilestoneDraft};
 use std::collections::HashMap;
 use std::sync::Arc;
 

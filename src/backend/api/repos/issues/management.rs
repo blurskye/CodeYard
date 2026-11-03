@@ -9,12 +9,12 @@ use crate::backend::{
     app::AppState,
     db::{self, issues::management as store},
 };
-use crate::webui::pages::repos::issues::{IssueManagement, RelatedIssue};
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::pages::repos::issues::{IssueManagement, RelatedIssue};
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
@@ -250,7 +250,7 @@ pub(crate) async fn load(
             target.id,
             (
                 branch.name.clone(),
-                crate::webui::pages::repos::ref_path::file_url(
+                codeyard_webui::pages::repos::ref_path::file_url(
                     &format!("/{owner}/{}", target.name),
                     "tree",
                     &branch.name,

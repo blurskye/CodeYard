@@ -1,17 +1,15 @@
 //! Repository form identity, bounded lists and effect-time authority on both databases.
 use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
 use axum::http::StatusCode;
-use codeyard::{
-    backend::{
-        api::create_router,
-        app::AppState,
-        ci::CiConfig,
-        db,
-        repositories::{access, lifecycle, store::repo_store},
-        storage::ObjectStore,
-    },
-    webui::{app::Page, pages::repos as view},
+use codeyard::backend::{
+    api::create_router,
+    app::AppState,
+    ci::CiConfig,
+    db,
+    repositories::{access, lifecycle, store::repo_store},
+    storage::ObjectStore,
 };
+use codeyard_webui::{app::Page, pages::repos as view};
 use serde_json::{json, Value};
 use std::sync::Arc;
 

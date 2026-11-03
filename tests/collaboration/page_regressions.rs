@@ -2,10 +2,8 @@
 use super::templates::{put, setup};
 use crate::support::http_client::hidden_value;
 use axum::http::StatusCode;
-use codeyard::{
-    backend::db,
-    webui::{app::Page, pages::repos::issues},
-};
+use codeyard::backend::db;
+use codeyard_webui::{app::Page, pages::repos::issues};
 use serde_json::Value;
 
 async fn milestone_models(pg: bool) {

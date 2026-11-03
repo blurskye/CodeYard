@@ -97,7 +97,7 @@ async fn read(
                 let url = format!(
                     "{}/branches/{}",
                     repo_url(&owner, &name),
-                    crate::webui::encode_component(&target)
+                    codeyard_webui::encode_component(&target)
                 );
                 return Ok((
                     StatusCode::MOVED_PERMANENTLY,
@@ -132,7 +132,7 @@ pub(super) async fn document(
     let url = format!(
         "{}/branches/{}",
         repo_url(owner, name),
-        crate::webui::encode_component(branch)
+        codeyard_webui::encode_component(branch)
     );
     let mut contexts: Vec<_> = rules
         .iter()
@@ -161,7 +161,7 @@ pub(super) async fn document(
             "contexts": contexts,
             "checks": checks,
         }},
-        "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(branch))},
+        "_links": {"self": url, "html": format!("{}/{owner}/{name}/tree/{}", crate::backend::api::http::config::link_origin(), codeyard_webui::encode_component(branch))},
     }))
 }
 

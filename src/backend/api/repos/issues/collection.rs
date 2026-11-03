@@ -21,10 +21,6 @@ use crate::backend::repositories::issue_templates::{
     FormKind, IssueTemplate, IssueTemplates,
 };
 use crate::backend::repositories::store::repo_store;
-use crate::webui::components::references::References;
-use crate::webui::components::task_lists::count_tasks;
-use crate::webui::pages::repos::issues as view;
-use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::Query;
@@ -34,6 +30,10 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::components::references::References;
+use codeyard_webui::components::task_lists::count_tasks;
+use codeyard_webui::pages::repos::issues as view;
+use codeyard_webui::pages::repos::issues::Kind;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;

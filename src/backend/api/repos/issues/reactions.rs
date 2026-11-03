@@ -7,11 +7,11 @@ use crate::backend::api::repos::pulls::diff::diff_url;
 use crate::backend::db;
 use crate::backend::db::reactions::{ReactionRefusal, Subject, CONTENTS};
 use crate::backend::issues::{discussion_link_at, MAX_COMMENT_PAGE, MAX_REVIEW_COMMENT_OFFSET};
-use crate::webui::pages::repos::issues::{CommentPage, Item, Kind, Reaction};
-use crate::webui::pages::repos::pulls::Thread;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::pages::repos::issues::{CommentPage, Item, Kind, Reaction};
+use codeyard_webui::pages::repos::pulls::Thread;
 use std::collections::HashMap;
 use std::sync::Arc;
 

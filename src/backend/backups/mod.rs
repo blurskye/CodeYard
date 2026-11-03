@@ -341,8 +341,8 @@ fn libpq_url(database_url: &str) -> Result<(String, Option<String>)> {
             .map(|(name, value)| {
                 format!(
                     "{}={}",
-                    crate::webui::encode_component(&name),
-                    crate::webui::encode_component(&value)
+                    codeyard_webui::encode_component(&name),
+                    codeyard_webui::encode_component(&value)
                 )
             })
             .collect::<Vec<_>>()

@@ -130,7 +130,7 @@ impl ReserveUpload<'_> {
                 .as_ref()
                 .is_none_or(|types| types.iter().any(|t| t == self.content_type))
             && (!matches!(self.reason, FileReason::Avatar | FileReason::OrgAvatar)
-                || crate::media::AVATAR_CONTENT_TYPES.contains(&self.content_type))
+                || codeyard_support::media::AVATAR_CONTENT_TYPES.contains(&self.content_type))
     }
 }
 

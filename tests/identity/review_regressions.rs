@@ -115,7 +115,7 @@ async fn signup_review(pg: bool) {
     let client = Client::login(&router, f.pool(), admin).await;
     let (status, page) = client.model("/admin/users?request_page=2").await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::AdminUsers {
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::AdminUsers {
         model,
         ..
     }) = page
@@ -135,7 +135,7 @@ async fn signup_review(pg: bool) {
     assert!(!serde_json::to_string(&page)
         .unwrap()
         .contains("secret-verifier"));
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::AdminUsers {
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::AdminUsers {
         model,
         ..
     }) = page

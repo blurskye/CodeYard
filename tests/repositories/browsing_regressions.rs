@@ -1,10 +1,8 @@
 //! Namespace-aware browsing and database-only repository pages on both engines.
 use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
 use axum::http::StatusCode;
-use codeyard::{
-    backend::{db, repositories::lifecycle},
-    webui::{app::Page, pages::repos as view},
-};
+use codeyard::backend::{db, repositories::lifecycle};
+use codeyard_webui::{app::Page, pages::repos as view};
 use serde_json::{json, Value};
 
 fn commit(

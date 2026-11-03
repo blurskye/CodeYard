@@ -7,19 +7,19 @@ use crate::backend::{
         store::{ErrorKind, RepoError},
     },
 };
-use crate::webui::{
-    app::Page,
-    pages::repos::{
-        dependency_graph::{Dependency, Page as GraphPage},
-        page::Page as RepoPage,
-    },
-};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     routing::get,
     Json, Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{
+        dependency_graph::{Dependency, Page as GraphPage},
+        page::Page as RepoPage,
+    },
 };
 use std::sync::Arc;
 

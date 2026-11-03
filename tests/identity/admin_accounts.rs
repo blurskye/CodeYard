@@ -48,9 +48,8 @@ async fn contract(pg: bool) {
     let admin = Client::login(&router, f.pool(), admin_id).await;
     let (status, page) = admin.model("/admin").await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Admin {
-        model,
-    }) = page
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::Admin { model }) =
+        page
     else {
         panic!("administration overview")
     };
@@ -70,9 +69,8 @@ async fn contract(pg: bool) {
         .unwrap();
     let (status, page) = admin.model("/admin").await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Admin {
-        model,
-    }) = page
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::Admin { model }) =
+        page
     else {
         panic!("administration overview")
     };
@@ -106,7 +104,7 @@ async fn contract(pg: bool) {
     assert_eq!(stored.size_bytes, 0);
     let (status, page) = admin.model("/admin/email").await;
     assert_eq!(status, StatusCode::OK);
-    assert!(matches!(page, codeyard::webui::app::Page::Email(_)));
+    assert!(matches!(page, codeyard_webui::app::Page::Email(_)));
     let invalid = admin
         .form_reply(
             "/admin/email",

@@ -12,7 +12,7 @@ use codeyard::backend::{
     db::{self, models::OrgRole, organizations as orgs},
     storage::ObjectStore,
 };
-use codeyard::webui::{
+use codeyard_webui::{
     app::{Page, PageEnvelope},
     pages::discovery as view,
 };
@@ -221,7 +221,7 @@ impl Fixture {
         if model {
             request = request.header(
                 header::ACCEPT,
-                codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+                codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
             );
         }
         if cross_site {

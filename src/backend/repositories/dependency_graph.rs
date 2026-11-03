@@ -311,8 +311,8 @@ pub async fn inventory(
                         let package = Package {
                             manifest: path.clone(),
                             ecosystem: ecosystem.into(),
-                            name: crate::webui::decode_component(name),
-                            version: crate::webui::decode_component(version),
+                            name: codeyard_webui::decode_component(name),
+                            version: codeyard_webui::decode_component(version),
                             package_url: purl.into(),
                             scope: dependency["scope"].as_str().unwrap_or("unknown").into(),
                         };

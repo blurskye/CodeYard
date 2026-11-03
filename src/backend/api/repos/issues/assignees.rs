@@ -10,11 +10,11 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::db::assignees::{AssignedItem, AssignmentRefusal, MAX_ASSIGNEES};
 use crate::backend::issues::assignments;
-use crate::webui::pages::repos::issues::Kind;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
 use std::sync::Arc;
 

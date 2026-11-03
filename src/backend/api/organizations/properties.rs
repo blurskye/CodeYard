@@ -5,7 +5,6 @@ use crate::backend::{
     app::AppState,
     db::organizations::{properties as data, OrganizationOutcome},
 };
-use crate::webui::pages::orgs as view;
 use anyhow::{ensure, Result};
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
@@ -14,6 +13,7 @@ use axum::{
     routing::post,
     Router,
 };
+use codeyard_webui::pages::orgs as view;
 use std::{collections::HashSet, sync::Arc};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing, Suspended};
 
@@ -286,7 +286,7 @@ async fn mutate(
             } else {
                 format!(
                     "&property={}",
-                    crate::webui::encode_component(organization::field(&form, "property_name"))
+                    codeyard_webui::encode_component(organization::field(&form, "property_name"))
                 )
             };
             return ctx.redirect(&format!("{}/{org}?tab=properties{property}", super::INDEX));

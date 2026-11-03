@@ -514,9 +514,9 @@ async fn releases_flow(pg: bool) {
     // Pages render for readers, with the source archives and the draft hidden from them.
     let (model_status, model) = bob.model("/alice/proj/releases").await;
     assert_eq!(model_status, StatusCode::OK);
-    let codeyard::webui::app::Page::Repositories(
-        codeyard::webui::pages::repos::page::Page::Releases {
-            page: codeyard::webui::pages::repos::releases::Page::List { items, .. },
+    let codeyard_webui::app::Page::Repositories(
+        codeyard_webui::pages::repos::page::Page::Releases {
+            page: codeyard_webui::pages::repos::releases::Page::List { items, .. },
             ..
         },
     ) = model

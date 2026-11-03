@@ -5,11 +5,11 @@ use crate::backend::db;
 use crate::backend::repositories::access;
 use crate::backend::repositories::lifecycle;
 use crate::backend::repositories::store::{repo_store, CommitInfo, ErrorKind, RepoError};
-use crate::webui::pages::repos as view;
-use crate::webui::pages::repos::chrome::RepoChrome;
-use crate::webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
 use axum::http::StatusCode;
 use axum::response::Response;
+use codeyard_webui::pages::repos as view;
+use codeyard_webui::pages::repos::chrome::RepoChrome;
+use codeyard_webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
 use std::collections::HashMap;
 pub(crate) struct Loaded {
     pub(crate) repository: db::models::Repository,
@@ -221,7 +221,7 @@ pub(crate) async fn load_database(
                 .map_err(|_| unavailable(ctx))?
         {
             // Only the actor's own fork is disclosed.
-            chrome.fork_url = Some(crate::webui::repository_path(&user.username, &fork.name));
+            chrome.fork_url = Some(codeyard_webui::repository_path(&user.username, &fork.name));
         }
     }
     if let Some(parent_id) = repository.forked_from_id {
@@ -241,7 +241,7 @@ pub(crate) async fn load_database(
                     .ok_or_else(|| unavailable(ctx))?;
                     chrome.parent_name = Some(format!("{}/{}", parent_owner, parent.name));
                     chrome.parent_url =
-                        Some(crate::webui::repository_path(&parent_owner, &parent.name));
+                        Some(codeyard_webui::repository_path(&parent_owner, &parent.name));
                 }
                 Err((StatusCode::NOT_FOUND, _)) => {} // Do not disclose inaccessible fork ancestry.
                 Err((status, _)) => return Err(api_failure(ctx, status)),
@@ -301,7 +301,7 @@ pub(crate) fn ref_names(loaded: &Loaded) -> Vec<String> {
 /// Whether `reference` is a branch. Only a branch takes a commit from the file pages, so only a
 /// branch offers edit and delete there.
 pub(crate) fn is_branch(loaded: &Loaded, reference: &str) -> bool {
-    if crate::git_ids::is_full_commit_id(reference) {
+    if codeyard_support::git_ids::is_full_commit_id(reference) {
         return false;
     }
     if reference.starts_with("refs/") {

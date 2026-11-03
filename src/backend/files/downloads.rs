@@ -95,7 +95,7 @@ async fn authorize(
 /// Only avatar bitmaps display inline; everything else downloads as a file.
 fn inline_type(file: &File) -> Option<&str> {
     (matches!(file.reason.as_deref(), Some("avatar" | "org_avatar"))
-        && crate::media::AVATAR_CONTENT_TYPES.contains(&file.content_type.as_str()))
+        && codeyard_support::media::AVATAR_CONTENT_TYPES.contains(&file.content_type.as_str()))
     .then_some(file.content_type.as_str())
 }
 

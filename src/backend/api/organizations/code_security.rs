@@ -1,10 +1,7 @@
-use crate::{
-    backend::{
-        api::http::{context::PageContext, render::redirect_response},
-        app::AppState,
-        db::code_security as records,
-    },
-    webui::{app::Page, pages::orgs::code_security as view},
+use crate::backend::{
+    api::http::{context::PageContext, render::redirect_response},
+    app::AppState,
+    db::code_security as records,
 };
 use axum::{
     extract::{Path, State},
@@ -13,6 +10,7 @@ use axum::{
     routing::get,
     Form, Router,
 };
+use codeyard_webui::{app::Page, pages::orgs::code_security as view};
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
 

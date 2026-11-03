@@ -23,8 +23,8 @@ async fn readable_run(
             .unwrap_or_else(|_| {
                 format!(
                     "/{}/{}/actions",
-                    crate::webui::encode_component(owner),
-                    crate::webui::encode_component(name)
+                    codeyard_webui::encode_component(owner),
+                    codeyard_webui::encode_component(name)
                 )
             }),
     );
@@ -136,8 +136,8 @@ pub(crate) async fn delete_artifact(
 fn run_page(owner: &str, name: &str, run_id: Uuid) -> String {
     format!(
         "/{}/{}/actions?job={run_id}",
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(name)
+        codeyard_webui::encode_component(owner),
+        codeyard_webui::encode_component(name)
     )
 }
 

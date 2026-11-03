@@ -8,13 +8,13 @@ use crate::backend::{
         users::accounts::{AccountCredential, AccountRestricted},
     },
 };
-use crate::webui::components::interactions::{
-    InteractionPanel, InteractionRestriction, PullCapForm,
-};
 use axum::{
     extract::{Form, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
+};
+use codeyard_webui::components::interactions::{
+    InteractionPanel, InteractionRestriction, PullCapForm,
 };
 use db::pull_caps::{CapUpdate, PullCapRefusal, PullCapScope};
 use std::sync::Arc;
@@ -161,8 +161,8 @@ async fn scope_target(ctx: &PageContext, scope: InteractionScope) -> String {
             ) {
                 (Ok(Some(repo)), Ok(Some(owner))) => format!(
                     "/{}/{}/settings",
-                    crate::webui::encode_component(&owner),
-                    crate::webui::encode_component(&repo.name)
+                    codeyard_webui::encode_component(&owner),
+                    codeyard_webui::encode_component(&repo.name)
                 ),
                 _ => "/".into(),
             }

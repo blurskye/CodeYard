@@ -4,13 +4,13 @@ use crate::backend::{
     app::AppState,
     db::{self, repositories::engagement::StarSort},
 };
-use crate::webui::app::Page as AppPage;
-use crate::webui::pages::discovery::{self as view, RepositoryCard};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::app::Page as AppPage;
+use codeyard_webui::pages::discovery::{self as view, RepositoryCard};
 use std::{collections::HashMap, sync::Arc};
 
 /// Starred repositories per page, on /stars and on a profile's Stars tab.

@@ -1,9 +1,7 @@
 use super::{db, json, protection::call, request, Client, Router, Value};
 use axum::http::StatusCode;
-use codeyard::{
-    backend::repositories::access::change_collaborator,
-    webui::{app::Page, pages::repos::page::Page as RepoPage},
-};
+use codeyard::backend::repositories::access::change_collaborator;
+use codeyard_webui::{app::Page, pages::repos::page::Page as RepoPage};
 
 const OP: &str = "repos/list-pull-requests-associated-with-commit";
 

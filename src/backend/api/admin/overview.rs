@@ -3,11 +3,11 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::components::charts::{normalize_days, DailyActivity};
-use crate::webui::pages::{account, admin::Admin};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::components::charts::{normalize_days, DailyActivity};
+use codeyard_webui::pages::{account, admin::Admin};
 use std::sync::Arc;
 
 async fn load_admin(ctx: &PageContext, days: i32) -> Result<Admin, Response> {
@@ -66,7 +66,7 @@ pub(crate) async fn admin_get(
         Ok(model) => ctx.page_model_status(
             StatusCode::OK,
             "Administration",
-            crate::webui::app::Page::Identity(account::Page::Admin { model }),
+            codeyard_webui::app::Page::Identity(account::Page::Admin { model }),
         ),
         Err(response) => response,
     }

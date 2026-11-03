@@ -115,11 +115,11 @@ fn version_metadata(namespace: &str, slug: &str, version: &db::packages::Version
     metadata["dist"]["tarball"] = json!(format!(
         "{}/api/packages/{}/npm/@{}/{}/-/{}-{}.tgz",
         crate::backend::api::http::config::link_origin(),
-        crate::webui::encode_component(namespace),
-        crate::webui::encode_component(namespace),
-        crate::webui::encode_component(slug),
-        crate::webui::encode_component(slug),
-        crate::webui::encode_component(&version.name),
+        codeyard_webui::encode_component(namespace),
+        codeyard_webui::encode_component(namespace),
+        codeyard_webui::encode_component(slug),
+        codeyard_webui::encode_component(slug),
+        codeyard_webui::encode_component(&version.name),
     ));
     Ok(metadata)
 }
@@ -336,15 +336,15 @@ async fn dispatch(
     let mut metadata = metadata.clone();
     let base = format!(
         "/api/packages/{}/npm/{}",
-        crate::webui::encode_component(namespace),
+        codeyard_webui::encode_component(namespace),
         if name.starts_with('@') {
             format!(
                 "@{}/{}",
-                crate::webui::encode_component(namespace),
-                crate::webui::encode_component(slug)
+                codeyard_webui::encode_component(namespace),
+                codeyard_webui::encode_component(slug)
             )
         } else {
-            crate::webui::encode_component(slug)
+            codeyard_webui::encode_component(slug)
         }
     );
     metadata["dist"] = json!({"tarball":format!("{base}/-/{slug}-{version}.tgz"),"shasum":sha1,"integrity":integrity});

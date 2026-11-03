@@ -5,7 +5,7 @@ use super::create::{create_and_broadcast_notification, NotificationRequest};
 use super::NotificationBroadcaster;
 use crate::backend::db;
 use crate::backend::repositories::access::can_read;
-use crate::webui::components::references::mentioned_usernames;
+use codeyard_webui::components::references::mentioned_usernames;
 use serde_json::json;
 use std::collections::HashSet;
 

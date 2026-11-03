@@ -9,11 +9,11 @@ use crate::backend::api::user::responses::{
 use crate::backend::app::AppState;
 use crate::backend::identity;
 use crate::backend::identity::login::LoginError;
-use crate::webui::app::Page;
-use crate::webui::pages::{account, auth::AuthMode};
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::{account, auth::AuthMode};
 use std::sync::Arc;
 
 /// The second-factor page as the password step renders it. Nothing is signed in yet.

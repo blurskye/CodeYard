@@ -6,7 +6,7 @@ use crate::backend::crypto::SecretEncryptor;
 use crate::backend::db::models::{User, Webhook, WebhookDelivery};
 use crate::backend::db::webhooks::{self as hooks, HookOwner};
 use crate::backend::db::DbPool;
-use crate::webui::components::webhooks::{
+use codeyard_webui::components::webhooks::{
     DeliveryDetail, DeliveryRow, HookDetail, HookDraft, HookRow, WebhookPanel,
 };
 use std::collections::HashMap;

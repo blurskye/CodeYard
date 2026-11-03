@@ -13,17 +13,17 @@ use crate::backend::identity::{
     fine_grained::{self, catalog, Access, Group, Owner, Request, TokenError, PERMISSIONS},
     tokens,
 };
-use crate::webui::app::Page;
-use crate::webui::pages::{
-    account,
-    settings::fine_grained::{Choice, Choices, Detail, Draft, Model, Row, View, BASE},
-};
 use axum::extract::{rejection::FormRejection, Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::get;
 use axum::Router;
 use chrono::{DateTime, Duration, NaiveDate, Utc};
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::{
+    account,
+    settings::fine_grained::{Choice, Choices, Detail, Draft, Model, Row, View, BASE},
+};
 use serde_json::{Map, Value};
 use std::{collections::HashMap, sync::Arc};
 

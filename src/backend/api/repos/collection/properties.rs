@@ -1,13 +1,11 @@
 //! Bounded native creation drafts; definitions and write authority remain server-side.
 use super::{CreationRefusal, NewRepositoryForm, PageContext, RepositoryCreationChoices};
-use crate::{
-    backend::db::{
-        models::OrgRole,
-        organizations::{self as orgs, properties as data, OrganizationOutcome::Applied},
-    },
-    webui::components::repository_properties::RepositoryPropertyField,
+use crate::backend::db::{
+    models::OrgRole,
+    organizations::{self as orgs, properties as data, OrganizationOutcome::Applied},
 };
 use axum::http::StatusCode;
+use codeyard_webui::components::repository_properties::RepositoryPropertyField;
 use std::collections::HashMap;
 
 pub(super) fn drafts(
@@ -131,7 +129,7 @@ pub(super) async fn populate(
                 default_preview: fields
                     .default_value
                     .as_ref()
-                    .map(|value| crate::webui::excerpt(&value.form_value(), 256)),
+                    .map(|value| codeyard_webui::excerpt(&value.form_value(), 256)),
             }
         })
         .collect();

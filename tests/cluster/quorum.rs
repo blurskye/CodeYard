@@ -67,7 +67,6 @@ impl Stores {
             },
         ];
         let fixture = setup_with_refs(pool, 2, "2", &refs).await;
-        assert!(db::cluster::enable_cluster(pool).await.unwrap());
         let repository = db::repositories::records::get_repository_by_id(pool, fixture.repo)
             .await
             .unwrap()

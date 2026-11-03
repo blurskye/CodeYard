@@ -48,14 +48,14 @@ pub async fn trigger_ci(
 }
 
 use crate::backend::api::http::context::PageContext;
-use crate::webui::pages::ci as view;
-use crate::webui::pages::repos::actions as view_actions;
 use axum::{
     extract::{OriginalUri, Path},
     http::Uri,
     response::Response,
     Form,
 };
+use codeyard_webui::pages::ci as view;
+use codeyard_webui::pages::repos::actions as view_actions;
 use std::collections::{BTreeMap, HashMap};
 pub(super) async fn global_dispatch(
     State(state): State<Arc<AppState>>,
@@ -204,7 +204,7 @@ async fn dispatch_error(
     ctx.page_model_status(
         status,
         "Run was not accepted",
-        crate::webui::app::Page::Actions(view::Page::DispatchRecovery {
+        codeyard_webui::app::Page::Actions(view::Page::DispatchRecovery {
             repo_chrome: loaded.map(|loaded| Box::new(loaded.chrome)),
             base_path: base_path.to_string(),
             csrf_token: ctx.csrf_token.clone(),
@@ -237,8 +237,8 @@ async fn dispatch(
         .map(|(owner, repo)| {
             format!(
                 "/{}/{}/actions",
-                crate::webui::encode_component(owner),
-                crate::webui::encode_component(repo)
+                codeyard_webui::encode_component(owner),
+                codeyard_webui::encode_component(repo)
             )
         })
         .unwrap_or_else(|| "/ci".into());

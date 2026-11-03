@@ -523,7 +523,7 @@ impl S3Store {
         ensure!(valid_key(key), "invalid object key");
         if let Some(kind) = inline_image {
             ensure!(
-                crate::media::AVATAR_CONTENT_TYPES.contains(&kind),
+                codeyard_support::media::AVATAR_CONTENT_TYPES.contains(&kind),
                 "unsafe inline object type"
             );
         }

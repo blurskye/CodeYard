@@ -1,6 +1,6 @@
 use crate::backend::db;
-use crate::webui::pages::ci as view;
-use crate::webui::pages::repos::actions as view_actions;
+use codeyard_webui::pages::ci as view;
+use codeyard_webui::pages::repos::actions as view_actions;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -176,15 +176,15 @@ fn bound_workflow_inputs(
 }
 
 pub(crate) fn bound_log_projection(
-    envelope: &mut crate::webui::app::PageEnvelope,
+    envelope: &mut codeyard_webui::app::PageEnvelope,
 ) -> Result<(), serde_json::Error> {
     match &mut envelope.page {
-        crate::webui::app::Page::Actions(view::Page::Actions(model)) => {
+        codeyard_webui::app::Page::Actions(view::Page::Actions(model)) => {
             if bound_workflow_inputs(&mut model.workflows)? {
                 model.workflow_warning = Some(WORKFLOW_INPUTS_WARNING.into());
             }
         }
-        crate::webui::app::Page::Actions(view::Page::DispatchRecovery {
+        codeyard_webui::app::Page::Actions(view::Page::DispatchRecovery {
             workflows,
             message,
             ..
@@ -206,7 +206,7 @@ pub(crate) fn bound_log_projection(
     // Keep the newest lines that fit; the browser refuses larger page models.
     for line in logs.into_iter().rev() {
         let size = serde_json::to_vec(&line)?.len() + usize::from(!selected.logs.is_empty());
-        if bytes.saturating_add(size) > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES {
+        if bytes.saturating_add(size) > codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES {
             selected.logs_truncated = true;
             break;
         }
@@ -218,10 +218,10 @@ pub(crate) fn bound_log_projection(
 }
 
 fn selected_run_mut(
-    envelope: &mut crate::webui::app::PageEnvelope,
+    envelope: &mut codeyard_webui::app::PageEnvelope,
 ) -> Option<&mut view_actions::SelectedRun> {
     match &mut envelope.page {
-        crate::webui::app::Page::Actions(view::Page::Actions(model)) => model.selected.as_mut(),
+        codeyard_webui::app::Page::Actions(view::Page::Actions(model)) => model.selected.as_mut(),
         _ => None,
     }
 }
@@ -277,18 +277,18 @@ mod tests {
             next_before: None,
             log_limit: 2000,
         };
-        let mut envelope = crate::webui::app::PageEnvelope {
+        let mut envelope = codeyard_webui::app::PageEnvelope {
             title: "Actions".into(),
             location: "/ci".into(),
             chrome: Default::default(),
-            page: crate::webui::app::Page::Actions(view::Page::Actions(Box::new(model))),
+            page: codeyard_webui::app::Page::Actions(view::Page::Actions(Box::new(model))),
         };
         bound_log_projection(&mut envelope).unwrap();
         assert!(
             serde_json::to_vec(&envelope).unwrap().len()
-                < crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES
+                < codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES
         );
-        let crate::webui::app::Page::Actions(view::Page::Actions(model)) = envelope.page else {
+        let codeyard_webui::app::Page::Actions(view::Page::Actions(model)) = envelope.page else {
             panic!("Actions")
         };
         assert!(model.workflow_warning.is_some());

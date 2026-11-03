@@ -205,11 +205,11 @@ pub async fn generate_notes(
         .await
         .map_err(unavailable)?
         .ok_or(ReleaseError::NotFound)?;
-    let encode = crate::webui::encode_component;
+    let encode = codeyard_webui::encode_component;
     let base = format!(
         "{}{}",
         link_origin(),
-        crate::webui::repository_path(&owner, &repository.name)
+        codeyard_webui::repository_path(&owner, &repository.name)
     );
     let categories = if config.changelog.categories.is_empty() {
         vec![Category {

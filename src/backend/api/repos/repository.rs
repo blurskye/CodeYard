@@ -25,11 +25,11 @@ use crate::backend::db;
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::lifecycle;
 use crate::backend::webhooks::{panel, settings::HookError};
-use crate::webui::pages::repos as view;
 use axum::extract::{OriginalUri, Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::{Form, Json};
+use codeyard_webui::pages::repos as view;
 use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
@@ -789,7 +789,7 @@ pub(super) fn settings_response(
     with_status(
         ctx.page_model(
             "Repository settings",
-            crate::webui::app::Page::Repositories(view::page::Page::Settings {
+            codeyard_webui::app::Page::Repositories(view::page::Page::Settings {
                 repo: loaded.chrome.clone(),
                 settings: Box::new(settings),
             }),
@@ -1208,7 +1208,7 @@ fn reject(
     with_status(
         ctx.page_model(
             "Action could not be completed",
-            crate::webui::app::Page::Repositories(view::page::Page::RejectedForm {
+            codeyard_webui::app::Page::Repositories(view::page::Page::RejectedForm {
                 repo: loaded.chrome.clone(),
                 action: action.to_owned(),
                 message: message.to_owned(),
@@ -1332,7 +1332,7 @@ fn editor_return<'a>(from: &'a str, base: &str) -> Option<&'a str> {
     }
     // The browser resolves `%2e%2e` as dot segments, so it is decoded once. `%252e` is a file
     // named `%2e` and stays allowed.
-    let decoded = crate::webui::decode_component(from);
+    let decoded = codeyard_webui::decode_component(from);
     let unsafe_text = decoded.contains("//")
         || decoded.chars().any(|c| c == '\\' || c.is_control())
         || decoded
@@ -1348,7 +1348,7 @@ pub(super) async fn get_form(
     Path(params): Path<HashMap<String, String>>,
     Query(query): Query<HashMap<String, String>>,
 ) -> Response {
-    let base = crate::webui::repository_path(&params["owner"], &params["repo"]);
+    let base = codeyard_webui::repository_path(&params["owner"], &params["repo"]);
     let editor = query
         .get("from")
         .and_then(|from| editor_return(from, &base));
@@ -1379,7 +1379,7 @@ pub(super) async fn post_form(
     // the repository page instead. Set it before the checks that can fail.
     ctx.return_to = Some(format!(
         "{}{}",
-        crate::webui::repository_path(owner, name),
+        codeyard_webui::repository_path(owner, name),
         form_page_suffix(action)
     ));
     if let Err(response) = ctx.check_csrf(&form) {
@@ -1557,7 +1557,7 @@ async fn mutate(
             )),
         )
     })?;
-    let base = crate::webui::repository_path(owner, name);
+    let base = codeyard_webui::repository_path(owner, name);
     let cluster = ctx.state.cluster.as_ref();
     let ci = &ctx.state.ci_runs;
     let authority = || ctx.database_actor(actor.id);
@@ -1609,7 +1609,7 @@ async fn mutate(
             )
             .await
             .map_err(lifecycle_error)?;
-            Ok(crate::webui::repository_path(&actor.username, &fork.name))
+            Ok(codeyard_webui::repository_path(&actor.username, &fork.name))
         }
         "create-branch" => {
             crate::backend::repositories::refs::create_branch(
@@ -1959,7 +1959,7 @@ async fn mutate(
             )
             .await
             .map_err(repository_settings_error)?;
-            Ok(crate::webui::repository_path(owner, &updated.name))
+            Ok(codeyard_webui::repository_path(owner, &updated.name))
         }
         "transfer" => {
             let updated = lifecycle::transfer(
@@ -1972,7 +1972,7 @@ async fn mutate(
             .await
             .map_err(lifecycle_error)?;
             let new_owner = repository_owner(pool, &updated).await?;
-            Ok(crate::webui::repository_path(&new_owner, &updated.name))
+            Ok(codeyard_webui::repository_path(&new_owner, &updated.name))
         }
         "archive" | "unarchive" => {
             crate::backend::repositories::access::check_admin(pool, repository.id, actor.id)
@@ -1993,7 +1993,7 @@ async fn mutate(
             lifecycle::delete(pool, cluster, ctx.database_actor(actor.id), repository.id)
                 .await
                 .map_err(lifecycle_error)?;
-            Ok(crate::webui::profile_path(owner))
+            Ok(codeyard_webui::profile_path(owner))
         }
         "template" => {
             db::repositories::records::patch_repository(

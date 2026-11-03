@@ -9,9 +9,9 @@ use axum::http::StatusCode;
 use codeyard::backend::{
     api::create_router, app::AppState, ci::CiConfig, db, storage::ObjectStore,
 };
-use codeyard::webui::app::Page;
-use codeyard::webui::pages::repos::insights::Page as Insights;
-use codeyard::webui::pages::repos::page::Page as RepoPage;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::repos::insights::Page as Insights;
+use codeyard_webui::pages::repos::page::Page as RepoPage;
 use serde_json::{json, Value};
 use std::sync::Arc;
 

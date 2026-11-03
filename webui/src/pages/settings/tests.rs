@@ -1,0 +1,701 @@
+//! Account settings contracts: a rejected form keeps its non-secret fields, and never its secrets.
+use super::*;
+use crate::pages::fields::{preserved_values, FormValues};
+use crate::pages::users::Profile;
+use dioxus::prelude::Element;
+use std::collections::HashMap;
+
+fn html(element: Element) -> String {
+    dioxus_ssr::render_element(element)
+}
+
+#[test]
+fn rejected_key_drafts_keep_a_malformed_public_key_but_never_a_private_one() {
+    let draft = |key: &str| {
+        preserved_values(&HashMap::from([("public_key".into(), key.into())])).public_key
+    };
+    assert_eq!(draft("ssh-ed25519 AAAA"), "ssh-ed25519 AAAA");
+    assert_eq!(
+        draft("ecdsa-sha2-nistp256 AAAA"),
+        "ecdsa-sha2-nistp256 AAAA"
+    );
+    assert_eq!(
+        draft("sk-ssh-ed25519@openssh.com AAAA"),
+        "sk-ssh-ed25519@openssh.com AAAA"
+    );
+    assert!(draft("b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQ").is_empty());
+    assert!(draft("command=bad ssh-ed25519 AAAA").is_empty());
+    assert!(draft("-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA").is_empty());
+    assert!(draft("PuTTY-User-Key-File-3: ssh-ed25519\nPrivate-Lines: 1\nAAAA").is_empty());
+}
+
+#[test]
+fn rejected_settings_preserve_nonsecret_fields_but_not_passwords_or_private_keys() {
+    crate::tests::in_scope(|| {
+        let form = HashMap::from([
+            ("display_name".into(), "Alice & Bob".into()),
+            ("bio".into(), "</textarea><script>evil</script>".into()),
+            ("website".into(), "https://example.org".into()),
+            ("new_password".into(), "secret-new-marker".into()),
+            (
+                "public_key".into(),
+                "-----BEGIN OPENSSH PRIVATE KEY-----secret-key-marker".into(),
+            ),
+        ]);
+        let values = preserved_values(&form);
+        assert!(values.public_key.is_empty());
+        assert!(!serde_json::to_string(&values)
+            .unwrap()
+            .contains("secret-new-marker"));
+        let output = html(settings_page(
+            Settings {
+                two_factor: Default::default(),
+                signing_keys: vec![],
+                gpg_keys: vec![],
+                blocked: Default::default(),
+                emails: vec![],
+                theme: crate::document::Theme::System,
+                profile: Profile::default(),
+                email: String::new(),
+                tab: "profile".into(),
+                session_pagination: Default::default(),
+                keys: vec![],
+                tokens: vec![],
+                sessions: vec![],
+                new_token: None,
+                password_supported: true,
+                email_notifications: true,
+                email_verification: EmailVerification::Verified,
+                must_change_password: false,
+                values,
+            },
+            "token",
+            Some("Please correct your profile."),
+            true,
+        ));
+        assert!(output.contains("Alice &#38; Bob"));
+        assert!(output.contains("&lt;/textarea&gt;"));
+        assert!(output.contains("https://example.org"));
+        assert!(!output.contains("<script>"));
+        assert!(!output.contains("secret-new-marker"));
+        assert!(!output.contains("secret-key-marker"));
+        assert!(!output.contains("Private node access"));
+    });
+}
+
+#[test]
+fn settings_primary_actions_share_one_class_and_deletes_are_outlined() {
+    crate::tests::in_scope(|| {
+        let settings_for = |tab: &str, keys: Vec<Key>| Settings {
+            two_factor: Default::default(),
+            signing_keys: vec![],
+            gpg_keys: vec![],
+            blocked: Default::default(),
+            emails: vec![],
+            theme: crate::document::Theme::System,
+            profile: Profile {
+                username: "alice".into(),
+                ..Profile::default()
+            },
+            email: "alice@example.test".into(),
+            tab: tab.into(),
+            session_pagination: Default::default(),
+            keys,
+            tokens: vec![],
+            sessions: vec![],
+            new_token: None,
+            password_supported: true,
+            email_notifications: true,
+            email_verification: EmailVerification::Verified,
+            must_change_password: false,
+            values: preserved_values(&HashMap::new()),
+        };
+        let profile = html(settings_page(
+            settings_for("profile", vec![]),
+            "token",
+            None,
+            false,
+        ));
+        assert!(profile.contains("btn-primary"));
+        assert!(!profile.contains("bg-primary"));
+        let keys = html(settings_page(
+            settings_for(
+                "keys",
+                vec![Key {
+                    id: 7,
+                    name: "Laptop".into(),
+                    fingerprint: "SHA256:public".into(),
+                    kind: "ed25519".into(),
+                    created: "2026-10-02".into(),
+                }],
+            ),
+            "token",
+            None,
+            false,
+        ));
+        assert!(keys.contains("btn btn-danger btn-sm"));
+        assert!(!keys.contains("identity-danger-link"));
+    });
+}
+
+#[test]
+fn ssh_key_and_token_deletion_ask_in_a_centred_dialog() {
+    crate::tests::in_scope(|| {
+        let settings_for = |tab: &str| Settings {
+            two_factor: Default::default(),
+            signing_keys: vec![],
+            gpg_keys: vec![],
+            blocked: Default::default(),
+            emails: vec![],
+            theme: crate::document::Theme::System,
+            profile: Profile {
+                username: "alice".into(),
+                ..Profile::default()
+            },
+            email: "alice@example.test".into(),
+            tab: tab.into(),
+            keys: vec![Key {
+                id: 7,
+                name: "Laptop".into(),
+                fingerprint: "SHA256:public".into(),
+                kind: "ed25519".into(),
+                created: "2026-10-02".into(),
+            }],
+            tokens: vec![Token {
+                id: 4,
+                name: "ci".into(),
+                scope: "read".into(),
+                expires: "2027-01-01".into(),
+                created: "2026-10-02".into(),
+                last_used: Some("2026-10-20T08:00:00Z".into()),
+                last_ip: Some("192.0.2.4".into()),
+            }],
+            session_pagination: Default::default(),
+            sessions: vec![],
+            new_token: None,
+            password_supported: true,
+            email_notifications: true,
+            email_verification: EmailVerification::Verified,
+            must_change_password: false,
+            values: preserved_values(&HashMap::new()),
+        };
+        let keys = html(settings_page(settings_for("keys"), "token", None, false));
+        assert!(
+            keys.contains("aria-label=\"Delete SSH key Laptop\""),
+            "{keys}"
+        );
+        assert!(
+            keys.contains("action=\"/settings/keys/7/delete\""),
+            "{keys}"
+        );
+        assert!(keys.contains("href=\"/settings?tab=keys\""), "{keys}");
+        assert!(keys.contains(">Cancel</a>"), "{keys}");
+        assert!(!keys.contains("class=\"collaboration-checkbox\""), "{keys}");
+        let tokens = html(settings_page(settings_for("tokens"), "token", None, false));
+        assert!(
+            tokens.contains("aria-label=\"Delete token ci\""),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("action=\"/settings/tokens/4/delete\""),
+            "{tokens}"
+        );
+        assert!(tokens.contains("href=\"/settings?tab=tokens\""), "{tokens}");
+        assert!(
+            tokens.contains("Personal access tokens (classic)"),
+            "{tokens}"
+        );
+        assert!(
+            tokens.contains("Last used Oct 20, 2026 from 192.0.2.4"),
+            "{tokens}"
+        );
+        assert!(
+            !tokens.contains("class=\"collaboration-checkbox\""),
+            "{tokens}"
+        );
+    });
+}
+
+#[test]
+fn settings_use_a_current_left_nav_and_keep_native_credential_forms() {
+    crate::tests::in_scope(|| {
+        let output = html(settings_page(
+            Settings {
+                two_factor: Default::default(),
+                signing_keys: vec![],
+                gpg_keys: vec![],
+                blocked: Default::default(),
+                emails: vec![],
+                theme: crate::document::Theme::System,
+                profile: Profile {
+                    username: "alice".into(),
+                    ..Profile::default()
+                },
+                email: "alice@example.test".into(),
+                tab: "keys".into(),
+                session_pagination: Default::default(),
+                keys: vec![],
+                tokens: vec![],
+                sessions: vec![],
+                new_token: None,
+                password_supported: true,
+                email_notifications: true,
+                email_verification: EmailVerification::Verified,
+                must_change_password: false,
+                values: FormValues::default(),
+            },
+            "settings-csrf",
+            None,
+            false,
+        ));
+        assert!(output.contains("class=\"identity-settings-layout\""));
+        assert!(output.contains("identity-settings-nav-current"));
+        assert!(output.contains("SSH and GPG keys, current page"));
+        assert!(output.contains("action=\"/settings/keys\""));
+        assert!(output.contains("name=\"public_key\""));
+        assert!(output.contains("value=\"settings-csrf\""));
+    });
+}
+
+#[test]
+fn prerendered_bio_and_public_key_keep_native_escaped_text() {
+    crate::tests::in_scope(|| {
+        let source = "\n</textarea><script>bad</script>&";
+        for (tab, name) in [("profile", "bio"), ("keys", "public_key")] {
+            let model = Settings {
+                session_pagination: Default::default(),
+                two_factor: Default::default(),
+                signing_keys: vec![],
+                gpg_keys: vec![],
+                blocked: Default::default(),
+                emails: vec![],
+                theme: crate::document::Theme::System,
+                profile: Profile::default(),
+                email: String::new(),
+                tab: tab.into(),
+                keys: vec![],
+                tokens: vec![],
+                sessions: vec![],
+                new_token: None,
+                password_supported: false,
+                email_notifications: true,
+                email_verification: EmailVerification::Verified,
+                must_change_password: false,
+                values: FormValues {
+                    bio: source.into(),
+                    public_key: source.into(),
+                    ..Default::default()
+                },
+            };
+            let mut renderer = dioxus_ssr::Renderer::new();
+            renderer.pre_render = true;
+            let html = renderer.render_element(settings_page(model, "csrf-fixture", None, false));
+            let textarea = html.split_once("<textarea").unwrap().1;
+            assert!(textarea
+                .split_once('>')
+                .unwrap()
+                .0
+                .contains(&format!("name=\"{name}\"")));
+            let text = textarea
+                .split_once('>')
+                .unwrap()
+                .1
+                .split_once("</textarea>")
+                .unwrap()
+                .0;
+            assert_eq!(
+                text,
+                "\n\n&lt;/textarea&gt;&lt;script&gt;bad&lt;/script&gt;&amp;"
+            );
+            assert!(!text.contains("<!--"));
+            assert!(html.contains("name=\"csrf_token\""));
+        }
+    });
+}
+
+#[test]
+fn token_expiry_defaults_to_thirty_days_and_takes_a_calendar_day() {
+    fn radio<'a>(output: &'a str, value: &str) -> &'a str {
+        let start = output
+            .find(&format!("value=\"{value}\""))
+            .expect("radio is rendered");
+        let rest = &output[start..];
+        &rest[..rest.find('>').expect("tag closes")]
+    }
+    crate::tests::in_scope(|| {
+        let tokens_page = |values: FormValues| {
+            html(settings_page(
+                Settings {
+                    two_factor: Default::default(),
+                    signing_keys: vec![],
+                    gpg_keys: vec![],
+                    blocked: Default::default(),
+                    emails: vec![],
+                    theme: crate::document::Theme::System,
+                    profile: Profile {
+                        username: "alice".into(),
+                        ..Profile::default()
+                    },
+                    email: "alice@example.test".into(),
+                    tab: "tokens".into(),
+                    session_pagination: Default::default(),
+                    keys: vec![],
+                    tokens: vec![],
+                    sessions: vec![],
+                    new_token: None,
+                    password_supported: true,
+                    email_notifications: true,
+                    email_verification: EmailVerification::Verified,
+                    must_change_password: false,
+                    values,
+                },
+                "token",
+                None,
+                false,
+            ))
+        };
+        let fresh = tokens_page(FormValues::default());
+        assert!(!radio(&fresh, "never").contains("checked"));
+        assert!(radio(&fresh, "date").contains("checked"));
+        assert!(fresh.contains("type=\"date\""));
+        assert!(fresh.contains("name=\"expires_at\""));
+        let thirty_days = (crate::components::current_time() + chrono::Duration::days(30))
+            .format("%Y-%m-%d")
+            .to_string();
+        assert!(fresh.contains(&format!("value=\"{thirty_days}\"")));
+        assert!(!fresh.contains("RFC 3339"));
+
+        let chosen = tokens_page(FormValues {
+            expiry: "date".into(),
+            expires_at: "2027-01-15".into(),
+            ..FormValues::default()
+        });
+        assert!(radio(&chosen, "date").contains("checked"));
+        assert!(!radio(&chosen, "never").contains("checked"));
+        assert!(chosen.contains("value=\"2027-01-15\""));
+    });
+}
+
+/// The whole form that holds the hidden `theme` input with this value.
+fn appearance_form<'a>(output: &'a str, theme: &str) -> &'a str {
+    let at = output
+        .find(&format!("value=\"{theme}\""))
+        .expect("theme input is rendered");
+    let start = output[..at].rfind("<form").expect("input sits in a form");
+    let end = at + output[at..].find("</form>").expect("form closes") + "</form>".len();
+    &output[start..end]
+}
+
+#[test]
+fn appearance_tab_sits_after_the_profile_and_marks_the_saved_theme() {
+    crate::tests::in_scope(|| {
+        let page = |theme: crate::document::Theme| {
+            html(settings_page(
+                Settings {
+                    two_factor: Default::default(),
+                    signing_keys: vec![],
+                    gpg_keys: vec![],
+                    blocked: Default::default(),
+                    emails: vec![],
+                    profile: Profile {
+                        username: "alice".into(),
+                        ..Profile::default()
+                    },
+                    email: "alice@example.test".into(),
+                    tab: "appearance".into(),
+                    session_pagination: Default::default(),
+                    keys: vec![],
+                    tokens: vec![],
+                    sessions: vec![],
+                    new_token: None,
+                    password_supported: true,
+                    email_notifications: true,
+                    email_verification: EmailVerification::Verified,
+                    must_change_password: false,
+                    values: preserved_values(&HashMap::new()),
+                    theme,
+                },
+                "token",
+                None,
+                false,
+            ))
+        };
+        let output = page(crate::document::Theme::Dark);
+        let profile = output
+            .find("href=\"/settings?tab=profile\"")
+            .expect("profile link");
+        let appearance = output
+            .find("href=\"/settings?tab=appearance\"")
+            .expect("appearance link");
+        let keys = output
+            .find("href=\"/settings?tab=keys\"")
+            .expect("keys link");
+        assert!(profile < appearance && appearance < keys);
+        assert!(output.contains(">Appearance<"));
+        assert!(output.contains("Choose how Codeyard looks on this device."));
+        assert_eq!(
+            output.matches("class=\"identity-appearance-row\"").count(),
+            3
+        );
+        for (value, label) in [("system", "System"), ("light", "Light"), ("dark", "Dark")] {
+            let form = appearance_form(&output, value);
+            assert!(form.contains("action=\"/_forms/theme\""));
+            assert!(form.contains("value=\"/settings?tab=appearance\""));
+            assert!(form.contains("name=\"csrf_token\""));
+            assert!(form.contains(&format!("Use {label}")));
+        }
+        let saved = appearance_form(&output, "dark");
+        assert!(saved.contains("aria-current=\"true\""));
+        assert!(saved.contains("count-badge"));
+        for value in ["system", "light"] {
+            let form = appearance_form(&output, value);
+            assert!(form.contains("aria-current=\"false\""));
+            assert!(!form.contains("count-badge"));
+        }
+    });
+}
+
+#[test]
+fn picture_preview_shows_the_account_picture_or_the_uploaded_file_at_72_pixels() {
+    crate::tests::in_scope(|| {
+        let page = |avatar_url: Option<&str>| {
+            html(settings_page(
+                Settings {
+                    two_factor: Default::default(),
+                    signing_keys: vec![],
+                    gpg_keys: vec![],
+                    blocked: Default::default(),
+                    emails: vec![],
+                    profile: Profile {
+                        username: "alice".into(),
+                        avatar_url: avatar_url.map(str::to_owned),
+                        ..Profile::default()
+                    },
+                    email: "alice@example.test".into(),
+                    tab: "profile".into(),
+                    session_pagination: Default::default(),
+                    keys: vec![],
+                    tokens: vec![],
+                    sessions: vec![],
+                    new_token: None,
+                    password_supported: true,
+                    email_notifications: true,
+                    email_verification: EmailVerification::Verified,
+                    must_change_password: false,
+                    values: preserved_values(&HashMap::new()),
+                    theme: crate::document::Theme::System,
+                },
+                "settings-csrf",
+                None,
+                false,
+            ))
+        };
+        let generated = page(None);
+        assert!(generated.contains("src=\"/avatars/alice\""));
+        assert!(generated.contains("width=\"72\""));
+        // An uploaded picture is linked by its own file, so a new upload shows at once.
+        let uploaded = page(Some("/api/files/7/download"));
+        assert!(uploaded.contains("src=\"/api/files/7/download\""));
+        assert!(uploaded.contains("class=\"identity-settings-avatar\""));
+    });
+}
+
+fn settings_for(tab: &str, sessions: Vec<AccountSession>) -> Settings {
+    Settings {
+        two_factor: Default::default(),
+        signing_keys: vec![],
+        gpg_keys: vec![],
+        blocked: Default::default(),
+        emails: vec![],
+        theme: crate::document::Theme::System,
+        profile: Profile::default(),
+        email: "alice@example.test".into(),
+        tab: tab.into(),
+        keys: vec![],
+        tokens: vec![],
+        sessions,
+        session_pagination: Default::default(),
+        new_token: None,
+        password_supported: true,
+        email_notifications: true,
+        email_verification: EmailVerification::Verified,
+        must_change_password: false,
+        values: FormValues::default(),
+    }
+}
+
+#[test]
+fn email_tab_asks_for_the_current_password_and_posts_to_the_email_route() {
+    crate::tests::in_scope(|| {
+        let output = html(settings_page(
+            settings_for("email", vec![]),
+            "token",
+            None,
+            false,
+        ));
+        assert!(output.contains("action=\"/settings/email\""));
+        assert!(output.contains("name=\"current_password\""));
+        assert!(output.contains("value=\"alice@example.test\""));
+        assert!(!output.contains("name=\"new_password\""));
+        assert!(output.contains("href=\"/settings?tab=email\""));
+    });
+}
+
+#[test]
+fn email_tab_shows_the_notification_choice() {
+    crate::tests::in_scope(|| {
+        let render = |wanted: bool| {
+            let mut model = settings_for("email", vec![]);
+            model.email_notifications = wanted;
+            html(settings_page(model, "token", None, false))
+        };
+        let on = render(true);
+        assert!(on.contains("action=\"/settings/email-notifications\""));
+        assert!(on.contains("name=\"email_notifications\""));
+        assert!(on.contains("checked"));
+        let off = render(false);
+        assert!(!off.contains("checked"));
+    });
+}
+
+#[test]
+fn email_tab_says_where_verification_stands() {
+    crate::tests::in_scope(|| {
+        let render = |status: EmailVerification, email: &str| {
+            let mut model = settings_for("email", vec![]);
+            model.email_verification = status;
+            model.email = email.into();
+            html(settings_page(model, "token", None, false))
+        };
+        let verified = render(EmailVerification::Verified, "alice@example.test");
+        assert!(verified.contains("This address is verified."));
+        assert!(!verified.contains("Resend verification email"));
+
+        let unverified = render(EmailVerification::Unverified, "alice@example.test");
+        assert!(unverified.contains("action=\"/settings/email-verification\""));
+        assert!(unverified.contains("Resend verification email"));
+        assert!(unverified.contains("action=\"/settings/email-verification/code\""));
+        assert!(unverified.contains("name=\"code\""));
+        assert!(unverified.contains(">Verify<"), "{unverified}");
+
+        let unavailable = render(EmailVerification::Unavailable, "alice@example.test");
+        assert!(unavailable.contains("Verification is unavailable"));
+        assert!(!unavailable.contains("Resend verification email"));
+        assert!(!unavailable.contains("name=\"code\""));
+
+        let none = render(EmailVerification::Unverified, "");
+        assert!(!none.contains("Resend verification email"));
+    });
+}
+
+#[test]
+fn sessions_tab_marks_this_session_and_never_shows_a_session_secret() {
+    crate::tests::in_scope(|| {
+        let sessions = vec![
+            AccountSession {
+                key: "digest-current".into(),
+                current: true,
+                created: "Oct 1, 2026 10:00 UTC".into(),
+                expires: "Oct 8, 2026".into(),
+                user_agent: "Firefox on Linux".into(),
+                ip_address: "203.0.113.4".into(),
+            },
+            AccountSession {
+                key: "digest-other".into(),
+                current: false,
+                created: "Oct 2, 2026 09:00 UTC".into(),
+                expires: "Oct 9, 2026".into(),
+                user_agent: String::new(),
+                ip_address: String::new(),
+            },
+        ];
+        let output = html(settings_page(
+            settings_for("sessions", sessions),
+            "token",
+            None,
+            false,
+        ));
+        assert!(output.contains("This session"));
+        assert!(output.contains("name=\"session\" value=\"digest-other\""));
+        assert!(output.contains("action=\"/settings/sessions/revoke\""));
+        assert!(output.contains("action=\"/settings/sessions/revoke-others\""));
+        assert!(output.contains("Unknown browser"));
+        assert!(output.contains("IP unknown"));
+    });
+}
+
+#[test]
+fn sessions_tab_hides_sign_out_everywhere_else_when_no_other_session_exists() {
+    crate::tests::in_scope(|| {
+        let sessions = vec![AccountSession {
+            key: "digest-current".into(),
+            current: true,
+            created: "Oct 1, 2026 10:00 UTC".into(),
+            expires: "Oct 8, 2026".into(),
+            user_agent: String::new(),
+            ip_address: String::new(),
+        }];
+        let output = html(settings_page(
+            settings_for("sessions", sessions),
+            "token",
+            None,
+            false,
+        ));
+        assert!(!output.contains("/settings/sessions/revoke-others"));
+    });
+}
+
+#[test]
+fn secondary_emails_have_native_add_remove_verification_and_publication_forms() {
+    crate::tests::in_scope(|| {
+        let mut settings = settings_for("email", vec![]);
+        settings.emails = vec![
+            SecondaryEmail {
+                email: "work@example.test".into(),
+                verified: true,
+            },
+            SecondaryEmail {
+                email: "pending@example.test".into(),
+                verified: false,
+            },
+        ];
+        settings.profile.public_email = "work@example.test".into();
+        let output = html(settings_page(settings, "csrf-marker", None, false));
+        for action in [
+            "/settings/secondary-emails",
+            "/settings/secondary-emails/verify",
+            "/settings/email-verification/code",
+            "/settings/email-visibility",
+        ] {
+            assert!(
+                output.contains(&format!("method=\"post\" action=\"{action}\"")),
+                "{output}"
+            );
+        }
+        assert!(output.contains("name=\"secondary_email\""));
+        assert!(output.contains("name=\"public_address\" value=\"work@example.test\""));
+        assert!(output.contains("name=\"remove\" value=\"yes\""));
+        assert!(output.contains("Hide public email"));
+        assert!(output.contains("csrf-marker"));
+    });
+}
+
+#[test]
+fn blocked_accounts_have_private_native_forms_and_page_links() {
+    crate::tests::in_scope(|| {
+        let mut settings = settings_for("blocked", vec![]);
+        settings.blocked = BlockedAccounts {
+            interaction: None,
+            users: vec!["bob".into()],
+            page: 2,
+            more: true,
+        };
+        let output = html(settings_page(settings, "block-csrf", None, false));
+        assert!(output.contains("method=\"post\" action=\"/settings/blocks\""));
+        assert!(output.contains("name=\"unblock\" value=\"yes\""));
+        assert!(output.contains("name=\"username\" value=\"bob\""));
+        assert!(output.contains("tab=blocked&#38;page=1"));
+        assert!(output.contains("tab=blocked&#38;page=3"));
+        assert!(output.contains("block-csrf"));
+    });
+}

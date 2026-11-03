@@ -231,8 +231,8 @@ pub(crate) fn namespace_url(owner: &str, name: &str) -> String {
     format!(
         "{}/{}/{}",
         link_origin(),
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(name)
+        codeyard_webui::encode_component(owner),
+        codeyard_webui::encode_component(name)
     )
 }
 

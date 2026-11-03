@@ -1,6 +1,6 @@
 use super::fixture::{Fixture, INDEX};
 use axum::http::StatusCode;
-use codeyard::webui::{app::Page, pages::account};
+use codeyard_webui::{app::Page, pages::account};
 
 pub async fn contracts(f: &Fixture) {
     let index = f.get(&f.owner, INDEX).await;

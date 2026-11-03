@@ -1,0 +1,12 @@
+[package]
+name = "codeyard-support"
+version.workspace = true
+edition.workspace = true
+description = "Codeyard pure helpers shared by the server and browser"
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+url = "2"
+
+[lints]
+workspace = true

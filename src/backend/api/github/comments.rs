@@ -277,8 +277,8 @@ async fn represent(
         for value in &mut values {
             let body = value["body"].as_str().unwrap_or_default();
             let rendered_html =
-                html.then(|| crate::webui::components::parse_markdown(body, &references));
-            let rendered_text = text.then(|| crate::webui::components::markdown_text(body));
+                html.then(|| codeyard_webui::components::parse_markdown(body, &references));
+            let rendered_text = text.then(|| codeyard_webui::components::markdown_text(body));
             size = size
                 .saturating_add(if profile == Representation::Full {
                     body.len()

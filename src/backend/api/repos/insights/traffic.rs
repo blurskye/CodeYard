@@ -4,12 +4,12 @@ use crate::backend::{
     app::AppState,
     repositories::traffic::{self, Refusal},
 };
-use crate::webui::pages::repos::insights::{traffic as view, Page as InsightsPage};
 use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::pages::repos::insights::{traffic as view, Page as InsightsPage};
 use serde::Deserialize;
 use std::sync::Arc;
 #[derive(Deserialize)]

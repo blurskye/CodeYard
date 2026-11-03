@@ -8,7 +8,7 @@ use crate::support::http_client::Client;
 
 use axum::http::StatusCode;
 use codeyard::backend::{db, identity::passwords};
-use codeyard::webui::{app::Page, pages::account};
+use codeyard_webui::{app::Page, pages::account};
 use db::users::signup_requests as requests;
 
 async fn user(f: &Database, name: &str) -> db::models::User {
@@ -113,7 +113,7 @@ async fn admin_forms(pg: bool) {
     // Signup requests are listed on the users page and decided there.
     let (status, page) = client.model("/admin/users").await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::AdminUsers {
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::AdminUsers {
         model,
         ..
     }) = page

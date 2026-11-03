@@ -4,7 +4,6 @@ use crate::backend::{
     app::AppState,
     repositories::traffic::{self, Identity, Metric},
 };
-use crate::webui::{app::Page, pages::repos::page::Page as RepoPage};
 use axum::{
     extract::Request,
     http::{header, Method},
@@ -12,6 +11,7 @@ use axum::{
     response::Response,
     Extension,
 };
+use codeyard_webui::{app::Page, pages::repos::page::Page as RepoPage};
 use std::sync::Arc;
 #[derive(Clone)]
 pub(super) struct Observation {

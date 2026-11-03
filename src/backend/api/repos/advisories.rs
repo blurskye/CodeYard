@@ -8,19 +8,19 @@ use crate::backend::{
     },
     repositories::{access, advisories as workflow},
 };
-use crate::webui::{
-    app::Page,
-    pages::repos::{
-        advisories::{Detail, Draft, Page as AdvisoryPage, Row, Vulnerability},
-        page::Page as RepoPage,
-    },
-};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Form, Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{
+        advisories::{Detail, Draft, Page as AdvisoryPage, Row, Vulnerability},
+        page::Page as RepoPage,
+    },
 };
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};
@@ -97,7 +97,7 @@ async fn render(
                     if access::can_read(&ctx.state.pool, ctx.user.as_ref(), &fork).await? {
                         db::repositories::records::repository_owner_name(&ctx.state.pool, id)
                             .await?
-                            .map(|owner| crate::webui::repository_path(&owner, &fork.name))
+                            .map(|owner| codeyard_webui::repository_path(&owner, &fork.name))
                     } else {
                         None
                     }

@@ -40,8 +40,8 @@ pub async fn resolve(
         let issue = &outcome.issue;
         let link = format!(
             "/{}/{}/issues/{}",
-            crate::webui::encode_component(owner),
-            crate::webui::encode_component(&repo.name),
+            codeyard_webui::encode_component(owner),
+            codeyard_webui::encode_component(&repo.name),
             issue.number
         );
         assignments::notify_assignees(

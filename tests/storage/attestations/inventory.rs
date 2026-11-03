@@ -54,7 +54,7 @@ async fn contract(pg: bool) {
     let (_, model) = owner
         .model(&format!("{base}/{private_digest}?kind=storage"))
         .await;
-    let codeyard::webui::app::Page::ArtifactMetadata(page) = model else {
+    let codeyard_webui::app::Page::ArtifactMetadata(page) = model else {
         panic!("typed native inventory")
     };
     assert_eq!(page.entries.len(), 1);
@@ -84,7 +84,7 @@ async fn contract(pg: bool) {
         .collect();
     call(&router,"orgs/set-cluster-deployment-records","POST","/api/v3/orgs/inventory-browser/artifacts/metadata/deployment-record/cluster/private-fleet",Some(&writer),json!({"logical_environment":"production","deployments":[{"name":"private artifact","digest":public_digest,"deployment_name":"private-deployment-marker","tags":tags,"runtime_risks":["internet-exposed"]}]}),200).await;
     let (_, model) = guest.model(&format!("{base}/{public_digest}")).await;
-    let codeyard::webui::app::Page::ArtifactMetadata(page) = model else {
+    let codeyard_webui::app::Page::ArtifactMetadata(page) = model else {
         panic!("public inventory page")
     };
     assert_eq!(page.entries.len(), 30);
@@ -93,7 +93,7 @@ async fn contract(pg: bool) {
         .iter()
         .all(|entry| entry.repository == "inventory-browser/public"));
     let (_, model) = guest.model(page.next.as_deref().unwrap()).await;
-    let codeyard::webui::app::Page::ArtifactMetadata(page) = model else {
+    let codeyard_webui::app::Page::ArtifactMetadata(page) = model else {
         panic!("public inventory next page")
     };
     assert_eq!(page.entries.len(), 1);
@@ -101,7 +101,7 @@ async fn contract(pg: bool) {
     let (_, model) = owner
         .model(&format!("{base}/{public_digest}?after=30"))
         .await;
-    let codeyard::webui::app::Page::ArtifactMetadata(page) = model else {
+    let codeyard_webui::app::Page::ArtifactMetadata(page) = model else {
         panic!("private inventory preview")
     };
     let private = page

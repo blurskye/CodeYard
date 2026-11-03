@@ -5,10 +5,8 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::{
-    backend::db::{models::OrgRole, organizations::*},
-    webui::{app::Page, bootstrap, pages::orgs::TeamPage},
-};
+use codeyard::backend::db::{models::OrgRole, organizations::*};
+use codeyard_webui::{app::Page, bootstrap, pages::orgs::TeamPage};
 use tower::ServiceExt;
 
 const TEAMS: &str = "/orgs/native_org/teams";

@@ -17,16 +17,16 @@ use crate::backend::repositories::releases::{
     self as releases, ReleaseError, ReleaseFields, ReleaseInput,
 };
 use crate::backend::repositories::store::ErrorKind;
-use crate::webui::app::Page;
-use crate::webui::pages::repos::chrome::RepoChrome;
-use crate::webui::pages::repos::page::Page as RepoPage;
-use crate::webui::pages::repos::releases::{
-    AssetItem, Page as ReleasePage, ReleaseDraft, ReleaseItem,
-};
 use axum::extract::multipart::MultipartError;
 use axum::extract::{Form, Multipart, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::repos::chrome::RepoChrome;
+use codeyard_webui::pages::repos::page::Page as RepoPage;
+use codeyard_webui::pages::repos::releases::{
+    AssetItem, Page as ReleasePage, ReleaseDraft, ReleaseItem,
+};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -74,8 +74,8 @@ fn asset_item(repo_base: &str, tag: &str, asset: &ReleaseAsset) -> AssetItem {
         downloads: asset.download_count,
         href: format!(
             "{repo_base}/releases/download/{}/{}",
-            crate::webui::encode_component(tag),
-            crate::webui::encode_component(&asset.name)
+            codeyard_webui::encode_component(tag),
+            codeyard_webui::encode_component(&asset.name)
         ),
     }
 }
@@ -393,7 +393,7 @@ pub(crate) async fn detail(
             };
             let reactions = counts
                 .into_iter()
-                .map(|count| crate::webui::pages::repos::issues::Reaction {
+                .map(|count| codeyard_webui::pages::repos::issues::Reaction {
                     content: count.content,
                     count: count.count,
                     mine: count.mine,
@@ -532,7 +532,7 @@ pub(crate) async fn create(
         Ok(release) => ctx.redirect(&format!(
             "{}/releases/tag/{}",
             repo.base(),
-            crate::webui::encode_component(&release.tag_name)
+            codeyard_webui::encode_component(&release.tag_name)
         )),
         Err(error) => {
             let (status, message) = refused(&error);
@@ -601,7 +601,7 @@ pub(crate) async fn update(
         Ok(release) => ctx.redirect(&format!(
             "{}/releases/tag/{}",
             repo.base(),
-            crate::webui::encode_component(&release.tag_name)
+            codeyard_webui::encode_component(&release.tag_name)
         )),
         Err(error) => {
             let (status, _) = refused(&error);

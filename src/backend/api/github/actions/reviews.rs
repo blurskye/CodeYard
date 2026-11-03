@@ -87,12 +87,12 @@ async fn history(
                 site_admin: false,
             })
         });
-        let encoded = crate::webui::encode_component(&row.environment_name);
+        let encoded = codeyard_webui::encode_component(&row.environment_name);
         let environment = json!({"id":row.environment_id,
             "node_id":crate::backend::api::github::node_id::encode("EN", row.environment_id),
             "name":row.environment_name,
             "url":format!("{}/environments/{encoded}", crate::backend::api::github::repo_url(&owner, &name)),
-            "html_url":format!("{}/{}/{}/deployments/activity_log?environments_filter={encoded}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(&owner), crate::webui::encode_component(&name))});
+            "html_url":format!("{}/{}/{}/deployments/activity_log?environments_filter={encoded}", crate::backend::api::http::config::link_origin(), codeyard_webui::encode_component(&owner), codeyard_webui::encode_component(&name))});
         values.push(json!({"environments":[environment],"state":row.state,"user":user,"comment":row.comment}));
     }
     Ok(Json(json!(values)))

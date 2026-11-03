@@ -220,7 +220,7 @@ async fn visibility_contract(pg: bool) {
     for (client, count) in [(&bob_client, 1), (&anonymous, 0)] {
         let (status, page) = client.model("/search?q=secret&type=repos").await;
         assert_eq!(status, StatusCode::OK);
-        let codeyard::webui::app::Page::Discovery(codeyard::webui::pages::discovery::Page::Search(
+        let codeyard_webui::app::Page::Discovery(codeyard_webui::pages::discovery::Page::Search(
             model,
         )) = page
         else {

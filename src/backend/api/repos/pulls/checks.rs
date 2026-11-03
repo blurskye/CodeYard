@@ -4,10 +4,10 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::repos::issues::{self as view, Kind};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::pages::repos::issues::{self as view, Kind};
 use std::sync::Arc;
 
 pub(crate) async fn native_checks(
@@ -74,7 +74,7 @@ async fn render_checks(
     .await
     .map_err(|_| unavailable(ctx))?
     .into_iter()
-    .map(|run| crate::webui::pages::repos::pulls::CheckStatus {
+    .map(|run| codeyard_webui::pages::repos::pulls::CheckStatus {
         state: match (run.status.as_str(), run.conclusion.as_deref()) {
             ("completed", Some("success" | "neutral" | "skipped")) => "success",
             ("completed", _) => "failure",
@@ -103,7 +103,7 @@ async fn render_checks(
                         .iter()
                         .any(|run| run.commit_status_context() == status.context)
             })
-            .map(|status| crate::webui::pages::repos::pulls::CheckStatus {
+            .map(|status| codeyard_webui::pages::repos::pulls::CheckStatus {
                 context: status.context,
                 state: status.state,
                 description: status.description,
@@ -196,7 +196,9 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             axum::http::header::ACCEPT,
-            crate::webui::bootstrap::MODEL_CONTENT_TYPE.parse().unwrap(),
+            codeyard_webui::bootstrap::MODEL_CONTENT_TYPE
+                .parse()
+                .unwrap(),
         );
         let ctx = PageContext::load(
             state,
@@ -224,8 +226,8 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 1024 * 1024)
             .await
             .unwrap();
-        let envelope: crate::webui::app::PageEnvelope = serde_json::from_slice(&body).unwrap();
-        let crate::webui::app::Page::Collaboration(model) = envelope.page else {
+        let envelope: codeyard_webui::app::PageEnvelope = serde_json::from_slice(&body).unwrap();
+        let codeyard_webui::app::Page::Collaboration(model) = envelope.page else {
             panic!("not collaboration")
         };
         let view::Page::PullChecks { item, statuses, .. } = *model else {

@@ -36,27 +36,27 @@ const fn embedded(path: &'static str, bytes: &'static [u8], mime: &'static str) 
 static EMBEDDED: [Embedded; 5] = [
     embedded(
         "/assets/logo.svg",
-        include_bytes!("../../../webui/assets/logo.svg"),
+        include_bytes!("../../../../webui/src/assets/logo.svg"),
         "image/svg+xml",
     ),
     embedded(
         "/assets/logo.webp",
-        include_bytes!("../../../webui/assets/logo.webp"),
+        include_bytes!("../../../../webui/src/assets/logo.webp"),
         "image/webp",
     ),
     embedded(
         "/assets/favicon.png",
-        include_bytes!("../../../webui/assets/favicon.png"),
+        include_bytes!("../../../../webui/src/assets/favicon.png"),
         "image/png",
     ),
     embedded(
         "/assets/fonts/mona-sans.woff2",
-        include_bytes!("../../../webui/assets/fonts/mona-sans.woff2"),
+        include_bytes!("../../../../webui/src/assets/fonts/mona-sans.woff2"),
         "font/woff2",
     ),
     embedded(
         "/assets/fonts/OFL.txt",
-        include_bytes!("../../../webui/assets/fonts/OFL.txt"),
+        include_bytes!("../../../../webui/src/assets/fonts/OFL.txt"),
         "text/plain; charset=utf-8",
     ),
 ];
@@ -126,7 +126,7 @@ pub(crate) fn runtime_module() -> Result<&'static str, ()> {
 /// and the browser may keep it; any other URL is revalidated.
 fn stylesheet(uri: &Uri, headers: &HeaderMap) -> Option<Response> {
     let name = uri.path().strip_prefix("/assets/")?;
-    let sheet = crate::webui::document::stylesheets()
+    let sheet = codeyard_webui::document::stylesheets()
         .iter()
         .find(|sheet| sheet.name == name)?;
     let etag = format!("W/\"{}\"", sheet.version);
@@ -301,18 +301,21 @@ mod tests {
             assert!(!bytes.is_empty());
             match path {
                 "/assets/logo.svg" => {
-                    assert_eq!(&bytes[..], include_bytes!("../../../webui/assets/logo.svg"));
+                    assert_eq!(
+                        &bytes[..],
+                        include_bytes!("../../../../webui/src/assets/logo.svg")
+                    );
                 }
                 "/assets/logo.webp" => {
                     assert_eq!(
                         &bytes[..],
-                        include_bytes!("../../../webui/assets/logo.webp")
+                        include_bytes!("../../../../webui/src/assets/logo.webp")
                     );
                 }
                 "/assets/favicon.png" => {
                     assert_eq!(
                         &bytes[..],
-                        include_bytes!("../../../webui/assets/favicon.png")
+                        include_bytes!("../../../../webui/src/assets/favicon.png")
                     );
                 }
                 _ => {}
@@ -321,7 +324,7 @@ mod tests {
     }
     #[tokio::test]
     async fn stylesheets_are_kept_only_under_their_versioned_url() {
-        for sheet in crate::webui::document::stylesheets() {
+        for sheet in codeyard_webui::document::stylesheets() {
             let versioned = format!("/assets/{}?v={}", sheet.name, sheet.version);
             let response = asset(versioned.parse().unwrap(), HeaderMap::new()).await;
             assert_eq!(response.status(), StatusCode::OK, "{versioned}");

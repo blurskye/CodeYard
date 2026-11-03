@@ -1,0 +1,43 @@
+[package]
+name = "codeyard-webui"
+version.workspace = true
+edition.workspace = true
+description = "Codeyard Dioxus views: server rendering and browser hydration"
+homepage = "https://codeyard.run"
+repository = "https://github.com/blurskye/CodeYard"
+license = "LGPL-3.0-or-later"
+
+[features]
+web = ["dep:dioxus-web", "dep:gloo-net", "dep:gloo-timers", "dep:wasm-bindgen", "dep:wasm-bindgen-futures", "dep:web-sys", "dep:js-sys"]
+
+[dependencies]
+codeyard-support = { path = "../backend/support" }
+chrono.workspace = true
+dioxus = { version = "=0.7.10", default-features = false, features = ["macro", "html", "signals", "hooks"] }
+dioxus-history = "=0.7.10"
+dioxus-router = "=0.7.10"
+futures-util = { version = "0.3.31", features = ["sink"] }
+pulldown-cmark = { version = "=0.13.4", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+syntect = { version = "5", default-features = false, features = ["default-fancy"] }
+unicase = "2"
+unicode-normalization = "0.1.25"
+url = "2"
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+dioxus-fullstack-core = { version = "=0.7.10", default-features = false }
+dioxus-ssr = "=0.7.10"
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+dioxus-web = { version = "=0.7.10", default-features = false, features = ["hydrate", "document", "mounted"], optional = true }
+gloo-net = { version = "0.6", default-features = false, features = ["http", "websocket", "json"], optional = true }
+gloo-timers = { version = "0.3", features = ["futures"], optional = true }
+wasm-bindgen = { version = "0.2", optional = true }
+wasm-bindgen-futures = { version = "0.4", optional = true }
+js-sys = { version = "0.3", optional = true }
+web-sys = { version = "0.3", optional = true, features = ["Window", "Document", "ScrollRestoration", "Element", "Node", "Location", "History", "Navigator", "Performance", "Clipboard", "Request", "RequestInit", "Headers", "RequestCredentials", "AbortController", "AbortSignal", "HtmlInputElement", "HtmlTextAreaElement", "HtmlSelectElement", "HtmlDialogElement", "ReadableStream", "ReadableStreamDefaultReader", "HtmlFormElement", "HtmlDocument", "KeyboardEvent", "NodeList", "console", "Event", "EventInit", "EventTarget", "DataTransfer", "DataTransferItemList", "DomRect", "File", "FileList"] }
+
+[lints]
+workspace = true

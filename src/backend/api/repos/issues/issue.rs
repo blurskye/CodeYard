@@ -10,8 +10,6 @@ use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::issues::mutations::UpdateIssueRequest;
-use crate::webui::pages::repos::issues::DetailDraft;
-use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -20,6 +18,8 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos::issues::DetailDraft;
+use codeyard_webui::pages::repos::issues::Kind;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -540,7 +540,7 @@ pub(crate) async fn native_change_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::webui::pages::repos::issues as view;
+    use codeyard_webui::pages::repos::issues as view;
     fn value() -> view::Item {
         view::Item {
             id: 1,

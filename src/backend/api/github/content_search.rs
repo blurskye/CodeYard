@@ -116,7 +116,7 @@ async fn content(
                 let path = super::contents::path_url(&code.path);
                 let url = format!("{repo_api}/contents/{path}?ref={}", code.revision);
                 let fragments=code.fragments.iter().map(|fragment|json!({"object_url":url,"object_type":"FileContent","property":"content","fragment":fragment.text,"matches":query.text_matches(&fragment.text)})).collect::<Vec<_>>();
-                json!({"name":code.path.rsplit('/').next().unwrap_or(&code.path),"path":code.path,"sha":code.sha,"url":url,"git_url":format!("{repo_api}/git/blobs/{}",code.sha),"html_url":crate::webui::pages::repos::ref_path::file_url(&format!("{}/{}/{}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(&repo.name)),"blob",&code.revision,&code.path),"file_size":code.size,"language":code.language,"line_numbers":code.fragments.iter().map(|fragment|fragment.line.to_string()).collect::<Vec<_>>(),"text_matches":fragments})
+                json!({"name":code.path.rsplit('/').next().unwrap_or(&code.path),"path":code.path,"sha":code.sha,"url":url,"git_url":format!("{repo_api}/git/blobs/{}",code.sha),"html_url":codeyard_webui::pages::repos::ref_path::file_url(&format!("{}/{}/{}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(&repo.name)),"blob",&code.revision,&code.path),"file_size":code.size,"language":code.language,"line_numbers":code.fragments.iter().map(|fragment|fragment.line.to_string()).collect::<Vec<_>>(),"text_matches":fragments})
             }
         };
         value["repository"] = repository;

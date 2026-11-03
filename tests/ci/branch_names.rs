@@ -61,7 +61,7 @@ async fn long_account_names_can_list_and_dispatch_workflows_on_both_engines() {
                 None,
             ));
             let client = requests::Client::login(&router, pool, owner.id).await;
-            let owner_path = codeyard::webui::encode_component(&username);
+            let owner_path = codeyard_webui::encode_component(&username);
             let content = base64::engine::general_purpose::STANDARD.encode(
                 "name: Manual\non: workflow_dispatch\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo test\n",
             );

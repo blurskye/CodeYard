@@ -9,8 +9,6 @@ use crate::backend::repositories::files;
 use crate::backend::repositories::store::{
     UploadFile, UploadWrite, MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
-use crate::webui::pages::repos as view;
-use crate::webui::pages::repos::ref_path::{branch_url, compare_url};
 use axum::{
     extract::{
         multipart::{Multipart, MultipartError, MultipartRejection},
@@ -19,6 +17,8 @@ use axum::{
     http::{HeaderMap, StatusCode},
     response::Response,
 };
+use codeyard_webui::pages::repos as view;
+use codeyard_webui::pages::repos::ref_path::{branch_url, compare_url};
 use std::{collections::HashMap, sync::Arc, time::Duration};
 
 /// The route template, shared with the form-body middleware that exempts it.
@@ -193,7 +193,7 @@ fn upload_page(
 ) -> Response {
     ctx.page_model(
         "Upload files",
-        crate::webui::app::Page::Repositories(view::page::Page::Upload {
+        codeyard_webui::app::Page::Repositories(view::page::Page::Upload {
             repo: loaded.chrome.clone(),
             form,
         }),

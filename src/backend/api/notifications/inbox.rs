@@ -6,7 +6,6 @@ use crate::backend::api::user::responses::PublicUserResponse as UserResponse;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::notifications::reasons;
-use crate::webui::pages::notifications as view;
 use axum::extract::OriginalUri;
 use axum::extract::Query;
 use axum::extract::State;
@@ -16,6 +15,7 @@ use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use codeyard_webui::pages::notifications as view;
 use db::notifications::records::{
     NotificationCursor, NotificationFilter, NotificationInbox, NotificationInboxAction,
     NotificationView, ViewCounts,
@@ -443,7 +443,7 @@ pub(crate) async fn notification_list(
                 body: item
                     .body
                     .as_deref()
-                    .map(crate::webui::components::body_preview),
+                    .map(codeyard_webui::components::body_preview),
                 link: item.link,
                 read: item.read_at.is_some(),
                 saved: item.saved_at.is_some(),
@@ -477,7 +477,7 @@ pub(crate) async fn notification_list(
     };
     ctx.page_model(
         "Notifications",
-        crate::webui::app::Page::Notifications(model),
+        codeyard_webui::app::Page::Notifications(model),
     )
 }
 
@@ -546,7 +546,7 @@ pub(crate) async fn native_action(
                     .notifications
                     .first()
                     .and_then(|notification| notification.link.as_deref())
-                    .filter(|link| crate::webui::navigation::safe_page_target(link))
+                    .filter(|link| codeyard_webui::navigation::safe_page_target(link))
                 {
                     Some(link) => ctx.redirect(link),
                     None => ctx.error(

@@ -4,10 +4,10 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::chrome::{default_ref, load, resolve, store_error, Loaded};
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
-use crate::webui::pages::repos as view;
 use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
+use codeyard_webui::pages::repos as view;
 use std::sync::Arc;
 
 async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Response, Response> {
@@ -64,7 +64,7 @@ async fn find_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
             "Go to file · {}/{}",
             loaded.chrome.owner, loaded.chrome.name
         ),
-        crate::webui::app::Page::Repositories(view::page::Page::Find {
+        codeyard_webui::app::Page::Repositories(view::page::Page::Find {
             repo: loaded.chrome.clone(),
             page,
         }),

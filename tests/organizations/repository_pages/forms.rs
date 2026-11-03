@@ -6,7 +6,7 @@ use codeyard::backend::db::{
     models::{AccessLevel, OrgRole},
     organizations as orgs,
 };
-use codeyard::webui::{
+use codeyard_webui::{
     app::{Page, PageEnvelope},
     bootstrap::{Bootstrap, BOOTSTRAP_ID},
     pages::discovery as view,

@@ -14,11 +14,11 @@ use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
 use crate::backend::app::AppState;
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::store::{repo_store, CommitFilter};
-use crate::webui::pages::repos as view;
 use axum::extract::{Path, Query, RawQuery, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos as view;
 use serde::Deserialize;
 use std::sync::Arc;
 
@@ -218,7 +218,7 @@ async fn commits_page(ctx: &PageContext, loaded: &Loaded) -> Result<Response, Re
         .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(ctx.page_model(
         &title,
-        crate::webui::app::Page::Repositories(view::page::Page::Commits {
+        codeyard_webui::app::Page::Repositories(view::page::Page::Commits {
             repo: loaded.chrome.clone(),
             rows,
             reference,

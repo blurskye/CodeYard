@@ -1,8 +1,6 @@
 use super::fixture::{Fixture, COLLISION, ORG, USER};
-use codeyard::{
-    backend::db,
-    webui::pages::discovery::{self as view, RepositoryCard},
-};
+use codeyard::backend::db;
+use codeyard_webui::pages::discovery::{self as view, RepositoryCard};
 
 const NAMES: [&str; 4] = [
     "discovery_personal",
@@ -428,7 +426,7 @@ async fn discovery_page_failures_and_old_repositories(f: &Fixture) {
                 "{path}: {}",
                 reply.body
             );
-            let codeyard::webui::app::Page::Error {
+            let codeyard_webui::app::Page::Error {
                 status, message, ..
             } = reply.envelope.page
             else {

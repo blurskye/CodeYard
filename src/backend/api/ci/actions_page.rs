@@ -2,13 +2,13 @@ use super::responses::{map_run, workflow_view};
 use crate::backend::api::http::context::PageContext;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::{app::AppState, db};
-use crate::webui::pages::ci as view;
-use crate::webui::pages::repos::actions::{self as view_actions, logs::LogLine};
 use axum::{
     extract::{OriginalUri, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::pages::ci as view;
+use codeyard_webui::pages::repos::actions::{self as view_actions, logs::LogLine};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
@@ -223,8 +223,8 @@ async fn actions(
                 };
             let path = format!(
                 "/{}/{}/actions",
-                crate::webui::encode_component(&owner),
-                crate::webui::encode_component(&repo.name)
+                codeyard_webui::encode_component(&owner),
+                codeyard_webui::encode_component(&repo.name)
             );
             return ctx.redirect(&view_actions::query_url(&path, &query, &[]));
         }
@@ -235,8 +235,8 @@ async fn actions(
             (
                 format!(
                     "/{}/{}/actions",
-                    crate::webui::encode_component(owner),
-                    crate::webui::encode_component(repo)
+                    codeyard_webui::encode_component(owner),
+                    codeyard_webui::encode_component(repo)
                 ),
                 format!("{owner}/{repo} · Actions"),
             )
@@ -516,8 +516,8 @@ async fn actions(
                 pull.map(|pull| {
                     format!(
                         "/{}/{}/pulls/{}",
-                        crate::webui::encode_component(&owner),
-                        crate::webui::encode_component(&run_repository.name),
+                        codeyard_webui::encode_component(&owner),
+                        codeyard_webui::encode_component(&run_repository.name),
                         pull.number
                     )
                 })
@@ -577,7 +577,7 @@ async fn actions(
     };
     ctx.page_model(
         &title,
-        crate::webui::app::Page::Actions(view::Page::Actions(Box::new(model))),
+        codeyard_webui::app::Page::Actions(view::Page::Actions(Box::new(model))),
     )
 }
 

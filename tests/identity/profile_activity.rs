@@ -13,7 +13,7 @@ use serde_json::Value;
 
 async fn activity_model(client: &Client, page: i64) -> (StatusCode, Value) {
     let (status, page) = client.model(&format!("/alice?page={page}")).await;
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Profile {
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::Profile {
         activity,
         ..
     }) = page

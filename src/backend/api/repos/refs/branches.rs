@@ -7,11 +7,11 @@ use crate::backend::api::repos::chrome::{
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::store::repo_store;
-use crate::webui::pages::repos as view;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos as view;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 #[derive(Serialize)]
@@ -271,7 +271,7 @@ pub(in crate::backend::api::repos) async fn refs_page(
     .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(ctx.page_model(
         if tags { "Tags" } else { "Branches" },
-        crate::webui::app::Page::Repositories(view::page::Page::Refs {
+        codeyard_webui::app::Page::Repositories(view::page::Page::Refs {
             repo: loaded.chrome.clone(),
             rows,
             tags,

@@ -41,7 +41,7 @@ fn artifact(path: &str) -> Option<Artifact> {
     let parts: Vec<String> = path
         .trim_start_matches('/')
         .split('/')
-        .map(crate::webui::decode_component)
+        .map(codeyard_webui::decode_component)
         .collect();
     if parts.len() < 4
         || parts

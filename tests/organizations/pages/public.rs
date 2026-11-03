@@ -4,10 +4,8 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::{
-    backend::db::organizations::TeamPrivacy,
-    webui::{app::Page, bootstrap, pages::orgs::OrganizationProfile},
-};
+use codeyard::backend::db::organizations::TeamPrivacy;
+use codeyard_webui::{app::Page, bootstrap, pages::orgs::OrganizationProfile};
 use std::collections::HashSet;
 use tower::ServiceExt;
 

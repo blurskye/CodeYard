@@ -5,8 +5,6 @@ use crate::backend::api::http::session::get_current_user;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::app::AppState;
-use crate::webui::pages::repos::issues::DetailDraft;
-use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -15,6 +13,8 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos::issues::DetailDraft;
+use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
 use std::sync::Arc;
 pub async fn mark_pull_request_ready(

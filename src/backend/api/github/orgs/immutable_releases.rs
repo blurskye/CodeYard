@@ -52,7 +52,7 @@ async fn get_settings(
     )?;
     Ok(Json(
         json!({"enforced_repositories": settings.enforced_repositories,
-        "selected_repositories_url": api_url(&format!("/orgs/{}/settings/immutable-releases/repositories", crate::webui::encode_component(&name)))}),
+        "selected_repositories_url": api_url(&format!("/orgs/{}/settings/immutable-releases/repositories", codeyard_webui::encode_component(&name)))}),
     ))
 }
 

@@ -206,8 +206,8 @@ async fn writable(pool: &db::DbPool, actor: i64, repo: i64) -> Result<(User, Rep
 pub fn comment_link(owner: &str, name: &str, comment: &CommitComment) -> String {
     format!(
         "/{}/{}/commit/{}?comment={}#commitcomment-{}",
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(name),
+        codeyard_webui::encode_component(owner),
+        codeyard_webui::encode_component(name),
         comment.sha,
         comment.id,
         comment.id
@@ -269,7 +269,7 @@ async fn notify(
     let title = format!(
         "{} commented on commit {}",
         user.username,
-        crate::webui::components::short_sha(&comment.sha)
+        codeyard_webui::components::short_sha(&comment.sha)
     );
     let mut notified = Vec::new();
     let mut subscriber_notice = None;
@@ -400,7 +400,7 @@ pub async fn create(
                     "The commit does not change this file",
                 ))?;
         if input.position.is_some() || input.line.is_some() {
-            let rows = crate::webui::components::patch_rows(&file.patch);
+            let rows = codeyard_webui::components::patch_rows(&file.patch);
             let start = rows
                 .iter()
                 .position(|row| row.text.starts_with("@@"))

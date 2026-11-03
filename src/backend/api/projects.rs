@@ -10,7 +10,6 @@ use crate::backend::{
         projects::{self, Content, NewView, Owner},
     },
 };
-use crate::webui::{app::Page, pages::projects as view};
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -18,6 +17,7 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_webui::{app::Page, pages::projects as view};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
@@ -53,12 +53,12 @@ pub fn router() -> Router<Arc<AppState>> {
 pub(crate) async fn sidebar(
     ctx: &PageContext,
     repo: i64,
-    kind: crate::webui::pages::repos::issues::Kind,
+    kind: codeyard_webui::pages::repos::issues::Kind,
     id: i64,
 ) -> anyhow::Result<Vec<view::Assignment>> {
     let pool = &ctx.state.pool;
     let viewer = ctx.user.as_ref().map(|u| u.id);
-    let content = if kind == crate::webui::pages::repos::issues::Kind::Issue {
+    let content = if kind == codeyard_webui::pages::repos::issues::Kind::Issue {
         Content::Issue(id)
     } else {
         Content::PullRequest(id)
@@ -138,7 +138,7 @@ pub(crate) async fn sidebar(
             } else {
                 "users"
             },
-            crate::webui::encode_component(&name),
+            codeyard_webui::encode_component(&name),
             project.number
         );
         result.push(view::Assignment {
@@ -175,7 +175,7 @@ async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner, Str
             .ok_or(projects::Refusal::Missing)?;
         let base = format!(
             "/orgs/{}/projects",
-            crate::webui::encode_component(&org.name)
+            codeyard_webui::encode_component(&org.name)
         );
         Ok((Owner::Organization(org.id), org.name, base))
     } else {
@@ -185,7 +185,7 @@ async fn owner(ctx: &PageContext, params: &Params) -> anyhow::Result<(Owner, Str
             .ok_or(projects::Refusal::Missing)?;
         let base = format!(
             "/users/{}/projects",
-            crate::webui::encode_component(&user.username)
+            codeyard_webui::encode_component(&user.username)
         );
         Ok((Owner::User(user.id), user.username, base))
     }
@@ -407,8 +407,8 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
                 id,
                 format!(
                     "/{}/{}/{kind}/{number}",
-                    crate::webui::encode_component(&owner),
-                    crate::webui::encode_component(&name)
+                    codeyard_webui::encode_component(&owner),
+                    codeyard_webui::encode_component(&name)
                 ),
             )
         })
@@ -438,7 +438,7 @@ async fn model(ctx: &PageContext, params: &Params) -> anyhow::Result<view::Page>
     }
     page.project = Some(summary(project));
     // Reserve envelope/pager space and count JSON escaping and board duplication.
-    let limit = crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES - 256 * 1024;
+    let limit = codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES - 256 * 1024;
     let mut bytes = serde_json::to_vec(&page)?.len();
     anyhow::ensure!(bytes < limit, projects::Refusal::Invalid);
     let mut first = None;

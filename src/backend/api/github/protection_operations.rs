@@ -305,7 +305,7 @@ async fn update(
     let url = format!(
         "{}/branches/{}/protection",
         repo_url(&owner, &name),
-        crate::webui::encode_component(&branch)
+        codeyard_webui::encode_component(&branch)
     );
     Ok(Json(document(&state, &rule, &url, actor.id).await?))
 }

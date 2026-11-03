@@ -8,16 +8,16 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::identity::profiles::ProfileError;
 use crate::backend::identity::{self, profiles};
-use crate::webui::pages::{
+use axum::extract::{Form, State};
+use axum::http::{HeaderMap, StatusCode, Uri};
+use axum::response::Response;
+use axum::Json;
+use codeyard_webui::pages::{
     account,
     fields::{preserved_values, FormValues},
     settings::{settings_tab, EmailVerification, Key, SecondaryEmail, Settings, Token, TwoFactor},
     users::Profile,
 };
-use axum::extract::{Form, State};
-use axum::http::{HeaderMap, StatusCode, Uri};
-use axum::response::Response;
-use axum::Json;
 use std::sync::Arc;
 
 pub(crate) fn profile_failure(error: ProfileError) -> (StatusCode, Json<ApiError>) {
@@ -246,7 +246,7 @@ pub(crate) async fn load_settings(
         })?;
         let more = users.len() > 100;
         users.truncate(100);
-        crate::webui::pages::settings::BlockedAccounts {
+        codeyard_webui::pages::settings::BlockedAccounts {
             interaction: Some(
                 super::interactions::panel(
                     &ctx.state.pool,
@@ -373,7 +373,7 @@ pub(crate) async fn settings_response(
         Ok(model) => ctx.page_model_status(
             status,
             "Settings",
-            crate::webui::app::Page::Identity(account::Page::Settings {
+            codeyard_webui::app::Page::Identity(account::Page::Settings {
                 model: Box::new(model),
                 csrf_token: ctx.csrf_token.clone(),
                 message: message.map(str::to_owned),

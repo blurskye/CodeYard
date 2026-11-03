@@ -229,7 +229,7 @@ impl Fixture {
                     .header("x-csrf-token", &actor.csrf)
                     .header(
                         header::ACCEPT,
-                        codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+                        codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
                     )
                     .header(
                         header::CONTENT_TYPE,

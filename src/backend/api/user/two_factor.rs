@@ -10,14 +10,14 @@ use crate::backend::api::user::responses::{
 use crate::backend::app::AppState;
 use crate::backend::crypto::SecretEncryptor;
 use crate::backend::identity::two_factor::{self, TwoFactorError};
-use crate::webui::app::Page;
-use crate::webui::pages::{
-    account,
-    settings::{Settings, TwoFactor, TwoFactorSetup},
-};
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::{
+    account,
+    settings::{Settings, TwoFactor, TwoFactorSetup},
+};
 use std::sync::Arc;
 
 fn encryptor(ctx: &PageContext) -> Result<&SecretEncryptor, TwoFactorError> {

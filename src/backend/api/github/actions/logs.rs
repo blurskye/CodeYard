@@ -34,7 +34,7 @@ async fn live_logs(
     after: i64,
     limit: Option<i64>,
 ) -> Result<Response> {
-    use crate::webui::pages::repos::actions::{
+    use codeyard_webui::pages::repos::actions::{
         logs::LogLine, Deployment, RunLogUpdate, RunProgress,
     };
     if after < 0 {

@@ -7,7 +7,7 @@ use crate::support::http_client as pulls;
 
 use axum::http::StatusCode;
 use codeyard::backend::{db, repositories::lifecycle};
-use codeyard::webui::{app::Page, pages::discovery as view};
+use codeyard_webui::{app::Page, pages::discovery as view};
 use database::Database;
 use pulls::Client;
 use std::path::Path;
@@ -131,7 +131,7 @@ async fn bounded_repository_pages(pg: bool) {
     for (client, total, tail) in [(&bob, 35, 5), (&alice, 36, 6)] {
         let (status, page) = client.model("/page_owner?repo_page=2").await;
         assert_eq!(status, StatusCode::OK);
-        let Page::Identity(codeyard::webui::pages::account::Page::Profile {
+        let Page::Identity(codeyard_webui::pages::account::Page::Profile {
             repositories,
             repository_count,
             repositories_newer,

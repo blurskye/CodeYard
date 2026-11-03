@@ -5,7 +5,6 @@ use crate::backend::api::http::session;
 use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db::{self, actions::ActionsSettings};
-use crate::webui::{app::Page, pages::admin::actions as view};
 use axum::{
     extract::{DefaultBodyLimit, Form, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -13,6 +12,7 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_webui::{app::Page, pages::admin::actions as view};
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

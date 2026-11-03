@@ -198,7 +198,7 @@ pub(super) async fn detail_model(ctx: &PageContext, id: &str) -> Result<view::De
             raw_url: format!(
                 "/gists/{id}/raw/{}/{}",
                 loaded.snapshot.sha,
-                crate::webui::encode_component(&entry.path)
+                codeyard_webui::encode_component(&entry.path)
             ),
             image: crate::backend::api::repos::code::raw::raw_content_type(&entry.path, true)
                 .starts_with("image/"),
@@ -365,7 +365,7 @@ async fn legacy_target(
         {
             let mut target = format!(
                 "{}{suffix}",
-                crate::webui::repository_path("gists", &repo.name)
+                codeyard_webui::repository_path("gists", &repo.name)
             );
             if let Some(query) = uri.query() {
                 target.push('?');
@@ -487,8 +487,8 @@ pub(super) async fn raw(
     };
     let suffix = format!(
         "/raw/{}/{}",
-        crate::webui::encode_component(&sha),
-        crate::webui::encode_component(&filename)
+        codeyard_webui::encode_component(&sha),
+        codeyard_webui::encode_component(&filename)
     );
     match legacy_target(&ctx, &id, &uri, &suffix).await {
         Ok(Some(target)) => return ctx.redirect(&target),

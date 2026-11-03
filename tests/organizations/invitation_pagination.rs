@@ -6,7 +6,7 @@ use crate::support::{
 };
 use axum::http::StatusCode;
 use codeyard::backend::db::{self, organizations::*};
-use codeyard::webui::app::Page;
+use codeyard_webui::app::Page;
 
 async fn organization(f: &Database, owner: i64, name: &str) -> i64 {
     applied(

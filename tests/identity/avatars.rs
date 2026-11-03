@@ -99,7 +99,7 @@ async fn set_avatar(
 async fn avatar_url(client: &Client) -> Option<String> {
     let (status, page) = client.model("/settings?tab=profile").await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Settings {
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::Settings {
         model,
         ..
     }) = page

@@ -12,7 +12,7 @@ use std::{
 const MAX_OUTPUT: usize = 1024 * 1024;
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(120);
 const CHECKOUT_TIMEOUT: Duration = Duration::from_secs(300);
-pub(crate) use crate::git_limits::MAX_MERGE_MESSAGE_BYTES;
+pub(crate) use codeyard_support::git_limits::MAX_MERGE_MESSAGE_BYTES;
 /// Conflicting paths that a refusal names. The rest are counted.
 const LISTED_CONFLICTS: usize = 20;
 
@@ -953,7 +953,7 @@ fn is_retained_object_ref(reference: &str) -> bool {
     reference
         .strip_prefix("refs/codeyard/objects/")
         .is_some_and(|id| {
-            crate::git_ids::is_full_commit_id(id)
+            codeyard_support::git_ids::is_full_commit_id(id)
                 && !id.bytes().any(|byte| byte.is_ascii_uppercase())
         })
 }

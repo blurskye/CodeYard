@@ -7,10 +7,10 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::users::profile::profile_repositories;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
-use crate::webui::app::Page;
-use crate::webui::pages::orgs::{OrganizationProfile, Team};
 use axum::http::StatusCode;
 use axum::response::Response;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::orgs::{OrganizationProfile, Team};
 
 /// Rows per page of each tab.
 const TAB_PAGE_LIMIT: i64 = 30;
@@ -157,7 +157,7 @@ pub(crate) async fn public_profile_response(ctx: &PageContext, name: &str) -> Re
             || (member_count.is_some()
                 && (settings.members_can_create_public_repositories
                     || settings.members_can_create_private_repositories)),
-        contacts: crate::webui::pages::orgs::ProfileContacts {
+        contacts: codeyard_webui::pages::orgs::ProfileContacts {
             company: settings.company.unwrap_or_default(),
             email: settings.email.unwrap_or_default(),
             twitter_username: settings.twitter_username.unwrap_or_default(),

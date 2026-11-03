@@ -189,7 +189,7 @@ pub async fn change(
                     json!({"repo_owner": owner, "repo_name": updated.name, "watchers_count": count, "subject": format!("{owner}/{}", updated.name)})
                 }
             };
-            let link = crate::webui::repository_path(&owner, &updated.name);
+            let link = codeyard_webui::repository_path(&owner, &updated.name);
             let notice = NotificationRequest {
                 user_id: recipient,
                 actor_id: Some(actor),

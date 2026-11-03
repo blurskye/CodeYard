@@ -3,26 +3,17 @@ use super::{
     chrome::{self, Loaded},
     forms::{authorize_post, checkbox, field, with_status},
 };
-use crate::{
-    backend::{
-        api::http::context::PageContext,
-        app::AppState,
-        db::{
-            self,
-            repositories::dependencies::{self as records, AlertState, Feature, Refusal},
-        },
-        repositories::{
-            access::AccessError,
-            dependencies::{self, DependencyError},
-            store::ErrorKind,
-        },
+use crate::backend::{
+    api::http::context::PageContext,
+    app::AppState,
+    db::{
+        self,
+        repositories::dependencies::{self as records, AlertState, Feature, Refusal},
     },
-    webui::{
-        app::Page,
-        pages::repos::{
-            dependencies::{Alert, Draft, Package, Page as DependencyPage, Proposal},
-            page::Page as RepoPage,
-        },
+    repositories::{
+        access::AccessError,
+        dependencies::{self, DependencyError},
+        store::ErrorKind,
     },
 };
 use axum::{
@@ -31,6 +22,13 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{
+        dependencies::{Alert, Draft, Package, Page as DependencyPage, Proposal},
+        page::Page as RepoPage,
+    },
 };
 use std::{collections::HashMap, sync::Arc};
 pub fn page_router() -> Router<Arc<AppState>> {

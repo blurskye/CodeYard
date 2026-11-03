@@ -151,7 +151,7 @@ async fn lifecycle(
     name: &str,
     download: &str,
 ) {
-    let encoded = codeyard::webui::encode_component(name);
+    let encoded = codeyard_webui::encode_component(name);
     let base = format!("/api/v3/users/ecosystem-owner/packages/{kind}/{encoded}");
     let package = github(
         router,

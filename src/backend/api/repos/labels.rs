@@ -8,7 +8,6 @@ use crate::backend::api::repos::discussion::{label, page, repository, unavailabl
 use crate::backend::api::repos::responses::storage_unavailable;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::repos::issues as view;
 use axum::extract::Path;
 use axum::extract::Query;
 use axum::extract::State;
@@ -17,6 +16,7 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos::issues as view;
 use serde::Deserialize;
 use serde::Serialize;
 use std::sync::Arc;
@@ -79,7 +79,7 @@ pub(crate) fn label_write_error(error: anyhow::Error) -> (StatusCode, Json<ApiEr
 
 /// A `#rrggbb` color, given with or without its `#`.
 pub(crate) fn parse_label_color(color: &str) -> Option<String> {
-    crate::webui::pages::repos::issues::label_hex(color)
+    codeyard_webui::pages::repos::issues::label_hex(color)
 }
 
 pub async fn list_labels(

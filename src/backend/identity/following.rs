@@ -93,7 +93,7 @@ pub async fn change(
             .map_err(mutation_error)?;
         if created {
             let title = format!("{} started following you", current.username);
-            let link = crate::webui::profile_path(&current.username);
+            let link = codeyard_webui::profile_path(&current.username);
             if let Err(error) = create_and_broadcast_notification(
                 pool,
                 broadcaster,

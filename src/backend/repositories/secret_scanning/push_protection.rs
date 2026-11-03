@@ -57,8 +57,8 @@ pub async fn refuse_blocked_secrets(
             let link = format!(
                 "{}/{}/{}/security/secret-scanning/unblock-secret/{}",
                 crate::backend::api::http::config::link_origin(),
-                crate::webui::encode_component(&owner),
-                crate::webui::encode_component(&repo.name),
+                codeyard_webui::encode_component(&owner),
+                codeyard_webui::encode_component(&repo.name),
                 placeholder.id
             );
             let safe_path = finding

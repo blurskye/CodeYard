@@ -44,8 +44,8 @@ async fn create_token(client: &Client, base: &str, cookie: &str, csrf: &str, sco
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(response.headers()["cache-control"], "no-store, private");
-    let envelope: codeyard::webui::app::PageEnvelope = response.json().await.unwrap();
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Settings {
+    let envelope: codeyard_webui::app::PageEnvelope = response.json().await.unwrap();
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::Settings {
         model,
         ..
     }) = envelope.page
@@ -806,8 +806,8 @@ async fn exercise(pool: &DbPool, url: &str) {
     let listing = response.text().await.unwrap();
     assert!(!listing.contains(read_value));
     assert!(!listing.contains("token_hash"));
-    let envelope: codeyard::webui::app::PageEnvelope = serde_json::from_str(&listing).unwrap();
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Settings {
+    let envelope: codeyard_webui::app::PageEnvelope = serde_json::from_str(&listing).unwrap();
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::Settings {
         model,
         ..
     }) = envelope.page

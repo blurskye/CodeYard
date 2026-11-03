@@ -583,8 +583,8 @@ async fn native_pages(f: &Database, router: &Router, alice: &Client, actor: i64,
     let (status, page) = alice.model(&path).await;
     assert_eq!(status, StatusCode::OK);
     let serialized = serde_json::to_string(&page).unwrap();
-    let restored: codeyard::webui::app::Page = serde_json::from_str(&serialized).unwrap();
-    assert!(matches!(restored, codeyard::webui::app::Page::Projects(_)));
+    let restored: codeyard_webui::app::Page = serde_json::from_str(&serialized).unwrap();
+    assert!(matches!(restored, codeyard_webui::app::Page::Projects(_)));
     let bad_csrf = alice
         .exchange(
             "POST",

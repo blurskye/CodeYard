@@ -58,7 +58,7 @@ async fn archive(
         .ok_or_else(|| Error::unavailable(()))?;
     let prefix = crate::backend::api::repos::code::archive::archive_prefix(
         &format!("{owner}-{name}"),
-        crate::webui::components::short_sha(&commit.sha),
+        codeyard_webui::components::short_sha(&commit.sha),
     );
     let bytes = store
         .archive(&commit.sha, &prefix, format)

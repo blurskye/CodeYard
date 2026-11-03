@@ -1,7 +1,7 @@
 //! Public profile activity: pushes, issues, pull requests and comments, newest first.
 use crate::backend::db::activity::ActivityRow;
 use crate::backend::identity::activity::ActivityPage;
-use crate::webui::pages::users::{ProfileActivity, ProfileActivityItem};
+use codeyard_webui::pages::users::{ProfileActivity, ProfileActivityItem};
 use serde::Deserialize;
 
 #[derive(Deserialize)]
@@ -19,12 +19,12 @@ pub(crate) fn profile_activity_view(page: ActivityPage) -> ProfileActivity {
 
 fn activity_item(row: ActivityRow) -> ProfileActivityItem {
     let repository = format!("{}/{}", row.owner_name, row.repo_name);
-    let repo_path = crate::webui::repository_path(&row.owner_name, &row.repo_name);
+    let repo_path = codeyard_webui::repository_path(&row.owner_name, &row.repo_name);
     let number = row.number.unwrap_or_default();
     let url = match row.kind.as_str() {
         "push" => format!(
             "{repo_path}/commits?ref={}",
-            crate::webui::encode_component(&format!(
+            codeyard_webui::encode_component(&format!(
                 "refs/heads/{}",
                 row.branch.as_deref().unwrap_or_default()
             ))

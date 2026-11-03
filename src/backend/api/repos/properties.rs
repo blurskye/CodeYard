@@ -1,13 +1,11 @@
 //! Native metadata forms use the same policy and transactions as REST and creation.
 use super::{chrome::Loaded, repository};
-use crate::{
-    backend::{api::http::context::PageContext, db::organizations::properties as data},
-    webui::{
-        components::repository_properties::RepositoryPropertyField,
-        pages::repos::settings::properties as view,
-    },
-};
+use crate::backend::{api::http::context::PageContext, db::organizations::properties as data};
 use axum::{http::StatusCode, response::Response};
+use codeyard_webui::{
+    components::repository_properties::RepositoryPropertyField,
+    pages::repos::settings::properties as view,
+};
 use std::collections::{HashMap, HashSet};
 
 pub(super) async fn panel(
@@ -187,7 +185,7 @@ pub(super) async fn form(
             return ctx.redirect(&format!(
                 "{}/settings?tab=properties&property={}",
                 loaded.chrome.base(),
-                crate::webui::encode_component(name)
+                codeyard_webui::encode_component(name)
             ))
         }
         Err(error) => match error.downcast_ref::<data::Refusal>() {

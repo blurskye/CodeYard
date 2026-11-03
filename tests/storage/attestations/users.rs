@@ -229,7 +229,7 @@ async fn contract(pg: bool) {
     assert!(html.contains("user-attestor/public"));
     assert!(!html.contains("user-attestor/private"));
     let (_, model) = owner.model(native).await;
-    let codeyard::webui::app::Page::Attestations(page) = model else {
+    let codeyard_webui::app::Page::Attestations(page) = model else {
         panic!("user attestation model")
     };
     assert_eq!(page.entries.len(), 2);

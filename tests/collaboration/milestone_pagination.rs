@@ -1,9 +1,7 @@
 use crate::support::{database::Database, fake_webui_bundle as bundle, http_client::Client};
 use axum::http::StatusCode;
-use codeyard::{
-    backend::{db, repositories::lifecycle},
-    webui::{app::Page, pages::repos::issues::Page as IssuePage},
-};
+use codeyard::backend::{db, repositories::lifecycle};
+use codeyard_webui::{app::Page, pages::repos::issues::Page as IssuePage};
 
 async fn milestone_items_have_reachable_continuation_pages(pg: bool) {
     bundle::install();

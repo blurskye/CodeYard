@@ -223,7 +223,7 @@ async fn dispatch(
         .await
         .map_err(admission_error)?;
     if input.return_run_details {
-        return Ok(Json(json!({"workflow_run_id":run.id,"run_url":format!("{}/actions/runs/{}",repo_url(&owner,&name),run.id),"html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(&owner),crate::webui::encode_component(&name),run.run_id)})).into_response());
+        return Ok(Json(json!({"workflow_run_id":run.id,"run_url":format!("{}/actions/runs/{}",repo_url(&owner,&name),run.id),"html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(&owner),codeyard_webui::encode_component(&name),run.run_id)})).into_response());
     }
     Ok(StatusCode::NO_CONTENT.into_response())
 }
@@ -264,7 +264,7 @@ async fn badge(
             _ => ("no status", "#9f9f9f"),
         }
     };
-    let escape = crate::webui::components::escape_html;
+    let escape = codeyard_webui::components::escape_html;
     let label = escape(&workflow.name.chars().take(22).collect::<String>());
     let title = escape(&workflow.name);
     let svg = format!(

@@ -2,19 +2,19 @@ use super::{chrome, forms};
 use crate::backend::{
     api::http::context::PageContext, app::AppState, db::pages, repositories::store::repo_store,
 };
-use crate::webui::{
-    app::Page,
-    pages::repos::{
-        page::Page as RepoPage,
-        pages::{Build, Page as PagesPage, Settings},
-    },
-};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{Redirect, Response},
     routing::{get, post},
     Form, Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{
+        page::Page as RepoPage,
+        pages::{Build, Page as PagesPage, Settings},
+    },
 };
 use serde_json::json;
 use std::{collections::HashMap, sync::Arc};

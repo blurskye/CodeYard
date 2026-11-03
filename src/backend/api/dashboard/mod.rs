@@ -5,10 +5,6 @@ use crate::backend::dashboard;
 use crate::backend::db;
 use crate::backend::db::issues::IssueRelation;
 use crate::backend::db::pull_requests::records::PullRequestRelation;
-use crate::webui::app::Page;
-use crate::webui::components::relative_time;
-use crate::webui::pages::dashboard::{RepositoryChoice, RepositoryChoices, WorkItem, WorkList};
-use crate::webui::pages::repos::issues::{Kind, Label};
 use axum::{
     extract::{OriginalUri, State},
     http::{HeaderMap, StatusCode},
@@ -16,6 +12,10 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_webui::app::Page;
+use codeyard_webui::components::relative_time;
+use codeyard_webui::pages::dashboard::{RepositoryChoice, RepositoryChoices, WorkItem, WorkList};
+use codeyard_webui::pages::repos::issues::{Kind, Label};
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

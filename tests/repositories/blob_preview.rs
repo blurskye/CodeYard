@@ -1,9 +1,7 @@
 use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 use axum::http::StatusCode;
-use codeyard::{
-    backend::db,
-    webui::{app::Page, pages::repos},
-};
+use codeyard::backend::db;
+use codeyard_webui::{app::Page, pages::repos};
 
 async fn contract(pg: bool) {
     fake_webui_bundle::install();

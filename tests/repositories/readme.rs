@@ -9,18 +9,16 @@ use axum::{
     body::{to_bytes, Body},
     http::{Request, StatusCode},
 };
-use codeyard::{
-    backend::{
-        db,
-        repositories::{
-            lifecycle::provision,
-            store::{repo_store, FileWrite, RepoStore},
-        },
+use codeyard::backend::{
+    db,
+    repositories::{
+        lifecycle::provision,
+        store::{repo_store, FileWrite, RepoStore},
     },
-    webui::{
-        app::{Page, PageEnvelope},
-        pages::repos::{self as view, tree::MAX_README_BYTES},
-    },
+};
+use codeyard_webui::{
+    app::{Page, PageEnvelope},
+    pages::repos::{self as view, tree::MAX_README_BYTES},
 };
 use database::Database;
 use std::io::Write;

@@ -55,7 +55,7 @@ pub fn gist_file(id: &str, sha: &str, entry: &TreeObjectEntry, content: Option<&
         .split(';')
         .next()
         .unwrap_or("application/octet-stream");
-    let mut value = json!({"filename":entry.path,"type":mime,"raw_url":format!("{}/gists/{id}/raw/{sha}/{}",link_origin(),crate::webui::encode_component(&entry.path)),"size":entry.size.unwrap_or(0)});
+    let mut value = json!({"filename":entry.path,"type":mime,"raw_url":format!("{}/gists/{id}/raw/{sha}/{}",link_origin(),codeyard_webui::encode_component(&entry.path)),"size":entry.size.unwrap_or(0)});
     if let Some(language) = crate::backend::git::language_for_path(&entry.path) {
         value["language"] = json!(language);
     }

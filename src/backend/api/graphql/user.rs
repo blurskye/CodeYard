@@ -6,14 +6,14 @@ use serde_json::json;
 pub(super) fn object(user: &db::models::User, viewer: i64) -> Value {
     json!({"__typename":"User","id":node_id::encode("U",user.id),"databaseId":user.id,
         "login":user.username,"name":user.display_name,
-        "url":url(&crate::webui::profile_path(&user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
+        "url":url(&codeyard_webui::profile_path(&user.username)),"avatarUrl":url(&format!("/avatars/{}",user.username)),"createdAt":user.created_at,
         "bio":user.bio,"location":user.location,"websiteUrl":user.website,
         "isViewer":viewer==user.id})
 }
 
 pub(super) fn organization(org: &db::models::Organization) -> Value {
     json!({"__typename":"Organization","id":node_id::encode("O",org.id),"databaseId":org.id,
-        "login":org.name,"name":org.display_name,"email":null,"url":url(&crate::webui::profile_path(&org.name)),
+        "login":org.name,"name":org.display_name,"email":null,"url":url(&codeyard_webui::profile_path(&org.name)),
         "avatarUrl":url(&format!("/avatars/{}",org.name)),"createdAt":org.created_at,
         "description":org.description,"websiteUrl":null})
 }

@@ -1012,9 +1012,9 @@ async fn notify_published(
 ) {
     let link = format!(
         "/{}/{}/releases/tag/{}",
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(name),
-        crate::webui::encode_component(&release.tag_name)
+        codeyard_webui::encode_component(owner),
+        codeyard_webui::encode_component(name),
+        codeyard_webui::encode_component(&release.tag_name)
     );
     notify_watchers(
         pool,

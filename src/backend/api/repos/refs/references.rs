@@ -6,8 +6,8 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::repos::discussion::unavailable;
 use crate::backend::db;
 use crate::backend::repositories::access::can_read;
-use crate::webui::components::references::{self, References};
 use axum::response::Response;
+use codeyard_webui::components::references::{self, References};
 
 pub(crate) fn autolink(row: db::repositories::autolinks::Autolink) -> references::Autolink {
     references::Autolink {
@@ -160,7 +160,7 @@ where
                 else {
                     continue;
                 };
-                let base = crate::webui::repository_path(&owner, &name);
+                let base = codeyard_webui::repository_path(&owner, &name);
                 let href = if let Some(number) = token.strip_prefix('#') {
                     let Ok(number) = number.parse::<i32>() else {
                         continue;

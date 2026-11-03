@@ -4,10 +4,10 @@ use crate::backend::api::user::profile::load_profile;
 use crate::backend::api::users::activity::ActivityQuery;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::{account, users};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::pages::{account, users};
 use std::sync::Arc;
 
 /// The Stars tab: how many of the user's stars the viewer can read, and the open page of them when
@@ -192,8 +192,8 @@ pub(crate) async fn profile_response(
     let repository_href = |page: usize| {
         format!(
             "{}?repo_page={page}&q={}",
-            crate::webui::profile_path(&target.username),
-            crate::webui::encode_component(repository_query)
+            codeyard_webui::profile_path(&target.username),
+            codeyard_webui::encode_component(repository_query)
         )
     };
     let repositories_newer =
@@ -215,7 +215,7 @@ pub(crate) async fn profile_response(
     ctx.page_model_status(
         status,
         &title,
-        crate::webui::app::Page::Identity(account::Page::Profile {
+        codeyard_webui::app::Page::Identity(account::Page::Profile {
             profile,
             repositories,
             repository_count,

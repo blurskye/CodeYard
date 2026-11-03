@@ -312,7 +312,7 @@ async fn markdown(
     {
         return Err(Error::validation("Markdown", "text", "invalid"));
     }
-    let mut references = crate::webui::components::references::References::default();
+    let mut references = codeyard_webui::components::references::References::default();
     if let Some(context) = input.context {
         let (owner, name) = context
             .split_once('/')
@@ -348,7 +348,7 @@ pub(super) async fn resolve_references(
     name: &str,
     texts: &[&str],
     document: bool,
-) -> Result<crate::webui::components::references::References> {
+) -> Result<codeyard_webui::components::references::References> {
     super::super::repos::refs::references::resolve_references_with(
         &state.pool,
         state.cluster.as_ref(),
@@ -376,16 +376,16 @@ async fn raw_markdown(body: String) -> Result<Response> {
     }
     render(
         body,
-        crate::webui::components::references::References::default(),
+        codeyard_webui::components::references::References::default(),
     )
     .await
 }
 pub(super) async fn render(
     text: String,
-    references: crate::webui::components::references::References,
+    references: codeyard_webui::components::references::References,
 ) -> Result<Response> {
     let html = tokio::task::spawn_blocking(move || {
-        crate::webui::components::parse_markdown(&text, &references)
+        codeyard_webui::components::parse_markdown(&text, &references)
     })
     .await
     .map_err(Error::unavailable)?;
@@ -394,14 +394,14 @@ pub(super) async fn render(
 
 async fn emojis() -> Json<Value> {
     Json(
-        crate::webui::components::EMOJI
+        codeyard_webui::components::EMOJI
             .iter()
             .map(|(name, _)| (name.to_string(), json!(api_url(&format!("/emojis/{name}")))))
             .collect(),
     )
 }
 async fn emoji(Path(name): Path<String>) -> Result<Response> {
-    let (_, emoji) = crate::webui::components::EMOJI
+    let (_, emoji) = codeyard_webui::components::EMOJI
         .iter()
         .find(|(key, _)| *key == name)
         .ok_or_else(Error::missing)?;

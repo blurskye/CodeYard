@@ -69,7 +69,7 @@ async fn repository_document(
     } else {
         value["owner"]["url"] = json!(super::api_url(&format!(
             "/orgs/{}",
-            crate::webui::encode_component(owner)
+            codeyard_webui::encode_component(owner)
         )));
     }
     documents.insert(repo.id, value.clone());

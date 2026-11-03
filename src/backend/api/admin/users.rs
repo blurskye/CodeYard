@@ -13,16 +13,16 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::identity;
 use crate::backend::identity::credentials::PasswordAccount;
-use crate::webui::app::Page;
-use crate::webui::pages::{
-    account,
-    admin::{AccountMetadata, AdminUsers},
-    fields::preserved_values,
-};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::{
+    account,
+    admin::{AccountMetadata, AdminUsers},
+    fields::preserved_values,
+};
 use std::sync::Arc;
 
 /// Accounts per page on the users page.

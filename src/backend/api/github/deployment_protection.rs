@@ -40,7 +40,7 @@ pub(super) fn write_error(error: anyhow::Error) -> Error {
 }
 
 fn integration(id: i64, slug: &str) -> Value {
-    json!({"id":id,"slug":slug,"integration_url":api_url(&format!("/apps/{}", crate::webui::encode_component(slug))),"node_id":node_id::encode("APP", id)})
+    json!({"id":id,"slug":slug,"integration_url":api_url(&format!("/apps/{}", codeyard_webui::encode_component(slug))),"node_id":node_id::encode("APP", id)})
 }
 fn document(rule: &Rule) -> Value {
     json!({"id":rule.id,"node_id":node_id::encode("DPR",rule.id),"enabled":rule.enabled,"app":integration(rule.app_id,&rule.slug)})

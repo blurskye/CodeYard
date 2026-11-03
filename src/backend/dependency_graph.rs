@@ -140,7 +140,7 @@ pub struct Package {
 }
 
 fn decode(value: &str) -> Option<String> {
-    Some(crate::webui::decode_component(value))
+    Some(codeyard_webui::decode_component(value))
 }
 
 fn package(purl: &str) -> Option<(String, String, String)> {

@@ -279,7 +279,7 @@ async fn create_deployment(
     let invalid = || Error::validation("PagesDeployment", "configuration", "invalid");
     if input.oidc_token.is_empty()
         || input.oidc_token.len() > 16384
-        || !crate::git_ids::is_full_commit_id(&input.pages_build_version)
+        || !codeyard_support::git_ids::is_full_commit_id(&input.pages_build_version)
         || input.artifact_id.is_some_and(|id| id <= 0)
         || (input.artifact_id.is_none() && input.artifact_url.is_none())
     {
@@ -327,8 +327,8 @@ async fn create_deployment(
             format!(
                 "{}/{}/{}/pages",
                 crate::backend::api::http::config::link_origin(),
-                crate::webui::encode_component(&params["owner"]),
-                crate::webui::encode_component(&params["repo"])
+                codeyard_webui::encode_component(&params["owner"]),
+                codeyard_webui::encode_component(&params["repo"])
             )
         });
     Ok(Json(

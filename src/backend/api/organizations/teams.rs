@@ -6,11 +6,11 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::app::AppState;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::*;
-use crate::webui::app::Page;
-use crate::webui::pages::orgs as view;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::orgs as view;
 use std::sync::Arc;
 
 // Refusals that name the rule a field broke. Other malformed input gets INVALID_FORM.

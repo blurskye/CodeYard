@@ -9,7 +9,6 @@ use crate::backend::{
         packages::{Credential, Listing, Owner, Package, Permission, Refusal},
     },
 };
-use crate::webui::{app::Page as AppPage, pages::packages as view};
 use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -17,6 +16,7 @@ use axum::{
     routing::get,
     Form, Router,
 };
+use codeyard_webui::{app::Page as AppPage, pages::packages as view};
 use std::{collections::HashMap, sync::Arc};
 
 pub(in crate::backend::api) fn router() -> Router<Arc<AppState>> {
@@ -47,10 +47,10 @@ pub(in crate::backend::api) fn router() -> Router<Arc<AppState>> {
 }
 
 fn owner_view(owner: &Owner) -> view::Owner {
-    let name = crate::webui::encode_component(&owner.name);
+    let name = codeyard_webui::encode_component(&owner.name);
     view::Owner {
         name: owner.name.clone(),
-        profile: crate::webui::profile_path(&owner.name),
+        profile: codeyard_webui::profile_path(&owner.name),
         packages: format!(
             "/{}/{name}/packages",
             if owner.kind == "org" { "orgs" } else { "users" }
@@ -340,7 +340,7 @@ async fn model(
                 .map_or("latest", |version| version.name.as_str());
             let registry_url = format!(
                 "{origin}/api/packages/{}/npm/",
-                crate::webui::encode_component(&owner.name)
+                codeyard_webui::encode_component(&owner.name)
             );
             if name.starts_with('@') {
                 (
@@ -376,8 +376,8 @@ async fn model(
                     |r| {
                         format!(
                             "{origin}/{}/{}",
-                            crate::webui::encode_component(&owner.name),
-                            crate::webui::encode_component(&r.name)
+                            codeyard_webui::encode_component(&owner.name),
+                            codeyard_webui::encode_component(&r.name)
                         )
                     },
                 );
@@ -387,7 +387,7 @@ async fn model(
                 let version = selected.as_ref().map_or("VERSION", |v| v.name.as_str());
                 let endpoint = format!(
                     "{origin}/api/packages/{}/nuget/index.json",
-                    crate::webui::encode_component(&owner.name)
+                    codeyard_webui::encode_component(&owner.name)
                 );
                 (
                     format!(
@@ -414,7 +414,7 @@ async fn model(
                     .unwrap_or("VERSION");
                 let endpoint = format!(
                     "{origin}/api/packages/{}/rubygems/",
-                    crate::webui::encode_component(&owner.name)
+                    codeyard_webui::encode_component(&owner.name)
                 );
                 (format!("source \"{endpoint}\" do\n  gem \"{}\", \"{version}\"\nend\n# bundle install", package.name), Some(endpoint))
             }
@@ -434,8 +434,8 @@ async fn model(
             repository_href: repository.map(|repo| {
                 format!(
                     "/{}/{}",
-                    crate::webui::encode_component(&owner.name),
-                    crate::webui::encode_component(&repo.name)
+                    codeyard_webui::encode_component(&owner.name),
+                    codeyard_webui::encode_component(&repo.name)
                 )
             }),
             package: card,

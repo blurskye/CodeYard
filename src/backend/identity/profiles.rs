@@ -10,7 +10,7 @@ use crate::backend::db::{
 pub fn social_account(
     input: &str,
 ) -> Result<crate::backend::db::users::social_accounts::SocialAccount, ProfileError> {
-    let url = crate::website::parse(input.trim()).ok_or(ProfileError::Website)?;
+    let url = codeyard_support::website::parse(input.trim()).ok_or(ProfileError::Website)?;
     if url.as_str().len() > 255 || input.contains(['\0', '\r', '\n']) {
         return Err(ProfileError::Website);
     }

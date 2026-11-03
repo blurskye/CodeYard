@@ -320,10 +320,10 @@ impl Client {
 
     /// A page as typed data, the way the browser loads it on navigation. Answers that are not
     /// pages, such as redirects, come back through `exchange`.
-    pub async fn model(&self, path: &str) -> (StatusCode, codeyard::webui::app::Page) {
+    pub async fn model(&self, path: &str) -> (StatusCode, codeyard_webui::app::Page) {
         let mut request = Request::builder().uri(path).header(
             header::ACCEPT,
-            codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+            codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
         );
         if !self.session.is_empty() {
             request = request.header(header::COOKIE, format!("session_id={}", self.session));
@@ -338,7 +338,7 @@ impl Client {
         assert_eq!(
             response.headers().get(header::CONTENT_TYPE),
             Some(&header::HeaderValue::from_static(
-                codeyard::webui::bootstrap::MODEL_CONTENT_TYPE
+                codeyard_webui::bootstrap::MODEL_CONTENT_TYPE
             )),
             "{path}: {status}, location {:?}",
             response.headers().get(header::LOCATION)
@@ -346,7 +346,7 @@ impl Client {
         let body = to_bytes(response.into_body(), 8 * 1024 * 1024)
             .await
             .unwrap();
-        let envelope: codeyard::webui::app::PageEnvelope = serde_json::from_slice(&body)
+        let envelope: codeyard_webui::app::PageEnvelope = serde_json::from_slice(&body)
             .unwrap_or_else(|error| panic!("{path}: not a page model: {error}"));
         (status, envelope.page)
     }
@@ -376,7 +376,7 @@ impl Client {
             let (_, page) = self
                 .page(&format!(
                     "{path}?template={}",
-                    codeyard::webui::encode_component(template)
+                    codeyard_webui::encode_component(template)
                 ))
                 .await;
             for name in ["repository_id", "template_revision"] {

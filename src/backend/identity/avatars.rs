@@ -45,7 +45,7 @@ pub enum AvatarError {
 /// The type of a picture, read from its first bytes, if it is one avatars may use.
 /// A name or a type sent by the browser proves nothing.
 pub fn picture_type(bytes: &[u8]) -> Option<&'static str> {
-    crate::media::AVATAR_CONTENT_TYPES
+    codeyard_support::media::AVATAR_CONTENT_TYPES
         .into_iter()
         .find(|kind| media_signature_matches(kind, bytes))
 }

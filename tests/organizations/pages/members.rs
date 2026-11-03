@@ -755,7 +755,7 @@ pub async fn contracts(f: &Fixture) {
         .await
         .redirect(&format!(
             "/login?redirect={}",
-            codeyard::webui::encode_component(&format!("{}?tab=members", f.path()))
+            codeyard_webui::encode_component(&format!("{}?tab=members", f.path()))
         ));
     f.database
         .execute(

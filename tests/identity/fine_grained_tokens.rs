@@ -6,21 +6,19 @@ use axum::{
     http::Request,
     Router,
 };
-use codeyard::{
-    backend::{
-        db::{
-            self,
-            organizations::{NewOrganization, OrganizationProfile},
-            repositories::creation::RepositoryCreationOwner,
-        },
-        repositories::lifecycle,
+use codeyard::backend::{
+    db::{
+        self,
+        organizations::{NewOrganization, OrganizationProfile},
+        repositories::creation::RepositoryCreationOwner,
     },
-    webui::{
-        app::Page,
-        pages::{
-            account,
-            settings::fine_grained::{Model, View},
-        },
+    repositories::lifecycle,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::{
+        account,
+        settings::fine_grained::{Model, View},
     },
 };
 use tower::ServiceExt;

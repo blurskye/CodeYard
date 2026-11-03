@@ -12,14 +12,14 @@ use crate::backend::db;
 use crate::backend::repositories::code_owners::load_rules;
 use crate::backend::repositories::store::repo_store;
 use crate::backend::repositories::store::{DiffFileInfo, DiffInfo};
-use crate::webui::pages::repos::{
-    issues::{self as view, Kind},
-    pulls::{self, LineComment, ReviewDraft},
-};
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos::{
+    issues::{self as view, Kind},
+    pulls::{self, LineComment, ReviewDraft},
+};
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::Arc;
 
@@ -36,9 +36,9 @@ pub(crate) fn diff_url(ctx: &PageContext, base: &str) -> String {
 
 /// Bound the actual envelope, including drafts, pending threads, references and JSON escaping.
 pub(crate) fn bound_thread_projection(
-    envelope: &mut crate::webui::app::PageEnvelope,
+    envelope: &mut codeyard_webui::app::PageEnvelope,
 ) -> Result<(), serde_json::Error> {
-    use crate::webui::app::Page;
+    use codeyard_webui::app::Page;
     let entries = match &mut envelope.page {
         Page::Collaboration(model) => match model.as_mut() {
             view::Page::Diff { threads, .. } => std::mem::take(threads),
@@ -47,7 +47,7 @@ pub(crate) fn bound_thread_projection(
         _ => return Ok(()),
     };
     let mut bytes = serde_json::to_vec(envelope)?.len();
-    if bytes > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES {
+    if bytes > codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES {
         return Err(serde::ser::Error::custom(
             "Diff page exceeds its size limit",
         ));
@@ -56,7 +56,7 @@ pub(crate) fn bound_thread_projection(
     let mut cut = false;
     for thread in entries {
         let size = serde_json::to_vec(&thread)?.len() + usize::from(!kept.is_empty());
-        if bytes.saturating_add(size) > crate::webui::bootstrap::MAX_PAGE_MODEL_BYTES {
+        if bytes.saturating_add(size) > codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES {
             cut = true;
             break;
         }

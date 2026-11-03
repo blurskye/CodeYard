@@ -19,7 +19,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
-pub(super) use crate::webui::pages::repos::ref_path::encode_path as path_url;
+pub(super) use codeyard_webui::pages::repos::ref_path::encode_path as path_url;
 
 pub(super) fn store_error(error: RepoError) -> Error {
     if error.is_write_denied() || error.is_protected_branch() {
@@ -115,13 +115,13 @@ pub(super) fn entry(
         "{}/contents/{}?ref={}",
         repo_url(owner, repo),
         path_url(path),
-        crate::webui::encode_component(reference)
+        codeyard_webui::encode_component(reference)
     );
     let base = format!(
         "{}/{}/{}",
         crate::backend::api::http::config::link_origin(),
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(repo)
+        codeyard_webui::encode_component(owner),
+        codeyard_webui::encode_component(repo)
     );
     // GitHub names the ref as the client gave it, so `main` stays `main` here.
     let html = format!(
@@ -142,7 +142,7 @@ pub(super) fn entry(
             "{}/contents/{}?ref={}&raw=1",
             repo_url(owner, repo),
             path_url(path),
-            crate::webui::encode_component(revision)
+            codeyard_webui::encode_component(revision)
         )
     });
     json!({
@@ -181,7 +181,7 @@ pub(super) async fn blob_response(
     {
         let text = String::from_utf8(blob.bytes)
             .map_err(|_| Error::invalid("HTML representation requires a text file"))?;
-        let references = crate::webui::components::references::References {
+        let references = codeyard_webui::components::references::References {
             owner: owner.to_owned(),
             repo: name.to_owned(),
             ..Default::default()

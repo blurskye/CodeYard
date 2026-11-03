@@ -620,20 +620,20 @@ async fn contract(pg: bool) {
             Request::builder()
                 .uri(&web)
                 .header("cookie", format!("session_id={}", owner.session))
-                .header("accept", codeyard::webui::bootstrap::MODEL_CONTENT_TYPE)
+                .header("accept", codeyard_webui::bootstrap::MODEL_CONTENT_TYPE)
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(model.status(), StatusCode::OK);
-    let model: codeyard::webui::app::PageEnvelope =
+    let model: codeyard_webui::app::PageEnvelope =
         serde_json::from_slice(&to_bytes(model.into_body(), 8 * 1024 * 1024).await.unwrap())
             .unwrap();
     assert!(matches!(
         model.page,
-        codeyard::webui::app::Page::Repositories(
-            codeyard::webui::pages::repos::page::Page::Check { .. }
+        codeyard_webui::app::Page::Repositories(
+            codeyard_webui::pages::repos::page::Page::Check { .. }
         )
     ));
     let result = owner

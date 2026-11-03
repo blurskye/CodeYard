@@ -10,12 +10,12 @@ use crate::backend::db::organizations::OrganizationOutcome::*;
 use crate::backend::db::organizations::*;
 use crate::backend::repositories::lifecycle;
 use crate::backend::webhooks;
-use crate::webui::app::Page;
-use crate::webui::pages::orgs as view;
 use axum::extract::rejection::FormRejection;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -315,7 +315,7 @@ pub(super) async fn respond_with_hook_draft(
     status: StatusCode,
     message: Option<String>,
     draft: Fields,
-    hook_draft: Option<crate::webui::components::webhooks::HookDraft>,
+    hook_draft: Option<codeyard_webui::components::webhooks::HookDraft>,
 ) -> Response {
     // A refused form is shown at its POST-only address, so the appearance switch returns to the
     // settings page instead.

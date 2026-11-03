@@ -12,15 +12,15 @@ use crate::backend::{
         store::{repo_store, ErrorKind},
     },
 };
-use crate::webui::pages::repos::ref_path::compare_url;
-use crate::webui::pages::repos::{
-    issues::{self as view, NewDraft},
-    pulls,
-};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
+};
+use codeyard_webui::pages::repos::ref_path::compare_url;
+use codeyard_webui::pages::repos::{
+    issues::{self as view, NewDraft},
+    pulls,
 };
 use std::{collections::HashMap, sync::Arc};
 

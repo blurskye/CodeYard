@@ -1,6 +1,5 @@
 //! The help page. It needs no account, and the header shows the viewer's account when there is one.
 use crate::backend::{api::http::context::PageContext, app::AppState};
-use crate::webui::app::Page as AppPage;
 use axum::{
     extract::State,
     http::{HeaderMap, Uri},
@@ -8,6 +7,7 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_webui::app::Page as AppPage;
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

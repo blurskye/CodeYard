@@ -195,7 +195,7 @@ const UNLICENSE_LICENSE: &str = include_str!("templates/license/unlicense.txt");
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::webui::pages::discovery::{GITIGNORE_CHOICES, LICENSE_CHOICES};
+    use codeyard_webui::pages::discovery::{GITIGNORE_CHOICES, LICENSE_CHOICES};
 
     #[test]
     fn templates_ignore_local_secrets_but_keep_gradle_wrappers() {

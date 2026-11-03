@@ -75,7 +75,7 @@ fn document(row: &records::Configuration, org: &str) -> Result<Value> {
     value["target_type"] = json!("organization");
     value["url"] = json!(api_url(&format!(
         "/orgs/{}/code-security/configurations/{}",
-        crate::webui::encode_component(org),
+        codeyard_webui::encode_component(org),
         row.id
     )));
     value["html_url"] = json!(format!(

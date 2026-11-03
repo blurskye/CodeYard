@@ -14,16 +14,16 @@ use crate::backend::issues::{COMMENTS_PER_PAGE, MAX_COMMENT_PAGE};
 use crate::backend::repositories::pull_requests::restack;
 use crate::backend::repositories::pull_requests::stacks;
 use crate::backend::repositories::store::{allowed_merge_methods, repo_store, MergeMethod};
-use crate::webui::pages::repos::issues as view;
-use crate::webui::pages::repos::issues::DetailDraft;
-use crate::webui::pages::repos::issues::Kind;
-use crate::webui::pages::repos::issues::NewDraft;
-use crate::webui::pages::repos::pulls::MAX_LISTED_COMMITS;
 use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
 use chrono::{DateTime, Utc};
+use codeyard_webui::pages::repos::issues as view;
+use codeyard_webui::pages::repos::issues::DetailDraft;
+use codeyard_webui::pages::repos::issues::Kind;
+use codeyard_webui::pages::repos::issues::NewDraft;
+use codeyard_webui::pages::repos::pulls::MAX_LISTED_COMMITS;
 use std::collections::HashMap;
 
 pub(crate) type ResultPage<T> = Result<T, Response>;
@@ -377,7 +377,7 @@ pub(crate) fn pull_item(
     let (head_label, head_url) = match pull.head_repo_id {
         Some(id) if id == repo.record.id => (
             pull.head_branch.clone(),
-            Some(crate::webui::pages::repos::ref_path::branch_url(
+            Some(codeyard_webui::pages::repos::ref_path::branch_url(
                 &repo.view.url(),
                 "tree",
                 &pull.head_branch,
@@ -388,7 +388,7 @@ pub(crate) fn pull_item(
             HeadRepository::Readable(head) => {
                 let owner = head.owner_name.ok_or_else(|| Box::new(unavailable(ctx)))?;
                 let label = format!("{owner}/{}:{}", head.name, pull.head_branch);
-                let url = crate::webui::pages::repos::ref_path::branch_url(
+                let url = codeyard_webui::pages::repos::ref_path::branch_url(
                     &view::repo_url(&owner, &head.name),
                     "tree",
                     &pull.head_branch,
@@ -1464,8 +1464,8 @@ pub(crate) async fn head_choices(
 }
 
 /// The page model, boxed: it is much larger than most pages.
-pub(crate) fn page(model: view::Page) -> crate::webui::app::Page {
-    crate::webui::app::Page::Collaboration(Box::new(model))
+pub(crate) fn page(model: view::Page) -> codeyard_webui::app::Page {
+    codeyard_webui::app::Page::Collaboration(Box::new(model))
 }
 
 pub(crate) fn expected(

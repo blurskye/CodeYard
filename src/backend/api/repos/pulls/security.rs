@@ -6,7 +6,7 @@ use crate::backend::{
     },
     db::{code_scanning as records, models::PullRequest},
 };
-use crate::webui::{encode_component, excerpt, pages::repos::security as view};
+use codeyard_webui::{encode_component, excerpt, pages::repos::security as view};
 use serde_json::Value;
 
 pub(super) async fn checks(

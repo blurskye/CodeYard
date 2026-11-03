@@ -1,7 +1,7 @@
 //! Supported provider requests and bounded response parsing. One configured HTTP client.
 
-use crate::webui::encode_component;
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
+use codeyard_webui::encode_component;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 

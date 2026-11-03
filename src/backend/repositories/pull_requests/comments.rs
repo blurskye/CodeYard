@@ -368,7 +368,7 @@ async fn check_diff_anchor(
     };
     let number =
         u32::try_from(line).map_err(|_| refusal("line must be a line of the pull request diff"))?;
-    let rows = crate::webui::components::patch_rows(&file.patch);
+    let rows = codeyard_webui::components::patch_rows(&file.patch);
     let on_left = rows.iter().any(|row| row.old == Some(number));
     let on_right = rows.iter().any(|row| row.new == Some(number));
     let found = match side {
@@ -380,7 +380,7 @@ async fn check_diff_anchor(
         if let Some((start_line, start_side)) = start {
             let start_number =
                 u32::try_from(start_line).map_err(|_| refusal("start_line must be positive"))?;
-            let coordinate = |row: &crate::webui::components::PatchRow<'_>, side: &str| {
+            let coordinate = |row: &codeyard_webui::components::PatchRow<'_>, side: &str| {
                 if side == "LEFT" {
                     row.old
                 } else {

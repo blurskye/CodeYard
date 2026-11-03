@@ -1,18 +1,15 @@
 //! Native gist pages and forms share the Git-backed domain with the GitHub API.
-use crate::{
-    backend::{
-        api::{
-            http::{context::PageContext, session},
-            user::responses::{field, mutation_guard, Fields},
-        },
-        app::AppState,
-        db, gists as domain,
-        repositories::{
-            lifecycle::{LifecycleFailure, StorageError},
-            store::{repo_store, ErrorKind, GistCredential, RepoError},
-        },
+use crate::backend::{
+    api::{
+        http::{context::PageContext, session},
+        user::responses::{field, mutation_guard, Fields},
     },
-    webui::{app::Page as AppPage, pages::gists as view},
+    app::AppState,
+    db, gists as domain,
+    repositories::{
+        lifecycle::{LifecycleFailure, StorageError},
+        store::{repo_store, ErrorKind, GistCredential, RepoError},
+    },
 };
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
@@ -21,6 +18,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use codeyard_webui::{app::Page as AppPage, pages::gists as view};
 use std::sync::Arc;
 mod forms;
 mod pages;

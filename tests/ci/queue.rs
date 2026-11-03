@@ -1472,18 +1472,16 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
         http::{header, Request, StatusCode},
         Router,
     };
-    use codeyard::{
-        backend::{
-            api::create_router,
-            app::AppState,
-            ci::{queue::LogLine, CiConfig},
-            storage::ObjectStore,
-        },
-        webui::{
-            app::PageEnvelope,
-            bootstrap::{MAX_PAGE_MODEL_BYTES, MODEL_CONTENT_TYPE},
-            pages::ci,
-        },
+    use codeyard::backend::{
+        api::create_router,
+        app::AppState,
+        ci::{queue::LogLine, CiConfig},
+        storage::ObjectStore,
+    };
+    use codeyard_webui::{
+        app::PageEnvelope,
+        bootstrap::{MAX_PAGE_MODEL_BYTES, MODEL_CONTENT_TYPE},
+        pages::ci,
     };
     use std::sync::Arc;
     use tower::ServiceExt;
@@ -1600,8 +1598,7 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
             )
             .await;
             let envelope: PageEnvelope = serde_json::from_slice(&bytes).unwrap();
-            let codeyard::webui::app::Page::Actions(ci::Page::Actions(model)) = envelope.page
-            else {
+            let codeyard_webui::app::Page::Actions(ci::Page::Actions(model)) = envelope.page else {
                 panic!("expected Actions model");
             };
             let selected = model.selected.unwrap();

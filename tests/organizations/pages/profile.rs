@@ -1,6 +1,6 @@
 use super::fixture::Fixture;
 use axum::http::StatusCode;
-use codeyard::webui::pages::orgs::{self, Page};
+use codeyard_webui::pages::orgs::{self, Page};
 use dioxus::prelude::*;
 
 fn root(page: Page) -> Element {

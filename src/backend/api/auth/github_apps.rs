@@ -9,10 +9,6 @@ use crate::backend::{
     db::{self, github_apps::App},
     identity::{github_apps as apps, tokens::token_hash},
 };
-use crate::webui::{
-    app::Page,
-    pages::{account, auth::apps::Model},
-};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -20,6 +16,10 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Form, Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::{account, auth::apps::Model},
 };
 use manifests::{manifest_approve, manifest_preview, manifest_start};
 use serde_json::Value;
@@ -75,7 +75,7 @@ fn login(ctx: &PageContext) -> Option<Response> {
     ctx.user.is_none().then(|| {
         Redirect::to(&format!(
             "/enter?redirect={}",
-            crate::webui::encode_component(&ctx.location)
+            codeyard_webui::encode_component(&ctx.location)
         ))
         .into_response()
     })

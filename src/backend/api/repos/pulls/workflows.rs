@@ -6,8 +6,6 @@ use crate::backend::api::repos::discussion::*;
 use crate::backend::api::repos::forms::{authorize_post, field};
 use crate::backend::app::AppState;
 use crate::backend::repositories::pull_requests::workflows::RunWorkflowsRequest;
-use crate::webui::pages::repos::issues::DetailDraft;
-use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -16,6 +14,8 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos::issues::DetailDraft;
+use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
 use std::sync::Arc;
 pub async fn run_pull_request_workflows(

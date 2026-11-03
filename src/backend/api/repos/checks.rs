@@ -11,16 +11,16 @@ use crate::backend::{
     },
     repositories::access,
 };
-use crate::webui::{
-    app::Page,
-    pages::repos::{checks as view, page::Page as RepoPage},
-};
 use axum::{
     extract::{Form, OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{checks as view, page::Page as RepoPage},
 };
 use std::{collections::HashMap, sync::Arc};
 

@@ -80,8 +80,8 @@ pub(super) async fn document(
         value["discussion_url"] = Value::String(format!(
             "{}/{}/{}/discussions/{number}",
             crate::backend::api::http::config::link_origin(),
-            crate::webui::encode_component(owner),
-            crate::webui::encode_component(name)
+            codeyard_webui::encode_component(owner),
+            codeyard_webui::encode_component(name)
         ));
     }
     let counts = db::reactions::reaction_counts(&state.pool, "release", &[release.id], 0)

@@ -229,7 +229,7 @@ impl From<CurrentPasswordError> for TwoFactorError {
 fn otpauth_uri(username: &str, secret: &str) -> String {
     format!(
         "otpauth://totp/Codeyard:{}?secret={secret}&issuer=Codeyard&algorithm=SHA1&digits=6&period=30",
-        crate::webui::encode_component(username)
+        codeyard_webui::encode_component(username)
     )
 }
 

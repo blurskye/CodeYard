@@ -9,17 +9,17 @@ use crate::backend::api::repos::responses::repository_owners;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::repositories::store::repo_store;
-use crate::webui::app::Page;
-use crate::webui::components::charts::{normalize_days, DailyActivity};
-use crate::webui::pages::repos::insights::{
-    Contributor, DependencyRow, Fork, Page as InsightsPage, Week, WorkflowUsage,
-    CONTRIBUTORS_SHOWN, FORKS_PER_PAGE,
-};
-use crate::webui::pages::repos::page::Page as RepoPage;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, Uri};
 use axum::response::Response;
 use axum::{routing::get, Router};
+use codeyard_webui::app::Page;
+use codeyard_webui::components::charts::{normalize_days, DailyActivity};
+use codeyard_webui::pages::repos::insights::{
+    Contributor, DependencyRow, Fork, Page as InsightsPage, Week, WorkflowUsage,
+    CONTRIBUTORS_SHOWN, FORKS_PER_PAGE,
+};
+use codeyard_webui::pages::repos::page::Page as RepoPage;
 use std::sync::Arc;
 
 pub fn page_router() -> Router<Arc<AppState>> {
@@ -74,7 +74,7 @@ async fn ref_activity(
     >,
 ) -> Response {
     use crate::backend::repositories::activity;
-    use crate::webui::pages::repos::insights::activity::{Page as ActivityPage, Row};
+    use codeyard_webui::pages::repos::insights::activity::{Page as ActivityPage, Row};
     let (ctx, loaded) = match open(state, headers, &uri, &owner, &name).await {
         Ok(opened) => opened,
         Err(response) => return response,
@@ -292,7 +292,7 @@ async fn community(
     headers: HeaderMap,
     uri: Uri,
 ) -> Response {
-    use crate::webui::pages::repos::{insights::CommunityCheck, ref_path::file_url};
+    use codeyard_webui::pages::repos::{insights::CommunityCheck, ref_path::file_url};
     let (ctx, loaded) = match open(state, headers, &uri, &owner, &name).await {
         Ok(opened) => opened,
         Err(response) => return response,

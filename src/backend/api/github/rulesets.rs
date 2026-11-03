@@ -83,7 +83,7 @@ impl Scope {
             Ok(Self {
                 owner: Owner::Organization(org.id),
                 actor: Some(actor.user.id),
-                path: format!("/orgs/{}", crate::webui::encode_component(&org.name)),
+                path: format!("/orgs/{}", codeyard_webui::encode_component(&org.name)),
                 source: org.name,
             })
         } else {
@@ -96,8 +96,8 @@ impl Scope {
                 source: format!("{owner}/{}", repo.name),
                 path: format!(
                     "/repos/{}/{}",
-                    crate::webui::encode_component(owner),
-                    crate::webui::encode_component(&repo.name)
+                    codeyard_webui::encode_component(owner),
+                    codeyard_webui::encode_component(&repo.name)
                 ),
             })
         }
@@ -118,7 +118,7 @@ impl Scope {
             .ok_or_else(Error::missing)?;
         Ok((
             org.name.clone(),
-            format!("/orgs/{}", crate::webui::encode_component(&org.name)),
+            format!("/orgs/{}", codeyard_webui::encode_component(&org.name)),
         ))
     }
     async fn document(&self, state: &AppState, rule: &Ruleset, editable: bool) -> Result<Value> {

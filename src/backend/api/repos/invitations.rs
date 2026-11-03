@@ -1,16 +1,10 @@
 //! Native recipient workflow, backed by the same invitation transactions as the REST adapters.
 use super::paging;
-use crate::{
-    backend::{
-        api::http::context::PageContext,
-        app::AppState,
-        db,
-        repositories::collaborators::{self, Error},
-    },
-    webui::{
-        app::Page,
-        pages::{account, repos::invitations as view},
-    },
+use crate::backend::{
+    api::http::context::PageContext,
+    app::AppState,
+    db,
+    repositories::collaborators::{self, Error},
 };
 use axum::{
     extract::{Path, State},
@@ -18,6 +12,10 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::{get, post},
     Form, Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::{account, repos::invitations as view},
 };
 use std::{collections::HashMap, sync::Arc};
 

@@ -2421,8 +2421,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
     .await
     .unwrap();
     assert_eq!(status, axum::http::StatusCode::OK);
-    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(model)) =
-        page
+    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(model)) = page
     else {
         panic!("Actions model")
     };

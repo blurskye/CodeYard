@@ -282,7 +282,7 @@ async fn policies(
                 format!(
                     "{}/environments/{}/deployment-branch-policies/{}",
                     repo_url(&params["owner"], &params["repo"]),
-                    crate::webui::encode_component(&env.name),
+                    codeyard_webui::encode_component(&env.name),
                     branch.id
                 ),
             )],

@@ -2,23 +2,21 @@ use super::{
     organization::{self, Fields},
     INDEX,
 };
-use crate::{
-    backend::{
-        api::http::context::PageContext,
-        app::AppState,
-        db::{
-            self,
-            private_registries::{Configuration, RegistryError},
-            secrets::SecretsError,
-        },
+use crate::backend::{
+    api::http::context::PageContext,
+    app::AppState,
+    db::{
+        self,
+        private_registries::{Configuration, RegistryError},
+        secrets::SecretsError,
     },
-    webui::pages::orgs::private_registries as view,
 };
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::pages::orgs::private_registries as view;
 use serde_json::{json, Value};
 use std::{collections::BTreeMap, sync::Arc};
 

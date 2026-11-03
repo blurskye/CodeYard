@@ -7,7 +7,6 @@ use crate::backend::{
         organization_values::{self as values, Kind, Save, ValueError},
     },
 };
-use crate::webui::pages::orgs::actions as view;
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -15,6 +14,7 @@ use axum::{
     routing::post,
     Router,
 };
+use codeyard_webui::pages::orgs::actions as view;
 use std::{collections::HashMap, sync::Arc};
 
 pub(super) fn router() -> Router<Arc<AppState>> {

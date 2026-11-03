@@ -91,7 +91,7 @@ pub(crate) async fn form(
         Ok(()) => ctx.redirect(&format!(
             "{}/settings?tab=secrets&environment={}",
             loaded.chrome.base(),
-            crate::webui::encode_component(&environment)
+            codeyard_webui::encode_component(&environment)
         )),
         Err(error) => {
             let (status, message) = match error {

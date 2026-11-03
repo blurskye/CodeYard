@@ -8,7 +8,6 @@ use crate::backend::{
         runners::{self as native, GroupInput, Labels, Refusal, Registration, Scope, Selection},
     },
 };
-use crate::webui::{app::Page, pages::runners as view};
 use axum::{
     body::Body,
     extract::{DefaultBodyLimit, Path, State},
@@ -18,6 +17,7 @@ use axum::{
     Form, Json, Router,
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_webui::{app::Page, pages::runners as view};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
@@ -201,8 +201,8 @@ async fn render(
                 format!("{owner}/{} runners", repo.name),
                 format!(
                     "/{}/{}/settings",
-                    crate::webui::encode_component(&owner),
-                    crate::webui::encode_component(&repo.name)
+                    codeyard_webui::encode_component(&owner),
+                    codeyard_webui::encode_component(&repo.name)
                 ),
                 native::Listing {
                     total: 0,

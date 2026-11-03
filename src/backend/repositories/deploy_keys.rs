@@ -6,8 +6,8 @@ use crate::backend::db::models::{AccessLevel, DeployKey, Repository, User};
 use crate::backend::db::users::ssh_keys::{self, SshKeyWriteRefusal};
 use crate::backend::db::{self, deploy_keys::NewDeployKey};
 use crate::backend::repositories::access::can_admin;
-use crate::webui::components::deploy_keys::{DeployKeyPanel, DeployKeyRow};
 use anyhow::{ensure, Context, Result};
+use codeyard_webui::components::deploy_keys::{DeployKeyPanel, DeployKeyRow};
 use ssh_key::HashAlg;
 use tracing::warn;
 

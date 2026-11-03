@@ -148,7 +148,7 @@ async fn compare(
     );
     let html_url = format!("{site}/{}", path_url(&spec));
     let mut value = json!({
-        "url": format!("{}/compare/{}", repo_url(&owner, &name), crate::webui::encode_component(&spec)),
+        "url": format!("{}/compare/{}", repo_url(&owner, &name), codeyard_webui::encode_component(&spec)),
         "html_url": html_url, "permalink_url": format!("{site}/{}", path_url(&permalink)),
         "diff_url": format!("{html_url}.diff"), "patch_url": format!("{html_url}.patch"),
         "base_commit": read_document(&state, base_repo.id, &comparison.base_commit, &base_owner, &base_repo.name).await?,

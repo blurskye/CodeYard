@@ -697,7 +697,7 @@ async fn contract(pg: bool) {
     assert!(html.contains("Just-in-time runner"));
     assert!(!html.contains(&registration_tokens[0]));
     let (_, model) = owner.model(&settings).await;
-    let codeyard::webui::app::Page::RunnerSettings(page) = model else {
+    let codeyard_webui::app::Page::RunnerSettings(page) = model else {
         panic!("runner page")
     };
     assert!(page

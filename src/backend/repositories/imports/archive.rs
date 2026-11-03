@@ -160,7 +160,7 @@ fn git_object_path(path: &str) -> bool {
     {
         return directory.len() == 2
             && file.len() == 38
-            && crate::git_ids::is_full_commit_id(format!("{directory}{file}"));
+            && codeyard_support::git_ids::is_full_commit_id(format!("{directory}{file}"));
     }
     false
 }

@@ -51,7 +51,7 @@ pub async fn merge_branch(
     }
     if input.message.is_some_and(|message| {
         message.is_empty()
-            || message.len() > crate::git_limits::MAX_MERGE_MESSAGE_BYTES
+            || message.len() > codeyard_support::git_limits::MAX_MERGE_MESSAGE_BYTES
             || message.contains('\0')
     }) {
         return Err(RefError::Invalid(

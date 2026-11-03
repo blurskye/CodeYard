@@ -1,7 +1,7 @@
 use crate::support::{database::Database, fake_webui_bundle, http_client::Client};
 use axum::http::StatusCode;
 use codeyard::backend::{db, identity};
-use codeyard::webui::{app::Page, pages::account};
+use codeyard_webui::{app::Page, pages::account};
 
 async fn bounded_administration(pg: bool) {
     fake_webui_bundle::install();
@@ -280,7 +280,7 @@ async fn postgres_search_omits_badges_when_native_query_budget_expires() {
     .await
     .unwrap();
     assert_eq!(status, StatusCode::OK);
-    let Page::Discovery(codeyard::webui::pages::discovery::Page::Search(model)) = page else {
+    let Page::Discovery(codeyard_webui::pages::discovery::Page::Search(model)) = page else {
         panic!("search")
     };
     assert_eq!(model.counts_unavailable, vec!["issues"]);

@@ -6,8 +6,8 @@ pub(crate) mod search;
 pub(crate) mod stars;
 
 use crate::backend::{api::http::context::PageContext, app::AppState, db};
-use crate::webui::{components::languages::LanguageShare, pages::discovery::RepositoryCard};
 use axum::{extract::DefaultBodyLimit, http::StatusCode, response::Response, routing::get, Router};
+use codeyard_webui::{components::languages::LanguageShare, pages::discovery::RepositoryCard};
 use std::{
     collections::{BTreeMap, HashMap},
     sync::Arc,

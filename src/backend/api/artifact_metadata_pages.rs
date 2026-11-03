@@ -7,7 +7,6 @@ use crate::backend::{
         artifact_metadata::{self, Record, Refusal},
     },
 };
-use crate::webui::{app::Page as AppPage, encode_component, pages::artifact_metadata as view};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -15,6 +14,7 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_webui::{app::Page as AppPage, encode_component, pages::artifact_metadata as view};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
@@ -90,7 +90,7 @@ fn entry(row: Record, organization: &str, repository: &str) -> anyhow::Result<vi
     if let Some(values) = document.get("tags").and_then(Value::as_object) {
         for (key, value) in values.iter().take(10) {
             if let Some(value) = value.as_str() {
-                tags.push((key.clone(), crate::webui::excerpt(value, 192)));
+                tags.push((key.clone(), codeyard_webui::excerpt(value, 192)));
             }
         }
         omitted_tags = values.len().saturating_sub(tags.len());
@@ -215,7 +215,7 @@ async fn show(
     ctx.page_model(
         "Artifact inventory",
         AppPage::ArtifactMetadata(view::Page {
-            organization_href: crate::webui::profile_path(&organization.name),
+            organization_href: codeyard_webui::profile_path(&organization.name),
             organization: organization.name,
             base,
             digest,

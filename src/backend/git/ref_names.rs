@@ -31,7 +31,7 @@ pub(crate) fn is_canonical_ref(reference: &str) -> bool {
         && git2::Reference::is_valid_name(reference)
 }
 
-pub(crate) use crate::git_ids::is_full_commit_id;
+pub(crate) use codeyard_support::git_ids::is_full_commit_id;
 
 pub(crate) fn branch_ref(name: &str) -> Option<String> {
     let reference = format!("refs/heads/{name}");

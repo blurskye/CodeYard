@@ -155,7 +155,7 @@ fn document(org: &str, kind: Kind, row: &OrganizationValue) -> Value {
         value["selected_repositories_url"] = json!(super::api_url(&format!(
             "/orgs/{org}/actions/{}/{}/repositories",
             plural(kind),
-            crate::webui::encode_component(&row.name)
+            codeyard_webui::encode_component(&row.name)
         )));
     }
     value
@@ -191,7 +191,7 @@ async fn list(
         &uri,
         plural(kind),
         rows.iter()
-            .map(|row| document(&crate::webui::encode_component(&org), kind, row))
+            .map(|row| document(&codeyard_webui::encode_component(&org), kind, row))
             .collect(),
     )
 }
@@ -228,7 +228,7 @@ async fn value(
         .find(|row| row.name == name)
         .ok_or_else(Error::missing)?;
     Ok(Json(document(
-        &crate::webui::encode_component(&params["org"]),
+        &codeyard_webui::encode_component(&params["org"]),
         kind,
         &row,
     )))

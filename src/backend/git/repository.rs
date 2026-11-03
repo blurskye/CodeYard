@@ -658,7 +658,7 @@ fn directory_tree<'repo>(
         };
         let (kind, id) = {
             let entry = tree
-                .get_name_bytes(&crate::git_paths::bytes(name))
+                .get_name_bytes(&codeyard_support::git_paths::bytes(name))
                 .ok_or_else(|| missing("the path does not exist in the given tree"))?;
             (entry.kind(), entry.id())
         };
@@ -680,7 +680,7 @@ pub(crate) fn tree_entry<'repo>(
 ) -> Result<git2::TreeEntry<'static>> {
     let (directory, name) = path.rsplit_once('/').unwrap_or(("", path));
     let tree = directory_tree(repo, commit, directory)?;
-    let raw = OsString::from_vec(crate::git_paths::bytes(name));
+    let raw = OsString::from_vec(codeyard_support::git_paths::bytes(name));
     Ok(tree.get_path(Path::new(&raw))?)
 }
 
@@ -697,12 +697,14 @@ fn apply_tree_history(output: &[u8], directory: &str, entries: &mut [TreeEntry])
         .enumerate()
         .map(|(index, entry)| {
             (
-                crate::git_paths::bytes(entry.path.rsplit('/').next().unwrap_or(&entry.path)),
+                codeyard_support::git_paths::bytes(
+                    entry.path.rsplit('/').next().unwrap_or(&entry.path),
+                ),
                 index,
             )
         })
         .collect();
-    let directory_raw = crate::git_paths::bytes(directory);
+    let directory_raw = codeyard_support::git_paths::bytes(directory);
     let directory = directory_raw.as_slice();
     let mut assigned: Vec<bool> = entries
         .iter()
@@ -821,7 +823,8 @@ fn apply_tree_history(output: &[u8], directory: &str, entries: &mut [TreeEntry])
             continue;
         }
         ensure!(
-            crate::git_ids::is_full_commit_id(sha) && crate::git_ids::is_full_commit_id(tree_sha),
+            codeyard_support::git_ids::is_full_commit_id(sha)
+                && codeyard_support::git_ids::is_full_commit_id(tree_sha),
             "Malformed git log commit ID"
         );
         let timestamp = std::str::from_utf8(timestamp)?.parse()?;
@@ -888,7 +891,7 @@ pub(crate) async fn list_file_paths(
     limit: usize,
     query: &str,
 ) -> Result<FileList> {
-    let terms = crate::file_search::query_terms(query);
+    let terms = codeyard_support::file_search::query_terms(query);
     let (path, revision) = (repo_path.to_owned(), git_ref.to_owned());
     let revision = process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
         let repo = Repository::open_bare(path)?;
@@ -945,8 +948,8 @@ pub(crate) async fn list_file_paths(
                 {
                     continue;
                 }
-                let path = crate::git_paths::from_bytes(path);
-                if !crate::file_search::matches_terms(&path, &terms) {
+                let path = codeyard_support::git_paths::from_bytes(path);
+                if !codeyard_support::file_search::matches_terms(&path, &terms) {
                     continue;
                 }
                 if cutoff.as_ref().is_some_and(|cutoff| path >= *cutoff) {
@@ -992,7 +995,7 @@ fn tree_entries(
     let mut entries = Vec::with_capacity(tree.len());
     for entry in tree.iter() {
         let name = String::from_utf8_lossy(entry.name_bytes()).into_owned();
-        let identity = crate::git_paths::from_bytes(entry.name_bytes());
+        let identity = codeyard_support::git_paths::from_bytes(entry.name_bytes());
         let entry_path = if path.is_empty() {
             identity
         } else {
@@ -1071,7 +1074,7 @@ pub(crate) async fn list_sidebar_trees(
                             .get(&prefix)
                             .ok_or_else(|| anyhow!("Missing sidebar directory"))?;
                         let entry = parent
-                            .get_name_bytes(&crate::git_paths::bytes(name))
+                            .get_name_bytes(&codeyard_support::git_paths::bytes(name))
                             .ok_or_else(|| git2::Error::from_str("Missing sidebar directory"))?;
                         ensure!(
                             entry.kind() == Some(ObjectType::Tree),
@@ -1155,7 +1158,9 @@ pub(crate) async fn list_tree_with_history(
             .arg(&commit_sha)
             .arg("--");
         for entry in &entries {
-            command.arg(OsString::from_vec(crate::git_paths::bytes(&entry.path)));
+            command.arg(OsString::from_vec(codeyard_support::git_paths::bytes(
+                &entry.path,
+            )));
         }
         command.current_dir(repo_path);
         // History is optional enrichment: exhausted budgets leave unresolved entries
@@ -1357,7 +1362,7 @@ pub(crate) async fn blame_file(repo_path: &Path, git_ref: &str, path: &str) -> R
     command
         .arg("--literal-pathspecs")
         .args(["blame", "--incremental", &revision, "--"])
-        .arg(OsString::from_vec(crate::git_paths::bytes(path)))
+        .arg(OsString::from_vec(codeyard_support::git_paths::bytes(path)))
         .current_dir(repo_path);
     let (status, output) = process::buffered(
         command,
@@ -1395,7 +1400,7 @@ fn parse_blame(output: &[u8]) -> Result<Vec<BlameHunk>> {
     for line in text.lines() {
         if line.len() > 40
             && line.as_bytes()[40] == b' '
-            && crate::git_ids::is_full_commit_id(&line.as_bytes()[..40])
+            && codeyard_support::git_ids::is_full_commit_id(&line.as_bytes()[..40])
         {
             let fields: Vec<_> = line.split(' ').collect();
             ensure!(fields.len() == 4, "Invalid Git blame header");
@@ -1620,7 +1625,7 @@ fn check_object_size(repo: &Repository, oid: git2::Oid) -> Result<(usize, Object
 /// or `tag^{commit}` is an unknown revision: libgit2 would load the object it names before
 /// the caller could check that object's size.
 fn resolve_revision(repo: &Repository, revision: &str) -> Result<git2::Oid> {
-    if crate::git_ids::is_full_commit_id(revision) {
+    if codeyard_support::git_ids::is_full_commit_id(revision) {
         if let Ok(oid) = git2::Oid::from_str(revision) {
             if repo.odb()?.exists(oid) {
                 return Ok(oid);
@@ -2061,7 +2066,8 @@ async fn read_delimited_window(
 /// around the first occurrence of `needle` (lowercase), so the shown text holds the match.
 fn parse_code_match(record: &[u8], prefix: &str, needle: &str) -> Option<CodeMatch> {
     let mut parts = record.splitn(3, |byte| *byte == 0);
-    let path = crate::git_paths::from_bytes(parts.next()?.strip_prefix(prefix.as_bytes())?);
+    let path =
+        codeyard_support::git_paths::from_bytes(parts.next()?.strip_prefix(prefix.as_bytes())?);
     let line_number = std::str::from_utf8(parts.next()?).ok()?.parse().ok()?;
     let text = String::from_utf8_lossy(parts.next()?);
     let text = text.trim();
@@ -2134,7 +2140,7 @@ pub(crate) async fn list_path_commits(
     command
         .arg(&tip)
         .arg("--")
-        .arg(OsString::from_vec(crate::git_paths::bytes(path)))
+        .arg(OsString::from_vec(codeyard_support::git_paths::bytes(path)))
         .current_dir(repo_path);
     let path = repo_path.to_owned();
     let filter = std::sync::Arc::new(filter.clone());

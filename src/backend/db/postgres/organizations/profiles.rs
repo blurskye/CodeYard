@@ -102,7 +102,7 @@ pub async fn set_organization_avatar(
         )
         .bind(file)
         .bind(actor)
-        .bind(serde_json::to_string(&crate::media::AVATAR_CONTENT_TYPES)?)
+        .bind(serde_json::to_string(&codeyard_support::media::AVATAR_CONTENT_TYPES)?)
         .fetch_optional(&mut *tx)
         .await?;
         if usable.is_none() {

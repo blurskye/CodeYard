@@ -1,7 +1,7 @@
 //! Problem matchers keep multiline state for one job, as actions/runner's IssueMatcher does.
 use super::commands::Masker;
-pub(super) use crate::command_codec::{escape, escape_data};
 use anyhow::{ensure, Context, Result};
+pub(super) use codeyard_support::command_codec::{escape, escape_data};
 use fancy_regex::{Regex, RegexBuilder};
 use serde::Deserialize;
 use std::collections::{BTreeMap, BTreeSet};

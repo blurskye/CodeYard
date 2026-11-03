@@ -1,14 +1,8 @@
 //! Native secret scanning pages use the same transactions as REST.
 use super::{chrome, forms};
-use crate::{
-    backend::{
-        api::http::context::PageContext, app::AppState, db::secret_scanning as records,
-        repositories::secret_scanning::jobs,
-    },
-    webui::{
-        app::Page,
-        pages::repos::{page::Page as RepoPage, secret_scanning as view},
-    },
+use crate::backend::{
+    api::http::context::PageContext, app::AppState, db::secret_scanning as records,
+    repositories::secret_scanning::jobs,
 };
 use axum::{
     extract::{Path, State},
@@ -16,6 +10,10 @@ use axum::{
     response::{IntoResponse, Redirect, Response},
     routing::get,
     Form, Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{page::Page as RepoPage, secret_scanning as view},
 };
 use std::{collections::HashMap, sync::Arc};
 
@@ -141,7 +139,7 @@ async fn list(
         format!(
             "{}/security/secret-scanning?state={state}&secret_type={}&page={}",
             loaded.chrome.base(),
-            crate::webui::encode_component(&secret_type),
+            codeyard_webui::encode_component(&secret_type),
             page + 1
         )
     });

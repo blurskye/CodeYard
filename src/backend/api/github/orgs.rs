@@ -407,8 +407,8 @@ async fn check(
                     header::LOCATION,
                     api_url(&format!(
                         "/orgs/{}/public_members/{}",
-                        crate::webui::encode_component(name),
-                        crate::webui::encode_component(username)
+                        codeyard_webui::encode_component(name),
+                        codeyard_webui::encode_component(username)
                     )),
                 )],
             )
@@ -489,7 +489,7 @@ async fn conceal(
 
 fn membership_document(org: &Organization, user: &User, role: &str, state: &str) -> Value {
     let organization = payloads::organization(org);
-    json!({"url": api_url(&format!("/orgs/{}/memberships/{}", crate::webui::encode_component(&org.name), crate::webui::encode_component(&user.username))),
+    json!({"url": api_url(&format!("/orgs/{}/memberships/{}", codeyard_webui::encode_component(&org.name), codeyard_webui::encode_component(&user.username))),
         "organization_url": organization["url"], "organization": organization, "user": payloads::user(user),
         "role": if role == "owner" { "admin" } else { "member" }, "state": state, "direct_membership": true})
 }

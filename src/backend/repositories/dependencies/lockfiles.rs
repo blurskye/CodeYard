@@ -50,7 +50,7 @@ fn add(
             .any(|c| c.is_control() || c.is_whitespace()),
         "Invalid locked dependency"
     );
-    let encode = crate::webui::pages::repos::ref_path::encode_path;
+    let encode = codeyard_webui::pages::repos::ref_path::encode_path;
     if out.iter().any(|package| {
         package.manifest == path
             && package.ecosystem == ecosystem
@@ -67,7 +67,7 @@ fn add(
         package_url: format!(
             "pkg:{ecosystem}/{}@{}",
             encode(&name),
-            crate::webui::encode_component(version)
+            codeyard_webui::encode_component(version)
         ),
         scope: "unknown".into(),
     });

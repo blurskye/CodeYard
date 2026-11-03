@@ -585,7 +585,7 @@ pub(super) async fn run(
                 .uri(&uri)
                 .header(
                     header::ACCEPT,
-                    codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+                    codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
                 )
                 .header(header::COOKIE, format!("session_id={}", session.session))
                 .body(Body::empty())
@@ -597,9 +597,9 @@ pub(super) async fn run(
     let bytes = to_bytes(response.into_body(), 2 * 1024 * 1024)
         .await
         .unwrap();
-    let model: codeyard::webui::app::PageEnvelope = serde_json::from_slice(&bytes).unwrap();
-    let codeyard::webui::app::Page::Repositories(
-        codeyard::webui::pages::repos::page::Page::BranchMerge { form, .. },
+    let model: codeyard_webui::app::PageEnvelope = serde_json::from_slice(&bytes).unwrap();
+    let codeyard_webui::app::Page::Repositories(
+        codeyard_webui::pages::repos::page::Page::BranchMerge { form, .. },
     ) = model.page
     else {
         panic!("merge page model")

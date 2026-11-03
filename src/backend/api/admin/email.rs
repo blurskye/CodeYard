@@ -8,7 +8,6 @@ use crate::backend::email::{
     self,
     config::{self, Security, SmtpConfig, Source},
 };
-use crate::webui::{app::Page, pages::admin::email as view};
 use axum::{
     extract::{DefaultBodyLimit, Form, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -16,6 +15,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
+use codeyard_webui::{app::Page, pages::admin::email as view};
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

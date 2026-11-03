@@ -12,6 +12,7 @@ name = "codeyard-actions"
 path = "src/main.rs"
 
 [dependencies]
+codeyard-support = { path = "../../backend/support" }
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true

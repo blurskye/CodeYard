@@ -1,14 +1,11 @@
 use super::{auth, events, Error, Result};
-use crate::{
-    backend::{
-        app::AppState,
-        db::{
-            self,
-            events::{EventScope, EventViewer},
-        },
-        identity::tokens,
+use crate::backend::{
+    app::AppState,
+    db::{
+        self,
+        events::{EventScope, EventViewer},
     },
-    webui::{components::escape_html, encode_component},
+    identity::tokens,
 };
 use axum::{
     extract::{Path, Query, State},
@@ -17,6 +14,7 @@ use axum::{
     routing::{get, MethodRouter},
     Json, Router,
 };
+use codeyard_webui::{components::escape_html, encode_component};
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::{collections::HashMap, fmt::Write, sync::Arc};

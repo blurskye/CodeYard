@@ -11,7 +11,6 @@ use crate::backend::{
     },
     identity::{admission, oauth_apps as oauth, tokens::token_hash},
 };
-use crate::webui::{app::Page, pages::account};
 use axum::{
     body::Bytes,
     extract::{Form, Query, State},
@@ -20,6 +19,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use codeyard_webui::{app::Page, pages::account};
 use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 
@@ -259,7 +259,7 @@ fn login(ctx: &PageContext) -> Option<Response> {
     ctx.user.is_none().then(|| {
         ctx.redirect(&format!(
             "/login?redirect={}",
-            crate::webui::encode_component(&ctx.location)
+            codeyard_webui::encode_component(&ctx.location)
         ))
     })
 }

@@ -10,14 +10,14 @@ use crate::backend::{
     app::AppState,
     ci::events::valid_dispatch,
 };
-use crate::webui::{
-    app::Page,
-    pages::repos::{actions::RepositoryEventForm, page::Page as RepoPage},
-};
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{actions::RepositoryEventForm, page::Page as RepoPage},
 };
 use std::{collections::HashMap, sync::Arc};
 async fn open(

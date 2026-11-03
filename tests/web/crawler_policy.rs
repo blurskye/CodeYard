@@ -106,9 +106,10 @@ async fn contract(pg: bool) {
     // Hydrated reads use the same stored value as the ordinary form.
     let (status, page) = admin.model("/admin/settings").await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Identity(
-        codeyard::webui::pages::account::Page::AdminSettings { model, .. },
-    ) = page
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::AdminSettings {
+        model,
+        ..
+    }) = page
     else {
         panic!("site settings")
     };

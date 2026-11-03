@@ -1,5 +1,5 @@
 //! SSR document and safe bootstrap contracts using typed view fixtures.
-use codeyard::webui::{
+use codeyard_webui::{
     app::{Page, PageEnvelope},
     bootstrap::{Bootstrap, BOOTSTRAP_ID},
     document::{self, Chrome},

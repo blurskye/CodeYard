@@ -5,10 +5,10 @@ use crate::backend::api::repos::chrome::{
 };
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::{repo_store, ErrorKind};
-use crate::webui::pages::repos as view;
 use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
+use codeyard_webui::pages::repos as view;
 use std::sync::Arc;
 
 async fn blame_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Response, Response> {
@@ -69,7 +69,7 @@ async fn blame_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Re
     let title = page.path.clone();
     Ok(ctx.page_model(
         &title,
-        crate::webui::app::Page::Repositories(view::page::Page::Blame {
+        codeyard_webui::app::Page::Repositories(view::page::Page::Blame {
             repo: loaded.chrome.clone(),
             page,
         }),

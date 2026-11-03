@@ -6,11 +6,11 @@ use crate::backend::{
     db,
     identity::{admission, github_apps, tokens::token_hash},
 };
-use crate::webui::{app::Page, pages::account};
 use axum::{
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Redirect, Response},
 };
+use codeyard_webui::{app::Page, pages::account};
 use serde_json::Value;
 use std::sync::Arc;
 pub(super) async fn manifest_start(

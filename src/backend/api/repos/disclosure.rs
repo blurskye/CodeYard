@@ -9,19 +9,19 @@ use crate::backend::{
     app::AppState,
     db::{advisories, repositories::security as records},
 };
-use crate::webui::{
-    app::Page,
-    pages::repos::{
-        disclosure::{Message, Page as SecurityPage, ReportRow},
-        page::Page as RepoPage,
-    },
-};
 use axum::{
     extract::{DefaultBodyLimit, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
     routing::{get, post},
     Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{
+        disclosure::{Message, Page as SecurityPage, ReportRow},
+        page::Page as RepoPage,
+    },
 };
 use std::{collections::HashMap, sync::Arc};
 

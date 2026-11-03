@@ -102,13 +102,13 @@ fn group_url(owner: &str, repo: &str, group: &str) -> String {
     format!(
         "{}/actions/concurrency_groups/{}",
         repo_url(owner, repo),
-        crate::webui::encode_component(group)
+        codeyard_webui::encode_component(group)
     )
 }
 fn member(member: &db::action_concurrency::Member, owner: &str, repo: &str) -> Value {
     let run = &member.run;
     let id = run.workflow_run_id.unwrap_or(run.id);
-    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(owner),crate::webui::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
+    let mut value = json!({"run_id":id,"run_name":run.pipeline,"run_url":format!("{}/actions/runs/{id}",repo_url(owner,repo)),"run_html_url":format!("{}/{}/{}/actions?job={}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(owner),codeyard_webui::encode_component(repo),run.run_id),"status":if member.holding{"in_progress"}else{"pending"}});
     if let Some(job) = member.job_id {
         value["job_id"] = json!(job);
         value["job_name"] = json!(member.job_name);

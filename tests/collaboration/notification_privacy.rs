@@ -885,7 +885,7 @@ pub(super) async fn notifications_model(client: &Client, path: &str) -> Value {
                 .uri(path)
                 .header(
                     header::ACCEPT,
-                    codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+                    codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
                 )
                 .header(header::COOKIE, format!("session_id={}", client.session))
                 .body(Body::empty())

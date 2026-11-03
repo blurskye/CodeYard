@@ -9,11 +9,11 @@ use crate::backend::api::user::profile::settings_result;
 use crate::backend::api::user::responses::{field, mutation_guard, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::pages::settings::{AccountSession, SessionPagination};
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::settings::{AccountSession, SessionPagination};
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
 

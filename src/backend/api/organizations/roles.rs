@@ -6,8 +6,8 @@ use crate::backend::{
         OrganizationOutcome,
     },
 };
-use crate::webui::pages::orgs as view;
 use axum::{http::StatusCode, response::Response};
+use codeyard_webui::pages::orgs as view;
 
 pub(super) struct Command {
     target: RoleTarget,

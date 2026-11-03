@@ -788,7 +788,7 @@ async fn team_member(
 }
 
 fn membership_document(team: i64, username: &str, role: &str, state: &str) -> Value {
-    json!({"url":api_url(&format!("/teams/{team}/memberships/{}",crate::webui::encode_component(username))),"role":role,"state":state})
+    json!({"url":api_url(&format!("/teams/{team}/memberships/{}",codeyard_webui::encode_component(username))),"role":role,"state":state})
 }
 
 async fn invitations(

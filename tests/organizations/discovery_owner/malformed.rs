@@ -1,6 +1,7 @@
 use super::fixture::{Fixture, COLLISION, PRIVATE, USER};
 use axum::http::StatusCode;
-use codeyard::{backend::db, webui::app::Page};
+use codeyard::backend::db;
+use codeyard_webui::app::Page;
 
 const UNAVAILABLE: &str = "This page's data is temporarily unavailable. Please try again.";
 

@@ -8,8 +8,8 @@ use crate::backend::db::models::OrgRole;
 use crate::backend::db::organizations;
 use crate::backend::db::organizations::OrganizationOutcome;
 use crate::backend::notifications::create::organization_invitation;
-use crate::webui::pages::orgs as view;
 use axum::response::Response;
+use codeyard_webui::pages::orgs as view;
 use std::collections::HashMap;
 
 pub(super) async fn project(

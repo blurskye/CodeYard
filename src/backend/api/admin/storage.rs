@@ -2,7 +2,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::{app::AppState, db};
-use crate::webui::{app::Page, pages::admin::storage as view};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
@@ -10,6 +9,7 @@ use axum::{
     routing::get,
     Router,
 };
+use codeyard_webui::{app::Page, pages::admin::storage as view};
 use std::sync::Arc;
 
 pub fn router() -> Router<Arc<AppState>> {

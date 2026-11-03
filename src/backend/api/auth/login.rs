@@ -10,14 +10,14 @@ use crate::backend::identity::credentials::PasswordAccount;
 use crate::backend::identity::login::{FirstFactor, PasswordCredentials};
 use crate::backend::identity::registration::RegistrationOutcome;
 use crate::backend::identity::setup::SetupInput;
-use crate::webui::pages::{
+use axum::extract::{Form, State};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
+use axum::response::Response;
+use codeyard_webui::pages::{
     account,
     auth::AuthMode,
     fields::{preserved_values, FormValues},
 };
-use axum::extract::{Form, State};
-use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
-use axum::response::Response;
 use std::sync::Arc;
 
 pub(crate) fn auth_mode(path: &str, mode: Option<&str>) -> AuthMode {
@@ -87,7 +87,7 @@ pub(crate) async fn auth_get(
     };
     ctx.page_model(
         mode.title(),
-        crate::webui::app::Page::Identity(account::Page::Auth {
+        codeyard_webui::app::Page::Identity(account::Page::Auth {
             mode,
             action: uri.path().to_owned(),
             csrf_token: ctx.csrf_token.clone(),
@@ -117,7 +117,7 @@ pub(crate) async fn auth_failure(
     ctx.page_model_status(
         status,
         mode.title(),
-        crate::webui::app::Page::Identity(account::Page::Auth {
+        codeyard_webui::app::Page::Identity(account::Page::Auth {
             mode,
             action: action.to_owned(),
             csrf_token: ctx.csrf_token.clone(),
@@ -250,7 +250,7 @@ pub(crate) async fn auth_post(
                 let resume = safe_redirect(form.get("redirect").map(String::as_str));
                 format!(
                     "/login?signup=requested&redirect={}",
-                    crate::webui::encode_component(&resume)
+                    codeyard_webui::encode_component(&resume)
                 )
             } else {
                 safe_redirect(form.get("redirect").map(String::as_str))

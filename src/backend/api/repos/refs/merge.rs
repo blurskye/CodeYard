@@ -14,16 +14,16 @@ use crate::backend::{
         refs::RefError,
     },
 };
-use crate::webui::{
-    components::SelectOption,
-    pages::repos::{merge::MergeForm, page::Page},
-};
 use axum::{
     extract::{DefaultBodyLimit, OriginalUri, Path, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{get, post},
     Form, Json, Router,
+};
+use codeyard_webui::{
+    components::SelectOption,
+    pages::repos::{merge::MergeForm, page::Page},
 };
 use serde::Deserialize;
 use std::{collections::HashMap, sync::Arc};
@@ -94,7 +94,7 @@ fn model(loaded: &Loaded, values: &HashMap<String, String>, submitted: bool) -> 
         .map(|(name, sha)| {
             SelectOption::new(
                 format!("{sha} {name}"),
-                format!("{name} ({})", crate::webui::components::short_sha(sha)),
+                format!("{name} ({})", codeyard_webui::components::short_sha(sha)),
             )
         })
         .collect();
@@ -147,7 +147,7 @@ fn model(loaded: &Loaded, values: &HashMap<String, String>, submitted: bool) -> 
 fn reply(ctx: &PageContext, loaded: &Loaded, form: MergeForm) -> Response {
     ctx.page_model(
         "Merge branches",
-        crate::webui::app::Page::Repositories(Page::BranchMerge {
+        codeyard_webui::app::Page::Repositories(Page::BranchMerge {
             repo: loaded.chrome.clone(),
             form: Box::new(form),
         }),

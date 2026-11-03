@@ -54,7 +54,7 @@ pub(super) async fn document(
     value["html_url"] = json!(format!(
         "{}{}",
         link_origin(),
-        crate::webui::profile_path(&org.name)
+        codeyard_webui::profile_path(&org.name)
     ));
     value["type"] = json!("Organization");
     value["is_verified"] = json!(org.is_verified);

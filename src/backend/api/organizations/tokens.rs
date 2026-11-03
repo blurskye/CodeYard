@@ -12,7 +12,6 @@ use crate::backend::{
     },
     identity::fine_grained::{catalog, MAX_DAYS},
 };
-use crate::webui::pages::orgs as view;
 use axum::{
     extract::{rejection::FormRejection, Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -20,6 +19,7 @@ use axum::{
     routing::post,
     Router,
 };
+use codeyard_webui::pages::orgs as view;
 use serde_json::{Map, Value};
 use std::{
     collections::{HashMap, HashSet},

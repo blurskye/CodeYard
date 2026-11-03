@@ -237,7 +237,7 @@ fn org(scope: Scope) -> Result<i64> {
 fn group_document(name: &str, g: &Group) -> Result<Value> {
     let base = format!(
         "/orgs/{}/actions/runner-groups/{}",
-        crate::webui::encode_component(name),
+        codeyard_webui::encode_component(name),
         g.id
     );
     let workflows: Value =

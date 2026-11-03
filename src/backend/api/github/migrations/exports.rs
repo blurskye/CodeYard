@@ -147,7 +147,7 @@ async fn document(
     let path = match org_name {
         Some(name) => format!(
             "/orgs/{}/migrations/{}",
-            crate::webui::encode_component(name),
+            codeyard_webui::encode_component(name),
             row.id
         ),
         None => format!("/user/migrations/{}", row.id),

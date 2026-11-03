@@ -9,12 +9,12 @@ use crate::backend::{
     app::AppState,
     db,
 };
-use crate::webui::pages::repos::issues::{self as view, Kind};
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::pages::repos::issues::{self as view, Kind};
 use std::{collections::HashMap, sync::Arc};
 
 pub(crate) async fn native_pin(

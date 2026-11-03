@@ -7,10 +7,8 @@ use axum::{
     body::{to_bytes, Body},
     http::Request,
 };
-use codeyard::{
-    backend::db,
-    webui::{app::Page, pages::gists},
-};
+use codeyard::backend::db;
+use codeyard_webui::{app::Page, pages::gists};
 use tower::ServiceExt;
 
 async fn pages(pg: bool) {

@@ -72,7 +72,7 @@ pub(crate) async fn follow_post(
     .await
     .map_err(follow_failure);
     match result {
-        Ok(_) => ctx.redirect(&crate::webui::profile_path(&username)),
+        Ok(_) => ctx.redirect(&codeyard_webui::profile_path(&username)),
         Err(error) => {
             profile_response(
                 &ctx,

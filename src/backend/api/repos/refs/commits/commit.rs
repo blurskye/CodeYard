@@ -9,11 +9,11 @@ use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
 use crate::backend::app::AppState;
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::store::{repo_store, DiffInfo};
-use crate::webui::pages::repos as view;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos as view;
 use serde::Serialize;
 use std::sync::Arc;
 #[derive(Serialize)]
@@ -198,7 +198,7 @@ pub(super) async fn commit_page(
     let info = commit(info);
     Ok(ctx.page_model(
         "Commit",
-        crate::webui::app::Page::Repositories(view::page::Page::CommitDetail {
+        codeyard_webui::app::Page::Repositories(view::page::Page::CommitDetail {
             repo: loaded.chrome.clone(),
             commit: info,
             diff: diff_model(diff, None),

@@ -5,10 +5,8 @@ use axum::{
     http::{header, Request, StatusCode},
     Router,
 };
-use codeyard::{
-    backend::{api::create_router, app::AppState, db, storage::ObjectStore},
-    webui::app::{Page, PageEnvelope},
-};
+use codeyard::backend::{api::create_router, app::AppState, db, storage::ObjectStore};
+use codeyard_webui::app::{Page, PageEnvelope};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, Once,
@@ -217,7 +215,7 @@ pub struct Reply {
     pub body: String,
 }
 impl Reply {
-    pub fn discovery(self) -> codeyard::webui::pages::discovery::Page {
+    pub fn discovery(self) -> codeyard_webui::pages::discovery::Page {
         assert_eq!(self.status, StatusCode::OK, "{}", self.body);
         assert!(!self.body.contains(PRIVATE));
         assert!(!self.body.contains("not-executed.git"));
@@ -339,7 +337,7 @@ impl Fixture {
     pub async fn page(&self, path: &str, authenticated: bool) -> Reply {
         let mut request = Request::builder().uri(path).header(
             header::ACCEPT,
-            codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+            codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
         );
         if authenticated {
             request = request.header(header::COOKIE, format!("session_id={}", self.session));

@@ -209,7 +209,9 @@ fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoErro
     if branch.is_empty() || crate::backend::git::branch_ref(branch).is_none() {
         return Err(invalid("Invalid branch name."));
     }
-    if expected_revision != "unborn" && !crate::git_ids::is_full_commit_id(expected_revision) {
+    if expected_revision != "unborn"
+        && !codeyard_support::git_ids::is_full_commit_id(expected_revision)
+    {
         return Err(invalid("A complete expected branch revision is required."));
     }
     Ok(())

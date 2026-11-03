@@ -179,8 +179,8 @@ fn pull_redirect(
     rest: &str,
     uri: &axum::http::Uri,
 ) -> axum::response::Response {
-    use crate::webui::encode_component;
     use axum::response::IntoResponse;
+    use codeyard_webui::encode_component;
     let tab = rest
         .split('/')
         .filter(|part| !part.is_empty())

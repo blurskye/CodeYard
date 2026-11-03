@@ -10,8 +10,6 @@ use crate::backend::api::repos::forms::authorize_post;
 use crate::backend::app::AppState;
 use crate::backend::repositories::pull_requests::mutations;
 use crate::backend::repositories::pull_requests::restack;
-use crate::webui::pages::repos::issues::DetailDraft;
-use crate::webui::pages::repos::issues::Kind;
 use axum::extract::Form;
 use axum::extract::Path;
 use axum::extract::State;
@@ -20,6 +18,8 @@ use axum::http::StatusCode;
 use axum::http::Uri;
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos::issues::DetailDraft;
+use codeyard_webui::pages::repos::issues::Kind;
 use std::collections::HashMap;
 use std::sync::Arc;
 

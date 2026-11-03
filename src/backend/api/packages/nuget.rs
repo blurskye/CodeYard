@@ -50,7 +50,7 @@ fn root(owner: &str) -> String {
     format!(
         "{}/api/packages/{}/nuget",
         crate::backend::api::http::config::link_origin(),
-        crate::webui::encode_component(owner)
+        codeyard_webui::encode_component(owner)
     )
 }
 fn normalize(version: &str) -> Result<String> {

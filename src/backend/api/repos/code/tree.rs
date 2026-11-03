@@ -11,12 +11,12 @@ use crate::backend::app::AppState;
 use crate::backend::repositories::languages as repo_languages;
 use crate::backend::repositories::releases;
 use crate::backend::repositories::store::{repo_store, RepoStore, TreeEntry};
-use crate::webui::components::languages::LanguageShare;
-use crate::webui::pages::repos as view;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::components::languages::LanguageShare;
+use codeyard_webui::pages::repos as view;
 use serde::Serialize;
 use std::sync::Arc;
 #[derive(Serialize)]
@@ -271,7 +271,7 @@ async fn tree_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
         .map_err(|(status, _)| ctx.error(status, "Repository not found."))?;
     Ok(ctx.page_model(
         &format!("{}/{}", loaded.chrome.owner, loaded.chrome.name),
-        crate::webui::app::Page::Repositories(view::page::Page::Tree {
+        codeyard_webui::app::Page::Repositories(view::page::Page::Tree {
             repo: loaded.chrome.clone(),
             page,
         }),

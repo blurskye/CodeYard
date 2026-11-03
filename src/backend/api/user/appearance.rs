@@ -7,13 +7,13 @@ use crate::backend::{
     },
     app::AppState,
 };
-use crate::webui::document::Theme;
 use axum::{
     body::Body,
     extract::{Form, OriginalUri, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
     response::Response,
 };
+use codeyard_webui::document::Theme;
 use std::{collections::HashMap, sync::Arc};
 
 pub(crate) async fn set_theme(
@@ -41,7 +41,7 @@ pub(crate) async fn set_theme(
         .filter(|v| safe_redirect_path(v))
         .unwrap_or("/");
     let mut response = if accepts_page_model(&ctx.headers) {
-        let saved = crate::webui::components::ThemeSaved { theme };
+        let saved = codeyard_webui::components::ThemeSaved { theme };
         let json = match serde_json::to_vec(&saved) {
             Ok(json) => json,
             Err(_) => {
@@ -56,7 +56,7 @@ pub(crate) async fn set_theme(
                 .status(StatusCode::OK)
                 .header(
                     header::CONTENT_TYPE,
-                    crate::webui::bootstrap::THEME_CONTENT_TYPE,
+                    codeyard_webui::bootstrap::THEME_CONTENT_TYPE,
                 )
                 .body(Body::from(json))
                 .expect("static theme response headers"),

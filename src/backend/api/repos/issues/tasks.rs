@@ -11,11 +11,11 @@ use crate::backend::db;
 use crate::backend::issues::comment_link;
 use crate::backend::issues::comments::{CommentTarget, CreateCommentRequest};
 use crate::backend::repositories::pull_requests::comments as comment_rules;
-use crate::webui::components::task_lists::toggle_task;
-use crate::webui::pages::repos::issues::{DetailDraft, Kind};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::components::task_lists::toggle_task;
+use codeyard_webui::pages::repos::issues::{DetailDraft, Kind};
 use std::collections::HashMap;
 use std::sync::Arc;
 

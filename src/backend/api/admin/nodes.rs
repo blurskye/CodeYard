@@ -2,7 +2,6 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::{mutation_guard, require_account};
 use crate::backend::{app::AppState, cluster, db};
-use crate::webui::{app::Page, components::format_bytes, pages::admin::nodes as view};
 use axum::{
     extract::{Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -10,6 +9,7 @@ use axum::{
     routing::{get, post},
     Form, Router,
 };
+use codeyard_webui::{app::Page, components::format_bytes, pages::admin::nodes as view};
 use std::{collections::HashMap, sync::Arc};
 
 pub fn router() -> Router<Arc<AppState>> {

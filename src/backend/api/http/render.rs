@@ -2,15 +2,15 @@
 use super::context::PageContext;
 use super::origin::safe_redirect_path;
 use crate::backend::app::AppState;
-use crate::webui::app::Page;
-use crate::webui::document::{self, Chrome};
-use crate::webui::pages::repos::chrome::RepoChrome;
 use axum::{
     body::Body,
     extract::{OriginalUri, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
+use codeyard_webui::app::Page;
+use codeyard_webui::document::{self, Chrome};
+use codeyard_webui::pages::repos::chrome::RepoChrome;
 use dioxus::prelude::*;
 use std::sync::Arc;
 
@@ -19,9 +19,9 @@ const CSP: &str = "default-src 'none'; script-src 'self' 'wasm-unsafe-eval'; con
 impl PageContext {
     /// Render the IDENTICAL safe App props for initial SSR and browser hydration,
     /// or return those authorized props for standard hydrated navigation.
-    pub fn page_model(&self, title: &str, page: crate::webui::app::Page) -> Response {
+    pub fn page_model(&self, title: &str, page: codeyard_webui::app::Page) -> Response {
         let status = match &page {
-            crate::webui::app::Page::Error { status, .. } => StatusCode::from_u16(*status)
+            codeyard_webui::app::Page::Error { status, .. } => StatusCode::from_u16(*status)
                 .ok()
                 .filter(|status| status.is_client_error() || status.is_server_error())
                 .unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
@@ -69,10 +69,10 @@ impl PageContext {
         &self,
         status: StatusCode,
         title: &str,
-        page: crate::webui::app::Page,
+        page: codeyard_webui::app::Page,
     ) -> Response {
         let observation = super::traffic::page(self, title, &page);
-        let mut envelope = crate::webui::app::PageEnvelope {
+        let mut envelope = codeyard_webui::app::PageEnvelope {
             title: title.to_string(),
             location: self.location.clone(),
             chrome: self.chrome(),
@@ -101,7 +101,7 @@ impl PageContext {
                 .status(status)
                 .header(
                     header::CONTENT_TYPE,
-                    crate::webui::bootstrap::MODEL_CONTENT_TYPE,
+                    codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
                 )
                 .body(Body::from(json))
                 .expect("static page model response headers");
@@ -160,8 +160,12 @@ impl PageContext {
                 return self.with_cookie(response);
             }
         }
-        let body =
-            crate::webui::pages::error::render(status.as_u16(), message, repo.as_ref(), signed_in);
+        let body = codeyard_webui::pages::error::render(
+            status.as_u16(),
+            message,
+            repo.as_ref(),
+            signed_in,
+        );
         self.with_cookie(html_response(
             status,
             status.canonical_reason().unwrap_or("Request failed"),
@@ -178,7 +182,7 @@ impl PageContext {
 
 #[derive(Clone)]
 struct ModelRender {
-    envelope: crate::webui::app::PageEnvelope,
+    envelope: codeyard_webui::app::PageEnvelope,
     runtime_module: &'static str,
 }
 
@@ -264,7 +268,7 @@ pub(crate) fn accepts_page_model(headers: &HeaderMap) -> bool {
         .is_some_and(|accept| {
             accept.split(',').any(|part| {
                 let mut fields = part.trim().split(';');
-                fields.next() == Some(crate::webui::bootstrap::MODEL_CONTENT_TYPE)
+                fields.next() == Some(codeyard_webui::bootstrap::MODEL_CONTENT_TYPE)
                     && !fields.any(|field| {
                         field
                             .trim()
@@ -330,7 +334,7 @@ pub(crate) fn error_model_response(
     location: String,
     chrome: Chrome,
 ) -> Option<Response> {
-    let envelope = crate::webui::app::PageEnvelope {
+    let envelope = codeyard_webui::app::PageEnvelope {
         title: status.canonical_reason().unwrap_or("Request failed").into(),
         location,
         chrome,
@@ -341,7 +345,7 @@ pub(crate) fn error_model_response(
         .status(status)
         .header(
             header::CONTENT_TYPE,
-            crate::webui::bootstrap::MODEL_CONTENT_TYPE,
+            codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
         )
         .body(Body::from(json))
         .ok()?;
@@ -367,7 +371,7 @@ pub(crate) fn public_error_returning_to(
             ..Chrome::default()
         },
         None,
-        crate::webui::pages::error::render(status.as_u16(), message, None, false),
+        codeyard_webui::pages::error::render(status.as_u16(), message, None, false),
     )
 }
 
@@ -386,7 +390,7 @@ pub(crate) async fn not_found(
             Some(query) => format!("{trimmed}?{query}"),
             None => trimmed.to_owned(),
         };
-        if crate::webui::navigation::safe_page_target(&target) {
+        if codeyard_webui::navigation::safe_page_target(&target) {
             return Redirect::permanent(&target).into_response();
         }
     }
@@ -421,7 +425,7 @@ mod tests {
                         .body(Body::empty())
                         .unwrap();
                     response.extensions_mut().insert(ModelRender {
-                        envelope: crate::webui::app::PageEnvelope {
+                        envelope: codeyard_webui::app::PageEnvelope {
                             title: "Help".into(),
                             location: "/help".into(),
                             chrome: Chrome::default(),

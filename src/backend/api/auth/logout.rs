@@ -3,10 +3,10 @@ use crate::backend::api::http::session;
 use crate::backend::api::user::responses::Fields;
 use crate::backend::app::AppState;
 use crate::backend::identity;
-use crate::webui::pages::account;
 use axum::extract::{Form, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::pages::account;
 use std::sync::Arc;
 
 pub(crate) async fn logout_get(
@@ -20,7 +20,7 @@ pub(crate) async fn logout_get(
     };
     ctx.page_model(
         "Sign out",
-        crate::webui::app::Page::Identity(account::Page::Logout {
+        codeyard_webui::app::Page::Identity(account::Page::Logout {
             csrf_token: ctx.csrf_token.clone(),
         }),
     )

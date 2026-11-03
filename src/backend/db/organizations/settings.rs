@@ -125,7 +125,7 @@ impl Changes {
         }
         let blog = text(input, "blog", 1024)?;
         if let Some(Some(value)) = &blog {
-            if crate::website::parse(value).is_none() {
+            if codeyard_support::website::parse(value).is_none() {
                 return Err(invalid("blog", "Enter an absolute HTTP or HTTPS URL"));
             }
         }

@@ -4,14 +4,14 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::app::Page;
-use crate::webui::pages::{
-    account,
-    admin::{AdminAudit, AuditEntry, AUDIT_ENTRIES_PER_PAGE},
-};
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::{
+    account,
+    admin::{AdminAudit, AuditEntry, AUDIT_ENTRIES_PER_PAGE},
+};
 use std::sync::Arc;
 
 /// Details that say nothing are left out of the page.

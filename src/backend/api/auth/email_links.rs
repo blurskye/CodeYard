@@ -7,10 +7,10 @@ use crate::backend::api::user::responses::{field, safe_redirect, within_bounds, 
 use crate::backend::app::AppState;
 use crate::backend::email::links::{self, LinkError, Purpose};
 use crate::backend::identity::{self, accounts::PasswordResetError};
-use crate::webui::pages::account;
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::pages::account;
 use std::sync::Arc;
 
 const INVALID_LINK: &str =
@@ -47,7 +47,7 @@ async fn forgot_page(
     ctx.page_model_status(
         status,
         "Forgot your password?",
-        crate::webui::app::Page::Identity(account::Page::PasswordHelp {
+        codeyard_webui::app::Page::Identity(account::Page::PasswordHelp {
             redirect,
             csrf_token: ctx.csrf_token.clone(),
             mail_available,
@@ -125,7 +125,7 @@ fn code_page(
     ctx.page_model_status(
         status,
         "Check your email",
-        crate::webui::app::Page::Identity(account::Page::ResetCode {
+        codeyard_webui::app::Page::Identity(account::Page::ResetCode {
             csrf_token: ctx.csrf_token.clone(),
             email: email.to_owned(),
             redirect: redirect.to_owned(),
@@ -184,7 +184,7 @@ pub(crate) async fn reset_code_post(
             } else {
                 format!(
                     "/login?reset=done&redirect={}",
-                    crate::webui::encode_component(&redirect)
+                    codeyard_webui::encode_component(&redirect)
                 )
             };
             ctx.redirect(&target)
@@ -255,7 +255,7 @@ async fn reset_page(
     ctx.page_model_status(
         status,
         "Reset your password",
-        crate::webui::app::Page::Identity(account::Page::ResetPassword {
+        codeyard_webui::app::Page::Identity(account::Page::ResetPassword {
             csrf_token: ctx.csrf_token.clone(),
             token: token.to_owned(),
             valid,
@@ -351,7 +351,7 @@ async fn verify_page(
     ctx.page_model_status(
         status,
         "Confirm your email address",
-        crate::webui::app::Page::Identity(account::Page::VerifyEmail {
+        codeyard_webui::app::Page::Identity(account::Page::VerifyEmail {
             csrf_token: ctx.csrf_token.clone(),
             token: token.to_owned(),
             valid,

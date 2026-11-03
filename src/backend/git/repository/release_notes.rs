@@ -75,7 +75,9 @@ pub(crate) async fn release_history(
         "Release notes span too many commits; choose a closer previous tag"
     );
     ensure!(
-        commits.iter().all(crate::git_ids::is_full_commit_id),
+        commits
+            .iter()
+            .all(codeyard_support::git_ids::is_full_commit_id),
         "Git returned invalid commit IDs"
     );
     Ok(ReleaseHistory {

@@ -14,11 +14,11 @@ use crate::backend::repositories::files;
 use crate::backend::repositories::store::{
     repo_store, BlobBytes, BlobRange, RepoError, RepoStore, MAX_EDITOR_BYTES,
 };
-use crate::webui::pages::repos as view;
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::repos as view;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -429,7 +429,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     let title = page.path.clone();
     Ok(ctx.page_model(
         &title,
-        crate::webui::app::Page::Repositories(view::page::Page::Blob {
+        codeyard_webui::app::Page::Repositories(view::page::Page::Blob {
             repo: loaded.chrome.clone(),
             page,
         }),

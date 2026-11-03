@@ -123,7 +123,7 @@ fn switch_url(org: &str, setting: Setting, rest: &str) -> String {
     };
     api_url(&format!(
         "/orgs/{}/actions/{path}{rest}",
-        crate::webui::encode_component(org)
+        codeyard_webui::encode_component(org)
     ))
 }
 
@@ -248,7 +248,7 @@ fn document(policy: &Policy, params: &Params, organization: Option<&str>) -> Res
                 org.to_owned(),
                 api_url(&format!(
                     "/orgs/{}/actions/policies/{}",
-                    crate::webui::encode_component(org),
+                    codeyard_webui::encode_component(org),
                     policy.id
                 )),
             )

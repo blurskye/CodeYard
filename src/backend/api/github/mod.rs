@@ -253,8 +253,8 @@ pub(crate) fn api_url(path: &str) -> String {
 pub(crate) fn repo_url(owner: &str, repo: &str) -> String {
     api_url(&format!(
         "/repos/{}/{}",
-        crate::webui::encode_component(owner),
-        crate::webui::encode_component(repo),
+        codeyard_webui::encode_component(owner),
+        codeyard_webui::encode_component(repo),
     ))
 }
 

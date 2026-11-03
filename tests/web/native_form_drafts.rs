@@ -1,6 +1,6 @@
 //! Native VDOM policy tests, not browser/domain acceptance or mocked product responses.
 //! The fetched WASM browser suite must separately prove real user draft preservation.
-use codeyard::webui::pages::{
+use codeyard_webui::pages::{
     ci,
     repos::{
         actions::{ActionsPage, Workflow},
@@ -212,7 +212,7 @@ fn collaboration_chrome_refresh_preserves_controlled_values_and_complete_edit_sn
             projects: vec![],
             reactions: Vec::new(),
         },
-        comments: codeyard::webui::pages::repos::issues::CommentPage::default(),
+        comments: codeyard_webui::pages::repos::issues::CommentPage::default(),
         available_labels: vec![],
         draft: DetailDraft::default(),
         error: None,

@@ -6,12 +6,12 @@ use crate::backend::api::user::responses::{field, mutation_guard, Fields};
 use crate::backend::app::AppState;
 use crate::backend::identity::tokens;
 use crate::backend::identity::tokens::{TokenError, TokenInput};
-use crate::webui::pages::account;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
 use chrono::{DateTime, NaiveDate, Utc};
+use codeyard_webui::pages::account;
 use std::sync::Arc;
 
 pub(crate) fn token_failure(error: TokenError) -> ApiFailure {
@@ -90,7 +90,7 @@ pub(crate) async fn token_add_post(
             model.new_token = Some(created.value);
             ctx.page_model(
                 "Settings",
-                crate::webui::app::Page::Identity(account::Page::Settings {
+                codeyard_webui::app::Page::Identity(account::Page::Settings {
                     model: Box::new(model),
                     csrf_token: ctx.csrf_token.clone(),
                     message: None,

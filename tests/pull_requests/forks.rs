@@ -918,11 +918,11 @@ async fn private_preview_contract(pg: bool) {
         let bytes = to_bytes(response.into_body(), 8 * 1024 * 1024)
             .await
             .unwrap();
-        let envelope: codeyard::webui::app::PageEnvelope = serde_json::from_slice(&bytes).unwrap();
-        let codeyard::webui::app::Page::Collaboration(page) = envelope.page else {
+        let envelope: codeyard_webui::app::PageEnvelope = serde_json::from_slice(&bytes).unwrap();
+        let codeyard_webui::app::Page::Collaboration(page) = envelope.page else {
             panic!("expected collaboration model")
         };
-        let codeyard::webui::pages::repos::issues::Page::New {
+        let codeyard_webui::pages::repos::issues::Page::New {
             diff: Some(diff), ..
         } = *page
         else {

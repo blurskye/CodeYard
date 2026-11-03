@@ -1,7 +1,7 @@
 //! Event names a webhook can subscribe to. The names are GitHub's, so receivers that
 //! already branch on them keep working. The form's EVENT_OPTIONS is the list a hook can
 //! subscribe to.
-use crate::webui::components::webhooks::EVENT_OPTIONS;
+use codeyard_webui::components::webhooks::EVENT_OPTIONS;
 
 pub const REPOSITORY: &str = "repository";
 pub const PUSH: &str = "push";

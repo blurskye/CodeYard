@@ -250,10 +250,10 @@ async fn code_search_on_an_unreachable_storage_node_is_an_error_not_an_empty_rep
 #[tokio::test]
 async fn content_search_allows_transport_fallback_and_keeps_completed_repositories() {
     use crate::support::{fake_webui_bundle, http_client::Client};
-    use codeyard::{
-        backend::{api::create_router, app::AppState, ci::CiConfig, storage::ObjectStore},
-        webui::{app::Page, pages::discovery},
+    use codeyard::backend::{
+        api::create_router, app::AppState, ci::CiConfig, storage::ObjectStore,
     };
+    use codeyard_webui::{app::Page, pages::discovery};
     use std::{sync::Arc, time::Duration};
     fake_webui_bundle::install();
     let database = native::PostgresDatabase::new().await;

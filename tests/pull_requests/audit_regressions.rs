@@ -5,19 +5,17 @@ use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
-use codeyard::{
-    backend::{
-        api::create_router,
-        app::AppState,
-        ci::CiConfig,
-        db,
-        repositories::{self, lifecycle},
-        storage::ObjectStore,
-    },
-    webui::{
-        app::{Page, PageEnvelope},
-        pages::repos::issues,
-    },
+use codeyard::backend::{
+    api::create_router,
+    app::AppState,
+    ci::CiConfig,
+    db,
+    repositories::{self, lifecycle},
+    storage::ObjectStore,
+};
+use codeyard_webui::{
+    app::{Page, PageEnvelope},
+    pages::repos::issues,
 };
 use serde_json::json;
 use std::sync::Arc;
@@ -103,7 +101,7 @@ async fn bounded_model(client: &Client, path: &str) -> PageEnvelope {
         .uri(path)
         .header(
             header::ACCEPT,
-            codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+            codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
         )
         .header(header::COOKIE, format!("session_id={}", client.session))
         .body(Body::empty())
@@ -112,7 +110,7 @@ async fn bounded_model(client: &Client, path: &str) -> PageEnvelope {
     assert_eq!(response.status(), StatusCode::OK);
     let bytes = to_bytes(
         response.into_body(),
-        codeyard::webui::bootstrap::MAX_PAGE_MODEL_BYTES,
+        codeyard_webui::bootstrap::MAX_PAGE_MODEL_BYTES,
     )
     .await
     .unwrap();

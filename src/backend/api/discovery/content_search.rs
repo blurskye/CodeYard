@@ -10,7 +10,7 @@ use crate::backend::{
     repositories::access::{self, AccessError},
     repositories::store::{repo_store, RepoError, RepoStore, MAX_COMMIT_OFFSET},
 };
-use crate::webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
+use codeyard_webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
 use futures_util::{stream, StreamExt};
 use std::collections::{HashMap, HashSet};
 use tokio::time::{timeout_at, Instant};

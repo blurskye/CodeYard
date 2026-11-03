@@ -1306,11 +1306,11 @@ async fn assert_native_list_omits_bodies(alice: &Client) {
     let items = model["page"]["model"]["List"]["items"].as_array().unwrap();
     assert!(items.len() >= 43);
     assert!(items.iter().all(|item| item.get("body").is_none()));
-    let envelope: codeyard::webui::app::PageEnvelope = serde_json::from_slice(&bytes).unwrap();
-    let codeyard::webui::app::Page::Collaboration(page) = envelope.page else {
+    let envelope: codeyard_webui::app::PageEnvelope = serde_json::from_slice(&bytes).unwrap();
+    let codeyard_webui::app::Page::Collaboration(page) = envelope.page else {
         panic!("collaboration page")
     };
-    let codeyard::webui::pages::repos::issues::Page::List { items, .. } = *page else {
+    let codeyard_webui::pages::repos::issues::Page::List { items, .. } = *page else {
         panic!("issue list")
     };
     assert!(items.iter().all(|item| item.body.is_empty()));

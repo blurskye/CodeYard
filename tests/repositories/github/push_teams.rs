@@ -362,8 +362,8 @@ pub(super) async fn run(
         .model(&format!("{native}/settings?tab=branches"))
         .await;
     assert_eq!(model_status, StatusCode::OK);
-    let codeyard::webui::app::Page::Repositories(
-        codeyard::webui::pages::repos::page::Page::Settings { settings, .. },
+    let codeyard_webui::app::Page::Repositories(
+        codeyard_webui::pages::repos::page::Page::Settings { settings, .. },
     ) = page
     else {
         panic!("repository settings model")

@@ -500,7 +500,7 @@ async fn ping_payload(
             payload["organization"] = payloads::organization(&org);
             crate::backend::api::github::api_url(&format!(
                 "/orgs/{}/hooks/{}",
-                crate::webui::encode_component(&org.name),
+                codeyard_webui::encode_component(&org.name),
                 hook.id
             ))
         }

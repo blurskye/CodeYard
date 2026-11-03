@@ -14,7 +14,7 @@ use codeyard::backend::{
     db::{self, repositories::discovery::NewForkedRepository},
     repositories::lifecycle,
 };
-use codeyard::webui::{
+use codeyard_webui::{
     app::Page,
     pages::{account, discovery as view, users},
 };

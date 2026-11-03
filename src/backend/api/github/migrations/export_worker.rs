@@ -505,7 +505,7 @@ async fn organization(
         .map_err(Error::unavailable)?
         .ok_or_else(Error::missing)?;
     let origin = crate::backend::api::http::config::link_origin();
-    let url = format!("{origin}{}", crate::webui::profile_path(&record.name));
+    let url = format!("{origin}{}", codeyard_webui::profile_path(&record.name));
     archive.person(json!({"id":record.id,"login":record.name,"html_url":url,"url":url,"type":"Organization","name":record.display_name,"description":record.description,"created_at":record.created_at,"updated_at":record.updated_at}));
     let mut after = 0;
     loop {
@@ -564,7 +564,7 @@ async fn teams(
             value["organization"] = json!(format!(
                 "{}{}",
                 crate::backend::api::http::config::link_origin(),
-                crate::webui::profile_path(slug)
+                codeyard_webui::profile_path(slug)
             ));
             value["parent_team_id"] = json!(row.team.parent_team_id);
             value["default_permission"] = json!(row.team.default_permission);
@@ -623,7 +623,7 @@ async fn teams(
                 let mut grants = Vec::new();
                 for repository in repositories {
                     repository_after = repository.id;
-                    grants.push(json!({"id":repository.id,"team":team_url,"repository":format!("{}/{}/{}",crate::backend::api::http::config::link_origin(),crate::webui::encode_component(&repository.owner),crate::webui::encode_component(&repository.name)),"permission":repository.permission}));
+                    grants.push(json!({"id":repository.id,"team":team_url,"repository":format!("{}/{}/{}",crate::backend::api::http::config::link_origin(),codeyard_webui::encode_component(&repository.owner),codeyard_webui::encode_component(&repository.name)),"permission":repository.permission}));
                 }
                 archive
                     .records("team_repository", grants)

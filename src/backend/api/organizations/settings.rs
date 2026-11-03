@@ -5,7 +5,6 @@ use crate::backend::{
     app::AppState,
     db::organizations::{settings as data, OrganizationOutcome},
 };
-use crate::webui::pages::orgs as view;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -13,6 +12,7 @@ use axum::{
     routing::post,
     Router,
 };
+use codeyard_webui::pages::orgs as view;
 use serde_json::{Map, Value};
 use std::{collections::HashSet, sync::Arc};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing, Suspended};

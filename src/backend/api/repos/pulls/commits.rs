@@ -4,11 +4,11 @@ use crate::backend::api::repos::chrome;
 use crate::backend::api::repos::discussion::*;
 use crate::backend::app::AppState;
 use crate::backend::repositories::store::repo_store;
-use crate::webui::pages::repos::issues::{self as view, Kind};
-use crate::webui::pages::repos::pulls::MAX_LISTED_COMMITS;
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::pages::repos::issues::{self as view, Kind};
+use codeyard_webui::pages::repos::pulls::MAX_LISTED_COMMITS;
 use std::sync::Arc;
 
 pub(crate) async fn native_commits(

@@ -509,7 +509,7 @@ async fn create_view(
         } else {
             "users"
         },
-        crate::webui::encode_component(&name),
+        codeyard_webui::encode_component(&name),
         project.number,
         view.number
     );

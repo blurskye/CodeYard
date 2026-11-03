@@ -12,12 +12,12 @@ use crate::backend::{
         issue_attributes::{Attribute, Definition, OptionInput, Refusal, ValueInput},
     },
 };
-use crate::webui::pages::repos::issues::{IssueAttribute, IssueAttributes, IssueSelectOption};
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::pages::repos::issues::{IssueAttribute, IssueAttributes, IssueSelectOption};
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
 fn view(a: Attribute, value: Option<Value>) -> IssueAttribute {
@@ -375,7 +375,7 @@ pub(crate) async fn native_change(
     }
     Ok(ctx.redirect(&format!(
         "/{}/{}/issues/{number}",
-        crate::webui::encode_component(&owner),
-        crate::webui::encode_component(&name)
+        codeyard_webui::encode_component(&owner),
+        codeyard_webui::encode_component(&name)
     )))
 }

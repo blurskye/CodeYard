@@ -15,14 +15,14 @@ use crate::backend::repositories::{
     lifecycle::{self, InitialFiles},
     templates::{self, Template},
 };
-use crate::webui::app::Page as AppPage;
-use crate::webui::pages::discovery::{
-    self as view, NewRepositoryForm, RepositoryCreationChoices, RepositoryCreationOrganization,
-};
 use axum::extract::{Query, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::{Form, Json};
+use codeyard_webui::app::Page as AppPage;
+use codeyard_webui::pages::discovery::{
+    self as view, NewRepositoryForm, RepositoryCreationChoices, RepositoryCreationOrganization,
+};
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;

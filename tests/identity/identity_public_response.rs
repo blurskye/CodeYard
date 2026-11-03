@@ -92,8 +92,8 @@ async fn profile_updates_reject_nul_in_json_and_native_forms_on_both_engines() {
             // The public profile carries the same four fields as the update.
             let (status, page) = client.model("/profile_owner").await;
             assert_eq!(status, StatusCode::OK);
-            let codeyard::webui::app::Page::Identity(
-                codeyard::webui::pages::account::Page::Profile { profile, .. },
+            let codeyard_webui::app::Page::Identity(
+                codeyard_webui::pages::account::Page::Profile { profile, .. },
             ) = page
             else {
                 panic!("profile")

@@ -7,25 +7,23 @@ use axum::{
     response::Response,
     Router,
 };
-use codeyard::{
-    backend::{
-        api::create_router,
-        app::AppState,
-        db::{
-            self, files as files_db,
-            models::{FileReason, FileVisibility},
-        },
-        files::{
-            self, ConfirmationError, DeleteError, DownloadCapability, DownloadError,
-            DownloadTransport, LocalUploadError, UploadCapability, UploadDeclaration, UploadError,
-        },
-        identity::avatars::{self, AvatarError},
-        storage::{local::LocalStore, s3::S3Config, ObjectStore, Upload},
+use codeyard::backend::{
+    api::create_router,
+    app::AppState,
+    db::{
+        self, files as files_db,
+        models::{FileReason, FileVisibility},
     },
-    webui::{
-        app::{Page, PageEnvelope},
-        pages::admin::storage as storage_view,
+    files::{
+        self, ConfirmationError, DeleteError, DownloadCapability, DownloadError, DownloadTransport,
+        LocalUploadError, UploadCapability, UploadDeclaration, UploadError,
     },
+    identity::avatars::{self, AvatarError},
+    storage::{local::LocalStore, s3::S3Config, ObjectStore, Upload},
+};
+use codeyard_webui::{
+    app::{Page, PageEnvelope},
+    pages::admin::storage as storage_view,
 };
 use http_body_util::BodyExt;
 use serde_json::{json, Value};

@@ -7,15 +7,15 @@ use crate::backend::{
     db,
     db::repositories::{discovery::ItemSort, records::RepositorySort},
 };
-use crate::webui::app::Page as AppPage;
-use crate::webui::components::body_preview;
-use crate::webui::pages::discovery::{
-    self as view, IssueCard, SearchCounts, SearchModel, UserCard, SEARCH_COUNT_CAP,
-};
 use axum::{
     extract::State,
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
+};
+use codeyard_webui::app::Page as AppPage;
+use codeyard_webui::components::body_preview;
+use codeyard_webui::pages::discovery::{
+    self as view, IssueCard, SearchCounts, SearchModel, UserCard, SEARCH_COUNT_CAP,
 };
 use std::{collections::HashMap, sync::Arc};
 

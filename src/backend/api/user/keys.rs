@@ -7,11 +7,11 @@ use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::identity::keys;
 use crate::backend::identity::keys::KeyError;
-use crate::webui::pages::fields::may_be_private_key;
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::pages::fields::may_be_private_key;
 use std::sync::Arc;
 
 pub(crate) fn key_failure(error: KeyError) -> (StatusCode, Json<ApiError>) {

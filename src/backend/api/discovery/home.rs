@@ -1,13 +1,13 @@
 use super::{dashboard_cards, unavailable};
 use crate::backend::db::models::AccessLevel;
 use crate::backend::{api::http::context::PageContext, app::AppState, db};
-use crate::webui::app::Page as AppPage;
-use crate::webui::pages::discovery::{self as view, HomeModel, SharedRepositoryCard};
 use axum::{
     extract::State,
     http::{HeaderMap, Uri},
     response::Response,
 };
+use codeyard_webui::app::Page as AppPage;
+use codeyard_webui::pages::discovery::{self as view, HomeModel, SharedRepositoryCard};
 use std::sync::Arc;
 
 pub(super) async fn home(

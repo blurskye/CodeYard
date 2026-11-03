@@ -2,18 +2,16 @@
 use super::origin::same_origin_submission;
 use super::render::{public_error, public_error_returning_to, redirect_response};
 use super::session;
-use crate::{
-    backend::{
-        app::AppState,
-        crypto::is_hex_token,
-        db::{self, models::User},
-    },
-    webui::document::{Chrome, Theme},
+use crate::backend::{
+    app::AppState,
+    crypto::is_hex_token,
+    db::{self, models::User},
 };
 use axum::{
     http::{header, HeaderMap, HeaderValue, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::document::{Chrome, Theme};
 use std::{collections::HashMap, sync::Arc};
 use subtle::ConstantTimeEq;
 
@@ -23,7 +21,7 @@ fn admission_redirect(page: &str, location: &str) -> String {
     if super::origin::safe_redirect_path(location) {
         format!(
             "{page}?redirect={}",
-            crate::webui::encode_component(location)
+            codeyard_webui::encode_component(location)
         )
     } else {
         page.to_owned()
@@ -502,7 +500,7 @@ mod tests {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::ACCEPT,
-            HeaderValue::from_static(crate::webui::bootstrap::MODEL_CONTENT_TYPE),
+            HeaderValue::from_static(codeyard_webui::bootstrap::MODEL_CONTENT_TYPE),
         );
         let ctx = PageContext {
             state: Arc::new(crate::backend::api::tests::closed_state().await),
@@ -520,7 +518,7 @@ mod tests {
         };
         let response = ctx.page_model(
             "Search",
-            crate::webui::app::Page::Error {
+            codeyard_webui::app::Page::Error {
                 status: 404,
                 message: "Typed test view".into(),
                 repo: None,
@@ -530,7 +528,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             response.headers()[header::CONTENT_TYPE],
-            crate::webui::bootstrap::MODEL_CONTENT_TYPE
+            codeyard_webui::bootstrap::MODEL_CONTENT_TYPE
         );
         assert_eq!(response.headers()[header::VARY], "Accept, Cookie");
         assert_eq!(
@@ -544,7 +542,7 @@ mod tests {
         assert!(!json.contains("PRIVATE_HASH_SENTINEL"));
         assert!(!json.contains("private@example.test"));
         assert!(!json.contains("password_hash"));
-        let model: crate::webui::app::PageEnvelope = serde_json::from_str(&json).unwrap();
+        let model: codeyard_webui::app::PageEnvelope = serde_json::from_str(&json).unwrap();
         assert_eq!(model.chrome.username.as_deref(), Some("alice"));
         assert_eq!(model.location, "/search?q=rust");
     }
@@ -557,7 +555,7 @@ mod tests {
         assert!(!accepts_page_model(&headers));
         headers.insert(
             header::ACCEPT,
-            HeaderValue::from_static(crate::webui::bootstrap::MODEL_CONTENT_TYPE),
+            HeaderValue::from_static(codeyard_webui::bootstrap::MODEL_CONTENT_TYPE),
         );
         assert!(accepts_page_model(&headers));
         headers.insert(
@@ -627,7 +625,7 @@ mod tests {
     #[tokio::test]
     async fn negotiated_error_preserves_status_exact_location_and_safe_headers() {
         let location = "/missing?q=a%26b&tag=one&tag=two&empty=";
-        let page = crate::webui::app::Page::Error {
+        let page = codeyard_webui::app::Page::Error {
             status: 404,
             message: "Not found".into(),
             repo: None,
@@ -643,7 +641,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(
             response.headers()[header::CONTENT_TYPE],
-            crate::webui::bootstrap::MODEL_CONTENT_TYPE
+            codeyard_webui::bootstrap::MODEL_CONTENT_TYPE
         );
         assert_eq!(
             response.headers()[header::CACHE_CONTROL],
@@ -653,11 +651,11 @@ mod tests {
         let body = axum::body::to_bytes(response.into_body(), 1_000_000)
             .await
             .unwrap();
-        let envelope: crate::webui::app::PageEnvelope = serde_json::from_slice(&body).unwrap();
+        let envelope: codeyard_webui::app::PageEnvelope = serde_json::from_slice(&body).unwrap();
         assert_eq!(envelope.location, location);
         assert!(matches!(
             envelope.page,
-            crate::webui::app::Page::Error { status: 404, .. }
+            codeyard_webui::app::Page::Error { status: 404, .. }
         ));
     }
 

@@ -6,17 +6,15 @@ use axum::{
     http::{header, HeaderMap, Request, StatusCode},
     Router,
 };
-use codeyard::{
-    backend::{
-        api::create_router,
-        app::AppState,
-        db::{self, organizations::*},
-        storage::ObjectStore,
-    },
-    webui::{
-        app::{Page, PageEnvelope},
-        pages::orgs as view,
-    },
+use codeyard::backend::{
+    api::create_router,
+    app::AppState,
+    db::{self, organizations::*},
+    storage::ObjectStore,
+};
+use codeyard_webui::{
+    app::{Page, PageEnvelope},
+    pages::orgs as view,
 };
 use std::sync::Arc;
 use tower::ServiceExt;
@@ -266,7 +264,7 @@ impl Fixture {
         if model {
             request = request.header(
                 header::ACCEPT,
-                codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+                codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
             );
         }
         if cross_site {

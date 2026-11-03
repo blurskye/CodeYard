@@ -11,12 +11,10 @@ use axum::{
     Router,
 };
 use base64::Engine;
-use codeyard::{
-    backend::db,
-    webui::{
-        app::{Page, PageEnvelope},
-        pages::repos as view,
-    },
+use codeyard::backend::db;
+use codeyard_webui::{
+    app::{Page, PageEnvelope},
+    pages::repos as view,
 };
 use database::Database;
 use serde_json::{json, Value};
@@ -71,7 +69,7 @@ async fn model(client: &http::Client, path: &str) -> (StatusCode, Page) {
                 .header(header::COOKIE, format!("session_id={}", client.session))
                 .header(
                     header::ACCEPT,
-                    codeyard::webui::bootstrap::MODEL_CONTENT_TYPE,
+                    codeyard_webui::bootstrap::MODEL_CONTENT_TYPE,
                 )
                 .body(Body::empty())
                 .unwrap(),
@@ -81,7 +79,7 @@ async fn model(client: &http::Client, path: &str) -> (StatusCode, Page) {
     let status = response.status();
     assert_eq!(
         response.headers()[header::CONTENT_TYPE],
-        codeyard::webui::bootstrap::MODEL_CONTENT_TYPE
+        codeyard_webui::bootstrap::MODEL_CONTENT_TYPE
     );
     let envelope: PageEnvelope = serde_json::from_slice(
         &to_bytes(response.into_body(), 2 * 1024 * 1024)

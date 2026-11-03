@@ -10,7 +10,7 @@ use codeyard::backend::{
     db::{self, assignees::AssignedItem, discussions::DiscussionEdit, models::AccessLevel},
     repositories::lifecycle,
 };
-use codeyard::webui::{app::Page, pages::repos::issues};
+use codeyard_webui::{app::Page, pages::repos::issues};
 use database::Database;
 use pulls::Client;
 use serde_json::{json, Value};

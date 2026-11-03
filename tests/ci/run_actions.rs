@@ -228,8 +228,7 @@ async fn contract(pg: bool) {
         .model(&format!("/alice/proj/actions?job={job}&ref=missing"))
         .await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(model)) =
-        model
+    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(model)) = model
     else {
         panic!("Actions model")
     };
@@ -338,7 +337,7 @@ async fn contract(pg: bool) {
     }
     let url = "/alice/proj/actions?workflow=.github%2Fworkflows%2Fci.yml&branch=main&event=workflow_dispatch&limit=1";
     let (_, page) = alice.model(url).await;
-    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(page)) = page
+    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(page)) = page
     else {
         panic!("Actions model")
     };
@@ -351,7 +350,7 @@ async fn contract(pg: bool) {
             &run.head_sha.as_deref().unwrap()[..7]
         ))
         .await;
-    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(page)) = page
+    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(page)) = page
     else {
         panic!("Actions model")
     };
@@ -359,7 +358,7 @@ async fn contract(pg: bool) {
     assert_eq!(page.runs[0].id, job);
     assert!(page.next_before.is_none());
     let (_, page) = alice.model(&format!("/alice/proj/actions?q={job}")).await;
-    let codeyard::webui::app::Page::Actions(codeyard::webui::pages::ci::Page::Actions(page)) = page
+    let codeyard_webui::app::Page::Actions(codeyard_webui::pages::ci::Page::Actions(page)) = page
     else {
         panic!("Actions model")
     };

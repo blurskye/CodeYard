@@ -18,7 +18,7 @@ use crate::backend::repositories::store::MergeMethod;
 use crate::backend::repositories::store::MergeRequest as StoreMerge;
 use crate::backend::repositories::store::RepoError;
 use crate::backend::webhooks::{self, events, payloads::Scope};
-use crate::webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
+use codeyard_webui::pages::repos::issues::MERGE_COMMIT_REFUSED;
 use serde::Deserialize;
 use serde::Serialize;
 use serde_json::json;

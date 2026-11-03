@@ -7,7 +7,6 @@ use crate::backend::{
         attestations::{self, Filter, Owner, Refusal},
     },
 };
-use crate::webui::{app::Page as AppPage, encode_component, pages::attestations as view};
 use axum::{
     extract::{DefaultBodyLimit, Path, State},
     http::{HeaderMap, StatusCode, Uri},
@@ -15,6 +14,7 @@ use axum::{
     routing::get,
     Form, Json, Router,
 };
+use codeyard_webui::{app::Page as AppPage, encode_component, pages::attestations as view};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 

@@ -94,7 +94,7 @@ async fn snapshot(
 fn url(org: &str, id: i64) -> String {
     api_url(&format!(
         "/orgs/{}/hooks/{id}",
-        crate::webui::encode_component(org)
+        codeyard_webui::encode_component(org)
     ))
 }
 fn document(org: &str, hook: &Webhook) -> Value {

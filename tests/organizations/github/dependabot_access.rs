@@ -265,7 +265,7 @@ async fn contract(pg: bool) {
     assert!(html.contains(&target), "{html}");
     let (status, model) = session.model(&settings).await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Organizations(model) = model else {
+    let codeyard_webui::app::Page::Organizations(model) = model else {
         panic!("organization model");
     };
     assert_eq!(model.dependabot.unwrap().repositories.len(), 3);

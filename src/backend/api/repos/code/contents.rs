@@ -7,13 +7,13 @@ use crate::backend::api::repos::responses::{AuthorInfo, CommitResponse};
 use crate::backend::app::AppState;
 use crate::backend::repositories::files;
 use crate::backend::repositories::store::{repo_store, BlobRange, FileWrite, MAX_EDITOR_BYTES};
-use crate::webui::components::references::References;
-use crate::webui::pages::repos as view;
-use crate::webui::pages::repos::ref_path::{branch_url, compare_url, is_markdown_path};
 use axum::extract::{Path, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;
 use axum::Json;
+use codeyard_webui::components::references::References;
+use codeyard_webui::pages::repos as view;
+use codeyard_webui::pages::repos::ref_path::{branch_url, compare_url, is_markdown_path};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -291,7 +291,7 @@ async fn editor_page(
     editor.new_branch = new_branch_for(ctx, loaded);
     Ok(ctx.page_model(
         if creating { "New file" } else { "Edit file" },
-        crate::webui::app::Page::Repositories(view::page::Page::Editor {
+        codeyard_webui::app::Page::Repositories(view::page::Page::Editor {
             repo: loaded.chrome.clone(),
             editor,
         }),
@@ -411,7 +411,7 @@ pub(in crate::backend::api::repos) async fn write_form(
             refuses_direct_commit(&ctx, loaded, &editor.branch, &editor.expected_revision).await;
         return ctx.page_model(
             "Preview file",
-            crate::webui::app::Page::Repositories(view::page::Page::Editor {
+            codeyard_webui::app::Page::Repositories(view::page::Page::Editor {
                 repo: loaded.chrome.clone(),
                 editor,
             }),
@@ -486,7 +486,7 @@ pub(in crate::backend::api::repos) async fn write_form(
             with_status(
                 ctx.page_model(
                     title,
-                    crate::webui::app::Page::Repositories(view::page::Page::Editor {
+                    codeyard_webui::app::Page::Repositories(view::page::Page::Editor {
                         repo: loaded.chrome.clone(),
                         editor,
                     }),
@@ -520,7 +520,7 @@ pub(in crate::backend::api::repos) async fn replaced_repository_editor(
     with_status(
         ctx.page_model(
             "File not saved",
-            crate::webui::app::Page::Repositories(view::page::Page::Editor { repo, editor }),
+            codeyard_webui::app::Page::Repositories(view::page::Page::Editor { repo, editor }),
         ),
         StatusCode::CONFLICT,
     )
@@ -545,7 +545,7 @@ async fn delete_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<R
     };
     Ok(ctx.page_model(
         "Delete file",
-        crate::webui::app::Page::Repositories(view::page::Page::DeleteFile {
+        codeyard_webui::app::Page::Repositories(view::page::Page::DeleteFile {
             repo: loaded.chrome.clone(),
             file,
         }),
@@ -625,7 +625,7 @@ pub(in crate::backend::api::repos) async fn delete_form(
             with_status(
                 ctx.page_model(
                     title,
-                    crate::webui::app::Page::Repositories(view::page::Page::DeleteFile {
+                    codeyard_webui::app::Page::Repositories(view::page::Page::DeleteFile {
                         repo: loaded.chrome.clone(),
                         file,
                     }),

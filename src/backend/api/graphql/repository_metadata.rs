@@ -148,7 +148,7 @@ pub(super) async fn resolve(
             }
             let owner = repository::owner(repo, request).await?;
             Ok(json!(files.first().map(|(path, _)| url(
-                &crate::webui::pages::repos::ref_path::branch_url(
+                &codeyard_webui::pages::repos::ref_path::branch_url(
                     &format!("/{}/{}", owner, repo.name),
                     "blob",
                     &repo.default_branch,
@@ -198,7 +198,7 @@ pub(super) async fn resolve(
             let owner = repository::owner(repo, request).await?;
             Ok(files.first().map(|(path, text)| {
                 let covenant = crate::backend::repositories::community::contributor_covenant(text);
-                json!({"key":if covenant { "contributor_covenant" } else { "other" },"name":if covenant { "Contributor Covenant" } else { "Other" },"url":url(&crate::webui::pages::repos::ref_path::branch_url(&format!("/{}/{}",owner,repo.name),"blob",&repo.default_branch,path))})
+                json!({"key":if covenant { "contributor_covenant" } else { "other" },"name":if covenant { "Contributor Covenant" } else { "Other" },"url":url(&codeyard_webui::pages::repos::ref_path::branch_url(&format!("/{}/{}",owner,repo.name),"blob",&repo.default_branch,path))})
             }).unwrap_or(Value::Null))
         }
         "licenseInfo" => {

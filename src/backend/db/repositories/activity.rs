@@ -44,7 +44,7 @@ impl<'a> RefActivity<'a> {
         anyhow::ensure!(
             [before, after]
                 .iter()
-                .all(crate::git_ids::is_full_commit_id),
+                .all(codeyard_support::git_ids::is_full_commit_id),
             "Invalid activity commit ID"
         );
         Ok(Self {

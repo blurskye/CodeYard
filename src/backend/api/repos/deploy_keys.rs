@@ -165,7 +165,7 @@ pub(super) async fn settings_section(
     ctx: &PageContext,
     loaded: &Loaded,
     viewer: &User,
-) -> Result<Box<crate::webui::components::deploy_keys::DeployKeyPanel>, Response> {
+) -> Result<Box<codeyard_webui::components::deploy_keys::DeployKeyPanel>, Response> {
     let base = format!("{}/settings?tab=deploy-keys", loaded.chrome.base());
     let action = format!("{}/_forms", loaded.chrome.base());
     let place = keys::Place {

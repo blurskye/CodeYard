@@ -23,7 +23,7 @@ use std::{collections::HashMap, sync::Arc};
 /// user content from this origin, and an SVG opened directly (not through
 /// `<img>`) can run script in that origin. Raw SVG stays a non-executable type,
 /// which is what the previous behaviour was too.
-pub use crate::webui::raw_content_type;
+pub use codeyard_webui::raw_content_type;
 
 pub(crate) fn download_limit() -> (u64, String) {
     let bytes = crate::backend::git::MAX_BLOB_MATERIALIZE_BYTES as u64;
@@ -308,7 +308,7 @@ async fn token_raw_page(
             std::iter::once(name.clone()).chain(short.map(str::to_owned))
         })
         .collect::<Vec<_>>();
-    use crate::webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
+    use codeyard_webui::pages::repos::ref_path::{resolve_repo_ref_path, split_path};
     let Some(resolved) = resolve_repo_ref_path(&split_path(&params["ref_path"]), &names, true)
     else {
         return StatusCode::NOT_FOUND.into_response();

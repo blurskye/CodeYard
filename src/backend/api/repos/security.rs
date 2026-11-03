@@ -3,18 +3,11 @@ use super::{
     chrome::{self, Loaded},
     forms::authorize_post,
 };
-use crate::{
-    backend::{
-        api::http::{context::PageContext, render::redirect_response},
-        app::AppState,
-        code_scanning, db,
-        repositories::store::{repo_store, BlobRange},
-    },
-    webui::{
-        app::Page,
-        excerpt,
-        pages::repos::{page::Page as RepoPage, security as view},
-    },
+use crate::backend::{
+    api::http::{context::PageContext, render::redirect_response},
+    app::AppState,
+    code_scanning, db,
+    repositories::store::{repo_store, BlobRange},
 };
 use axum::{
     extract::{Path, State},
@@ -22,6 +15,11 @@ use axum::{
     response::Response,
     routing::get,
     Form, Router,
+};
+use codeyard_webui::{
+    app::Page,
+    excerpt,
+    pages::repos::{page::Page as RepoPage, security as view},
 };
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};
@@ -172,7 +170,7 @@ async fn model(
             // The code view with the line query reaches lines past the first preview.
             alert.code_url = format!(
                 "{}?view=code&line={line}#L{line}",
-                crate::webui::pages::repos::ref_path::file_url(
+                codeyard_webui::pages::repos::ref_path::file_url(
                     &loaded.chrome.base(),
                     "blob",
                     &instance.commit_sha,
@@ -327,7 +325,7 @@ async fn dismiss(
             let suffix = values
                 .get("branch")
                 .filter(|branch| branch.len() <= 4096)
-                .map(|branch| format!("?branch={}", crate::webui::encode_component(branch)))
+                .map(|branch| format!("?branch={}", codeyard_webui::encode_component(branch)))
                 .unwrap_or_default();
             redirect_response(&format!(
                 "{}/security/code-scanning/{number}{suffix}",

@@ -154,7 +154,7 @@ async fn find_contract(pg: bool) {
         ))
         .await;
     assert_eq!(status, StatusCode::OK);
-    let codeyard::webui::app::Page::Repositories(codeyard::webui::pages::repos::page::Page::Find {
+    let codeyard_webui::app::Page::Repositories(codeyard_webui::pages::repos::page::Page::Find {
         page,
         ..
     }) = model

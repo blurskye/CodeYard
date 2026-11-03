@@ -6,15 +6,13 @@ use crate::support::{
     http_client::Client,
 };
 use axum::http::StatusCode;
-use codeyard::{
-    backend::db::{
-        self,
-        models::{OrgRole, Repository},
-        organizations::*,
-        repositories::creation::*,
-    },
-    webui::{app::Page, pages::discovery},
+use codeyard::backend::db::{
+    self,
+    models::{OrgRole, Repository},
+    organizations::*,
+    repositories::creation::*,
 };
+use codeyard_webui::{app::Page, pages::discovery};
 
 async fn org(f: &Database, owner: i64, name: &str) -> i64 {
     applied(

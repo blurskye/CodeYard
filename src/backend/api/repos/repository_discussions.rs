@@ -1,15 +1,9 @@
 //! Authorized browser destinations for discussion and discussion-comment URLs.
 use super::{chrome, discussion::ResultPage, paging};
-use crate::{
-    backend::{
-        api::http::context::PageContext,
-        app::AppState,
-        db::{self, repository_discussions as store},
-    },
-    webui::{
-        app::Page,
-        pages::repos::{discussions as view, page::Page as RepoPage},
-    },
+use crate::backend::{
+    api::http::context::PageContext,
+    app::AppState,
+    db::{self, repository_discussions as store},
 };
 use axum::{
     extract::{Path, State},
@@ -17,6 +11,10 @@ use axum::{
     response::Response,
     routing::get,
     Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{discussions as view, page::Page as RepoPage},
 };
 use std::{collections::HashMap, sync::Arc};
 

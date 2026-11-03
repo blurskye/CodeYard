@@ -81,13 +81,13 @@ async fn contract(pg: bool) {
     assert!(!html.contains("<script>alert('provenance')</script>"));
     assert!(!html.contains("https://private.example.test/provenance"));
     let (_, model) = owner.model(base).await;
-    let codeyard::webui::app::Page::Attestations(page) = model else {
+    let codeyard_webui::app::Page::Attestations(page) = model else {
         panic!("typed attestation navigation")
     };
     assert_eq!(page.entries.len(), 2);
     assert!(page.repo.is_none());
     let (_, model) = owner.model("/provenance-pages/private/attestations").await;
-    let codeyard::webui::app::Page::Attestations(page) = model else {
+    let codeyard_webui::app::Page::Attestations(page) = model else {
         panic!("repository attestation chrome")
     };
     assert_eq!(page.entries.len(), 1);

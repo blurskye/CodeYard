@@ -3,18 +3,12 @@ use super::{
     chrome::{self, Loaded},
     forms::authorize_post,
 };
-use crate::{
-    backend::{
-        api::http::{context::PageContext, render::redirect_response},
-        app::AppState,
-        db::{
-            self,
-            dependabot_alerts::{self as store, Update},
-        },
-    },
-    webui::{
-        app::Page,
-        pages::repos::{dependabot as view, page::Page as RepoPage},
+use crate::backend::{
+    api::http::{context::PageContext, render::redirect_response},
+    app::AppState,
+    db::{
+        self,
+        dependabot_alerts::{self as store, Update},
     },
 };
 use axum::{
@@ -23,6 +17,10 @@ use axum::{
     response::Response,
     routing::{get, post},
     Form, Router,
+};
+use codeyard_webui::{
+    app::Page,
+    pages::repos::{dependabot as view, page::Page as RepoPage},
 };
 use serde_json::Value;
 use std::{collections::HashMap, sync::Arc};

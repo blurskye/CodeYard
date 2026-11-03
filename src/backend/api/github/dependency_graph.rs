@@ -175,7 +175,7 @@ async fn compare(
                 "severity":a.severity(),
                 "advisory_ghsa_id":a.catalogue_id(),
                 "advisory_summary":a.summary,
-                "advisory_url":format!("https://osv.dev/vulnerability/{}",crate::webui::encode_component(&a.id)),
+                "advisory_url":format!("https://osv.dev/vulnerability/{}",codeyard_webui::encode_component(&a.id)),
             })).collect::<Vec<_>>();
         if let Some(ecosystem) = crate::backend::vulnerabilities::ecosystem(&package.ecosystem) {
             for advisory in &local {
@@ -317,7 +317,7 @@ async fn fetch(
             format!(
                 "{}/dependency-graph/sbom?report={}",
                 repo_url(&owner, &name),
-                crate::webui::encode_component(&id)
+                codeyard_webui::encode_component(&id)
             ),
         )],
     )

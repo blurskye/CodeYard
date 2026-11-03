@@ -4,11 +4,11 @@ use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::{field, mutation_guard, require_account, Fields};
 use crate::backend::app::AppState;
 use crate::backend::db;
-use crate::webui::app::Page;
-use crate::webui::pages::{account, admin::AdminSettings};
 use axum::extract::{Form, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::app::Page;
+use codeyard_webui::pages::{account, admin::AdminSettings};
 use std::sync::Arc;
 
 /// The site settings page. A refused save shows the page again with the message.

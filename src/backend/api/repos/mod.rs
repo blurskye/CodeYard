@@ -128,7 +128,7 @@ async fn legacy_alias_uri(
         .path()
         .split('/')
         .nth(3)
-        .map(crate::webui::decode_component)
+        .map(codeyard_webui::decode_component)
         .is_some_and(|owner| owner.eq_ignore_ascii_case("gists"))
     {
         return axum::http::StatusCode::NOT_FOUND.into_response();

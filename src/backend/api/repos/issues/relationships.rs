@@ -12,12 +12,12 @@ use crate::backend::{
         relationships::{Kind, Mutation, Refusal},
     },
 };
-use crate::webui::pages::repos::issues::RelatedIssue;
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_webui::pages::repos::issues::RelatedIssue;
 use std::{collections::HashMap, sync::Arc};
 pub(crate) async fn load(ctx: &PageContext, root: i64) -> ResultPage<Vec<RelatedIssue>> {
     let mut result = Vec::new();
@@ -41,8 +41,8 @@ pub(crate) async fn load(ctx: &PageContext, root: i64) -> ResultPage<Vec<Related
         {
             let href = format!(
                 "/{}/{}/issues/{}",
-                crate::webui::encode_component(&link.owner),
-                crate::webui::encode_component(&link.repo),
+                codeyard_webui::encode_component(&link.owner),
+                codeyard_webui::encode_component(&link.repo),
                 link.number
             );
             result.push(RelatedIssue {
@@ -120,7 +120,7 @@ pub(crate) async fn native_change(
     })?;
     Ok(ctx.redirect(&format!(
         "/{}/{}/issues/{number}",
-        crate::webui::encode_component(&owner),
-        crate::webui::encode_component(&name)
+        codeyard_webui::encode_component(&owner),
+        codeyard_webui::encode_component(&name)
     )))
 }

@@ -12,14 +12,14 @@ use crate::backend::{
         suggestions::{Action, ListFilter, Proposal, Refusal},
     },
 };
-use crate::webui::pages::repos::issues::{
-    DetailDraft, IssueSuggestion, IssueSuggestions, Kind, SuggestionDraft,
-};
 use axum::{
     extract::{Form, Path, State},
     http::{HeaderMap, StatusCode, Uri},
     response::{IntoResponse, Response},
     Json,
+};
+use codeyard_webui::pages::repos::issues::{
+    DetailDraft, IssueSuggestion, IssueSuggestions, Kind, SuggestionDraft,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -379,8 +379,8 @@ pub(crate) async fn native_change(
     };
     Ok(ctx.redirect(&format!(
         "/{}/{}/issues/{number}{suffix}",
-        crate::webui::encode_component(&owner),
-        crate::webui::encode_component(&name)
+        codeyard_webui::encode_component(&owner),
+        codeyard_webui::encode_component(&name)
     )))
 }
 #[derive(Deserialize)]

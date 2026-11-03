@@ -1,9 +1,9 @@
 use crate::backend::api::http::context::PageContext;
 use crate::backend::api::user::responses::require_account;
 use crate::backend::{db, identity};
-use crate::webui::pages::admin::{Signup, SIGNUP_REQUESTS_PER_PAGE};
 use axum::http::StatusCode;
 use axum::response::Response;
+use codeyard_webui::pages::admin::{Signup, SIGNUP_REQUESTS_PER_PAGE};
 
 pub(crate) fn signup_decision(action: &str) -> Option<identity::accounts::SignupDecision> {
     match action.trim().to_ascii_lowercase().as_str() {

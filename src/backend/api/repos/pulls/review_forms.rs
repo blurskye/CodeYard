@@ -22,13 +22,13 @@ use crate::backend::repositories::pull_requests::reviews::{
     CreatePullRequestReviewRequest, DismissPullRequestReviewRequest, RequestReviewerRequest,
 };
 use crate::backend::repositories::store::repo_store;
-use crate::webui::pages::repos::{
-    issues::{self as view, DetailDraft, Kind},
-    pulls::{self, LineComment, ReviewDraft},
-};
 use axum::extract::{Form, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};
 use axum::response::Response;
+use codeyard_webui::pages::repos::{
+    issues::{self as view, DetailDraft, Kind},
+    pulls::{self, LineComment, ReviewDraft},
+};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 

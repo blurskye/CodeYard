@@ -66,7 +66,7 @@ fn document(import: &SourceImport, owner: &str, name: &str) -> Value {
         "status_text": match status { "complete" => "Import complete", "error" => "Import failed; retry with updated credentials", _ => "Importing Git data" },
         "error_message": if status == "error" { Some("Import failed or timed out. Git data already published is retained.") } else { None },
         "url": format!("{base}/import"), "repository_url": base,
-        "html_url": format!("{}/{}/{}", crate::backend::api::http::config::link_origin(), crate::webui::encode_component(owner), crate::webui::encode_component(name)),
+        "html_url": format!("{}/{}/{}", crate::backend::api::http::config::link_origin(), codeyard_webui::encode_component(owner), codeyard_webui::encode_component(name)),
         "authors_url": format!("{base}/import/authors"),
     })
 }

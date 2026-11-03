@@ -284,8 +284,8 @@ pub(super) async fn resolve(
             };
             let mut path = format!(
                 "/{}/{}/discussions/{number}",
-                crate::webui::encode_component(&repository::owner(&repo, request).await?),
-                crate::webui::encode_component(&repo.name)
+                codeyard_webui::encode_component(&repository::owner(&repo, request).await?),
+                codeyard_webui::encode_component(&repo.name)
             );
             if ty == "DiscussionComment" {
                 path.push_str(&format!(

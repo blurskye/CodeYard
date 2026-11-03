@@ -1368,27 +1368,23 @@ dependencies = [
  "clap",
  "codeyard-actions",
  "codeyard-github-graphql",
+ "codeyard-support",
+ "codeyard-webui",
  "croner",
  "crypto_box",
  "data-encoding",
  "dioxus",
  "dioxus-fullstack-core",
- "dioxus-history",
- "dioxus-router",
  "dioxus-ssr",
- "dioxus-web",
  "dotenvy",
  "encoding_rs",
  "flate2",
  "futures-util",
  "git2",
- "gloo-net",
- "gloo-timers",
  "hex",
  "hmac 0.12.1",
  "http-body-util",
  "iroh",
- "js-sys",
  "jsonschema",
  "lettre",
  "libc",
@@ -1412,7 +1408,6 @@ dependencies = [
  "sqlx",
  "ssh-key 0.6.7",
  "subtle",
- "syntect",
  "tar",
  "tempfile",
  "thiserror 2.0.21",
@@ -1424,13 +1419,9 @@ dependencies = [
  "tower-http 0.5.2",
  "tracing",
  "tracing-subscriber",
- "unicase",
  "unicode-normalization",
  "url",
  "uuid",
- "wasm-bindgen",
- "wasm-bindgen-futures",
- "web-sys",
  "zip",
 ]
 
@@ -1442,6 +1433,7 @@ dependencies = [
  "anyhow",
  "base64 0.22.1",
  "clap",
+ "codeyard-support",
  "dotenvy",
  "fancy-regex 0.16.2",
  "libc",
@@ -1467,6 +1459,42 @@ dependencies = [
  "chrono",
  "serde_json",
  "tokio",
+]
+
+[[package]]
+name = "codeyard-support"
+version = "0.1.5"
+dependencies = [
+ "url",
+]
+
+[[package]]
+name = "codeyard-webui"
+version = "0.1.5"
+dependencies = [
+ "chrono",
+ "codeyard-support",
+ "dioxus",
+ "dioxus-fullstack-core",
+ "dioxus-history",
+ "dioxus-router",
+ "dioxus-ssr",
+ "dioxus-web",
+ "futures-util",
+ "gloo-net",
+ "gloo-timers",
+ "js-sys",
+ "pulldown-cmark",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "syntect",
+ "unicase",
+ "unicode-normalization",
+ "url",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
 ]
 
 [[package]]

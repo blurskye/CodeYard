@@ -603,13 +603,13 @@ async fn cookie_bound_mutations(pg: bool) {
         .next()
         .unwrap()
         .to_owned();
-    let envelope: codeyard::webui::app::PageEnvelope = serde_json::from_slice(
+    let envelope: codeyard_webui::app::PageEnvelope = serde_json::from_slice(
         &to_bytes(response.into_body(), 2 * 1024 * 1024)
             .await
             .unwrap(),
     )
     .unwrap();
-    let codeyard::webui::app::Page::Identity(codeyard::webui::pages::account::Page::Auth {
+    let codeyard_webui::app::Page::Identity(codeyard_webui::pages::account::Page::Auth {
         csrf_token,
         ..
     }) = envelope.page
