@@ -10,7 +10,6 @@ Start with the [README](../README.md) for setup.
 - [Running a cluster](CLUSTER.md): roles, pairing nodes, storage nodes, CI workers and limits.
 - [Kubernetes](KUBERNETES.md): Helm installation, external services, role scaling and current limits.
 - [Cluster readiness plan](CLUSTER_PLAN.md): checks on the cluster that exists, what is still missing, and the decision for each open question.
-- [Cluster S lock contract and claim-scan remainder](CLUSTER_S_REMAINDERS.md): account-scoped authority locks and the unfinished examined-row bound.
 - [Crate split plan](CRATE_SPLIT_PLAN.md): how the one big crate becomes crates under `backend/`, with the order and the circles to cut.
 - [CI API](CI_API.md): workflow runs, who may start them, statuses and known gaps.
 - [GitHub API plan](GITHUB_API_PLAN.md): making `/api/v3` and GraphQL match GitHub, what stays unsupported, and the worker split.

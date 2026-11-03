@@ -426,3 +426,15 @@ comparison between two repositories (a fork's compare page) is not served by a c
 Re-check the iroh and russh versions in [Architecture](ARCHITECTURE.md) when you upgrade
 either. Cores and CI workers must run the same release, because a worker only claims from
 cores on the same events protocol.
+
+Account restrictions (bans, suspensions, demotions) take PostgreSQL advisory locks keyed
+by schema and account ID. Authority readers take shared locks and restrictions take
+exclusive ones. A write that touches several accounts locks them in sorted order, so
+unrelated accounts never wait on each other. Two global locks remain: one for the user
+and organization name namespace and initial setup, and one for email ownership across
+users and secondary emails.
+
+A CI claim returns at most 128 compatible runs (1 to 1024 in the configuration), but the
+database may still examine a very large queued backlog to find them, and a claim restarts
+from the oldest run each time. This is not measured. A hard bound needs indexed
+scheduling buckets or a persistent fair cursor, so keep the queue short for now.
