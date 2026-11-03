@@ -751,6 +751,13 @@ CREATE TABLE download_rate_limit (
     downloaded_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 
+CREATE TABLE notification_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    payload TEXT NOT NULL CHECK (length(CAST(payload AS BLOB))<=4096),
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
+);
+CREATE INDEX notification_events_created ON notification_events(created_at,id);
+
 CREATE TABLE notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
     user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE CHECK (user_id IS NULL OR typeof(user_id)='integer'),

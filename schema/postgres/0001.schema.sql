@@ -902,6 +902,13 @@ CREATE INDEX IF NOT EXISTS idx_download_rate_limit_file_id ON download_rate_limi
 --------------------------------------------------------------------------------
 
 -- pulls
+CREATE TABLE notification_events (
+    id BIGINT PRIMARY KEY DEFAULT (pg_current_xact_id()::text::bigint),
+    payload TEXT NOT NULL CHECK (octet_length(payload)<=4096),
+    created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp()
+);
+CREATE INDEX notification_events_created ON notification_events(created_at,id);
+
 CREATE TABLE notification_threads (
     id BIGSERIAL PRIMARY KEY,
     user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
