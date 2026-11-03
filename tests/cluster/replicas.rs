@@ -1673,7 +1673,6 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     let sha = repo
         .save("main", ".github/workflows/ci.yml", "unborn", yaml)
         .await;
-    assert_current(&primary, &copy, &repo).await;
     let blob = git2::Oid::hash_object(git2::ObjectType::Blob, yaml)
         .unwrap()
         .to_string();
@@ -1719,6 +1718,8 @@ async fn database_free_ci_checkout_uses_claimed_replica_targets() {
     )
     .await
     .unwrap();
+    // Enqueue advances the write version to include the run's retained inputs.
+    assert_current(&primary, &copy, &repo).await;
     let claim = queue
         .claim(
             &worker,
@@ -3273,7 +3274,7 @@ async fn git_fetches_use_the_primary_instead_of_a_lagging_copy() {
     let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
     let base = repo.save("main", "README.md", "unborn", b"base\n").await;
     assert_current(&primary, &copy, &repo).await;
-    let head = repo.save("main", "README.md", &base, b"new\n").await;
+    let head = repo.save("main", "new.txt", &base, b"new\n").await;
     let primary_id = primary.context.node_id;
     let input = fetch_input(&head);
     let mut pack = Vec::new();
@@ -3763,11 +3764,11 @@ async fn review_admission_refuses_a_lagging_copy_when_primary_is_down() {
     primary.shutdown().await;
     let store =
         codeyard::backend::repositories::store::repo_store(&repo.repository, Some(&web.context));
-    assert_eq!(
-        store.commit("refs/heads/topic").await.unwrap().sha,
-        head,
-        "ordinary reads can use the lagging copy"
-    );
+    assert!(store
+        .commit("refs/heads/topic")
+        .await
+        .unwrap_err()
+        .is_storage_node_unavailable());
     let actor = db::users::accounts::get_user_by_id(&database.pool, repo.actor)
         .await
         .unwrap()
