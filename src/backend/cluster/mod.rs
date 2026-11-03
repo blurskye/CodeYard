@@ -13,6 +13,7 @@ pub mod tcp;
 mod tls;
 mod transport;
 pub(crate) mod worker;
+pub mod writes;
 pub use context::NodeContext;
 pub(crate) use transport::DIAL_TIMEOUT;
 pub use worker::{worker_context, CorePeer};

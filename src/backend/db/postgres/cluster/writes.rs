@@ -1,7 +1,9 @@
 //! PostgreSQL is the arbiter; no transaction here spans Git or network work.
 use crate::backend::db::{
     cluster::writes::{self as rules, MAX_FAMILY, MAX_REFS, MAX_VOTERS},
-    models::{RecoveryView, RefChange, RefValue, WriteRecord, WriteVote, WriteVoter},
+    models::{
+        RecoveryView, RefChange, RefValue, WriteRecord, WriteSettings, WriteVote, WriteVoter,
+    },
 };
 use anyhow::{ensure, Context, Result};
 use sqlx::{FromRow, PgConnection, PgPool};
@@ -40,12 +42,22 @@ async fn active_node(conn: &mut PgConnection, node: i64) -> Result<bool> {
     .is_some())
 }
 
+async fn settings(conn: &mut PgConnection) -> Result<WriteSettings> {
+    Ok(sqlx::query_as(
+        "SELECT write_quorum,write_timeout_seconds FROM node_configuration WHERE id=1",
+    )
+    .fetch_optional(conn)
+    .await?
+    .unwrap_or_default())
+}
+
+pub async fn write_settings(pool: &PgPool) -> Result<WriteSettings> {
+    settings(&mut *pool.acquire().await?).await
+}
+
 async fn quorum(conn: &mut PgConnection, repo: i64, term: i64) -> Result<i64> {
-    let setting: String =
-        sqlx::query_scalar("SELECT write_quorum FROM node_configuration WHERE id=1")
-            .fetch_optional(&mut *conn)
-            .await?
-            .unwrap_or_else(|| "majority".to_owned());
+    let settings = settings(conn).await?;
+    let setting = settings.write_quorum.context("write quorum is disabled")?;
     rules::required_votes(&setting, voter_count(conn, repo, term).await?)
 }
 
@@ -165,12 +177,14 @@ pub async fn begin_write(
     let current: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM repository_voters WHERE repository_id=$1 AND node_id=$2 AND term=$3 AND applied_version=$4)")
         .bind(repo).bind(primary).bind(term).bind(control.committed_version).fetch_one(&mut *tx).await?;
     ensure!(current, "primary has not applied committed refs");
-    let required = quorum(&mut tx, repo, term).await?;
+    let settings = settings(&mut tx).await?;
+    let setting = settings.write_quorum.context("write quorum is disabled")?;
+    let required = rules::required_votes(&setting, voter_count(&mut tx, repo, term).await?)?;
     rules::changed_refs(canonical_refs(&mut tx, repo).await?, refs)?;
     let hash = rules::manifest_hash(repo, primary, term, control.committed_version, refs)?;
     sqlx::query("INSERT INTO repository_writes(id,repository_id,term,primary_id,base_version,required_votes,deadline,decision,manifest_hash)
-        VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+INTERVAL '10 seconds','pending',$7)")
-        .bind(id).bind(repo).bind(term).bind(primary).bind(control.committed_version).bind(required).bind(hash).execute(&mut *tx).await?;
+        VALUES($1,$2,$3,$4,$5,$6,clock_timestamp()+($8::bigint * INTERVAL '1 second'),'pending',$7)")
+        .bind(id).bind(repo).bind(term).bind(primary).bind(control.committed_version).bind(required).bind(hash).bind(settings.write_timeout_seconds).execute(&mut *tx).await?;
     for change in refs {
         sqlx::query("INSERT INTO repository_write_refs(write_id,name,kind,old_target,new_target) VALUES($1,$2,$3,$4,$5)")
             .bind(id).bind(&change.name).bind(&change.kind).bind(&change.old_target).bind(&change.new_target).execute(&mut *tx).await?;
@@ -441,11 +455,10 @@ pub async fn switch_write_family(
             return Ok(false);
         }
     }
-    let setting: String =
-        sqlx::query_scalar("SELECT write_quorum FROM node_configuration WHERE id=1")
-            .fetch_optional(&mut *tx)
-            .await?
-            .unwrap_or_else(|| "majority".to_owned());
+    let setting = settings(&mut tx)
+        .await?
+        .write_quorum
+        .context("write quorum is disabled")?;
     rules::required_votes(&setting, voters.len())?;
     for (repo, control) in &controls {
         // Replacing failed voters must not silently lower the denominator.

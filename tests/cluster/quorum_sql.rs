@@ -3,7 +3,7 @@
 use crate::support::native_database as native;
 use chrono::{DateTime, Utc};
 use codeyard::backend::{
-    cluster::NodeKey,
+    cluster::{writes as coordinator, NodeKey},
     db::{
         self,
         cluster::writes,
@@ -812,6 +812,254 @@ async fn input_and_config(pool: &DbPool) {
     );
 }
 
+async fn set_timeout(pool: &DbPool, seconds: i64) -> Result<(), sqlx::Error> {
+    let sql = "UPDATE node_configuration SET write_timeout_seconds=$1 WHERE id=1";
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query(sql).bind(seconds).execute(raw).await?;
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query(sql).bind(seconds).execute(raw).await?;
+        }
+    }
+    Ok(())
+}
+
+async fn opt_in_and_timeout(pool: &DbPool) {
+    assert_eq!(
+        writes::write_settings(pool).await.unwrap().write_quorum,
+        None
+    );
+    db::node_config::upsert_node_configuration(pool, "public", true)
+        .await
+        .unwrap();
+    let settings = writes::write_settings(pool).await.unwrap();
+    assert_eq!(settings.write_quorum, None);
+    assert_eq!(settings.write_timeout_seconds, 10);
+    let f = setup(pool, 2, "2").await;
+    for seconds in [-1, 0, 121, i64::MAX] {
+        assert!(set_timeout(pool, seconds).await.is_err());
+    }
+    set_timeout(pool, 3).await.unwrap();
+    let before = clock(pool).await;
+    let id = begin(pool, &f).await;
+    let after = clock(pool).await;
+    let record = writes::load_write(pool, &id).await.unwrap().unwrap();
+    assert!(record.deadline >= before + chrono::Duration::seconds(3));
+    assert!(record.deadline <= after + chrono::Duration::seconds(3));
+}
+
+async fn coordinator_publication(pool: &DbPool) {
+    let f = setup(pool, 2, "2").await;
+    let id = Uuid::new_v4().to_string();
+    let prepared = coordinator::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
+    assert_eq!(prepared.record().id, id);
+    votes(pool, &f, &id).await;
+    assert!(coordinator::collect_votes(pool, &prepared).await.unwrap());
+    let committed = coordinator::decide(pool, &prepared, true).await.unwrap();
+    assert_eq!(committed.decision, "commit");
+    assert!(coordinator::publish(pool, &committed)
+        .await
+        .unwrap_err()
+        .is::<coordinator::OutcomeUnknown>());
+    assert!(writes::mark_write_applied(pool, f.repo, f.primary, 1, 1)
+        .await
+        .unwrap());
+    assert!(coordinator::publish(pool, &committed)
+        .await
+        .unwrap_err()
+        .is::<coordinator::OutcomeUnknown>());
+    assert!(writes::mark_write_applied(pool, f.repo, f.voters[1], 1, 1)
+        .await
+        .unwrap());
+    coordinator::publish(pool, &committed).await.unwrap();
+    // A later refusal cannot turn a committed decision into a rollback.
+    assert_eq!(
+        coordinator::decide(pool, &prepared, false)
+            .await
+            .unwrap()
+            .decision,
+        "commit"
+    );
+}
+
+async fn coordinator_missing_vote(pool: &DbPool) {
+    let f = setup(pool, 2, "majority").await;
+    set_timeout(pool, 1).await.unwrap();
+    let id = Uuid::new_v4().to_string();
+    let started = std::time::Instant::now();
+    let prepared = coordinator::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
+    assert!(writes::vote_write(pool, &id, f.primary, 1).await.unwrap());
+    assert!(!coordinator::collect_votes(pool, &prepared).await.unwrap());
+    let aborted = coordinator::decide(pool, &prepared, true).await.unwrap();
+    assert_eq!(aborted.decision, "abort");
+    assert!(started.elapsed() < std::time::Duration::from_secs(4));
+    let view = writes::recovery_view(pool, f.repo).await.unwrap();
+    assert_eq!(view.committed_version, 0);
+    assert_eq!(view.refs, initial_refs());
+}
+
+async fn coordinator_admission(pool: &DbPool) {
+    let f = setup(pool, 2, "1").await;
+    assert!(coordinator::begin(
+        pool,
+        f.repo,
+        f.primary,
+        1,
+        &Uuid::new_v4().to_string(),
+        &[change()]
+    )
+    .await
+    .is_err());
+    configure(pool, "2").await.unwrap();
+    assert!(coordinator::begin(
+        pool,
+        f.repo,
+        f.primary,
+        2,
+        &Uuid::new_v4().to_string(),
+        &[change()]
+    )
+    .await
+    .is_err());
+    assert!(coordinator::begin(
+        pool,
+        f.repo,
+        f.voters[1],
+        1,
+        &Uuid::new_v4().to_string(),
+        &[change()]
+    )
+    .await
+    .is_err());
+    assert!(coordinator::recover(pool, f.repo, f.primary, 1)
+        .await
+        .is_err());
+    assert!(writes::switch_write_family(
+        pool,
+        f.repo,
+        f.primary,
+        &[(f.repo, 1)],
+        f.voters[1],
+        &f.voters
+    )
+    .await
+    .unwrap());
+    assert!(coordinator::begin(
+        pool,
+        f.repo,
+        f.primary,
+        1,
+        &Uuid::new_v4().to_string(),
+        &[change()]
+    )
+    .await
+    .is_err());
+    assert!(coordinator::begin(
+        pool,
+        f.repo,
+        f.voters[1],
+        2,
+        &Uuid::new_v4().to_string(),
+        &[change()]
+    )
+    .await
+    .is_err());
+    let view = coordinator::recover(pool, f.repo, f.voters[1], 2)
+        .await
+        .unwrap();
+    assert!(!view.serving);
+    assert_eq!(view.refs, initial_refs());
+}
+
+async fn coordinator_three_voters(pool: &DbPool) {
+    let f = setup(pool, 3, "majority").await;
+    assert!(coordinator::begin(
+        pool,
+        f.repo,
+        f.primary,
+        1,
+        &Uuid::new_v4().to_string(),
+        &[change()]
+    )
+    .await
+    .is_err());
+    assert!(writes::recovery_view(pool, f.repo)
+        .await
+        .unwrap()
+        .unfinished
+        .is_none());
+}
+
+async fn coordinator_duplicate_begin(pool: &DbPool) {
+    let f = setup(pool, 2, "2").await;
+    let id = Uuid::new_v4().to_string();
+    let original = coordinator::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
+    let retried = coordinator::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
+    assert_eq!(original.record(), retried.record());
+    assert!(!coordinator::collect_votes(pool, &retried).await.unwrap());
+    assert_eq!(
+        coordinator::decide(pool, &retried, true)
+            .await
+            .unwrap()
+            .decision,
+        "abort"
+    );
+    assert_eq!(
+        writes::recovery_view(pool, f.repo).await.unwrap().refs,
+        initial_refs()
+    );
+}
+
+async fn coordinator_recovery(pool: &DbPool) {
+    let f = setup(pool, 2, "2").await;
+    let id = Uuid::new_v4().to_string();
+    let prepared = coordinator::begin(pool, f.repo, f.primary, 1, &id, &[change()])
+        .await
+        .unwrap();
+    votes(pool, &f, &id).await;
+    let committed = coordinator::decide(pool, &prepared, true).await.unwrap();
+    assert!(coordinator::publish(pool, &committed).await.is_err());
+    let target = f.voters[1];
+    assert!(writes::switch_write_family(
+        pool,
+        f.repo,
+        f.primary,
+        &[(f.repo, 1)],
+        target,
+        &f.voters
+    )
+    .await
+    .unwrap());
+    let view = coordinator::recover(pool, f.repo, target, 2).await.unwrap();
+    assert_eq!(view.committed_version, 1);
+    assert_eq!(view.unfinished.unwrap().decision, "commit");
+    assert_eq!(
+        view.refs.iter().find(|r| r.name == MAIN).unwrap().target,
+        NEW
+    );
+    assert!(!writes::enable_write_family(pool, &[(f.repo, 2)])
+        .await
+        .unwrap());
+    for voter in &f.voters {
+        assert!(writes::mark_write_applied(pool, f.repo, *voter, 2, 1)
+            .await
+            .unwrap());
+    }
+    assert!(writes::finish_write(pool, &id, 2).await.unwrap());
+    assert!(writes::enable_write_family(pool, &[(f.repo, 2)])
+        .await
+        .unwrap());
+}
+
 macro_rules! engine_pair {
     ($sqlite:ident, $postgres:ident, $contract:ident) => {
         #[tokio::test]
@@ -828,6 +1076,41 @@ macro_rules! engine_pair {
     };
 }
 
+engine_pair!(
+    sqlite_opt_in_and_timeout,
+    postgres_opt_in_and_timeout,
+    opt_in_and_timeout
+);
+engine_pair!(
+    sqlite_coordinator_publication,
+    postgres_coordinator_publication,
+    coordinator_publication
+);
+engine_pair!(
+    sqlite_coordinator_missing_vote,
+    postgres_coordinator_missing_vote,
+    coordinator_missing_vote
+);
+engine_pair!(
+    sqlite_coordinator_admission,
+    postgres_coordinator_admission,
+    coordinator_admission
+);
+engine_pair!(
+    sqlite_coordinator_recovery,
+    postgres_coordinator_recovery,
+    coordinator_recovery
+);
+engine_pair!(
+    sqlite_coordinator_three_voters,
+    postgres_coordinator_three_voters,
+    coordinator_three_voters
+);
+engine_pair!(
+    sqlite_coordinator_duplicate_begin,
+    postgres_coordinator_duplicate_begin,
+    coordinator_duplicate_begin
+);
 engine_pair!(sqlite_two_of_two, postgres_two_of_two, two_voters);
 engine_pair!(sqlite_two_of_three, postgres_two_of_three, three_voters);
 engine_pair!(

@@ -63,8 +63,11 @@ CREATE TABLE node_configuration (
     -- all, and 'all' keeps a copy on every storage node.
     replicas TEXT NOT NULL DEFAULT '1'
         CHECK (replicas = 'all' OR (replicas GLOB '[1-9]*' AND replicas NOT GLOB '*[^0-9]*' AND length(replicas) <= 3)),
-    write_quorum TEXT NOT NULL DEFAULT 'majority'
+    -- NULL leaves the existing asynchronous push path unchanged.
+    write_quorum TEXT DEFAULT NULL
         CHECK (write_quorum = 'majority' OR (write_quorum GLOB '[1-9]*' AND write_quorum NOT GLOB '*[^0-9]*' AND length(write_quorum) <= 3)),
+    write_timeout_seconds INTEGER NOT NULL DEFAULT 10
+        CHECK (typeof(write_timeout_seconds) = 'integer' AND write_timeout_seconds BETWEEN 1 AND 120),
     -- Whether robots.txt and ai.txt block AI training crawlers, and whether HTML pages say so.
     -- Blocked until an administrator allows them.
     ai_crawlers TEXT NOT NULL DEFAULT 'block' CHECK (ai_crawlers IN ('allow', 'block')),

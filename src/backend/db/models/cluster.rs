@@ -152,6 +152,22 @@ impl fmt::Display for ReplicaSetting {
     }
 }
 
+/// Quorum is opt-in. The database clock enforces this preparation deadline.
+#[derive(Debug, Clone, PartialEq, Eq, FromRow)]
+pub struct WriteSettings {
+    pub write_quorum: Option<String>,
+    pub write_timeout_seconds: i64,
+}
+
+impl Default for WriteSettings {
+    fn default() -> Self {
+        Self {
+            write_quorum: None,
+            write_timeout_seconds: 10,
+        }
+    }
+}
+
 /// One canonical Git reference, including symbolic HEAD and retention refs.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, FromRow)]
 pub struct RefValue {
