@@ -296,7 +296,7 @@ impl LocalStore {
             )
             .await
             .map_err(RepoError::from)?;
-        self.import_prepared_objects(pool, repo, prepared.path(), &[target.clone()])
+        self.import_prepared_objects(pool, repo, prepared.path(), std::slice::from_ref(&target))
             .await?;
         let changes = [oid_change(&reference, Some(&old), Some(&target))];
         if !publication

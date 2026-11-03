@@ -93,6 +93,7 @@ impl LocalStore {
         Ok(true)
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) async fn prepare_publications<F>(
         &self,
         pool: &db::DbPool,

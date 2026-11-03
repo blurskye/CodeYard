@@ -345,6 +345,7 @@ pub(crate) fn prepare(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn prepare_object(
     repo: &Repository,
     repository_id: i64,

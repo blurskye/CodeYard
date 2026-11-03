@@ -564,7 +564,6 @@ impl NodeContext {
                 )
                 .await?;
             ensure!(status.success(), "could not prepare publication objects");
-            drop(output);
             drop(pack);
             destination.index_pack(temporary.path(), true).await?;
             Ok::<_, anyhow::Error>(())

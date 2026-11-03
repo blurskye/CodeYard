@@ -2835,8 +2835,13 @@ impl LocalStore {
             .await?;
             access::check_publication_actor(pool, authority, &repository).await?;
         }
-        self.import_prepared_objects(pool, repo_id, prepared_path, &[prepared.commit.sha.clone()])
-            .await?;
+        self.import_prepared_objects(
+            pool,
+            repo_id,
+            prepared_path,
+            std::slice::from_ref(&prepared.commit.sha),
+        )
+        .await?;
         let changes = [oid_change(
             &prepared.reference,
             prepared.expected.as_deref(),
