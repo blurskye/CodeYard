@@ -13,6 +13,7 @@ impl LocalStore {
         mut import: GitImport,
         pack: &[u8],
     ) -> Result<(), RepoError> {
+        self.admitted_path(false).await?;
         // Pull refs are local discussion identities, never source-import metadata.
         import
             .refs
@@ -52,7 +53,6 @@ impl LocalStore {
         publication: &Arc<git::locks::PublicationGuard>,
     ) -> Result<(), RepoError> {
         self.import_authority(pool, repo_id, actor, &import).await?;
-        super::require_legacy_publisher(pool, repo_id).await?;
         // Failed preparations may leave intents, not published user refs. They must not
         // make an otherwise empty repository permanently impossible to import into.
         if self
@@ -220,16 +220,87 @@ impl LocalStore {
         // Finish fallible default-branch preparation before publishing user refs. A failed
         // import remains empty and retryable, even if HEAD already names the future branch.
         if let Some(branch) = branch {
-            self.set_head_target(&format!("refs/heads/{branch}"))
-                .await?;
+            let target = format!("refs/heads/{branch}");
+            let old = self.head_target().await?;
+            let changes = [db::models::RefChange {
+                name: "HEAD".into(),
+                kind: "symbolic".into(),
+                old_target: old,
+                new_target: Some(target.clone()),
+            }];
+            if !publication
+                .scope(self.publish_quorum_refs(
+                    pool,
+                    repo_id,
+                    &changes,
+                    self.import_authority(pool, repo_id, actor, &import),
+                ))
+                .await?
+            {
+                self.set_head_target(&target).await?;
+            }
             db::repositories::records::update_repo_default_branch(pool, repo_id, branch)
                 .await
                 .map_err(|_| RepoError::authority_unavailable())?;
         }
+        self.import_prepared_objects(
+            pool,
+            repo_id,
+            staged.path(),
+            &import.refs.values().cloned().collect::<Vec<_>>(),
+        )
+        .await?;
+        let changes = import
+            .refs
+            .iter()
+            .map(|(name, sha)| oid_change(name, None, Some(sha)))
+            .collect::<Vec<_>>();
+        let quorum = publication
+            .scope(self.publish_quorum_refs(pool, repo_id, &changes, async {
+                self.import_authority(pool, repo_id, actor, &import).await?;
+                for write in &writes {
+                    live_write(
+                        pool,
+                        repo_id,
+                        actor,
+                        Some(*write),
+                        &History::Stored {
+                            repository: staged.path(),
+                        },
+                        self.path(),
+                        self.node_id,
+                    )
+                    .await?;
+                }
+                crate::backend::repositories::releases::immutable::check_current_tag_updates(
+                    pool,
+                    &repository,
+                    &tag_updates,
+                )
+                .await?;
+                if let ImportCredential::Token(token) = &import.credential {
+                    staged
+                        .check_publication_grant(
+                            pool,
+                            repo_id,
+                            actor,
+                            Some(*token),
+                            import
+                                .refs
+                                .values()
+                                .map(|sha| (ZERO_SHA.to_owned(), sha.clone()))
+                                .collect(),
+                            None,
+                        )
+                        .await?;
+                }
+                Ok(())
+            }))
+            .await?;
         // Put refspecs in the isolated repository's config rather than argv: a valid mirror
         // can exceed the host argument-size limit. No tracking refs exist, so the lease
         // requires every imported destination ref to remain absent.
-        if !import.refs.is_empty() {
+        if !quorum && !import.refs.is_empty() {
             use tokio::io::AsyncWriteExt;
             let quote = |value: &str| value.replace('\\', "\\\\").replace('"', "\\\"");
             let destination = std::path::absolute(self.path())

@@ -10,6 +10,64 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 impl NodeContext {
+    /// The caller holds the publication lease and repeats live authority after preparation.
+    pub(crate) async fn publish_ref_changes<F>(
+        &self,
+        repository: Uuid,
+        path: &std::path::Path,
+        repo: i64,
+        term: i64,
+        changes: &[db::models::RefChange],
+        authorize: F,
+    ) -> anyhow::Result<()>
+    where
+        F: std::future::Future<Output = anyhow::Result<()>>,
+    {
+        use crate::backend::cluster::writes as coordinator;
+        use db::cluster::writes as journal;
+        let pool = self.database()?;
+        let limits = super::git_session::WriteLimits::load(pool).await?;
+        let id = Uuid::new_v4().to_string();
+        let write = coordinator::begin(pool, repo, self.node_id, term, &id, changes).await?;
+        let prepared = self
+            .prepare_push_write(repository, path, write.record())
+            .await;
+        let votes = prepared.is_ok()
+            && coordinator::collect_votes(pool, &write)
+                .await
+                .unwrap_or(false);
+        let authorized = if votes {
+            tokio::time::timeout(std::time::Duration::from_secs(5), authorize)
+                .await
+                .is_ok_and(|result| result.is_ok())
+        } else {
+            false
+        };
+        let decided = coordinator::decide(pool, &write, votes && authorized).await?;
+        if decided.decision != "commit" {
+            if self
+                .abort_push_write(repository, path, &decided)
+                .await
+                .is_ok()
+            {
+                journal::finish_write(pool, &decided.id, decided.term).await?;
+            }
+            anyhow::bail!("write quorum unavailable");
+        }
+        // After the SQL decision every failure is an unknown outcome, never a rollback.
+        if super::git_session::apply_refs(path, &decided, limits.timeout)
+            .await
+            .is_err()
+            || self
+                .publish_push_write(repository, path, &decided)
+                .await
+                .is_err()
+        {
+            return Err(coordinator::OutcomeUnknown.into());
+        }
+        Ok(())
+    }
+
     pub(crate) async fn prepare_push_write(
         &self,
         repository: Uuid,

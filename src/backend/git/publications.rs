@@ -54,6 +54,7 @@ pub struct PublicationRecord {
     pub publication: BranchPublication,
 }
 
+#[derive(Clone)]
 pub(crate) struct PublicationUpdate {
     pub reference: String,
     pub old: Option<String>,
@@ -165,7 +166,7 @@ fn matching(
 /// Retain branch history only while its branch exists. Run before preparing a creation,
 /// never between the preparation and publication of a batch. This bounds metadata refs by
 /// the existing/proposed branch count even when users repeatedly delete and reuse names.
-fn remove_absent_branches(repo: &Repository) -> Result<()> {
+fn remove_absent_branches(repo: &Repository, apply: bool) -> Result<Vec<PublicationUpdate>> {
     let mut active = HashSet::new();
     for reference in repo.references_glob("refs/heads/*")? {
         if let Some(name) = reference?.name() {
@@ -176,6 +177,7 @@ fn remove_absent_branches(repo: &Repository) -> Result<()> {
         .references_glob("refs/codeyard/publications/*")?
         .collect::<std::result::Result<Vec<_>, _>>()?;
     let mut deletes = String::from("start\n");
+    let mut changes = Vec::new();
     for reference in candidates {
         let Some(name) = reference.name() else {
             continue;
@@ -193,9 +195,14 @@ fn remove_absent_branches(repo: &Repository) -> Result<()> {
                 .target()
                 .context("Publication ref must be direct")?;
             deletes.push_str(&format!("delete {name} {expected}\n"));
+            changes.push(PublicationUpdate {
+                reference: name.to_owned(),
+                old: Some(expected.to_string()),
+                new: None,
+            });
         }
     }
-    if deletes != "start\n" {
+    if apply && deletes != "start\n" {
         deletes.push_str("prepare\ncommit\n");
         let mut command = super::repository::process::git_command()?;
         command
@@ -213,7 +220,7 @@ fn remove_absent_branches(repo: &Repository) -> Result<()> {
             "Git could not prune obsolete publication refs"
         );
     }
-    Ok(())
+    Ok(changes)
 }
 
 pub(crate) fn read_at(
@@ -231,6 +238,29 @@ pub(crate) fn prepare_at(
     login: &str,
     updates: &[PublicationUpdate],
 ) -> Result<()> {
+    prepare_at_mode(path, repository_id, actor, login, updates, true)?;
+    Ok(())
+}
+
+/// Builds metadata objects without publishing refs; quorum stores journal these changes.
+pub(crate) fn plan_at(
+    path: &Path,
+    repository_id: i64,
+    actor: PublicationActor,
+    login: &str,
+    updates: &[PublicationUpdate],
+) -> Result<Vec<PublicationUpdate>> {
+    prepare_at_mode(path, repository_id, actor, login, updates, false)
+}
+
+fn prepare_at_mode(
+    path: &Path,
+    repository_id: i64,
+    actor: PublicationActor,
+    login: &str,
+    updates: &[PublicationUpdate],
+    apply: bool,
+) -> Result<Vec<PublicationUpdate>> {
     fn oid(text: Option<&str>) -> Result<Option<Oid>> {
         Ok(text
             .map(Oid::from_str)
@@ -248,14 +278,16 @@ pub(crate) fn prepare_at(
             ))
         })
         .collect::<Result<Vec<_>>>()?;
-    if parsed
+    let mut changes = if parsed
         .iter()
         .any(|(_, old, new)| old.is_none() && new.is_some())
     {
-        remove_absent_branches(&repo)?;
-    }
+        remove_absent_branches(&repo, apply)?
+    } else {
+        Vec::new()
+    };
     for (update, old, new) in parsed {
-        prepare(
+        if let Some(change) = prepare_object(
             &repo,
             repository_id,
             actor,
@@ -263,9 +295,14 @@ pub(crate) fn prepare_at(
             &update.reference,
             old,
             new,
-        )?;
+            apply,
+        )? {
+            // A recreated branch replaces the obsolete slot rather than deleting it first.
+            changes.retain(|previous| previous.reference != change.reference);
+            changes.push(change);
+        }
     }
-    Ok(())
+    Ok(changes)
 }
 
 pub(crate) fn read_current(
@@ -285,6 +322,7 @@ pub(crate) fn read_current(
 
 /// The metadata update precedes the branch CAS. It is not proof of a push until its `new`
 /// identity matches the published branch. No-ops neither change the identity nor invent a push.
+#[cfg(test)]
 pub(crate) fn prepare(
     repo: &Repository,
     repository_id: i64,
@@ -294,6 +332,29 @@ pub(crate) fn prepare(
     old: Option<Oid>,
     new: Option<Oid>,
 ) -> Result<()> {
+    prepare_object(
+        repo,
+        repository_id,
+        actor,
+        actor_login,
+        reference,
+        old,
+        new,
+        true,
+    )?;
+    Ok(())
+}
+
+fn prepare_object(
+    repo: &Repository,
+    repository_id: i64,
+    actor: PublicationActor,
+    actor_login: &str,
+    reference: &str,
+    old: Option<Oid>,
+    new: Option<Oid>,
+    apply: bool,
+) -> Result<Option<PublicationUpdate>> {
     checked_reference(reference)?;
     ensure!(
         repository_id > 0 && actor.id() > 0,
@@ -310,7 +371,7 @@ pub(crate) fn prepare(
         super::RefConflict("Branch changed before publication".into())
     );
     if old == new {
-        return Ok(());
+        return Ok(None);
     }
     let name = metadata_ref(reference);
     let old_slot = target(repo, &name)?;
@@ -352,14 +413,20 @@ pub(crate) fn prepare(
         &signature,
         &payload,
     )?;
-    repo.reference_matching(
-        &name,
-        oid,
-        true,
-        old_slot.unwrap_or_else(Oid::zero),
-        "Prepare native branch publication",
-    )?;
-    Ok(())
+    if apply {
+        repo.reference_matching(
+            &name,
+            oid,
+            true,
+            old_slot.unwrap_or_else(Oid::zero),
+            "Prepare native branch publication",
+        )?;
+    }
+    Ok(Some(PublicationUpdate {
+        reference: name,
+        old: old_slot.map(|oid| oid.to_string()),
+        new: Some(oid.to_string()),
+    }))
 }
 
 #[cfg(test)]
@@ -396,6 +463,35 @@ mod tests {
             String::from_utf8_lossy(&output.stderr)
         );
         String::from_utf8(output.stdout).unwrap()
+    }
+
+    #[test]
+    fn planned_publications_do_not_move_refs() {
+        let (root, repo, first, second) = fixture();
+        let reference = "refs/heads/main";
+        repo.reference(reference, first, true, "initial").unwrap();
+        let changes = plan_at(
+            root.path(),
+            1,
+            PublicationActor::User(7),
+            "owner",
+            &[PublicationUpdate {
+                reference: reference.into(),
+                old: Some(first.to_string()),
+                new: Some(second.to_string()),
+            }],
+        )
+        .unwrap();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].reference, metadata_ref(reference));
+        assert_eq!(changes[0].old, None);
+        assert!(repo.find_reference(&changes[0].reference).is_err());
+        assert_eq!(
+            repo.find_reference(reference).unwrap().target(),
+            Some(first)
+        );
+        repo.find_tag(Oid::from_str(changes[0].new.as_deref().unwrap()).unwrap())
+            .unwrap();
     }
 
     #[test]

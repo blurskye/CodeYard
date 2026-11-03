@@ -153,6 +153,7 @@ impl LocalStore {
         input: GistEdit,
     ) -> Result<GistSnapshot, RepoError> {
         input.validate()?;
+        self.admitted_path(false).await?;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -160,7 +161,6 @@ impl LocalStore {
         if repo.owner_user_id != Some(actor) {
             return Err(RepoError::write_denied());
         }
-        super::require_legacy_publisher(pool, id).await?;
         self.finish_pending(pool, id).await?;
         let user = db::users::accounts::get_user_by_id(pool, actor)
             .await
@@ -172,7 +172,7 @@ impl LocalStore {
         let prepared = self
             .blocking(move |path| git::gists::prepare(path, &edit, &user.username, &email))
             .await?;
-        let _change = super::begin_ref_change(pool, id, self.path(), self.node_id).await?;
+        let _change = self.begin_publisher_change(pool, id).await?;
         gists::admit(
             pool,
             actor,
@@ -188,20 +188,35 @@ impl LocalStore {
         )
         .await
         .map_err(failure)?;
+        let changes = [oid_change(
+            "refs/heads/main",
+            prepared.base.as_deref(),
+            Some(&prepared.sha),
+        )];
+        let quorum = publication
+            .scope(self.publish_quorum_refs(pool, id, &changes, async {
+                gists::check_write(pool, actor, &credential.borrowed(), id)
+                    .await
+                    .map_err(failure)?;
+                self.gist_location(pool, id, false).await?;
+                Ok(())
+            }))
+            .await?;
         // Admission is durable and single-use. A lost response is reconciled from the actual ref.
-        if publication
-            .scope(git::publish_ref(
-                self.path(),
-                "update gist",
-                "refs/heads/main",
-                Some(&prepared.sha),
-                prepared
-                    .base
-                    .as_deref()
-                    .unwrap_or("0000000000000000000000000000000000000000"),
-            ))
-            .await
-            .is_err()
+        if !quorum
+            && publication
+                .scope(git::publish_ref(
+                    self.path(),
+                    "update gist",
+                    "refs/heads/main",
+                    Some(&prepared.sha),
+                    prepared
+                        .base
+                        .as_deref()
+                        .unwrap_or("0000000000000000000000000000000000000000"),
+                ))
+                .await
+                .is_err()
         {
             let published = self.refs().await?.get("refs/heads/main") == Some(&prepared.sha);
             if !published {

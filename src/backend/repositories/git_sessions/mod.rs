@@ -274,15 +274,15 @@ impl ReceiveCredential {
     }
 }
 
-pub(crate) struct ReceiveSession<'a> {
+pub struct ReceiveSession<'a> {
     pub repo_id: i64,
     pub path: &'a std::path::Path,
-    /// The application binary that runs as the pre-receive and post-receive hook.
+    /// The application binary that runs the receive and reference-transaction hooks.
     pub executable: std::path::PathBuf,
     pub session: crate::backend::repositories::store::GitSession,
 }
 
-pub(crate) async fn receive_session(
+pub async fn receive_session(
     pool: DbPool,
     ci: Arc<CiRuns>,
     receive: ReceiveSession<'_>,

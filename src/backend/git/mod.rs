@@ -18,8 +18,8 @@ pub use ci::*;
 pub(crate) use comparison::compare_commits;
 pub use comparison::CommitComparison;
 pub(crate) use publications::{
-    prepare_at as prepare_branch_publications, read_at as read_branch_publication,
-    PublicationUpdate,
+    plan_at as plan_branch_publications, prepare_at as prepare_branch_publications,
+    read_at as read_branch_publication, PublicationUpdate,
 };
 pub use publications::{BranchPublication, PublicationActor, PublicationRecord};
 pub(crate) use ref_names::{

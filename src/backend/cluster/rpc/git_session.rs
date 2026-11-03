@@ -291,12 +291,16 @@ fn write_targets(write: &WriteRecord) -> Result<Vec<String>> {
         write
             .changes
             .iter()
-            .all(|change| change.kind == "oid" && change.name != "HEAD"),
-        "push requires oid refs"
+            .all(|change| (change.kind == "oid" && change.name != "HEAD")
+                || (change.kind == "symbolic"
+                    && change.name == "HEAD"
+                    && change.new_target.is_some())),
+        "unsupported write reference kind"
     );
     let mut targets: Vec<_> = write
         .changes
         .iter()
+        .filter(|change| change.kind == "oid")
         .flat_map(|change| change.old_target.iter().chain(change.new_target.iter()))
         .cloned()
         .collect();
@@ -445,6 +449,67 @@ async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits) -> 
     ] {
         tokio::fs::File::open(directory).await?.sync_all().await?;
     }
+    let repository = path.to_owned();
+    let changes = write.changes.clone();
+    let committed = write.decision == "commit";
+    git_process::blocking_until(std::time::Instant::now() + limits.timeout, move || {
+        let repo = git2::Repository::open_bare(repository)?;
+        let mut created = Vec::new();
+        for change in changes {
+            let actual = match repo.find_reference(&change.name) {
+                Ok(reference) => Some(reference_target(&reference, &change.kind)?),
+                Err(error) if error.code() == git2::ErrorCode::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            ensure!(
+                actual == change.old_target || (committed && actual == change.new_target),
+                "voter reference old value mismatch"
+            );
+            if change.kind == "oid" {
+                if let Some(target) = &change.new_target {
+                    if change.name.starts_with("refs/heads/") {
+                        let object = repo.find_object(git2::Oid::from_str(target)?, None)?;
+                        ensure!(
+                            object.kind() == Some(git2::ObjectType::Commit),
+                            "branch target must be a commit"
+                        );
+                    }
+                    if change.old_target.is_none() && actual.is_none() {
+                        let mut parent = change.name.as_str();
+                        while let Some((prefix, _)) = parent.rsplit_once('/') {
+                            parent = prefix;
+                            if !parent.starts_with("refs/") {
+                                break;
+                            }
+                            match repo.find_reference(parent) {
+                                Ok(_) => anyhow::bail!("reference namespace conflict"),
+                                Err(error) if error.code() == git2::ErrorCode::NotFound => {}
+                                Err(error) => return Err(error.into()),
+                            }
+                        }
+                        ensure!(
+                            repo.references_glob(&format!("{}/*", change.name))?
+                                .next()
+                                .is_none(),
+                            "reference namespace conflict"
+                        );
+                        created.push(change.name);
+                    }
+                }
+            }
+        }
+        created.sort();
+        for names in created.windows(2) {
+            ensure!(
+                !names[1]
+                    .strip_prefix(names[0].as_str())
+                    .is_some_and(|tail| tail.starts_with('/')),
+                "reference namespace conflict"
+            );
+        }
+        Ok(())
+    })
+    .await?;
     let pins = pin_names(write)?;
     let mut script = String::from("start\n");
     for (name, target) in &pins {
@@ -472,6 +537,41 @@ async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits) -> 
 }
 
 impl NodeContext {
+    pub(crate) async fn import_write_objects(
+        &self,
+        source: &Path,
+        path: &Path,
+        targets: &[String],
+    ) -> Result<()> {
+        let limits = WriteLimits::load(self.database()?).await?;
+        tokio::time::timeout(limits.timeout, async {
+            let temporary = tempfile::NamedTempFile::new()?;
+            let source =
+                RepoStore::from_disk_path(source.to_str().context("invalid preparation path")?);
+            let destination =
+                RepoStore::from_disk_path(path.to_str().context("invalid repository path")?);
+            let mut pack = tokio::fs::File::create(temporary.path()).await?;
+            let mut output = LimitedWriter::new(&mut pack, limits.pack_bytes);
+            let status = source
+                .replica_pack(
+                    targets,
+                    &[],
+                    GitStreams {
+                        input: &mut tokio::io::empty(),
+                        output: &mut output,
+                        errors: &mut tokio::io::sink(),
+                    },
+                )
+                .await?;
+            ensure!(status.success(), "could not prepare publication objects");
+            drop(output);
+            drop(pack);
+            destination.index_pack(temporary.path(), true).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await?
+    }
+
     async fn current_write(&self, id: &str) -> Result<WriteRecord> {
         journal::validate_id(id)?;
         let pool = self.database()?;
@@ -559,12 +659,7 @@ impl NodeContext {
             let repo = git2::Repository::open_bare(owned_path)?;
             for change in changes {
                 let actual = match repo.find_reference(&change.name) {
-                    Ok(reference) => Some(
-                        reference
-                            .target()
-                            .context("unexpected symbolic ref")?
-                            .to_string(),
-                    ),
+                    Ok(reference) => Some(reference_target(&reference, &change.kind)?),
                     Err(error) if error.code() == git2::ErrorCode::NotFound => None,
                     Err(error) => return Err(error.into()),
                 };
@@ -748,20 +843,29 @@ impl RpcHandler {
     }
 }
 
-async fn apply_refs(path: &Path, write: &WriteRecord, limit: Duration) -> Result<()> {
+fn reference_target(reference: &git2::Reference<'_>, kind: &str) -> Result<String> {
+    if kind == "symbolic" {
+        Ok(reference
+            .symbolic_target()
+            .context("expected symbolic ref")?
+            .to_owned())
+    } else {
+        Ok(reference
+            .target()
+            .context("unexpected symbolic ref")?
+            .to_string())
+    }
+}
+
+pub(super) async fn apply_refs(path: &Path, write: &WriteRecord, limit: Duration) -> Result<()> {
     let owned_path = path.to_owned();
     let changes = write.changes.clone();
     let script = tokio::task::spawn_blocking(move || -> Result<String> {
         let repo = git2::Repository::open_bare(owned_path)?;
-        let mut script = String::from("start\n");
+        let mut script = String::from("start\noption no-deref\n");
         for change in changes {
             let actual = match repo.find_reference(&change.name) {
-                Ok(reference) => Some(
-                    reference
-                        .target()
-                        .context("unexpected symbolic ref")?
-                        .to_string(),
-                ),
+                Ok(reference) => Some(reference_target(&reference, &change.kind)?),
                 Err(error) if error.code() == git2::ErrorCode::NotFound => None,
                 Err(error) => return Err(error.into()),
             };
@@ -772,6 +876,19 @@ async fn apply_refs(path: &Path, write: &WriteRecord, limit: Duration) -> Result
                 actual == change.old_target,
                 "write reference old value mismatch"
             );
+            if change.kind == "symbolic" {
+                // The publication lease excludes other writers, including symbolic HEAD changes.
+                repo.reference_symbolic(
+                    &change.name,
+                    change
+                        .new_target
+                        .as_deref()
+                        .context("symbolic deletion unsupported")?,
+                    true,
+                    "apply committed write",
+                )?;
+                continue;
+            }
             let old = change
                 .old_target
                 .as_deref()

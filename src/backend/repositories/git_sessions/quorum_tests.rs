@@ -93,7 +93,8 @@ async fn prepared_hook_waits_for_a_decision_and_missing_voter_refuses_without_mo
         .unwrap();
     let root = directory.path().join("repos");
     std::fs::create_dir(&root).unwrap();
-    let path = root.join(format!("{}.git", uuid::Uuid::new_v4()));
+    let path = crate::backend::cluster::context::term_path(&root, uuid::Uuid::new_v4(), 1);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     let repository = git2::Repository::init_bare(&path).unwrap();
     let old = commit(&repository, "old");
     let new = commit(&repository, "new");

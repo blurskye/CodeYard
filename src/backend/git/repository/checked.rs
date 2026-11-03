@@ -1171,6 +1171,20 @@ pub(crate) async fn publish_ref_delete(path: &Path, reference: &str, old: &str) 
     publish_ref(path, "delete reference", reference, None, old).await
 }
 
+pub(crate) fn merge_head_ref(head_branch: &str, head: &str) -> Result<String> {
+    if head_branch.starts_with("refs/heads/") || is_pull_head_ref(head_branch) {
+        ensure!(
+            git2::Reference::is_valid_name(head_branch),
+            "Invalid pull ref"
+        );
+        validate_merge_revision("main", head)?;
+        Ok(head_branch.to_owned())
+    } else {
+        validate_merge_revision(head_branch, head)?;
+        crate::backend::git::branch_ref(head_branch).ok_or_else(|| anyhow!("Invalid head branch"))
+    }
+}
+
 /// Moves the base branch to `result` in one transaction, failing if the base or any head moved
 /// since the merge was prepared. Each head is `(head branch or pull ref, commit)`.
 pub(crate) async fn publish_merge(
@@ -1186,18 +1200,7 @@ pub(crate) async fn publish_merge(
         .ok_or_else(|| anyhow!("Invalid base branch"))?;
     let mut input = String::from("start\n");
     for (head_branch, head) in heads {
-        let head_ref = if head_branch.starts_with("refs/heads/") || is_pull_head_ref(head_branch) {
-            ensure!(
-                git2::Reference::is_valid_name(head_branch),
-                "Invalid pull ref"
-            );
-            validate_merge_revision("main", head)?;
-            (*head_branch).to_owned()
-        } else {
-            validate_merge_revision(head_branch, head)?;
-            crate::backend::git::branch_ref(head_branch)
-                .ok_or_else(|| anyhow!("Invalid head branch"))?
-        };
+        let head_ref = merge_head_ref(head_branch, head)?;
         if head_ref == base_ref {
             bail!("Head and base must be distinct branches");
         }

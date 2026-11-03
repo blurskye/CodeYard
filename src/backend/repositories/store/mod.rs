@@ -44,6 +44,7 @@ pub use editor::{
 };
 use error::invalid_ref;
 pub use error::{ErrorKind, RepoError, RepoErrorReason, MERGE_METHOD_NOT_ALLOWED, REPLICA_BUSY};
+pub(crate) use local::begin_coordinated_ref_change;
 pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};
 pub use types::{

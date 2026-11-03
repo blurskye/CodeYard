@@ -417,7 +417,39 @@ impl Gateway {
         let repo = db::repositories::records::get_repository_by_id(&self.pool, operation.repo_id)
             .await?
             .context("repository unavailable")?;
-        let path = self.bare_path(&repo).await?;
+        let committed_term = operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .writes
+            .iter()
+            .find(|write| write.decision == "commit")
+            .map(|write| write.term);
+        let path = if let Some(term) = committed_term {
+            // This admitted child must publish before its voter can be marked current.
+            // It may finish only in its original serving term, never in a successor's path.
+            let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+            let view = db::cluster::writes::recovery_view(&self.pool, repo.id).await?;
+            ensure!(
+                view.serving && view.term == term && view.primary_id == cluster.node_id,
+                "repository term changed"
+            );
+            let node = db::cluster::get_node_by_id(&self.pool, cluster.node_id)
+                .await?
+                .context("storage node unavailable")?;
+            ensure!(
+                node.status == "active"
+                    && node.public_key == cluster.key.public_hex()
+                    && node.roles.iter().any(|role| role == "storage"),
+                "storage node unavailable"
+            );
+            let uuid = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
+            let path = crate::backend::cluster::context::term_path(&cluster.repos_path, uuid, term);
+            crate::backend::cluster::context::literal_directory(&cluster.repos_path, &path).await?;
+            path
+        } else {
+            self.bare_path(&repo).await?
+        };
         ensure!(path == operation.path, "repository location changed");
         Ok((repo, path))
     }
@@ -577,7 +609,7 @@ impl Gateway {
         } else {
             false
         };
-        let ref_change = crate::backend::repositories::store::begin_ref_change(
+        let ref_change = crate::backend::repositories::store::begin_coordinated_ref_change(
             &self.pool,
             repo.id,
             &operation.path,
@@ -589,7 +621,12 @@ impl Gateway {
             (operation.clone(), path.clone(), updates.to_vec());
         let admitted_quarantine = quarantine.clone();
         let held = publication.clone();
-        tokio::task::spawn_blocking(move || {
+        let quorum = operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .quorum;
+        let publications = tokio::task::spawn_blocking(move || {
             let _held = held;
             if check_workflows {
                 crate::backend::git::oauth::check_workflows(
@@ -636,15 +673,67 @@ impl Gateway {
                     crate::backend::git::PublicationActor::User(admitted.actor_id)
                 }
             };
-            crate::backend::git::prepare_branch_publications(
-                &admitted_path,
-                repo.id,
-                actor,
-                &identity.username,
-                &publications,
-            )
+            if quorum {
+                crate::backend::git::plan_branch_publications(
+                    &admitted_path,
+                    repo.id,
+                    actor,
+                    &identity.username,
+                    &publications,
+                )
+            } else {
+                crate::backend::git::prepare_branch_publications(
+                    &admitted_path,
+                    repo.id,
+                    actor,
+                    &identity.username,
+                    &publications,
+                )?;
+                Ok(Vec::new())
+            }
         })
         .await??;
+        if !publications.is_empty() {
+            let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+            let uuid = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
+            let term = db::cluster::writes::recovery_view(&self.pool, repo.id)
+                .await?
+                .term;
+            let changes = publications
+                .into_iter()
+                .map(|change| db::models::RefChange {
+                    name: change.reference,
+                    kind: "oid".into(),
+                    old_target: change.old,
+                    new_target: change.new,
+                })
+                .collect::<Vec<_>>();
+            let result = publication
+                .scope(
+                    cluster.publish_ref_changes(uuid, &path, repo.id, term, &changes, async {
+                        let (repo, _) = self.operation_repository(operation).await?;
+                        let (actor, _) = operation
+                            .credential
+                            .authorize(&self.pool, &repo, true)
+                            .await?;
+                        ensure!(actor.id == operation.actor_id, "identity changed");
+                        self.check_publication_branches(&repo, &actor, updates, &history, via)
+                            .await?;
+                        Ok(())
+                    }),
+                )
+                .await;
+            if let Err(error) = result {
+                if error.is::<crate::backend::cluster::writes::OutcomeUnknown>() {
+                    operation
+                        .state
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .quorum_unknown = true;
+                }
+                return Err(error);
+            }
+        }
         // An intent written before a slow batch is not authority to publish after revocation.
         let (current, _) = self.operation_repository(operation).await?;
         let (identity, _) = operation
@@ -1115,10 +1204,25 @@ impl Gateway {
         // HEAD selection and its database default must belong to the same push, so only those
         // steps hold the repository lock. The storage walk below runs after it is released.
         {
-            let _lock = crate::backend::git::locks::lock(&path).await;
+            let quorum = operation
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+                .quorum;
+            let publication = if quorum {
+                Some(crate::backend::git::locks::publication(&path).await?)
+            } else {
+                None
+            };
+            let _lock = if quorum {
+                None
+            } else {
+                Some(crate::backend::git::locks::lock(&path).await)
+            };
             let head_path = path.clone();
-            let branch = tokio::task::spawn_blocking(move || {
-                let _operation = operation;
+            let held = operation.clone();
+            let (branch, head_change) = tokio::task::spawn_blocking(move || {
+                let _operation = held;
                 let repository = git2::Repository::open_bare(&head_path)?;
                 let head = repository.find_reference("HEAD")?;
                 let mut branch = head
@@ -1126,18 +1230,51 @@ impl Gateway {
                     .and_then(|name| name.strip_prefix("refs/heads/"))
                     .map(str::to_owned)
                     .unwrap_or(fallback);
+                let mut head_change = None;
                 // A first push can create only a branch other than the initial HEAD. Git
                 // leaves HEAD unborn, so the first pushed branch becomes the default.
                 if repository.head().is_err() {
                     if let Some(first) = reads::preferred_branch(created.iter().map(String::as_str))
                     {
-                        repository.set_head(&format!("refs/heads/{first}"))?;
+                        let target = format!("refs/heads/{first}");
+                        if quorum {
+                            head_change = Some(db::models::RefChange {
+                                name: "HEAD".into(),
+                                kind: "symbolic".into(),
+                                old_target: head.symbolic_target().map(str::to_owned),
+                                new_target: Some(target),
+                            });
+                        } else {
+                            repository.set_head(&target)?;
+                        }
                         branch = first.to_owned();
                     }
                 }
-                Ok::<_, anyhow::Error>(branch)
+                Ok::<_, anyhow::Error>((branch, head_change))
             })
             .await??;
+            if let Some(change) =
+                head_change.filter(|change| change.old_target != change.new_target)
+            {
+                let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+                let view = db::cluster::writes::recovery_view(&self.pool, repo.id).await?;
+                let uuid = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
+                publication
+                    .as_ref()
+                    .context("publication lease missing")?
+                    .scope(cluster.publish_ref_changes(
+                        uuid,
+                        &path,
+                        repo.id,
+                        view.term,
+                        &[change],
+                        async {
+                            self.operation_repository(&operation).await?;
+                            Ok(())
+                        },
+                    ))
+                    .await?;
+            }
             db::repositories::records::update_repo_default_branch(&self.pool, repo.id, &branch)
                 .await?;
         }

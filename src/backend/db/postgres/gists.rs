@@ -259,6 +259,20 @@ pub async fn admit(
     tx.commit().await?;
     Ok(())
 }
+pub async fn check_write(
+    pool: &PgPool,
+    actor: i64,
+    credential: &AccountCredential<'_>,
+    repo: i64,
+) -> Result<Repository> {
+    let mut tx = pool.begin().await?;
+    lock_accounts(&mut tx, actor, repo).await?;
+    super::users::transitions::require_account(&mut tx, actor, credential).await?;
+    let repository = authority(&mut tx, actor, repo, true, false).await?;
+    tx.commit().await?;
+    Ok(repository)
+}
+
 pub async fn pending(pool: &PgPool, repo: i64) -> Result<Option<PendingWrite>> {
     Ok(sqlx::query_as("SELECT pending_sha AS sha,pending_base AS base,pending_storage_node_id AS storage_node_id FROM gists WHERE repo_id=$1 AND pending_sha IS NOT NULL").bind(repo).fetch_optional(pool).await?)
 }

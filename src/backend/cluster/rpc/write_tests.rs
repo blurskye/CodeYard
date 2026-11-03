@@ -109,6 +109,44 @@ async fn prepared_objects_are_pinned_without_publishing_and_apply_uses_old_value
 }
 
 #[tokio::test]
+async fn a_non_commit_branch_target_cannot_receive_a_durable_vote() {
+    let primary = tempfile::tempdir().unwrap();
+    let follower = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init_bare(primary.path()).unwrap();
+    let target = repo.treebuilder(None).unwrap().write().unwrap().to_string();
+    let record = write(&target);
+    git2::Repository::init_bare(follower.path()).unwrap();
+    let preparation = preparation_path(follower.path(), &record).unwrap();
+    tokio::fs::create_dir_all(&preparation).await.unwrap();
+    let mut pack = tokio::fs::File::create(preparation.join("objects.pack"))
+        .await
+        .unwrap();
+    let status = RepoStore::from_disk_path(primary.path().to_str().unwrap())
+        .replica_pack(
+            &[target],
+            &[],
+            GitStreams {
+                input: &mut tokio::io::empty(),
+                output: &mut pack,
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(status.success());
+    pack.sync_all().await.unwrap();
+    assert!(retain_write(follower.path(), &record, limits())
+        .await
+        .is_err());
+    assert!(!preparation.join("manifest.json").exists());
+    let repo = git2::Repository::open_bare(follower.path()).unwrap();
+    assert!(repo.find_reference("refs/heads/main").is_err());
+    for (name, _) in pin_names(&record).unwrap() {
+        assert!(repo.find_reference(&name).is_err());
+    }
+}
+
+#[tokio::test]
 async fn truncated_preparation_cannot_pin_or_publish_refs() {
     let root = tempfile::tempdir().unwrap();
     let repo = git2::Repository::init_bare(root.path()).unwrap();
