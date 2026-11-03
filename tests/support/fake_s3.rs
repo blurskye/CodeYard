@@ -6,7 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
     Router,
 };
-use codeyard::backend::storage::s3::S3Config;
+use codeyard::backend::{db, storage::s3::S3Config};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -21,6 +21,24 @@ pub struct FakeS3 {
 }
 
 impl FakeS3 {
+    pub async fn for_database(pool: &db::DbPool) -> Option<Self> {
+        if db::cluster::cluster_enabled(pool).await.unwrap() {
+            Some(Self::start().await)
+        } else {
+            None
+        }
+    }
+
+    pub fn environment(&self) -> [(&'static str, &str); 5] {
+        [
+            ("S3_ENDPOINT", &self.config.endpoint),
+            ("S3_PUBLIC_ENDPOINT", self.config.get_public_endpoint()),
+            ("S3_ACCESS_KEY", &self.config.access_key),
+            ("S3_SECRET_KEY", &self.config.secret_key),
+            ("S3_BUCKET", &self.config.bucket),
+        ]
+    }
+
     pub async fn start() -> Self {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();

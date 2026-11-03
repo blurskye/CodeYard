@@ -1,5 +1,6 @@
 //! Built-in SSH and HTTP test servers and the Git and API calls they take in tests.
 
+use super::fake_s3::FakeS3;
 use super::native_database as native;
 use super::server::spawn_on_free_ports;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -19,6 +20,7 @@ pub struct Server {
     pub ssh_port: u16,
     pub log: PathBuf,
     pub node_id: i64,
+    _s3: Option<FakeS3>,
 }
 impl Drop for Server {
     fn drop(&mut self) {
@@ -49,6 +51,7 @@ impl Server {
         let log = root.join("server.log");
         let key = NodeKey::generate();
         let client = Client::new();
+        let s3 = FakeS3::for_database(&database.pool).await;
         let (child, addresses) = spawn_on_free_ports(
             &log,
             2,
@@ -86,6 +89,9 @@ impl Server {
                     })
                     .args(["--http-addr", &http, "--ssh-addr", &ssh])
                     .current_dir(root);
+                if let Some(s3) = &s3 {
+                    command.envs(s3.environment());
+                }
                 command
             },
             |addresses| {
@@ -115,6 +121,7 @@ impl Server {
             ssh_port: addresses[1].port(),
             log,
             node_id: node.id,
+            _s3: s3,
         }
     }
 }
