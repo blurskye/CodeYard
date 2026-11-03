@@ -29,6 +29,7 @@ mod environment_limits;
 mod environment_values;
 mod gh_apps;
 mod github_tokens;
+mod log_chunks;
 mod oidc;
 mod organization_values;
 mod push_events;

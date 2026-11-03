@@ -19,6 +19,13 @@ pub(crate) struct Chunk {
     pub created_at: DateTime<Utc>,
 }
 
+pub(crate) fn batch_job(lines: &[LogLine]) -> Option<i64> {
+    lines
+        .first()
+        .and_then(|line| line.job_id)
+        .filter(|job| lines.iter().all(|line| line.job_id == Some(*job)))
+}
+
 pub(crate) fn request_hash(lines: &[LogLine]) -> Result<String> {
     Ok(hex::encode(Sha256::digest(serde_json::to_vec(lines)?)))
 }
@@ -73,8 +80,9 @@ impl LogRange {
     pub(crate) fn extend(&mut self, chunks: Vec<Chunk>) -> Result<()> {
         for chunk in chunks {
             let first = chunk.first_line;
-            let last = first + chunk.line_count - 1;
+            let count = chunk.line_count;
             let mut decoded = chunk.decode()?;
+            let last = first + count - 1;
             if self.reverse {
                 decoded.reverse();
             }
@@ -103,7 +111,7 @@ impl LogRange {
 impl Chunk {
     pub(crate) fn decode(self) -> Result<Vec<CiLogLine>> {
         ensure!(
-            self.first_line > 0
+            (1..=100_000).contains(&self.first_line)
                 && (1..=64).contains(&self.line_count)
                 && self.first_line + self.line_count <= 100_001
                 && self.data.len() <= MAX_ENCODED_BYTES,
@@ -124,7 +132,7 @@ impl Chunk {
         );
         let lines = crate::backend::ci::queue::prepare_logs(&lines)?;
         ensure!(
-            lines.iter().all(|line| line.job_id == self.job_id)
+            batch_job(&lines) == self.job_id
                 && lines
                     .iter()
                     .map(|line| (line.stage.len() + line.line.len()) as i64)

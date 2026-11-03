@@ -674,6 +674,7 @@ async fn test_ci_queue_claim_heartbeat_finish_cancel_and_stale() {
         &pool,
         run.id,
         "node-a/1",
+        0,
         &[
             codeyard::backend::ci::queue::LogLine {
                 stage: "ci.yml".into(),

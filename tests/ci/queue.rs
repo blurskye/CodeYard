@@ -1574,8 +1574,8 @@ async fn actions_models_bound_current_logs_and_keep_refreshing_status(db: &Datab
                 ..Default::default()
             })
             .collect();
-        for batch in lines.chunks(16) {
-            db::ci::append_ci_logs(db.pool(), run.id, WORKER, batch)
+        for (sequence, batch) in lines.chunks(16).enumerate() {
+            db::ci::append_ci_logs(db.pool(), run.id, WORKER, sequence as i64, batch)
                 .await
                 .unwrap();
         }
@@ -2147,7 +2147,7 @@ async fn log_batches_preserve_line_order_and_totals(db: &Database) {
             ..Default::default()
         })
         .collect();
-    db::ci::append_ci_logs(db.pool(), run.id, WORKER, &lines)
+    db::ci::append_ci_logs(db.pool(), run.id, WORKER, 0, &lines)
         .await
         .unwrap();
     let stored = db::ci::list_ci_logs(db.pool(), run.id, 100).await.unwrap();

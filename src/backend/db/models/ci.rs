@@ -190,7 +190,7 @@ mod tests {
     }
 }
 
-#[derive(Debug, Clone, FromRow, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CiLogLine {
     pub id: i64,
     pub run_id: i64,

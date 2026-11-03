@@ -41,7 +41,6 @@ pub struct Grant {
     pub max_log_id: i64,
     pub manifest: Json<Manifest>,
 }
-#[derive(sqlx::FromRow)]
 pub struct Line {
     pub id: i64,
     pub job_id: Option<i64>,

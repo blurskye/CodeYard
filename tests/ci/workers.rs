@@ -882,7 +882,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     assert_eq!(foreign.heartbeat("slot-1", queued.id).await.unwrap(), None);
     assert_eq!(remote.heartbeat("slot-2", queued.id).await.unwrap(), None);
     assert!(foreign
-        .logs("slot-1", queued.id, &[line("foreign")])
+        .logs("slot-1", queued.id, 0, &[line("foreign")])
         .await
         .is_err());
     assert!(!foreign
@@ -897,6 +897,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         .logs(
             "slot-1",
             queued.id,
+            0,
             &[line("first"), line("binary\0output"), line("second")],
         )
         .await
@@ -917,7 +918,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
     ] {
         let reply = stream_request(
             &connection,
-            json!({"worker":"slot-1", "operation":{"Logs":{"id":queued.id,"lines":lines}}}),
+            json!({"worker":"slot-1", "operation":{"Logs":{"id":queued.id,"sequence":1,"lines":lines}}}),
         )
         .await;
         assert!(reply["result"].get("Err").is_some(), "{reply}");
@@ -933,7 +934,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         Some(true)
     );
     remote
-        .logs("slot-1", queued.id, &[line("stopping")])
+        .logs("slot-1", queued.id, 1, &[line("stopping")])
         .await
         .unwrap();
     assert!(remote
@@ -969,7 +970,7 @@ async fn database_free_worker_claims_runs_and_core_enforces_membership_and_owner
         ["first", "binary?output", "second", "stopping"]
     );
     assert!(remote
-        .logs("slot-1", queued.id, &[line("after finish")])
+        .logs("slot-1", queued.id, 2, &[line("after finish")])
         .await
         .is_err());
 
@@ -1359,7 +1360,7 @@ async fn ci_repository_claim_checks_match_on_postgres_and_sqlite() {
                 .unwrap(),
             Some(true)
         );
-        db::ci::append_ci_logs(pool, run.id, &worker, &[line("stopping")])
+        db::ci::append_ci_logs(pool, run.id, &worker, 0, &[line("stopping")])
             .await
             .unwrap();
         db::ci::finish_ci_run(pool, run.id, &worker, "cancelled", None)
@@ -1489,12 +1490,12 @@ async fn sqlite_log_batches_check_ownership_and_bounds() {
     .unwrap()
     .unwrap();
     assert!(
-        db::ci::append_ci_logs(&database.pool, run.id, "other", &[line("not mine")])
+        db::ci::append_ci_logs(&database.pool, run.id, "other", 0, &[line("not mine")])
             .await
             .is_err()
     );
     assert!(
-        db::ci::append_ci_logs(&database.pool, run.id, "worker", &vec![line("x"); 65])
+        db::ci::append_ci_logs(&database.pool, run.id, "worker", 0, &vec![line("x"); 65])
             .await
             .is_err()
     );
@@ -1502,6 +1503,7 @@ async fn sqlite_log_batches_check_ownership_and_bounds() {
         &database.pool,
         run.id,
         "worker",
+        0,
         &[line("one"), line("two")],
     )
     .await
@@ -3476,6 +3478,7 @@ async fn binary_logs_are_printable_and_counted_before_limits_on_both_engines() {
             pool,
             run.id,
             "worker",
+            0,
             &[
                 line("before"),
                 LogLine {
@@ -3527,7 +3530,7 @@ async fn binary_logs_are_printable_and_counted_before_limits_on_both_engines() {
             }],
             vec![line(&"\0".repeat(16 * 1024)); 17],
         ] {
-            assert!(db::ci::append_ci_logs(pool, run.id, "worker", &batch)
+            assert!(db::ci::append_ci_logs(pool, run.id, "worker", 1, &batch)
                 .await
                 .is_err());
         }
@@ -3546,6 +3549,7 @@ async fn binary_logs_are_printable_and_counted_before_limits_on_both_engines() {
             .logs(
                 "worker",
                 run.id,
+                1,
                 &[
                     line("neighbor before"),
                     line(&"\0".repeat(4096)),
@@ -3614,7 +3618,7 @@ async fn control_byte_batches_are_accepted_whole_on_both_engines() {
         // Stored as `?`, the batch stays far below the 256 KiB limit, so it is accepted whole.
         let mut batch: Vec<LogLine> = (0..16).map(|_| line(&"\u{1}".repeat(4096))).collect();
         batch.push(line("neighbor"));
-        queue.logs("worker", run.id, &batch).await.unwrap();
+        queue.logs("worker", run.id, 0, &batch).await.unwrap();
         let stored = db::ci::list_ci_logs(pool, run.id, 100).await.unwrap();
         assert_eq!(
             stored.len(),
@@ -3681,6 +3685,7 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
             pool,
             run.id,
             "worker",
+            0,
             &[line("kept"), line("dropped"), line("dropped too")],
         )
         .await
@@ -3691,7 +3696,7 @@ async fn log_totals_close_a_run_at_its_limit_with_one_truncation_line() {
         assert_eq!(stored[1].level, "warn");
 
         assert!(
-            !db::ci::append_ci_logs(pool, run.id, "worker", &[line("after the limit")])
+            !db::ci::append_ci_logs(pool, run.id, "worker", 1, &[line("after the limit")])
                 .await
                 .unwrap()
         );
@@ -4907,7 +4912,7 @@ async fn successful_core_is_tried_first_for_subsequent_log_batches() {
     assert_eq!(attempts.load(Ordering::SeqCst), 1);
     tokio::time::timeout(
         Duration::from_secs(1),
-        queue.logs("slot", run.id, &[line("after failover")]),
+        queue.logs("slot", run.id, 0, &[line("after failover")]),
     )
     .await
     .unwrap()
@@ -4997,7 +5002,7 @@ async fn shutdown_cancels_a_run_while_its_heartbeat_is_stalled() {
 }
 
 #[tokio::test]
-async fn a_lost_log_reply_does_not_replay_a_committed_batch_on_the_next_core() {
+async fn a_lost_log_reply_replays_without_duplicating_a_committed_batch_on_the_next_core() {
     let fixture = ci_fixture().await;
     let run = fixture.queue_run().await;
     fixture
@@ -5042,7 +5047,14 @@ async fn a_lost_log_reply_does_not_replay_a_committed_batch_on_the_next_core() {
             fixture.peer.clone(),
         ],
     };
-    assert!(queue.logs("slot", run.id, &[line("once")]).await.is_err());
+    assert!(queue
+        .logs("slot", run.id, 0, &[line("once")])
+        .await
+        .unwrap());
+    assert!(queue
+        .logs("slot", run.id, 0, &[line("once")])
+        .await
+        .unwrap());
     received.recv().await.unwrap();
     let stored = db::ci::list_ci_logs(fixture.pool(), run.id, 100)
         .await
@@ -5154,7 +5166,7 @@ async fn stalled_database_logs_do_not_block_timed_out_container_cleanup() {
 
 #[tokio::test]
 #[ignore = "needs a writable delegated cgroup v2 for local CI runs (CI_PROCESS_CGROUP_ROOT)"]
-async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
+async fn stalled_remote_logs_fail_success_and_do_not_delay_timeout_or_cancellation() {
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
@@ -5197,7 +5209,7 @@ async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
         std::fs::write(
             &runner,
             if outcome != "success" {
-                "#!/bin/sh\nyes output\n"
+                "#!/bin/sh\necho output\nsleep 60\n"
             } else {
                 "#!/bin/sh\ni=0; while test $i -lt 10000; do echo output; i=$((i+1)); done\n"
             },
@@ -5227,7 +5239,8 @@ async fn stalled_remote_logs_do_not_delay_success_timeout_or_cancellation() {
                         .unwrap();
                     if current.completed_at.is_some() {
                         if outcome == "success" {
-                            assert_eq!(current.status, "success", "{:?}", current.error_message);
+                            assert_eq!(current.status, "failed");
+                            assert_eq!(current.error_message.as_deref(), Some("CI could not run"));
                         } else {
                             assert_eq!(current.status, "failed");
                             assert_eq!(

@@ -354,17 +354,21 @@ async fn execute(
                     // The cause may hold paths or credentials, so only the server log gets it.
                     warn!(error = %format!("{error:#}"), run = %run.run_id, "CI could not run");
                     let message = "CI could not run".to_owned();
-                    let _ = send_log_lines(
-                        service,
-                        worker,
-                        run,
-                        &mut log_sequence,
-                        &[LogLine {
-                            stage: "setup".into(),
-                            line: message.clone(),
-                            level: "error".into(),
-                            ..Default::default()
-                        }],
+                    // Failure reporting must not hold up cleanup when log storage failed.
+                    let _ = tokio::time::timeout(
+                        LOG_FLUSH_GRACE,
+                        send_log_lines(
+                            service,
+                            worker,
+                            run,
+                            &mut log_sequence,
+                            &[LogLine {
+                                stage: "setup".into(),
+                                line: message.clone(),
+                                level: "error".into(),
+                                ..Default::default()
+                            }],
+                        ),
                     )
                     .await;
                     ("failed", Some(message))
@@ -622,8 +626,11 @@ async fn run_workflows(
         ensure!(!remaining.is_zero(), Stopped::TimedOut);
         let stage = workflow.to_owned();
         let (lines_tx, lines_rx) = mpsc::channel(LOG_QUEUE_LINES);
+        let (output_ended, output_end) = oneshot::channel::<()>();
         let remote = matches!(&service.queue, RunQueue::Remote { .. });
         let running = async {
+            // Every exit releases the final-flush wait, including output callback errors.
+            let _output_ended = output_ended;
             let admitting = async {
                 match &concurrency_dir {
                     Some(directory) => {
@@ -783,8 +790,17 @@ async fn run_workflows(
             drop(lines_tx);
             status
         };
-        // Cancellation stops the process, not its log drain. A failed flush fails the run.
-        let sending = send_log_batches(service, worker, run, lines_rx, &mut log_open, log_sequence);
+        let sending = async {
+            let batches =
+                send_log_batches(service, worker, run, lines_rx, &mut log_open, log_sequence);
+            tokio::pin!(batches);
+            tokio::select! {
+                sent = &mut batches => sent,
+                _ = output_end => tokio::time::timeout(LOG_FLUSH_GRACE, &mut batches).await.context("CI final log flush timed out")?,
+                _ = process::cancelled(cancel.clone()) => Err(Stopped::Cancelled.into()),
+                _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => Err(Stopped::TimedOut.into()),
+            }
+        };
         let (status, sent) = tokio::join!(running, sending);
         sent?;
         let status = status?;
@@ -1672,6 +1688,7 @@ async fn remove_resource(
     Ok(())
 }
 
+#[derive(Debug)]
 enum LogMessage {
     Line(LogLine),
     Flush(oneshot::Sender<()>),
@@ -2385,6 +2402,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn final_log_flush_acknowledges_only_stored_output() {
+        let root = tempfile::tempdir().unwrap();
+        let (service, run) = queued_fixture(root.path()).await;
+        let RunQueue::Database { pool, .. } = &service.queue else {
+            unreachable!()
+        };
+        let (tx, rx) = mpsc::channel(64);
+        let producing = async {
+            enqueue_log_line(
+                &tx,
+                LogLine {
+                    stage: "ci".into(),
+                    line: "last output".into(),
+                    level: "info".into(),
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .unwrap();
+            flush_log_lines(&tx).await.unwrap();
+            let stored = db::ci::list_ci_logs(pool, run.id, 100).await.unwrap();
+            assert_eq!(stored.len(), 1);
+            assert_eq!(stored[0].line, "last output");
+            db::ci::finish_ci_run(pool, run.id, "worker", "success", None)
+                .await
+                .unwrap()
+                .unwrap();
+            drop(tx);
+        };
+        let mut open = true;
+        let mut sequence = 0;
+        let (_, sent) = tokio::join!(
+            producing,
+            send_log_batches(&service, "worker", &run, rx, &mut open, &mut sequence)
+        );
+        sent.unwrap();
+        assert_eq!(sequence, 1);
+        pool.close().await;
+    }
+
+    #[tokio::test]
     async fn closed_logs_drain_output_without_sending_more_batches() {
         let root = tempfile::tempdir().unwrap();
         let (service, run) = queued_fixture(root.path()).await;
@@ -2403,12 +2462,12 @@ mod tests {
         let (tx, rx) = mpsc::channel(256);
         let producing = async {
             for _ in 0..64 {
-                tx.send(LogLine {
+                tx.send(LogMessage::Line(LogLine {
                     stage: "ci".into(),
                     line: "output".into(),
                     level: "info".into(),
                     ..Default::default()
-                })
+                }))
                 .await
                 .unwrap();
             }
@@ -2429,22 +2488,23 @@ mod tests {
                 .unwrap();
             // Any later ingestion would now fail ownership validation.
             for _ in 0..128 {
-                tx.send(LogLine {
+                tx.send(LogMessage::Line(LogLine {
                     stage: "ci".into(),
                     line: "discarded".into(),
                     level: "info".into(),
                     ..Default::default()
-                })
+                }))
                 .await
                 .unwrap();
             }
             drop(tx);
         };
         let mut open = true;
+        let mut sequence = 0;
         let (_, sent) = tokio::time::timeout(Duration::from_secs(10), async {
             tokio::join!(
                 producing,
-                send_log_batches(&service, "worker", &run, rx, &mut open)
+                send_log_batches(&service, "worker", &run, rx, &mut open, &mut sequence)
             )
         })
         .await
@@ -3165,7 +3225,7 @@ jobs:
     }
 
     #[tokio::test]
-    async fn stalled_remote_log_buffer_drops_overflow_without_repeated_waits() {
+    async fn stalled_remote_log_buffer_fails_instead_of_dropping_output() {
         let (sender, mut receiver) = mpsc::channel(1);
         let line = || LogLine {
             stage: "ci".into(),
@@ -3173,25 +3233,15 @@ jobs:
             level: "info".into(),
             ..Default::default()
         };
-        let stalled = AtomicBool::new(false);
-        enqueue_log_line(&sender, line(), true, &stalled)
-            .await
-            .unwrap();
-        enqueue_log_line(&sender, line(), true, &stalled)
-            .await
-            .unwrap();
-        assert!(stalled.load(Ordering::Relaxed));
-        tokio::time::timeout(Duration::from_millis(100), async {
-            for _ in 0..1000 {
-                enqueue_log_line(&sender, line(), true, &stalled)
-                    .await
-                    .unwrap();
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(receiver.recv().await.unwrap().line, "output");
+        enqueue_log_line(&sender, line(), true).await.unwrap();
+        assert!(enqueue_log_line(&sender, line(), true).await.is_err());
+        let LogMessage::Line(stored) = receiver.recv().await.unwrap() else {
+            panic!("expected output")
+        };
+        assert_eq!(stored.line, "output");
         assert!(receiver.try_recv().is_err());
+        drop(receiver);
+        assert!(enqueue_log_line(&sender, line(), true).await.is_err());
     }
 
     #[tokio::test]

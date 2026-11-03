@@ -130,7 +130,7 @@ pub(super) async fn contract(
         &serde_json::from_slice::<Value>(&body).unwrap(),
     );
     assert_eq!(
-        f.scalar("SELECT COUNT(*) FROM ci_logs WHERE run_id=$1", &[run])
+        f.scalar("SELECT COUNT(*) FROM ci_log_chunks WHERE run_id=$1", &[run])
             .await,
         0
     );

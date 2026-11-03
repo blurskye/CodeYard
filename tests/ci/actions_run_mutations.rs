@@ -168,6 +168,7 @@ async fn contract(pg: bool) {
         f.pool(),
         target.id,
         "test",
+        0,
         &[LogLine {
             stage: "ci".into(),
             line: "saved output".into(),

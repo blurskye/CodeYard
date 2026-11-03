@@ -838,7 +838,6 @@ CREATE TABLE ci_log_chunks (
     run_id INTEGER NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
     job_id INTEGER REFERENCES actions_jobs(id) ON DELETE CASCADE,
     sequence INTEGER NOT NULL CHECK (sequence >= 0),
-    upload_sequence INTEGER NOT NULL CHECK (upload_sequence >= 0),
     request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
     first_line INTEGER NOT NULL CHECK (first_line > 0),
     line_count INTEGER NOT NULL CHECK (line_count BETWEEN 1 AND 64),
@@ -1924,7 +1923,6 @@ CREATE TABLE actions_job_states (
     state TEXT NOT NULL CHECK(json_valid(state)),
     PRIMARY KEY(run_id,generation,workflow_path)
 );
-CREATE INDEX ci_log_chunks_upload ON ci_log_chunks(run_id, upload_sequence);
 
 CREATE TABLE actions_log_downloads (
     token_hash TEXT PRIMARY KEY,

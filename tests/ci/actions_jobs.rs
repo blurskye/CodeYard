@@ -192,6 +192,7 @@ async fn contract(pg: bool) {
         f.pool(),
         run.id,
         "jobs",
+        0,
         &[LogLine {
             stage: workflow.into(),
             line: "observed output".into(),
@@ -206,6 +207,7 @@ async fn contract(pg: bool) {
         f.pool(),
         run.id,
         "jobs",
+        1,
         &[LogLine {
             stage: workflow.into(),
             line: "wrong step".into(),
@@ -220,6 +222,7 @@ async fn contract(pg: bool) {
         f.pool(),
         run.id,
         "jobs",
+        1,
         &[LogLine {
             stage: workflow.into(),
             line: "wrong job".into(),
@@ -507,8 +510,11 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        f.scalar("SELECT COUNT(*) FROM ci_logs WHERE run_id=$1", &[run.id])
-            .await,
+        f.scalar(
+            "SELECT COUNT(*) FROM ci_log_chunks WHERE run_id=$1",
+            &[run.id]
+        )
+        .await,
         1
     );
     super::actions_logs::contract(&f, &api, base, run.id, job, &reader, &writer).await;
