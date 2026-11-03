@@ -344,11 +344,14 @@ async fn contract(pg: bool) {
             .await;
             assert_eq!(attempt, jobs);
             assert_eq!(
-                f.scalar(
-                    "SELECT COUNT(DISTINCT job_id) FROM ci_logs WHERE run_id=$1 AND step_number=2",
-                    &[run.id]
-                )
-                .await,
+                db::ci::list_ci_logs(f.pool(), run.id, 100_000)
+                    .await
+                    .unwrap()
+                    .into_iter()
+                    .filter(|line| line.step_number == Some(2))
+                    .filter_map(|line| line.job_id)
+                    .collect::<std::collections::BTreeSet<_>>()
+                    .len(),
                 2
             );
             assert_eq!(f.scalar("SELECT COUNT(*) FROM actions_job_states WHERE run_id=$1 AND CAST(state AS TEXT) LIKE '%ghs_%'",&[run.id]).await,0);

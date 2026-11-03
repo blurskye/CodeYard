@@ -1462,9 +1462,15 @@ pub async fn append_ci_logs(
     pool: &PgPool,
     run_id: i64,
     worker: &str,
+    sequence: i64,
     lines: &[crate::backend::ci::queue::LogLine],
 ) -> Result<bool> {
+    ensure!(
+        (0..100_000).contains(&sequence),
+        "invalid CI upload sequence"
+    );
     let lines = crate::backend::ci::queue::prepare_logs(lines)?;
+    let hash = crate::backend::db::ci::log_chunks::request_hash(&lines)?;
     let mut tx = pool.begin().await?;
     // Serialize log allocation and commit, and check ownership and totals under the same lock.
     let totals: Option<(i64, i64)> = sqlx::query_as(
@@ -1501,22 +1507,37 @@ pub async fn append_ci_logs(
             ensure!(exists, "log step is outside its job");
         }
     }
+    let previous: Option<String> = sqlx::query_scalar(
+        "SELECT request_hash FROM ci_log_chunks WHERE run_id=$1 AND sequence=$2",
+    )
+    .bind(run_id)
+    .bind(sequence)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(previous) = previous {
+        ensure!(
+            previous == hash,
+            "CI upload sequence has different contents"
+        );
+        return Ok(stored_lines < crate::backend::ci::logs::MAX_RUN_LOG_LINES);
+    }
+    if stored_lines >= crate::backend::ci::logs::MAX_RUN_LOG_LINES {
+        return Ok(false);
+    }
+    let next: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(sequence)+1,0) FROM ci_log_chunks WHERE run_id=$1")
+            .bind(run_id)
+            .fetch_one(&mut *tx)
+            .await?;
+    ensure!(sequence == next, "CI upload sequence is out of order");
     let (kept, lines_total, bytes_total) =
         crate::backend::ci::logs::admit_log_lines(stored_lines, stored_bytes, &lines);
-    if !kept.is_empty() {
-        let mut insert = sqlx::QueryBuilder::<Postgres>::new(
-            "INSERT INTO ci_logs (run_id, stage, line, level,job_id,step_number) ",
-        );
-        insert.push_values(&kept, |mut row, line| {
-            row.push_bind(run_id)
-                .push_bind(&line.stage)
-                .push_bind(&line.line)
-                .push_bind(&line.level)
-                .push_bind(line.job_id)
-                .push_bind(line.step_number);
-        });
-        insert.build().execute(&mut *tx).await?;
-    }
+    let (data, size) = crate::backend::db::ci::log_chunks::encode(&kept)?;
+    // Mixed-job batches keep their job and step tags in the compressed payload.
+    let job = crate::backend::db::ci::log_chunks::batch_job(&kept);
+    sqlx::query("INSERT INTO ci_log_chunks(run_id,job_id,sequence,request_hash,first_line,line_count,byte_size,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8)")
+        .bind(run_id).bind(job).bind(sequence).bind(&hash).bind(stored_lines + 1)
+        .bind(kept.len() as i64).bind(size).bind(data).execute(&mut *tx).await?;
     if lines_total != stored_lines || bytes_total != stored_bytes {
         sqlx::query("UPDATE ci_runs SET log_lines = $2, log_bytes = $3 WHERE id = $1")
             .bind(run_id)
@@ -1530,15 +1551,19 @@ pub async fn append_ci_logs(
 }
 
 pub async fn list_ci_logs(pool: &PgPool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {
-    let rows = sqlx::query_as::<_, CiLogLine>(
-        "SELECT l.* FROM ci_logs l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND (r.log_expires_at IS NULL OR r.log_expires_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) ORDER BY l.id DESC LIMIT $2",
+    ensure!(limit >= 0, "Result limit must be nonnegative");
+    let mut connection = pool.acquire().await?;
+    let mut lines = read_log_range(
+        &mut connection,
+        run_id,
+        0,
+        100_000,
+        limit.min(100_000),
+        true,
     )
-    .bind(run_id)
-    .bind(limit)
-    .fetch_all(pool)
     .await?;
-
-    Ok(rows.into_iter().rev().collect())
+    lines.reverse();
+    Ok(lines)
 }
 
 pub async fn ci_repository_owner(pool: &PgPool, repo_id: i64) -> Result<Option<String>> {
@@ -1588,14 +1613,32 @@ pub async fn list_ci_log_history(
         after >= 0 && (1..=5000).contains(&limit),
         "invalid CI history cursor/window"
     );
-    Ok(sqlx::query_as::<_, CiLogLine>(
-        "SELECT l.* FROM ci_logs l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND l.id>$2 AND (r.log_expires_at IS NULL OR r.log_expires_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) ORDER BY l.id LIMIT $3",
-    )
-    .bind(run_id)
-    .bind(after)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?)
+    let mut connection = pool.acquire().await?;
+    read_log_range(&mut connection, run_id, after, 100_000, limit, false).await
+}
+
+/// Read bounded pages of compressed chunks, including a cursor inside a chunk.
+pub(super) async fn read_log_range(
+    connection: &mut sqlx::PgConnection,
+    run: i64,
+    after: i64,
+    before: i64,
+    limit: i64,
+    reverse: bool,
+) -> Result<Vec<CiLogLine>> {
+    let mut range =
+        crate::backend::db::ci::log_chunks::LogRange::new(after, before, limit, reverse)?;
+    while !range.complete() {
+        let order = if reverse { "DESC" } else { "ASC" };
+        let chunks = sqlx::query_as::<_, crate::backend::db::ci::log_chunks::Chunk>(&format!(
+            "SELECT l.* FROM ci_log_chunks l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND l.first_line+l.line_count-1>$2 AND l.first_line<=$3 AND (r.log_expires_at IS NULL OR r.log_expires_at>FLOOR(EXTRACT(EPOCH FROM clock_timestamp()))::bigint) ORDER BY l.sequence {order} LIMIT 64"
+        )).bind(run).bind(range.after).bind(range.before).fetch_all(&mut *connection).await?;
+        if chunks.is_empty() {
+            break;
+        }
+        range.extend(chunks)?;
+    }
+    Ok(range.finish())
 }
 
 pub async fn get_ci_deployment_by_run_id(

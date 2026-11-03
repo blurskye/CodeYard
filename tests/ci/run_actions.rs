@@ -110,6 +110,7 @@ async fn contract(pg: bool) {
         f.pool(),
         run.id,
         "log-worker",
+        0,
         &output
             .iter()
             .map(|line| codeyard::backend::ci::queue::LogLine {

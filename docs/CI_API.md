@@ -192,6 +192,13 @@ per page. Other REST operations remain token-only. Cancellation uses the native
 run page's form or v3's workflow-run cancel operation. The old log, history,
 log-download, cancel and deployment routes are removed.
 
+Logs are stored as compressed incremental chunks in the database, not one row per
+line. The existing 100,000-line and 32 MiB limits and retention settings still apply.
+ZIP and text downloads are generated from those chunks. A job's final log batch is
+stored before success is recorded; upload failure fails the run. A killed runner's
+stored chunks remain readable after the stale-worker sweep fails the run. Upgrade
+cores and runners together: sequenced log uploads use `codeyard/events/7`.
+
 Run statuses are `queued`, `running`, `success`, `failed` and `cancelled`. `mode` is
 `unassigned` until a worker claims the run, and stays `unassigned` if the run never
 starts. After a claim it is the claiming worker's execution mode, `local` or `podman`.

@@ -43,7 +43,7 @@ const SHUTDOWN_CLAIM_GRACE: Duration = Duration::from_secs(2);
 /// Output lines reach the core in batches of at most this many lines (the core's limit per
 /// call) or bytes. A waiting batch goes out after `LOG_BATCH_INTERVAL` at the latest, and the
 /// command may print `LOG_QUEUE_LINES` lines ahead of the sender. A stalled remote sender
-/// gets one short wait before overflow becomes lossy.
+/// gets one short wait before the workflow fails instead of losing output.
 const LOG_BATCH_LINES: usize = 64;
 const LOG_BATCH_BYTES: usize = 64 * 1024;
 const LOG_BATCH_INTERVAL: Duration = Duration::from_millis(250);
@@ -311,6 +311,7 @@ async fn execute(
     let work = async {
         let (cleaned, cleanup) = oneshot::channel();
         let mut workspace = None;
+        let mut log_sequence = 0;
         let result = async {
             // A delayed claim must renew its live authority before any workflow process starts.
             tokio::select! {
@@ -327,6 +328,7 @@ async fn execute(
                 cleaned,
                 &mut workspace,
                 ownership.group.as_ref(),
+                &mut log_sequence,
             )
             .await
         }
@@ -352,16 +354,21 @@ async fn execute(
                     // The cause may hold paths or credentials, so only the server log gets it.
                     warn!(error = %format!("{error:#}"), run = %run.run_id, "CI could not run");
                     let message = "CI could not run".to_owned();
-                    let _ = send_log_lines(
-                        service,
-                        worker,
-                        run,
-                        &[LogLine {
-                            stage: "setup".into(),
-                            line: message.clone(),
-                            level: "error".into(),
-                            ..Default::default()
-                        }],
+                    // Failure reporting must not hold up cleanup when log storage failed.
+                    let _ = tokio::time::timeout(
+                        LOG_FLUSH_GRACE,
+                        send_log_lines(
+                            service,
+                            worker,
+                            run,
+                            &mut log_sequence,
+                            &[LogLine {
+                                stage: "setup".into(),
+                                line: message.clone(),
+                                level: "error".into(),
+                                ..Default::default()
+                            }],
+                        ),
                     )
                     .await;
                     ("failed", Some(message))
@@ -481,6 +488,7 @@ async fn run_workflows(
     cleaned: oneshot::Sender<()>,
     workspace_owner: &mut Option<Workspace>,
     scope: Option<&codeyard_actions::process::Cgroup>,
+    log_sequence: &mut i64,
 ) -> Result<bool> {
     let timeout = claim
         .limits
@@ -517,7 +525,7 @@ async fn run_workflows(
     let variable_file = workspace.write_values("variables.env", &claim.variables, !native)?;
     workspace.write_event(claim)?;
     if !native && claim.github_tokens.act_limited {
-        send_log_lines(service, worker, run, &[LogLine { stage: "setup".into(), line: "act runs give every job the same token; use the codeyard-actions engine for per-job permissions".into(), level: "warn".into(), ..Default::default() }]).await?;
+        send_log_lines(service, worker, run, log_sequence, &[LogLine { stage: "setup".into(), line: "act runs give every job the same token; use the codeyard-actions engine for per-job permissions".into(), level: "warn".into(), ..Default::default() }]).await?;
     }
     let podman_label =
         (service.config.mode == CiExecutionMode::Podman).then(|| run_container_label(run.run_id));
@@ -618,9 +626,11 @@ async fn run_workflows(
         ensure!(!remaining.is_zero(), Stopped::TimedOut);
         let stage = workflow.to_owned();
         let (lines_tx, lines_rx) = mpsc::channel(LOG_QUEUE_LINES);
-        let stalled = Arc::new(AtomicBool::new(false));
+        let (output_ended, output_end) = oneshot::channel::<()>();
         let remote = matches!(&service.queue, RunQueue::Remote { .. });
         let running = async {
+            // Every exit releases the final-flush wait, including output callback errors.
+            let _output_ended = output_ended;
             let admitting = async {
                 match &concurrency_dir {
                     Some(directory) => {
@@ -683,7 +693,6 @@ async fn run_workflows(
                         ..Default::default()
                     };
                     let lines_tx = lines_tx.clone();
-                    let stalled = stalled.clone();
                     let records = records.clone();
                     let admissions = admissions.clone();
                     let generation = generation.clone();
@@ -691,6 +700,7 @@ async fn run_workflows(
                     let masker = masker.clone();
                     async move {
                         if let Some(job) = completed {
+                            flush_log_lines(&lines_tx).await?;
                             return deliver(|| service.queue.finish_job(worker, run.id, &job))
                                 .await;
                         }
@@ -710,6 +720,12 @@ async fn run_workflows(
                                 line.job_id = Some(id);
                                 line.step_number = step.map(i32::try_from).transpose()?;
                             } else {
+                                if matches!(
+                                    event.update,
+                                    codeyard_actions::progress::Update::Finished { .. }
+                                ) {
+                                    flush_log_lines(&lines_tx).await?;
+                                }
                                 let id = deliver(|| {
                                     service.queue.progress(
                                         worker,
@@ -745,7 +761,7 @@ async fn run_workflows(
                                 return Ok(());
                             }
                         }
-                        enqueue_log_line(&lines_tx, line, remote, &stalled).await
+                        enqueue_log_line(&lines_tx, line, remote).await
                     }
                 },
             );
@@ -775,10 +791,14 @@ async fn run_workflows(
             status
         };
         let sending = async {
+            let batches =
+                send_log_batches(service, worker, run, lines_rx, &mut log_open, log_sequence);
+            tokio::pin!(batches);
             tokio::select! {
-                sent = send_log_batches(service, worker, run, lines_rx, &mut log_open) => sent,
-                _ = process::cancelled(cancel.clone()) => Ok(()),
-                _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => Ok(()),
+                sent = &mut batches => sent,
+                _ = output_end => tokio::time::timeout(LOG_FLUSH_GRACE, &mut batches).await.context("CI final log flush timed out")?,
+                _ = process::cancelled(cancel.clone()) => Err(Stopped::Cancelled.into()),
+                _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => Err(Stopped::TimedOut.into()),
             }
         };
         let (status, sent) = tokio::join!(running, sending);
@@ -1668,28 +1688,40 @@ async fn remove_resource(
     Ok(())
 }
 
-/// Preserve ordinary delivery, but spend at most one short wait on a stalled remote queue.
+#[derive(Debug)]
+enum LogMessage {
+    Line(LogLine),
+    Flush(oneshot::Sender<()>),
+}
+
+/// A stalled upload must fail the job, rather than silently dropping output before success.
 async fn enqueue_log_line(
-    sender: &mpsc::Sender<LogLine>,
+    sender: &mpsc::Sender<LogMessage>,
     line: LogLine,
     remote: bool,
-    stalled: &AtomicBool,
 ) -> Result<()> {
-    if !remote {
-        return sender
-            .send(line)
+    let sending = sender.send(LogMessage::Line(line));
+    if remote {
+        tokio::time::timeout(LOG_FLUSH_GRACE, sending)
             .await
-            .map_err(|_| anyhow::anyhow!("CI log batches stopped"));
-    }
-    if stalled.load(Ordering::Relaxed) {
-        let _ = sender.try_send(line);
-    } else if tokio::time::timeout(LOG_FLUSH_GRACE, sender.send(line))
-        .await
-        .is_err()
-    {
-        stalled.store(true, Ordering::Relaxed);
+            .context("CI log queue stalled")??;
+    } else {
+        sending.await.context("CI log batches stopped")?;
     }
     Ok(())
+}
+
+async fn flush_log_lines(sender: &mpsc::Sender<LogMessage>) -> Result<()> {
+    tokio::time::timeout(DELIVERY_RETRY, async {
+        let (sent, stored) = oneshot::channel();
+        sender
+            .send(LogMessage::Flush(sent))
+            .await
+            .context("CI log batches stopped")?;
+        stored.await.context("CI log flush failed")
+    })
+    .await
+    .context("CI log flush timed out")?
 }
 
 /// Stores output lines. The Actions pages read the stored lines.
@@ -1697,17 +1729,17 @@ async fn send_log_lines(
     service: &CiWorkers,
     worker: &str,
     run: &CiRun,
+    sequence: &mut i64,
     lines: &[LogLine],
 ) -> Result<bool> {
-    let result = service.queue.logs(worker, run.id, lines).await;
-    // Log ingestion is best effort on both database and remote workers.
-    match result {
-        Err(error) => {
-            warn!(%error, "could not send CI log lines");
-            Ok(true)
-        }
-        result => result,
-    }
+    let open = tokio::time::timeout(
+        DELIVERY_RETRY,
+        deliver(|| service.queue.logs(worker, run.id, *sequence, lines)),
+    )
+    .await
+    .context("CI log upload timed out")??;
+    *sequence += 1;
+    Ok(open)
 }
 
 /// Stores the lines a command prints, in order, in batches. A batch goes out when it is full,
@@ -1717,8 +1749,9 @@ async fn send_log_batches(
     service: &CiWorkers,
     worker: &str,
     run: &CiRun,
-    mut lines: mpsc::Receiver<LogLine>,
+    mut lines: mpsc::Receiver<LogMessage>,
     log_open: &mut bool,
+    sequence: &mut i64,
 ) -> Result<()> {
     let mut batch: Vec<LogLine> = Vec::new();
     let mut bytes = 0;
@@ -1726,28 +1759,35 @@ async fn send_log_batches(
     // After a quiet spell the next batch is not flushed once per missed tick.
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
-        tokio::select! {
-            line = lines.recv() => {
-                let Some(line) = line else { break };
-                if !*log_open {
-                    continue;
-                }
-                bytes += line.stage.len() + line.line.len();
-                batch.push(line);
-                if batch.len() < LOG_BATCH_LINES && bytes < LOG_BATCH_BYTES {
-                    continue;
+        let flush = tokio::select! {
+            message = lines.recv() => {
+                match message {
+                    None => break,
+                    Some(LogMessage::Flush(stored)) => Some(stored),
+                    Some(LogMessage::Line(line)) => {
+                        if !*log_open { continue; }
+                        bytes += line.stage.len() + line.line.len();
+                        batch.push(line);
+                        if batch.len() < LOG_BATCH_LINES && bytes < LOG_BATCH_BYTES { continue; }
+                        None
+                    }
                 }
             }
-            _ = tick.tick(), if !batch.is_empty() => {}
+            _ = tick.tick(), if !batch.is_empty() => None,
+        };
+        if !batch.is_empty() {
+            *log_open = send_log_lines(service, worker, run, sequence, &batch).await?;
+            batch.clear();
+            bytes = 0;
         }
-        *log_open = send_log_lines(service, worker, run, &batch).await?;
-        batch.clear();
-        bytes = 0;
+        if let Some(stored) = flush {
+            let _ = stored.send(());
+        }
     }
     if batch.is_empty() {
         return Ok(());
     }
-    *log_open = send_log_lines(service, worker, run, &batch).await?;
+    *log_open = send_log_lines(service, worker, run, sequence, &batch).await?;
     Ok(())
 }
 
@@ -2362,6 +2402,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn final_log_flush_acknowledges_only_stored_output() {
+        let root = tempfile::tempdir().unwrap();
+        let (service, run) = queued_fixture(root.path()).await;
+        let RunQueue::Database { pool, .. } = &service.queue else {
+            unreachable!()
+        };
+        let (tx, rx) = mpsc::channel(64);
+        let producing = async {
+            enqueue_log_line(
+                &tx,
+                LogLine {
+                    stage: "ci".into(),
+                    line: "last output".into(),
+                    level: "info".into(),
+                    ..Default::default()
+                },
+                false,
+            )
+            .await
+            .unwrap();
+            flush_log_lines(&tx).await.unwrap();
+            let stored = db::ci::list_ci_logs(pool, run.id, 100).await.unwrap();
+            assert_eq!(stored.len(), 1);
+            assert_eq!(stored[0].line, "last output");
+            db::ci::finish_ci_run(pool, run.id, "worker", "success", None)
+                .await
+                .unwrap()
+                .unwrap();
+            drop(tx);
+        };
+        let mut open = true;
+        let mut sequence = 0;
+        let (_, sent) = tokio::join!(
+            producing,
+            send_log_batches(&service, "worker", &run, rx, &mut open, &mut sequence)
+        );
+        sent.unwrap();
+        assert_eq!(sequence, 1);
+        pool.close().await;
+    }
+
+    #[tokio::test]
     async fn closed_logs_drain_output_without_sending_more_batches() {
         let root = tempfile::tempdir().unwrap();
         let (service, run) = queued_fixture(root.path()).await;
@@ -2380,12 +2462,12 @@ mod tests {
         let (tx, rx) = mpsc::channel(256);
         let producing = async {
             for _ in 0..64 {
-                tx.send(LogLine {
+                tx.send(LogMessage::Line(LogLine {
                     stage: "ci".into(),
                     line: "output".into(),
                     level: "info".into(),
                     ..Default::default()
-                })
+                }))
                 .await
                 .unwrap();
             }
@@ -2406,22 +2488,23 @@ mod tests {
                 .unwrap();
             // Any later ingestion would now fail ownership validation.
             for _ in 0..128 {
-                tx.send(LogLine {
+                tx.send(LogMessage::Line(LogLine {
                     stage: "ci".into(),
                     line: "discarded".into(),
                     level: "info".into(),
                     ..Default::default()
-                })
+                }))
                 .await
                 .unwrap();
             }
             drop(tx);
         };
         let mut open = true;
+        let mut sequence = 0;
         let (_, sent) = tokio::time::timeout(Duration::from_secs(10), async {
             tokio::join!(
                 producing,
-                send_log_batches(&service, "worker", &run, rx, &mut open)
+                send_log_batches(&service, "worker", &run, rx, &mut open, &mut sequence)
             )
         })
         .await
@@ -3142,7 +3225,7 @@ jobs:
     }
 
     #[tokio::test]
-    async fn stalled_remote_log_buffer_drops_overflow_without_repeated_waits() {
+    async fn stalled_remote_log_buffer_fails_instead_of_dropping_output() {
         let (sender, mut receiver) = mpsc::channel(1);
         let line = || LogLine {
             stage: "ci".into(),
@@ -3150,25 +3233,15 @@ jobs:
             level: "info".into(),
             ..Default::default()
         };
-        let stalled = AtomicBool::new(false);
-        enqueue_log_line(&sender, line(), true, &stalled)
-            .await
-            .unwrap();
-        enqueue_log_line(&sender, line(), true, &stalled)
-            .await
-            .unwrap();
-        assert!(stalled.load(Ordering::Relaxed));
-        tokio::time::timeout(Duration::from_millis(100), async {
-            for _ in 0..1000 {
-                enqueue_log_line(&sender, line(), true, &stalled)
-                    .await
-                    .unwrap();
-            }
-        })
-        .await
-        .unwrap();
-        assert_eq!(receiver.recv().await.unwrap().line, "output");
+        enqueue_log_line(&sender, line(), true).await.unwrap();
+        assert!(enqueue_log_line(&sender, line(), true).await.is_err());
+        let LogMessage::Line(stored) = receiver.recv().await.unwrap() else {
+            panic!("expected output")
+        };
+        assert_eq!(stored.line, "output");
         assert!(receiver.try_recv().is_err());
+        drop(receiver);
+        assert!(enqueue_log_line(&sender, line(), true).await.is_err());
     }
 
     #[tokio::test]

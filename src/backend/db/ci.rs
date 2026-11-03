@@ -5,6 +5,7 @@ use anyhow::Result;
 use uuid::Uuid;
 
 pub mod claims;
+pub(crate) mod log_chunks;
 
 /// Policy refusals from the native CI enqueue and cancellation transactions.
 #[derive(Debug, thiserror::Error)]
@@ -376,6 +377,7 @@ native_operation!(crate::backend::db::postgres::ci::append_ci_logs,
     pool: &DbPool,
     run_id: i64,
     worker: &str,
+    sequence: i64,
     lines: &[crate::backend::ci::queue::LogLine],
 ) -> Result<bool>);
 

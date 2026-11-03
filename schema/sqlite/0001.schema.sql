@@ -834,15 +834,18 @@ CREATE TABLE ci_runs (
 CREATE UNIQUE INDEX idx_ci_runs_pull_revision ON ci_runs(pull_request_id, branch, head_sha, workflow_path, attempt)
     WHERE event = 'pull_request' AND pull_request_id IS NOT NULL;
 
-CREATE TABLE ci_logs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
-    run_id INTEGER NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE CHECK (run_id IS NULL OR typeof(run_id)='integer'),
-    stage TEXT NOT NULL CHECK (length(stage)<=255),
-    line TEXT NOT NULL,
-    level TEXT NOT NULL DEFAULT 'info' CHECK (length(level)<=20), 
+CREATE TABLE ci_log_chunks (
+    run_id INTEGER NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
+    job_id INTEGER REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    sequence INTEGER NOT NULL CHECK (sequence >= 0),
+    request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
+    first_line INTEGER NOT NULL CHECK (first_line > 0),
+    line_count INTEGER NOT NULL CHECK (line_count BETWEEN 1 AND 64),
+    byte_size INTEGER NOT NULL CHECK (byte_size BETWEEN 0 AND 262656),
+    data BLOB NOT NULL CHECK (length(data) <= 2097152),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now')),
-    job_id INTEGER REFERENCES actions_jobs(id) ON DELETE SET NULL,
-    step_number INTEGER
+    PRIMARY KEY (run_id, sequence),
+    UNIQUE (job_id, sequence)
 );
 
 CREATE TABLE ci_deployments (
@@ -1154,7 +1157,7 @@ CREATE INDEX idx_ci_runs_status ON ci_runs(status);
 CREATE INDEX idx_ci_runs_push_user_created_at ON ci_runs(triggered_by_id, created_at DESC)
     WHERE event = 'push';
 
-CREATE INDEX idx_ci_logs_run_id_id ON ci_logs(run_id, id);
+CREATE INDEX ci_log_chunks_range ON ci_log_chunks(run_id, first_line);
 
 CREATE INDEX idx_ci_deployments_repo_env ON ci_deployments(repo_id, environment, created_at DESC);
 CREATE INDEX ci_deployments_environment_waiting ON ci_deployments(repo_id,environment_key,status,run_id) WHERE status IN ('pending','approved');
@@ -1920,7 +1923,6 @@ CREATE TABLE actions_job_states (
     state TEXT NOT NULL CHECK(json_valid(state)),
     PRIMARY KEY(run_id,generation,workflow_path)
 );
-CREATE INDEX ci_logs_job ON ci_logs(job_id,id);
 
 CREATE TABLE actions_log_downloads (
     token_hash TEXT PRIMARY KEY,

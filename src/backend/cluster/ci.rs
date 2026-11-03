@@ -471,9 +471,11 @@ impl CiHandler {
             Operation::Heartbeat { id } => {
                 serde_json::to_value(self.queue.heartbeat(&worker, id).await?)?
             }
-            Operation::Logs { id, lines } => {
-                serde_json::to_value(self.queue.logs(&worker, id, &lines).await?)?
-            }
+            Operation::Logs {
+                id,
+                sequence,
+                lines,
+            } => serde_json::to_value(self.queue.logs(&worker, id, sequence, &lines).await?)?,
             Operation::Finish {
                 id,
                 status,

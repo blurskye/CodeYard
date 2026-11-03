@@ -41,7 +41,6 @@ pub struct Grant {
     pub max_log_id: i64,
     pub manifest: Json<Manifest>,
 }
-#[derive(sqlx::FromRow)]
 pub struct Line {
     pub id: i64,
     pub job_id: Option<i64>,
@@ -50,6 +49,19 @@ pub struct Line {
     pub line: String,
     pub created_at: DateTime<Utc>,
 }
+impl From<super::models::CiLogLine> for Line {
+    fn from(line: super::models::CiLogLine) -> Self {
+        Self {
+            id: line.id,
+            job_id: line.job_id,
+            step_number: line.step_number,
+            stage: line.stage,
+            line: line.line,
+            created_at: line.created_at,
+        }
+    }
+}
+
 pub struct Snapshot {
     pub grant: Grant,
     pub lines: Vec<Line>,
