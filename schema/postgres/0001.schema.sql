@@ -78,6 +78,8 @@ CREATE TABLE IF NOT EXISTS node_configuration (
     -- all, and 'all' keeps a copy on every storage node.
     replicas TEXT NOT NULL DEFAULT '1'
         CHECK (replicas = 'all' OR replicas ~ '^[1-9][0-9]{0,2}$'),
+    write_quorum TEXT NOT NULL DEFAULT 'majority'
+        CHECK (write_quorum = 'majority' OR write_quorum ~ '^[1-9][0-9]{0,2}$'),
     -- Whether robots.txt and ai.txt block AI training crawlers, and whether HTML pages say so.
     -- Blocked until an administrator allows them.
     ai_crawlers VARCHAR(10) NOT NULL DEFAULT 'block' CHECK (ai_crawlers IN ('allow', 'block')),
@@ -1225,6 +1227,64 @@ CREATE TABLE IF NOT EXISTS repository_replicas (
 CREATE INDEX IF NOT EXISTS idx_repository_replicas_node ON repository_replicas(node_id);
 CREATE INDEX idx_repository_replicas_pending ON repository_replicas(node_id, repository_id)
 WHERE applied_version < 0 AND synced_at IS NULL;
+
+-- Quorum decisions are independent of the attempted-write cache version.
+CREATE TABLE repository_write_control (
+    repository_id BIGINT PRIMARY KEY REFERENCES repositories(id) ON DELETE CASCADE,
+    term BIGINT NOT NULL DEFAULT 1 CHECK (term > 0),
+    committed_version BIGINT NOT NULL DEFAULT 0 CHECK (committed_version >= 0),
+    serving INTEGER NOT NULL DEFAULT 0 CHECK (serving IN (0,1))
+);
+
+CREATE TABLE repository_voters (
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    term BIGINT NOT NULL CHECK (term > 0),
+    applied_version BIGINT NOT NULL DEFAULT -1 CHECK (applied_version >= -1),
+    PRIMARY KEY (repository_id, node_id)
+);
+
+CREATE TABLE repository_writes (
+    id TEXT PRIMARY KEY,
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    term BIGINT NOT NULL,
+    primary_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    base_version BIGINT NOT NULL,
+    required_votes BIGINT NOT NULL CHECK (required_votes > 0),
+    deadline TIMESTAMPTZ NOT NULL,
+    decision TEXT NOT NULL CHECK (decision IN ('pending','commit','abort')),
+    committed_version BIGINT,
+    finished INTEGER NOT NULL DEFAULT 0 CHECK (finished IN (0,1)),
+    manifest_hash TEXT NOT NULL,
+    UNIQUE (repository_id, committed_version)
+);
+
+CREATE UNIQUE INDEX idx_repository_writes_unfinished ON repository_writes(repository_id)
+WHERE finished = 0;
+
+CREATE TABLE repository_write_refs (
+    write_id TEXT NOT NULL REFERENCES repository_writes(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('oid','symbolic')),
+    old_target TEXT,
+    new_target TEXT,
+    PRIMARY KEY (write_id, name)
+);
+
+CREATE TABLE repository_write_votes (
+    write_id TEXT NOT NULL REFERENCES repository_writes(id) ON DELETE CASCADE,
+    node_id BIGINT NOT NULL REFERENCES nodes(id) ON DELETE RESTRICT,
+    durable_at TIMESTAMPTZ NOT NULL,
+    PRIMARY KEY (write_id, node_id)
+);
+
+CREATE TABLE repository_committed_refs (
+    repository_id BIGINT NOT NULL REFERENCES repositories(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('oid','symbolic')),
+    target TEXT NOT NULL,
+    PRIMARY KEY (repository_id, name)
+);
 
 -- Forks of private repositories stay private, including forks of forks.
 CREATE OR REPLACE FUNCTION enforce_repository_visibility_floor() RETURNS TRIGGER AS $$
