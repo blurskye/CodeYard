@@ -56,6 +56,8 @@ use std::{
 };
 use uuid::Uuid;
 
+mod shared_web;
+
 const PNG: &[u8] = b"\x89PNG\r\n\x1a\n";
 
 struct Database {

@@ -35,9 +35,10 @@ and the rest) open the node connection in either mode; they do not change the mo
   signed push webhooks are sent on storage nodes too. Core startup requires a valid
   64-hex-character key and checks it against an existing signed hook when one exists.
   Database-free workers do not need it.
-- **S3-compatible storage** for uploads and avatars when more than one node serves
-  the web (`S3_*`, see the [README](../README.md)); a local uploads directory exists on
-  one node only.
+- **Shared S3-compatible storage** for uploads, avatars, release assets, packages and
+  Actions artifacts and caches (`S3_*`, see the [README](../README.md)). Every core node
+  refuses to start in cluster mode without these settings. Use the same bucket on all
+  nodes; single-node mode still defaults to local disk.
 - **UDP or TCP between the nodes.** Nodes talk over QUIC on `IROH_BIND` (default
   `0.0.0.0:7444`). Direct connections are the default and there is no relay unless you
   set `IROH_RELAY`. Behind NAT or a container port mapping, tell the other nodes where to
