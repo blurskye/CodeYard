@@ -76,7 +76,7 @@ pub async fn save_actions_settings(
     settings.validate_engines()?;
     let mut tx = pool.begin().await?;
     super::action_objects::lock_site_cache_policy(&mut tx, true).await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     if !super::users::transitions::active_admin(&mut tx, actor).await?
         || !super::users::transitions::live_session(&mut tx, actor, session).await?
     {

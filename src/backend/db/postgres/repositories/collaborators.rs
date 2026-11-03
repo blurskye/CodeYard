@@ -179,8 +179,12 @@ pub async fn respond(
     let authority = actor.into();
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
-    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
     let invitation=sqlx::query_as::<_,Invitation>("SELECT * FROM repository_invitations WHERE id=$1 AND invitee_id=$2 AND state='pending' AND created_at>NOW()-INTERVAL '7 days'").bind(id).bind(actor).fetch_optional(&mut *tx).await?.ok_or(Refusal::NotFound)?;
+    super::super::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor, invitation.inviter_id],
+    )
+    .await?;
     if accept {
         admin(&mut tx, invitation.inviter_id, invitation.repo_id).await?;
     }

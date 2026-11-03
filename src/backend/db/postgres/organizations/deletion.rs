@@ -13,7 +13,8 @@ pub async fn delete_organization(
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
     let role = require_org!(tx, actor, org);
     if role != OrgRole::Owner
@@ -83,7 +84,8 @@ pub async fn list_organization_deletion_repositories(
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
         || !super::super::credentials::organization(
@@ -117,8 +119,9 @@ pub async fn delete_organization_repository(
     let owner = actor.into();
     let actor = owner.user_id;
     let mut tx = begin(pool).await?;
-    // Deletion locks membership and the initiating credential before organization/fork rows.
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    // Retain the initiating account before organization/fork rows.
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     super::super::credentials::require_account(&mut tx, &owner).await?;
     if require_org!(tx, actor, org) != OrgRole::Owner
         || !super::super::credentials::organization(

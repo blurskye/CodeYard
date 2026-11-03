@@ -183,6 +183,15 @@ pub(crate) async fn ci(
             )
         }
     };
+    if owner != actor {
+        // A job bot is discovered after the triggering actor's resource locks.
+        // Never wait for a restriction in the reverse account order.
+        let retained: bool = sqlx::query_scalar("SELECT pg_try_advisory_xact_lock_shared(hashtextextended(COALESCE(current_schema(),'') || ':account:' || $1::bigint::text,0))")
+            .bind(owner).fetch_one(&mut **tx).await?;
+        if !retained {
+            return Ok(false);
+        }
+    }
     let actor = Actor {
         user_id: owner,
         credential: Some(credential),

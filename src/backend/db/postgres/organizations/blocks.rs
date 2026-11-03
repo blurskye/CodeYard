@@ -66,7 +66,8 @@ pub async fn change(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts(&mut tx, &[actor, target])
+        .await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }

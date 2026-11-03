@@ -243,7 +243,8 @@ async fn deletion_removes_release_uploads(pg: bool) {
             .fetch_one(&mut *reader)
             .await
             .unwrap();
-        sqlx::query("SELECT pg_advisory_xact_lock_shared(hashtext(current_schema()),37002)")
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':account:' || $1::bigint::text,0))")
+            .bind(owner)
             .execute(&mut *reader)
             .await
             .unwrap();

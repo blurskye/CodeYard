@@ -490,8 +490,8 @@ async fn postgres_fork_deletion_and_notification_reads_take_the_source_first() {
 
 /// A personal fork's rename locks the owner's account, then the organization that owns the
 /// fork's source. A ban locks that organization, then the account. The rename has to take the
-/// membership lock first, or each can hold the row the other waits for. The ban takes the
-/// membership lock and the organization as `change_ban` does, and takes the account only once
+/// account advisory lock first, or each can hold the row the other waits for. The ban takes the
+/// account lock and the organization as `change_ban` does, and takes the account row only once
 /// the rename is waiting.
 #[tokio::test]
 async fn postgres_fork_rename_and_owner_ban_do_not_deadlock() {
@@ -534,7 +534,8 @@ async fn postgres_fork_rename_and_owner_ban_do_not_deadlock() {
         .fetch_one(&mut *ban)
         .await
         .unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), 37002)")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':account:' || $1::bigint::text,0))")
+        .bind(owner)
         .execute(&mut *ban)
         .await
         .unwrap();

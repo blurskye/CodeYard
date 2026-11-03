@@ -346,7 +346,7 @@ pub async fn update(
 }
 pub async fn organization_repositories(pool: &PgPool, actor: i64, org: i64) -> Result<Vec<i64>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     let allowed: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.user_id=$2 AND m.role IN ('owner','admin') AND NOT u.is_banned AND NOT u.must_change_password AND EXISTS(SELECT 1 FROM org_memberships owners JOIN users active ON active.id=owners.user_id WHERE owners.org_id=m.org_id AND owners.role='owner' AND NOT active.is_banned AND NOT active.must_change_password))").bind(org).bind(actor).fetch_one(&mut *tx).await?;
     ensure!(
         allowed || super::organizations::roles::manages_security(&mut tx, actor, org).await?,

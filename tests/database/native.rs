@@ -89,6 +89,54 @@ async fn new_pr(
     .unwrap()
 }
 
+async fn package_read_during_mutation(pool: &db::DbPool, package: i64) {
+    let count = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        db::packages::version_count(pool, package, None),
+    )
+    .await
+    .expect("package reads must not wait for metadata mutations")
+    .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn sqlite_package_read_does_not_wait_for_mutation() {
+    let f = NativeDatabase::new().await;
+    let owner = setup(&f.pool, "public").await;
+    let package: i64 = sqlx::query_scalar("INSERT INTO packages(owner_kind,owner_user_id,name,package_type,visibility,created_at,updated_at) VALUES('user',?1,'read-lock','npm','public',0,0) RETURNING id")
+        .bind(owner.id).fetch_one(&f.raw).await.unwrap();
+    let mut mutation = f.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    sqlx::query("UPDATE packages SET visibility='private' WHERE id=?1")
+        .bind(package)
+        .execute(&mut *mutation)
+        .await
+        .unwrap();
+    package_read_during_mutation(&f.pool, package).await;
+    mutation.rollback().await.unwrap();
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_package_read_does_not_wait_for_mutation() {
+    let mut f = PostgresDatabase::new().await;
+    let owner = setup(&f.pool, "public").await;
+    let package: i64 = sqlx::query_scalar("INSERT INTO packages(owner_kind,owner_user_id,name,package_type,visibility,created_at,updated_at) VALUES('user',$1,'read-lock','npm','public',0,0) RETURNING id")
+        .bind(owner.id).fetch_one(&f.raw).await.unwrap();
+    let mut mutation = f.raw.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':package:' || $1, 723947120))")
+        .bind(serde_json::to_string(&("user", owner.id, "npm", "read-lock")).unwrap())
+        .execute(&mut *mutation).await.unwrap();
+    sqlx::query("UPDATE packages SET visibility='private' WHERE id=$1")
+        .bind(package)
+        .execute(&mut *mutation)
+        .await
+        .unwrap();
+    package_read_during_mutation(&f.pool, package).await;
+    mutation.rollback().await.unwrap();
+    f.finish().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn simultaneous_setup_has_one_winner_and_constraint_failure_rolls_back() {
     let fixture = NativeDatabase::new().await;
@@ -4250,11 +4298,11 @@ async fn postgres_processed_signup_verifiers_are_cleared() {
     fixture.pool.close().await;
 }
 
-/// An acknowledgement queues behind an account or membership transition before it locks
-/// the recipient row. A ban takes the membership lock first and then organization rows,
+/// An acknowledgement queues behind an account transition before it locks
+/// the recipient row. A ban takes the account advisory lock first and then organization rows,
 /// so an acknowledgement that locked the recipient first could deadlock with it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn postgres_acknowledgement_waits_for_membership_transition() {
+async fn postgres_acknowledgement_waits_for_account_transition() {
     let fixture = PostgresDatabase::new().await;
     let owner = db::users::accounts::create_user(&fixture.pool, "ack_owner", None)
         .await
@@ -4277,9 +4325,10 @@ async fn postgres_acknowledgement_waits_for_membership_transition() {
     .unwrap();
     let raw = &fixture.raw;
 
-    // A transition holds the membership lock until it commits.
+    // A transition retains its account advisory lock until it commits.
     let mut transition = raw.begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), 37002)")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':account:' || $1::bigint::text,0))")
+        .bind(recipient)
         .execute(&mut *transition)
         .await
         .unwrap();
@@ -4308,7 +4357,7 @@ async fn postgres_acknowledgement_waits_for_membership_transition() {
         }
     })
     .await
-    .expect("acknowledgement queues behind the membership transition");
+    .expect("acknowledgement queues behind the account transition");
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE NOWAIT")
         .bind(recipient)
         .fetch_one(raw)

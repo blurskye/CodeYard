@@ -571,13 +571,9 @@ async fn held_run(
     Ok(run)
 }
 
-/// Each candidate is checked in its own transaction, so no lock is held while the
-/// next one is examined. Within a candidate the locks are taken in the order
-/// organization, starter's account, repository, node, then run. Enqueue and the
-/// revocations use the same order, so a claim never waits on a ban that is waiting
-/// on the claim. A run that another worker or a cancellation holds is left to them.
-/// Queued runs are looked at in id order until one can start, so runs that must wait never hide
-/// later work.
+/// Select a bounded page of compatible runs before taking authority locks. The scan's
+/// SKIP LOCKED locks end before authority is acquired: revocations lock authority before
+/// runs too. Each candidate is then rechecked and claimed in that same lock order.
 async fn claim_queued_run(
     pool: &PgPool,
     node_key: Option<&str>,
@@ -590,8 +586,28 @@ async fn claim_queued_run(
         matches!(mode, "local" | "podman"),
         "invalid CI execution mode"
     );
-    let mut after = 0_i64;
-    loop {
+    let limit = crate::backend::db::ci::claims::candidate_limit()?;
+    let mut scan = pool.begin().await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), hashtext('ci-worker:' || $1))")
+        .bind(worker).execute(&mut *scan).await?;
+    let mut held = sqlx::Acquire::begin(&mut scan).await?;
+    if let Some(run) = held_run(&mut held, node_key, worker).await? {
+        held.commit().await?;
+        scan.commit().await?;
+        return Ok((!run.cancel_requested).then_some(run));
+    }
+    held.rollback().await?;
+    let candidates: Vec<CiRun> =
+        sqlx::query_as(&crate::backend::db::ci::claims::candidates_sql(true))
+            .bind(node_key)
+            .bind(mode)
+            .bind(serde_json::to_string(platforms)?)
+            .bind(0_i64)
+            .bind(limit)
+            .fetch_all(&mut *scan)
+            .await?;
+    scan.rollback().await?;
+    for next in candidates {
         let mut tx = pool.begin().await?;
         // Serialize retries of this worker's claim across cores, before any authority locks.
         sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), hashtext('ci-worker:' || $1))")
@@ -606,14 +622,6 @@ async fn claim_queued_run(
         }
         // Release authority locks if a previously held run finished while we waited.
         held.rollback().await?;
-        let next = sqlx::query_as::<_, CiRun>(
-            "SELECT * FROM ci_runs WHERE status = 'queued' AND NOT approval_required AND id > $1 ORDER BY id LIMIT 1",
-        )
-        .bind(after)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some(next) = next else { break };
-        after = next.id;
         // A private repository's fork switch may have been turned off after admission.
         let fork_refused = next.is_fork
             && !super::action_settings::fork_runs_allowed(&mut tx, next.repo_id).await?;
@@ -1067,7 +1075,7 @@ async fn request_cancellation(
     credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<crate::backend::db::ci::Cancellation> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor_id]).await?;
     let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = $1")
         .bind(actor_id)
         .fetch_optional(&mut *tx)

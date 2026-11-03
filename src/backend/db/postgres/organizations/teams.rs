@@ -98,7 +98,13 @@ pub async fn create_organization_team(
 ) -> Result<OrganizationOutcome<Team>> {
     let grant: crate::backend::db::credentials::Actor = actor.into();
     let (actor, token) = (grant.user_id, grant.token_id());
+    if input.maintainers.len() > 100 || input.repositories.len() > 100 {
+        return Ok(Conflict);
+    }
     let mut tx = begin(pool).await?;
+    let mut accounts = input.maintainers.clone();
+    accounts.push(actor);
+    super::super::users::transitions::lock_accounts_shared(&mut tx, &accounts).await?;
     let role = require_org!(tx, actor, org);
     if !super::super::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
@@ -110,9 +116,6 @@ pub async fn create_organization_team(
     }
     if !administers(role) {
         return Ok(Denied);
-    }
-    if input.maintainers.len() > 100 || input.repositories.len() > 100 {
-        return Ok(Conflict);
     }
     for &user in &input.maintainers {
         if !active(&mut tx, user).await?
@@ -380,6 +383,7 @@ pub async fn add_organization_team_member(
     let grant: crate::backend::db::credentials::Actor = actor.into();
     let (actor, token) = (grant.user_id, grant.token_id());
     let mut tx = begin(pool).await?;
+    super::super::users::transitions::lock_accounts_shared(&mut tx, &[actor, target]).await?;
     let actor_role = require_org!(tx, actor, org);
     if !super::super::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);

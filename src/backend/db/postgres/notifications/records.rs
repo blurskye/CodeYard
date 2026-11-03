@@ -9,7 +9,7 @@ use crate::backend::db::notifications::{
     NewNotification, NotificationInbox, NotificationInboxAction,
 };
 use crate::backend::db::postgres::repositories::access::USER_REPO_ACCESS_SQL;
-use crate::backend::db::postgres::users::transitions::lock_membership_shared;
+use crate::backend::db::postgres::users::transitions::lock_accounts_shared;
 use anyhow::Result;
 use sqlx::PgPool;
 
@@ -19,7 +19,11 @@ pub async fn create_notification(
 ) -> Result<Notification> {
     use crate::backend::db::notifications::records::NotificationSuppressed;
     let mut tx = pool.begin().await?;
-    lock_membership_shared(&mut tx).await?;
+    let accounts: Vec<i64> = [Some(input.user_id), input.actor_id]
+        .into_iter()
+        .flatten()
+        .collect();
+    lock_accounts_shared(&mut tx, &accounts).await?;
     if matches!(
         input.kind,
         "user_followed" | "repository_starred" | "repository_watched"
@@ -171,14 +175,14 @@ pub async fn create_notification(
     Ok(notification)
 }
 
-// Every notification transaction starts here, so the shared membership lock comes first.
+// Every notification transaction retains the recipient's account before row locks.
 // The recipient row is locked FOR SHARE so account changes wait for this transaction.
 // Never load a payload before its repository scope has passed Read policy.
 async fn notification_recipient(
     connection: &mut sqlx::PgConnection,
     user_id: i64,
 ) -> Result<Option<bool>> {
-    lock_membership_shared(&mut *connection).await?;
+    lock_accounts_shared(connection, &[user_id]).await?;
     Ok(sqlx::query_scalar(
         "SELECT is_admin FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE",
     ).bind(user_id).fetch_optional(connection).await?)

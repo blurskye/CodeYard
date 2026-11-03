@@ -51,7 +51,6 @@ pub async fn convert(
     secret: Option<&SealedSecret>,
 ) -> Result<Option<App>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     let candidate:Option<Draft>=sqlx::query_as("SELECT * FROM github_app_manifests WHERE conversion_hash=$1 AND user_id IS NOT NULL AND expires_at>$2").bind(hash).bind(chrono::Utc::now().timestamp()).fetch_optional(&mut *tx).await?;
     let Some(candidate) = candidate else {
         return Ok(None);
@@ -59,6 +58,8 @@ pub async fn convert(
     let (Some(actor), Some(session)) = (candidate.user_id, candidate.session_id) else {
         return Ok(None);
     };
+    super::users::transitions::lock_accounts(&mut tx, &[actor]).await?;
+    super::users::transitions::lock_namespace(&mut tx).await?;
     // Account -> session -> grant, matching logout/account revocation and its FK cascades.
     if !super::users::transitions::active_session(&mut tx, actor, &session).await? {
         return Ok(None);

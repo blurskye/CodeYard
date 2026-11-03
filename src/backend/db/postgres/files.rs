@@ -228,7 +228,7 @@ async fn require_file_actor(
             Err(error) => return Err(file_authority_error(error)),
         }
     }
-    super::users::transitions::lock_membership_shared(tx)
+    super::users::transitions::lock_accounts_shared(tx, &[user])
         .await
         .map_err(file_authority_error)?;
     Ok(sqlx::query_scalar::<_, bool>(
@@ -414,9 +414,12 @@ pub async fn delete_file(
     let mut tx = pool.begin().await?;
     // Organization assignment and account transitions take membership, organizations,
     // accounts, then files. File deletion must not invert that order.
-    super::users::transitions::lock_membership_shared(&mut tx)
-        .await
-        .map_err(file_authority_error)?;
+    super::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &user_id.into_iter().collect::<Vec<_>>(),
+    )
+    .await
+    .map_err(file_authority_error)?;
     let organizations: Vec<i64> = sqlx::query_scalar(
         "SELECT id FROM organizations WHERE avatar_file_id=$1 ORDER BY id FOR UPDATE",
     )

@@ -21,7 +21,7 @@ pub async fn save_email_settings(
     settings: &NewEmailSettings<'_>,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     if !super::users::transitions::active_admin(&mut tx, actor).await?
         || !super::users::transitions::live_session(&mut tx, actor, session).await?
     {
@@ -296,7 +296,7 @@ pub(super) async fn lock_link_recipient(
 
 pub async fn save_email_token(pool: &PgPool, link: &EmailLink<'_>) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[link.user_id]).await?;
     if !lock_link_recipient(&mut tx, link.user_id).await? {
         return Ok(false);
     }
@@ -358,7 +358,6 @@ pub async fn email_token_is_valid(pool: &PgPool, purpose: &str, token_hash: &str
 
 pub async fn verify_email_token(pool: &PgPool, token_hash: &str) -> Result<Option<bool>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
     let user: Option<i64> = sqlx::query_scalar(
         "SELECT user_id FROM email_tokens WHERE purpose='verify' AND token_hash=$1",
     )
@@ -366,6 +365,7 @@ pub async fn verify_email_token(pool: &PgPool, token_hash: &str) -> Result<Optio
     .fetch_optional(&mut *tx)
     .await?;
     let Some(user) = user else { return Ok(None) };
+    super::users::transitions::lock_accounts(&mut tx, &[user]).await?;
     // Consumers retain the parent before taking the issuance, like issuers and account deletion.
     if sqlx::query_scalar::<_, i64>("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
         .bind(user)

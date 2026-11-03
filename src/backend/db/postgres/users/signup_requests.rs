@@ -69,7 +69,7 @@ pub async fn admin_pending_page(
     requested: usize,
 ) -> Result<crate::backend::db::users::signup_requests::AdminSignupPage> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_membership_shared(&mut tx).await?;
+    super::transitions::lock_accounts_shared(&mut tx, &[administrator.user_id]).await?;
     require_reviewer(&mut tx, administrator).await?;
     let total = count_signup_requests(&mut *tx, "pending").await?;
     let limit = limit.clamp(1, 100);
@@ -125,7 +125,7 @@ pub async fn approve_signup_request(
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin().await?;
-    super::transitions::lock_membership(&mut tx).await?;
+    super::transitions::lock_accounts(&mut tx, &[reviewer_user_id]).await?;
     super::transitions::lock_namespace(&mut tx).await?;
     require_reviewer(&mut tx, &reviewer).await?;
 
@@ -189,7 +189,7 @@ pub async fn reject_signup_request(
     let reviewer = reviewer.into();
     let reviewer_user_id = reviewer.user_id;
     let mut tx = pool.begin().await?;
-    super::transitions::lock_membership(&mut tx).await?;
+    super::transitions::lock_accounts(&mut tx, &[reviewer_user_id]).await?;
     require_reviewer(&mut tx, &reviewer).await?;
     let rejected = sqlx::query_as::<_, (String, Option<String>)>(
         "UPDATE signup_requests SET status = 'rejected', reviewed_by = $1, reviewed_at = NOW(), updated_at = NOW() WHERE id = $2 AND status = 'pending' RETURNING username, email",

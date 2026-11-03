@@ -28,7 +28,14 @@ async fn authorize(
             OrganizationOutcome::Applied(OrgRole::Owner | OrgRole::Admin)
         ),
         PullCapScope::Repository(repo) => {
-            super::discussions::lock_policy_authority(connection, actor, repo, maintain).await?
+            super::discussions::lock_policy_authority_with(
+                connection,
+                actor,
+                repo,
+                super::repositories::access::RepositoryRowLock::Exclusive,
+                maintain,
+            )
+            .await?
         }
     };
     anyhow::ensure!(allowed, PullCapRefusal::Denied);
@@ -39,7 +46,7 @@ async fn cap(connection: &mut PgConnection, scope: PullCapScope) -> Result<PullC
 }
 pub async fn get_cap(pool: &PgPool, actor: i64, scope: PullCapScope) -> Result<PullCap> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     authorize(&mut tx, actor, scope, false).await?;
     let result = cap(&mut tx, scope).await?;
     tx.commit().await?;
@@ -54,7 +61,7 @@ pub async fn update_cap(
 ) -> Result<PullCap> {
     input.validate()?;
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     authorize(&mut tx, actor, scope, false).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     let result = input.apply(cap(&mut tx, scope).await?);
@@ -64,7 +71,7 @@ pub async fn update_cap(
 }
 pub async fn bypass_users(pool: &PgPool, actor: i64, repo: i64) -> Result<Vec<User>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     authorize(&mut tx, actor, PullCapScope::Repository(repo), true).await?;
     let result = sqlx::query_as("SELECT u.* FROM users u JOIN interaction_pull_bypass b ON b.user_id=u.id WHERE b.repo_id=$1 ORDER BY LOWER(u.username),u.id").bind(repo).fetch_all(&mut *tx).await?;
     tx.commit().await?;
@@ -80,7 +87,7 @@ pub async fn change_bypass(
 ) -> Result<()> {
     anyhow::ensure!(names.len() <= 100, PullCapRefusal::Limit);
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     authorize(&mut tx, actor, PullCapScope::Repository(repo), true).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     for name in names {
@@ -113,9 +120,8 @@ pub async fn change_bypass(
 }
 
 /// All quota-increasing transitions lock the original author's counter before repository rows.
-/// The membership lock also serializes live policy and bypass mutations with the eventual effect.
+/// Organization and repository rows retain live policy and bypass authority.
 pub(crate) async fn lock_author(connection: &mut PgConnection, author: i64) -> Result<()> {
-    super::users::transitions::lock_membership_shared(&mut *connection).await?;
     sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'')||'/pull-cap/'||$1::bigint::text,0))").bind(author).execute(connection).await?;
     Ok(())
 }

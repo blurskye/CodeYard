@@ -90,7 +90,7 @@ pub async fn bypass(
 }
 
 async fn org_authority(tx: &mut Transaction<'_, Postgres>, actor: i64, org: i64) -> Result<()> {
-    super::users::transitions::lock_membership_shared(tx).await?;
+    super::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
     let exists: Option<i64> =
         sqlx::query_scalar("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
             .bind(org)

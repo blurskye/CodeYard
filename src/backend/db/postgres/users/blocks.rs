@@ -37,13 +37,13 @@ pub(crate) async fn repository_interaction_blocked(
     Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM user_blocks b JOIN repositories r ON (r.owner_user_id=b.user_id AND b.blocked_id=$1) OR (r.owner_user_id=b.blocked_id AND b.user_id=$1) WHERE r.id=$2 AND r.owner_kind='user') OR EXISTS(SELECT 1 FROM organization_blocks b JOIN repositories r ON r.owner_org_id=b.org_id WHERE r.id=$2 AND r.owner_kind='org' AND b.user_id=$1)").bind(actor).bind(repo).fetch_one(connection).await?)
 }
 
-/// Call before the first repository lock. Block changes take the membership lock exclusively.
+/// Call before the first repository lock. Blocks exclude both accounts until commit.
 pub(crate) async fn require_repository_interaction(
     connection: &mut PgConnection,
     actor: i64,
     repo: i64,
 ) -> Result<()> {
-    super::transitions::lock_membership_shared(&mut *connection).await?;
+    super::transitions::lock_accounts_shared(connection, &[actor]).await?;
     let active: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *connection).await?;
     anyhow::ensure!(
         active && !repository_interaction_blocked(connection, actor, repo).await?,
@@ -61,8 +61,8 @@ pub async fn change_block(
 ) -> Result<()> {
     anyhow::ensure!(user != target, InvalidBlock);
     let mut tx = pool.begin().await?;
-    // All contribution, follow, notification, and engagement effects retain the shared lock.
-    super::transitions::lock_membership(&mut tx).await?;
+    // Either participant's effects must finish before removing their shared state.
+    super::transitions::lock_accounts(&mut tx, &[user, target]).await?;
     super::transitions::require_account_exclusive(&mut tx, user, credential).await?;
     let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1)")
         .bind(target)

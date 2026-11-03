@@ -63,7 +63,6 @@ async fn save(
     replace: bool,
 ) -> Result<OrganizationOutcome<OrgInvitation>> {
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
     let policy = if replace {
         InvitationOffer::Replace
     } else {
@@ -87,6 +86,9 @@ pub(super) async fn save_in_transaction(
     let grant = actor.into();
     let actor = grant.user_id;
     let replace = matches!(policy, InvitationOffer::Replace);
+    let target = invitation_target(tx, input).await?;
+    let accounts: Vec<i64> = [Some(actor), target].into_iter().flatten().collect();
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(tx, &accounts).await?;
     let actor_role = require_org!(tx, actor, org);
     if !credential(tx, &grant, org, "members").await? {
         return Ok(Denied);
@@ -100,11 +102,9 @@ pub(super) async fn save_in_transaction(
     if !input.valid() {
         return Ok(Conflict);
     }
-    let target = if let Some(email) = &input.email {
-        sqlx::query_scalar("SELECT u.id FROM users u WHERE (u.email_verified AND lower(u.email)=$1) OR EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND e.verified AND lower(e.email)=$1) LIMIT 1").bind(email).fetch_optional(&mut *tx).await?
-    } else {
-        input.user_id
-    };
+    if invitation_target(tx, input).await? != target {
+        return Ok(Conflict);
+    }
     if let Some(target) = target {
         if !active(tx, target).await? || super::blocks::target_blocked(tx, org, target).await? {
             return Ok(Denied);
@@ -219,6 +219,15 @@ pub(super) async fn save_in_transaction(
     }
     queue_invitation_email(tx, actor, org, target, &invitation).await?;
     Ok(Applied(invitation))
+}
+
+async fn invitation_target(tx: &mut PgConnection, input: &NewInvitation) -> Result<Option<i64>> {
+    Ok(if let Some(email) = &input.email {
+        sqlx::query_scalar("SELECT u.id FROM users u WHERE (u.email_verified AND lower(u.email)=$1) OR EXISTS(SELECT 1 FROM user_emails e WHERE e.user_id=u.id AND e.verified AND lower(e.email)=$1) LIMIT 1")
+            .bind(email).fetch_optional(tx).await?
+    } else {
+        input.user_id
+    })
 }
 
 /// Queues the offer's email with the offer, so a saved invitation always has its message. The
@@ -365,7 +374,8 @@ async fn cancel(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     let actor_role = require_org!(tx, actor, org);
     if !credential(&mut tx, &grant, org, "members").await?
         || !administers(actor_role)
@@ -453,7 +463,16 @@ pub async fn accept_organization_invitation(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
+    if sqlx::query_scalar::<_, i64>("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
+        .bind(org)
+        .fetch_optional(&mut *tx)
+        .await?
+        .is_none()
+    {
+        return Ok(Missing);
+    }
     // Hold the account lock before testing verified address ownership. Address removal and
     // primary-address changes lock the same row and cannot revoke proof under acceptance.
     let actor_active = active(&mut tx, actor).await?;
@@ -527,8 +546,12 @@ pub async fn decline_organization_invitation(
     if !super::super::credentials::live(&mut tx, &grant, true).await? {
         return Ok(Denied);
     }
-    // Serialize consumption with acceptance before either path locks the recipient.
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
+    sqlx::query("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
+        .bind(org)
+        .execute(&mut *tx)
+        .await?;
     let _ = active(&mut tx, actor).await?;
     let sql = format!("SELECT i.id FROM organization_invitations i WHERE {RECIPIENT} AND i.org_id=$2 ORDER BY i.id FOR UPDATE");
     sqlx::query(&sql)

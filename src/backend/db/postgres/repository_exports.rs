@@ -13,7 +13,7 @@ async fn authority(connection: &mut PgConnection, actor: i64, org: Option<i64>) 
             OrganizationOutcome::Applied(OrgRole::Owner)
         ));
     }
-    super::users::transitions::lock_membership_shared(connection).await?;
+    super::users::transitions::lock_accounts_shared(connection, &[actor]).await?;
     Ok(sqlx::query_scalar::<_, i64>(
         "SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE",
     )

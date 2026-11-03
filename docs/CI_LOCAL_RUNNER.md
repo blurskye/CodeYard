@@ -72,8 +72,11 @@ runs up to `CI_MAX_ACTIVE_RUNS` runs at once
 (default 4). Worker-injected limits apply to explicit job and service containers too;
 workflow options cannot raise them. These are limits, not protection against hostile workflows.
 
-A run waits in the queue until one of the node's slots is free. Repository maintenance
-never prunes, so the commit of a queued run stays readable after its branch moves on.
+A run waits in the queue until one of the node's slots is free. Core nodes check at most
+`CI_CLAIM_CANDIDATES` compatible candidates per claim (default 128, range 1–1024), in run ID
+order. Labels, runner scope/group and workflow concurrency are filtered before that limit;
+live authority is checked again when claiming. Repository maintenance never prunes, so the
+commit of a queued run stays readable after its branch moves on.
 
 The first run downloads the runner image, normally `ghcr.io/catthehacker/ubuntu:act-latest`.
 Later runs use the copy on the node and do not check the registry, so update the image on

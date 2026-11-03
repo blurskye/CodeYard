@@ -253,7 +253,7 @@ pub(crate) async fn lock_policy_authority(
 ) -> Result<bool> {
     lock_policy_authority_with(tx, actor_id, repo_id, RepositoryLock::Shared, maintain).await
 }
-async fn lock_policy_authority_with(
+pub(crate) async fn lock_policy_authority_with(
     tx: &mut Transaction<'_, Postgres>,
     actor_id: i64,
     repo_id: i64,

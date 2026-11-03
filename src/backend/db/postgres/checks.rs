@@ -13,7 +13,6 @@ async fn authority(
     repo: i64,
     admin: bool,
 ) -> Result<(String, Option<i64>)> {
-    super::users::transitions::lock_membership_shared(tx).await?;
     let actor: i64 = match credential {
         Credential::Token(id) => sqlx::query_scalar("SELECT t.user_id FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1 AND t.scope='write' AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password")
             .bind(id).fetch_optional(&mut **tx).await?.ok_or(Refusal::Denied)?,
@@ -206,7 +205,6 @@ pub async fn automatic_suites(
         ..Default::default()
     };
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     let current: Option<crate::backend::db::models::Repository> = sqlx::query_as(
         "SELECT * FROM repositories WHERE id=$1 AND NOT is_archived AND NOT is_gist FOR SHARE",
     )

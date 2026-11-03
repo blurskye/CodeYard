@@ -130,12 +130,18 @@ impl Database {
             .expect("reconnect owned schema")
             .into()
     }
-    async fn block_membership(&self) -> Transaction<'static, Postgres> {
+    async fn block_namespace(&self) -> Transaction<'static, Postgres> {
         let mut tx = self.raw.begin().await.unwrap();
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37002)")
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37003)")
             .execute(&mut *tx)
             .await
             .unwrap();
+        tx
+    }
+    async fn block_account(&self, user: i64) -> Transaction<'static, Postgres> {
+        let mut tx = self.raw.begin().await.unwrap();
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':account:' || $1::bigint::text,0))")
+            .bind(user).execute(&mut *tx).await.unwrap();
         tx
     }
     async fn wait_for_blocked(&self, count: i64) {
@@ -162,7 +168,7 @@ impl Database {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn setup_competitors_have_one_transactional_admin_and_mode() {
     let fixture = Database::new().await;
-    let blocker = fixture.block_membership().await;
+    let blocker = fixture.block_namespace().await;
     let a_pool = fixture.pool.clone();
     let b_pool = fixture.pool.clone();
     let a = tokio::spawn(async move {
@@ -351,7 +357,7 @@ async fn reciprocal_admin_bans_revalidate_the_actor_and_preserve_repository_data
         .await
         .unwrap();
     }
-    let blocker = fixture.block_membership().await;
+    let blocker = fixture.block_account(a.id.min(b.id)).await;
     let p = fixture.pool.clone();
     let q = fixture.pool.clone();
     let aid = a.id;
@@ -1338,7 +1344,7 @@ async fn token_insert_waiting_behind_password_revocation_is_refused() {
 async fn public_oauth_parallel_enrollment_has_no_orphan_user_or_second_link() {
     let fixture = Database::new().await;
     fixture.setup("public").await;
-    let blocker = fixture.block_membership().await;
+    let blocker = fixture.block_namespace().await;
     let p = fixture.pool.clone();
     let q = fixture.pool.clone();
     let one = tokio::spawn(async move {

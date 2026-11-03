@@ -7,31 +7,42 @@ use crate::backend::db::models::{NodeConfiguration, User};
 use anyhow::Result;
 use sqlx::{PgConnection, Postgres, Transaction};
 
-pub(crate) async fn lock_membership(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-    // Lock order: account membership 37002 -> (for inserts) namespace 37003 ->
-    // configuration/actor/request rows -> name predicates. Organization creation
-    // takes both transaction locks before the actor row too.
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), 37002)")
-        .execute(&mut **tx)
-        .await?;
-    Ok(())
+/// Take the complete account set before namespace or row locks. Account restrictions
+/// are exclusive; authority readers retain shared locks through their effect.
+/// Never add another account after taking rows, or upgrade a shared advisory lock.
+pub(crate) async fn lock_accounts(connection: &mut PgConnection, accounts: &[i64]) -> Result<()> {
+    account_locks(connection, accounts, false).await
 }
 
-/// The shared form of the membership lock. A transaction takes it before any row lock.
-/// Transitions hold the exclusive form while they lock organizations and then accounts,
-/// and an acknowledgement locks an account before organizations. Without the shared form,
-/// those two orders could each wait for a row the other holds.
-pub(crate) async fn lock_membership_shared(connection: &mut PgConnection) -> Result<()> {
-    sqlx::query(
-        "SELECT pg_advisory_xact_lock_shared(hashtext(COALESCE(current_schema(),'')), 37002)",
-    )
-    .execute(connection)
-    .await?;
+pub(crate) async fn lock_accounts_shared(
+    connection: &mut PgConnection,
+    accounts: &[i64],
+) -> Result<()> {
+    account_locks(connection, accounts, true).await
+}
+
+async fn account_locks(
+    connection: &mut PgConnection,
+    accounts: &[i64],
+    shared: bool,
+) -> Result<()> {
+    let mut accounts = accounts.to_vec();
+    accounts.sort_unstable();
+    accounts.dedup();
+    let lock = if shared {
+        "pg_advisory_xact_lock_shared"
+    } else {
+        "pg_advisory_xact_lock"
+    };
+    for account in accounts {
+        sqlx::query(&format!("SELECT {lock}(hashtextextended(COALESCE(current_schema(),'') || ':account:' || $1::bigint::text,0))"))
+            .bind(account).execute(&mut *connection).await?;
+    }
     Ok(())
 }
 
 pub(crate) async fn lock_namespace(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
-    // Must follow lock_membership, before any actor/name examination. Held to commit.
+    // Account locks precede namespace reservation, which is shared by user and org names.
     sqlx::query("SELECT pg_advisory_xact_lock(hashtext(COALESCE(current_schema(),'')), 37003)")
         .execute(&mut **tx)
         .await?;
@@ -99,7 +110,7 @@ async fn active_account_locked(
     actor: i64,
     exclusive: bool,
 ) -> Result<bool> {
-    lock_membership_shared(connection).await?;
+    lock_accounts_shared(connection, &[actor]).await?;
     let lock = if exclusive {
         "FOR NO KEY UPDATE"
     } else {
@@ -203,6 +214,7 @@ pub(crate) async fn credential_live(
     Ok(match credential {
         AccountCredential::Session(session) => live_session(tx, actor, session).await?,
         AccountCredential::Token(id, hash) => {
+            crate::backend::db::postgres::oauth_apps::lock_token_issuer(tx, *id).await?;
             // Installation revocation takes this row before deleting its personal tokens.
             let _: Option<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id WHERE t.token_id=$1 FOR SHARE OF i")
                 .bind(id).fetch_optional(&mut *tx).await?;
@@ -231,7 +243,7 @@ pub(crate) async fn current_password(
     session: &str,
     allow_must_change: bool,
 ) -> Result<bool> {
-    lock_membership_shared(tx).await?;
+    lock_accounts_shared(tx, &[user]).await?;
     let valid: bool = sqlx::query_scalar(
         "SELECT password_hash=$2 AND NOT is_banned AND ($3 OR NOT must_change_password) FROM users WHERE id=$1 FOR NO KEY UPDATE",
     ).bind(user).bind(expected).bind(allow_must_change).fetch_optional(&mut **tx).await?.unwrap_or(false);
@@ -252,19 +264,21 @@ pub(crate) async fn active_admin_session(
 }
 
 pub(crate) async fn active_admin(tx: &mut Transaction<'_, Postgres>, actor: i64) -> Result<bool> {
+    lock_accounts_shared(tx, &[actor]).await?;
     // Serialize authority changes without blocking CI notification foreign keys.
     Ok(sqlx::query_scalar::<_, bool>("SELECT is_admin AND NOT is_banned AND NOT must_change_password FROM users WHERE id = $1 FOR NO KEY UPDATE")
         .bind(actor).fetch_optional(&mut **tx).await?.unwrap_or(false))
 }
 
 /// Locks every organization currently owned by `user` before the account row.
-/// Membership changes take the same transaction lock before changing ownership,
+/// Membership changes retain the target account lock before changing ownership,
 /// so this first query is a current ownership snapshot rather than a stale candidate list.
+/// Administrative callers lock actor and target together before entering here.
 pub(crate) async fn owned_organizations_for_account_change(
     tx: &mut Transaction<'_, Postgres>,
     user: i64,
 ) -> Result<Vec<i64>> {
-    lock_membership(tx).await?;
+    lock_accounts(tx, &[user]).await?;
     let candidates: Vec<i64> = sqlx::query_scalar(
         "SELECT org_id FROM org_memberships WHERE user_id=$1 AND role='owner' ORDER BY org_id",
     )
@@ -324,7 +338,9 @@ pub async fn complete_setup(
     recovery: Option<(i64, &str)>,
 ) -> Result<SetupClaim> {
     let mut tx = pool.begin().await?;
-    lock_membership(&mut tx).await?;
+    if let Some((user, _)) = recovery {
+        lock_accounts(&mut tx, &[user]).await?;
+    }
     lock_namespace(&mut tx).await?;
     let completed = sqlx::query_scalar::<_, bool>(
         "SELECT setup_completed FROM node_configuration WHERE id = 1 FOR UPDATE",
@@ -376,7 +392,6 @@ pub async fn create_cli_user(
     email: Option<&str>,
 ) -> Result<AccountAdmission> {
     let mut tx = pool.begin().await?;
-    lock_membership(&mut tx).await?;
     lock_namespace(&mut tx).await?;
     let completed = sqlx::query_scalar::<_, bool>(
         "SELECT setup_completed FROM node_configuration WHERE id=1 FOR UPDATE",
@@ -409,7 +424,6 @@ pub async fn bootstrap_admin(
     mode: &str,
 ) -> Result<SetupClaim> {
     let mut tx = pool.begin().await?;
-    lock_membership(&mut tx).await?;
     lock_namespace(&mut tx).await?;
     let completed = sqlx::query_scalar::<_, bool>(
         "SELECT setup_completed FROM node_configuration WHERE id=1 FOR UPDATE",
@@ -451,6 +465,7 @@ pub async fn change_ban(
 ) -> Result<BanChange> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
+    lock_accounts(&mut tx, &[actor.user_id, target]).await?;
     let organizations = owned_organizations_for_account_change(&mut tx, target).await?;
     if !active_admin_session(&mut tx, &actor).await? {
         return Ok(BanChange::Denied);
@@ -569,7 +584,7 @@ pub async fn change_admin_role(
 ) -> Result<RoleChange> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
-    lock_membership(&mut tx).await?;
+    lock_accounts(&mut tx, &[actor.user_id, target]).await?;
     if !active_admin_session(&mut tx, &actor).await? {
         return Ok(RoleChange::Denied);
     }
@@ -603,7 +618,9 @@ pub async fn register_password(
     administrator: Option<(i64, &str, bool)>,
 ) -> Result<AccountAdmission> {
     let mut tx = pool.begin().await?;
-    lock_membership(&mut tx).await?;
+    if let Some((actor, _, _)) = administrator {
+        lock_accounts(&mut tx, &[actor]).await?;
+    }
     lock_namespace(&mut tx).await?;
     let config = sqlx::query_as::<_, NodeConfiguration>(
         "SELECT * FROM node_configuration WHERE id=1 FOR UPDATE",
@@ -672,7 +689,18 @@ pub async fn admit_oauth_account(
     display_name: Option<&str>,
 ) -> Result<AccountAdmission> {
     let mut tx = pool.begin().await?;
-    lock_membership(&mut tx).await?;
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'') || ':oauth-account:' || $1 || ':' || $2,0))")
+        .bind(provider).bind(provider_id).execute(&mut *tx).await?;
+    let linked_account: Option<i64> = sqlx::query_scalar(
+        "SELECT user_id FROM oauth_accounts WHERE provider=$1 AND provider_user_id=$2",
+    )
+    .bind(provider)
+    .bind(provider_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(user) = linked_account {
+        lock_accounts(&mut tx, &[user]).await?;
+    }
     lock_namespace(&mut tx).await?;
     let config = sqlx::query_as::<_, NodeConfiguration>(
         "SELECT * FROM node_configuration WHERE id=1 FOR UPDATE",
@@ -685,7 +713,7 @@ pub async fn admit_oauth_account(
     let linked = sqlx::query_as::<_, User>("SELECT u.* FROM users u JOIN oauth_accounts a ON a.user_id=u.id WHERE a.provider=$1 AND a.provider_user_id=$2 FOR UPDATE OF u")
         .bind(provider).bind(provider_id).fetch_optional(&mut *tx).await?;
     if let Some(user) = linked {
-        if user.is_banned || user.must_change_password {
+        if linked_account != Some(user.id) || user.is_banned || user.must_change_password {
             return Ok(AccountAdmission::Denied);
         }
         tx.commit().await?;
@@ -745,7 +773,7 @@ pub async fn enroll_oauth_identity(
         return Ok(false);
     }
     let mut tx = pool.begin().await?;
-    lock_membership(&mut tx).await?;
+    lock_accounts(&mut tx, &[actor, user]).await?;
     let private = sqlx::query_scalar::<_, bool>("SELECT setup_completed AND node_mode='private' FROM node_configuration WHERE id=1 FOR UPDATE")
         .fetch_optional(&mut *tx).await?.unwrap_or(false);
     if !private || !active_admin(&mut tx, actor).await? {
@@ -826,8 +854,7 @@ pub async fn reset_password_with_link(
     expected_temporary: bool,
 ) -> Result<Option<i64>> {
     let mut tx = pool.begin().await?;
-    // Retain the owning organizations and account before the issuance, as in account changes.
-    lock_membership(&mut tx).await?;
+    // Retain the owning organizations and account before consuming the issuance.
     let user: Option<i64> = sqlx::query_scalar(
         "SELECT user_id FROM email_tokens WHERE purpose='reset' AND token_hash=$1",
     )

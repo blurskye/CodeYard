@@ -76,7 +76,7 @@ async fn require_key_account(
                 }
             });
     }
-    super::transitions::lock_membership_shared(tx).await?;
+    super::transitions::lock_accounts_shared(tx, &[user]).await?;
     let active: Option<bool> = sqlx::query_scalar(
         "SELECT NOT is_banned AND NOT must_change_password FROM users WHERE id=$1 FOR SHARE",
     )

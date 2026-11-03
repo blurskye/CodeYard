@@ -7,9 +7,7 @@ use crate::backend::db::cluster::{
     Authority, DeclaredMember, FamilyOutcome, JoinRequest, NewJoinToken, PrimaryReplicaRow,
     PromoteOutcome,
 };
-use crate::backend::db::postgres::users::transitions::{
-    active_admin, live_session, lock_membership_shared,
-};
+use crate::backend::db::postgres::users::transitions::{active_admin, live_session};
 use anyhow::{anyhow, bail, ensure, Result};
 use sqlx::{PgConnection, PgPool};
 
@@ -116,7 +114,6 @@ pub async fn place_fork_family(
 pub async fn join_with_token(pool: &PgPool, request: JoinRequest<'_>) -> Result<JoinOutcome> {
     // Every early return below drops the transaction, which rolls it back.
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     // A key that is registered already gets its standing back and keeps the token unused.
     let known = sqlx::query_as::<_, ClusterNode>(
         "SELECT *, NOW() AS observed_at FROM nodes WHERE public_key = $1",
@@ -281,7 +278,7 @@ pub async fn admin_node_page(
     after: &str,
 ) -> Result<Vec<ClusterNode>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[administrator.user_id]).await?;
     anyhow::ensure!(
         super::users::transitions::active_admin_session(&mut tx, administrator).await?,
         crate::backend::db::users::accounts::AccountRestricted
@@ -316,7 +313,6 @@ pub async fn set_node_status(
     status: &str,
 ) -> Result<NodeStatusChange> {
     let mut tx = pool.begin().await?;
-    lock_membership_shared(&mut tx).await?;
     if let Authority::Administrator { user_id, session } = authority {
         if !active_admin(&mut tx, user_id).await?
             || !live_session(&mut tx, user_id, session).await?
