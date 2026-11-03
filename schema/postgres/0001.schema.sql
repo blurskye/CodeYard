@@ -1128,18 +1128,22 @@ CREATE TABLE actions_jobs (
     UNIQUE(run_id,generation,workflow_path,logical_job,variant)
 );
 
-CREATE TABLE IF NOT EXISTS ci_logs (
-    id BIGSERIAL PRIMARY KEY,
+CREATE TABLE ci_log_chunks (
     run_id BIGINT NOT NULL REFERENCES ci_runs(id) ON DELETE CASCADE,
-    stage VARCHAR(255) NOT NULL,
-    line TEXT NOT NULL,
-    level VARCHAR(20) NOT NULL DEFAULT 'info', -- info, warn, error, debug
+    job_id BIGINT REFERENCES actions_jobs(id) ON DELETE CASCADE,
+    sequence BIGINT NOT NULL CHECK (sequence >= 0),
+    upload_sequence BIGINT NOT NULL CHECK (upload_sequence >= 0),
+    request_hash TEXT NOT NULL CHECK (length(request_hash) = 64),
+    first_line BIGINT NOT NULL CHECK (first_line > 0),
+    line_count BIGINT NOT NULL CHECK (line_count BETWEEN 1 AND 64),
+    byte_size BIGINT NOT NULL CHECK (byte_size BETWEEN 0 AND 262144),
+    data BYTEA NOT NULL CHECK (octet_length(data) <= 2097152),
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-    job_id BIGINT REFERENCES actions_jobs(id) ON DELETE SET NULL,
-    step_number INTEGER
+    PRIMARY KEY (run_id, sequence),
+    UNIQUE (job_id, sequence)
 );
 
-CREATE INDEX IF NOT EXISTS idx_ci_logs_run_id_id ON ci_logs(run_id, id);
+CREATE INDEX ci_log_chunks_range ON ci_log_chunks(run_id, first_line);
 
 CREATE TABLE IF NOT EXISTS ci_deployments (
     id BIGSERIAL PRIMARY KEY,
@@ -2062,7 +2066,7 @@ CREATE TABLE actions_job_states (
     state JSONB NOT NULL,
     PRIMARY KEY(run_id,generation,workflow_path)
 );
-CREATE INDEX ci_logs_job ON ci_logs(job_id,id);
+CREATE INDEX ci_log_chunks_upload ON ci_log_chunks(run_id, upload_sequence);
 
 CREATE TABLE actions_log_downloads (
     token_hash TEXT PRIMARY KEY,
