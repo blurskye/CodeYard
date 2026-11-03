@@ -56,6 +56,19 @@ jobs:
           rustup toolchain install 1.99.0 --profile minimal -c rustfmt -c clippy
           rustup default 1.99.0
           rustc --version
+      - name: Add swap
+        # The runner was stopped while Clippy checked the large crate, which points to running out
+        # of memory. Free the preinstalled tools this project does not use, then swap on the disk.
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo swapoff -a
+          sudo rm -f /mnt/swapfile
+          sudo fallocate -l 16G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -m
+          df -h /
       - name: Check formatting
         run: cargo fmt --all -- --check
       - name: Clippy
