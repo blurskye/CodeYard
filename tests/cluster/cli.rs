@@ -11,6 +11,7 @@ fn run(directory: &Path, arguments: &[&str], environment: &[(&str, &str)]) -> Ou
     Command::new(env!("CARGO_BIN_EXE_codeyard"))
         .args(arguments)
         .env_clear()
+        .env("CODEYARD_EXPERIMENTAL_CLUSTER", "1")
         .envs(environment.iter().copied())
         .current_dir(directory)
         .output()
@@ -19,6 +20,32 @@ fn run(directory: &Path, arguments: &[&str], environment: &[(&str, &str)]) -> Ou
 
 fn text(bytes: &[u8]) -> String {
     String::from_utf8_lossy(bytes).into_owned()
+}
+
+#[test]
+fn cluster_mode_requires_an_explicit_experimental_opt_in() {
+    let directory = tempfile::tempdir().unwrap();
+    std::fs::write(directory.path().join(".env"), "").unwrap();
+    for arguments in [vec!["cluster", "enable"], vec!["serve", "--cluster"]] {
+        for value in ["", "0", "true", "01"] {
+            let output = run(
+                directory.path(),
+                &arguments,
+                &[("CODEYARD_EXPERIMENTAL_CLUSTER", value)],
+            );
+            assert!(!output.status.success());
+            assert!(text(&output.stderr).contains("cluster mode is not ready yet"));
+            assert!(!directory.path().join(".gitserv").exists());
+        }
+        let output = Command::new(env!("CARGO_BIN_EXE_codeyard"))
+            .args(&arguments)
+            .env_clear()
+            .current_dir(directory.path())
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(text(&output.stderr).contains("cluster mode is not ready yet"));
+    }
 }
 
 #[tokio::test]

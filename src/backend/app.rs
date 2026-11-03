@@ -31,6 +31,10 @@ pub struct AppState {
     /// How long one code or commit search page may walk repositories:
     /// `SEARCH_TIME_BUDGET_SECONDS`, default 35.
     pub search_time_budget: std::time::Duration,
+    pub metrics_token_hash: Option<String>,
+    pub roles: crate::backend::node::NodeRoles,
+    pub storage_min_free_bytes: u64,
+    pub(crate) storage_readiness: Arc<tokio::sync::Semaphore>,
 }
 
 impl AppState {
@@ -58,6 +62,13 @@ impl AppState {
         ));
         let oidc_keys = Arc::new(crate::backend::ci::oidc::SigningKeys::new(pool.clone()));
         Self {
+            metrics_token_hash: std::env::var("METRICS_TOKEN")
+                .ok()
+                .filter(|token| !token.is_empty() && token.len() <= 4096)
+                .map(|token| crate::backend::identity::tokens::token_hash(&token)),
+            roles: crate::backend::node::NodeRoles::default(),
+            storage_min_free_bytes: 1024 * 1024 * 1024,
+            storage_readiness: Arc::new(tokio::sync::Semaphore::new(1)),
             pool,
             oidc_keys,
             repos_path,

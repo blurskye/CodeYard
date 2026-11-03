@@ -6,6 +6,10 @@ Actions jobs ([CI local runner](CI_LOCAL_RUNNER.md)). Use cluster mode when you 
 and SSH servers separate from the machines that hold the repositories, or several
 repository disks. [Architecture](ARCHITECTURE.md) section 2 explains how it works.
 
+Single node is the supported setup. Cluster mode is experimental: `cluster enable` and
+`serve --cluster` refuse with "cluster mode is not ready yet" unless
+`CODEYARD_EXPERIMENTAL_CLUSTER=1` is set in the environment.
+
 ## Turn on cluster mode
 
 On a machine with the installation's `DATABASE_URL` (PostgreSQL):
@@ -39,6 +43,32 @@ and the rest) open the node connection in either mode; they do not change the mo
   set `IROH_RELAY`. Behind NAT or a container port mapping, tell the other nodes where to
   dial with `IROH_ADVERTISE=host:port`. If UDP cannot reach the nodes, use one TCP port
   instead; see [Reachable only over TCP](#reachable-only-over-tcp).
+
+## Monitoring
+
+`/health` is liveness; `/ready` checks the database with a 2-second deadline. Nodes with
+`storage` also probe repository-root writes and available space with a 2-second deadline.
+`STORAGE_MIN_FREE_BYTES` sets the reserve (unsigned bytes, default 1 GiB). Failed checks
+return 503 with the check name, never a path. Storage nodes without `web` expose only
+these probes and `/metrics` on `HTTP_ADDR`; keep that listener on a private network.
+
+`/metrics` returns Prometheus text to a site administrator's personal token or a bearer
+matching `METRICS_TOKEN` (1–4096 bearer-token characters). Other callers receive 404;
+browser sessions and repository-scoped tokens do not grant access. Scrapes have a
+2-second collection deadline and support at most 1,000 storage nodes.
+
+- `codeyard_repository_bytes{node_id}`: recorded repository sizes, including initialized
+  replicas using their primary's recorded size; not a filesystem usage scan.
+- `codeyard_storage_free_bytes{node_id}`: last reported available disk bytes (`NaN` until
+  reported). Alert below the storage reserve and on missing reports.
+- `codeyard_replica_lag_versions`: largest write-version gap, including pending copies.
+  Alert when nonzero for several minutes.
+- `codeyard_ci_queued_runs`, `codeyard_ci_oldest_queued_seconds`: queue depth and oldest
+  age (zero for an empty queue). Alert when age exceeds 120 seconds.
+- `codeyard_database_pool_size`: open connections in this process, including idle ones.
+  `codeyard_database_pool_waiters` is `NaN`: SQLx does not expose its acquisition queue.
+- `codeyard_nodes{state}`: counts of pending, active and revoked memberships, not
+  heartbeat health. Alert on unexpected membership changes and scrape failures.
 
 ## Roles
 

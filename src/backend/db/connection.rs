@@ -145,6 +145,14 @@ impl DbPool {
         Ok(())
     }
 
+    /// Open connections, including idle connections, for this process.
+    pub fn size(&self) -> u32 {
+        match self {
+            Self::Postgres(pool) => pool.size(),
+            Self::Sqlite(pool) => pool.size(),
+        }
+    }
+
     /// Allows owned database listeners to stop retrying after pool shutdown.
     pub fn is_closed(&self) -> bool {
         match self {

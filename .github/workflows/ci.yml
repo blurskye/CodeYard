@@ -11,17 +11,12 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  # Smaller debug info and no incremental data make the large crate build faster and use less disk.
-  CARGO_INCREMENTAL: 0
-  CARGO_PROFILE_DEV_DEBUG: line-tables-only
-  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   test:
     name: Format, lint and test
     runs-on: ubuntu-latest
-    # A cold build of the large crate takes more than an hour on a free runner.
-    timeout-minutes: 300
+    timeout-minutes: 60
     services:
       postgres:
         image: postgres:18
@@ -40,22 +35,12 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Raise the PostgreSQL lock table size
-        # Dropping a test schema with all its tables in one transaction needs more locks than the
-        # default of 64 per connection allows ("out of shared memory"). A service container cannot
-        # take server arguments, so set it and restart the container. The restart can change the
-        # published port, so the next step reads it again.
-        run: |
-          id=$(docker ps -q --filter ancestor=postgres:18)
-          docker exec "$id" psql -U postgres -d gitserv_test -c "ALTER SYSTEM SET max_locks_per_transaction = 512"
-          docker restart "$id"
-          until docker exec "$id" pg_isready -U postgres -d gitserv_test; do sleep 1; done
       - name: Configure PostgreSQL
         run: |
           if [[ -f /.dockerenv || -f /run/.containerenv ]]; then
             address=postgres:5432
           else
-            address=127.0.0.1:$(docker port "$(docker ps -q --filter ancestor=postgres:18)" 5432/tcp | head -n1 | cut -d: -f2)
+            address=127.0.0.1:${{ job.services.postgres.ports[5432] }}
           fi
           echo "GITSERV_TEST_DATABASE_URL=postgres://postgres:postgres@$address/gitserv_test" >> "$GITHUB_ENV"
       - name: Install Rust
@@ -71,8 +56,6 @@ jobs:
           rustup toolchain install 1.99.0 --profile minimal -c rustfmt -c clippy
           rustup default 1.99.0
           rustc --version
-      - name: Cache dependencies
-        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
       - name: Free disk space
         # The runner was stopped while Clippy checked the large crate, which points to running out
         # of memory. Remove the preinstalled tools this project does not use, to make room for swap
@@ -114,9 +97,6 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=0.2.89-codeyard.1" -o "$RUNNER_TEMP/bin/act" .
       - name: Test
         env:
-          # Compiling the large crate for tests needs more than 12 GiB for one compiler process
-          # (measured for Clippy), so a runner with 16 GiB is stopped when more than one runs.
-          CARGO_BUILD_JOBS: 1
           # The OpenSSH tests run this CLI as a separate process.
           GITSERV_TEST_OPENSSH_HELPER: ${{ github.workspace }}/target/debug/codeyard
           CODEYARD_ACTIONS_BIN: ${{ github.workspace }}/target/debug/codeyard-actions
