@@ -410,6 +410,19 @@ mod admission_tests {
         }
     }
 
+    #[tokio::test]
+    async fn oversized_terminal_output_preserves_an_unknown_outcome_after_draining() {
+        let mut output = tokio::io::sink();
+        let operation = pending_operation();
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: operation.clone(),
+            held: vec![0; crate::backend::cluster::rpc::MAX_JSON],
+        };
+        assert!(gate.write_all(b"x").await.is_err());
+        assert!(operation.state.lock().unwrap().quorum_unknown);
+    }
+
     #[test]
     fn busy_session_refusals_keep_the_public_reason() {
         assert_eq!(
@@ -1081,6 +1094,13 @@ impl AsyncWrite for ReceiveOutput<'_> {
         if hold {
             if bytes.len() > crate::backend::cluster::rpc::MAX_JSON.saturating_sub(self.held.len())
             {
+                // Receive-pack drains after output errors. Do not release a truncated status
+                // merely because that draining process later exits successfully.
+                self.operation
+                    .state
+                    .lock()
+                    .unwrap_or_else(|error| error.into_inner())
+                    .quorum_unknown = true;
                 return std::task::Poll::Ready(Err(std::io::Error::other(
                     "receive status exceeds limit",
                 )));

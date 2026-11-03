@@ -279,7 +279,8 @@ impl Gateway {
                     crate::backend::repositories::releases::immutable::check_current_tag_updates(
                         &self.pool, &repo, updates,
                     )
-                    .await
+                    .await?;
+                    Ok::<_, anyhow::Error>(())
                 };
                 let decided =
                     coordinator::decide(&self.pool, &write, votes && authorized.await.is_ok())

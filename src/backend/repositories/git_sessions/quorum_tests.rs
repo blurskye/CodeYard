@@ -1,7 +1,7 @@
 use super::super::protocol::TransactionPhase;
 use super::*;
 use crate::backend::{
-    cluster::{transport::Relay, IrohDialer, NodeAddress, NodeContext, NodeKey},
+    cluster::{IrohDialer, NodeAddress, NodeContext, NodeKey, Relay},
     db::{cluster::writes as journal, models::RefValue},
     notifications::NotificationBroadcaster,
 };
