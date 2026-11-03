@@ -10,6 +10,119 @@ use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 impl NodeContext {
+    pub(crate) async fn prepare_push_write(
+        &self,
+        repository: Uuid,
+        path: &std::path::Path,
+        write: &db::models::WriteRecord,
+    ) -> anyhow::Result<()> {
+        let limits = super::git_session::WriteLimits::load(self.database()?).await?;
+        tokio::time::timeout(limits.timeout, async {
+            let follower = self.write_follower(write).await?;
+            self.prepare_local_write(path, write, limits).await?;
+            let (reply, _) = self
+                .call(
+                    follower,
+                    Request {
+                        repository,
+                        operation: Operation::PrepareWrite {
+                            id: write.id.clone(),
+                        },
+                        actor: None,
+                        ci_run: None,
+                    },
+                    &[],
+                )
+                .await?;
+            reply.result.map_err(|_| unavailable())?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await?
+    }
+
+    pub(crate) async fn publish_push_write(
+        &self,
+        repository: Uuid,
+        path: &std::path::Path,
+        write: &db::models::WriteRecord,
+    ) -> anyhow::Result<()> {
+        let limits = super::git_session::WriteLimits::load(self.database()?).await?;
+        tokio::time::timeout(limits.timeout, async {
+            let follower = self.write_follower(write).await?;
+            self.publish_local_write(path, write).await?;
+            let (reply, _) = self
+                .call(
+                    follower,
+                    Request {
+                        repository,
+                        operation: Operation::ApplyWrite {
+                            id: write.id.clone(),
+                        },
+                        actor: None,
+                        ci_run: None,
+                    },
+                    &[],
+                )
+                .await?;
+            reply.result.map_err(|_| unavailable())?;
+            self.remove_write_preparation(path, write, limits).await?;
+            crate::backend::cluster::writes::publish(self.database()?, write).await?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await?
+    }
+
+    pub(crate) async fn abort_push_write(
+        &self,
+        repository: Uuid,
+        path: &std::path::Path,
+        write: &db::models::WriteRecord,
+    ) -> anyhow::Result<()> {
+        let limits = super::git_session::WriteLimits::load(self.database()?).await?;
+        tokio::time::timeout(
+            limits.timeout.min(std::time::Duration::from_secs(1)),
+            async {
+                anyhow::ensure!(write.decision == "abort", "write is not aborted");
+                let follower = self.write_follower(write).await?;
+                self.remove_write_preparation(path, write, limits).await?;
+                let (reply, _) = self
+                    .call(
+                        follower,
+                        Request {
+                            repository,
+                            operation: Operation::ApplyWrite {
+                                id: write.id.clone(),
+                            },
+                            actor: None,
+                            ci_run: None,
+                        },
+                        &[],
+                    )
+                    .await?;
+                reply.result.map_err(|_| unavailable())?;
+                Ok::<_, anyhow::Error>(())
+            },
+        )
+        .await?
+    }
+
+    async fn write_follower(&self, write: &db::models::WriteRecord) -> anyhow::Result<i64> {
+        let view =
+            db::cluster::writes::recovery_view(self.database()?, write.repository_id).await?;
+        anyhow::ensure!(
+            view.primary_id == self.node_id
+                && write.primary_id == self.node_id
+                && view.term == write.term
+                && view.voters.len() == 2,
+            "write term changed"
+        );
+        view.voters
+            .iter()
+            .find(|voter| voter.node_id != self.node_id && voter.term == write.term)
+            .map(|voter| voter.node_id)
+            .ok_or_else(|| anyhow::anyhow!("write voter missing"))
+    }
+
     pub async fn call(
         &self,
         node_id: i64,

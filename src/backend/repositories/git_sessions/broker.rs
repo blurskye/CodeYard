@@ -386,6 +386,30 @@ mod admission_tests {
         assert!(bytes.is_empty());
     }
 
+    #[tokio::test]
+    async fn unknown_outcomes_replace_plain_and_sideband_success_packets() {
+        for status in [
+            b"0010unpack ok\n".as_slice(),
+            b"0010\x01unpack ok\n".as_slice(),
+        ] {
+            let (mut output, mut reader) = tokio::io::duplex(1024);
+            let mut gate = ReceiveOutput {
+                output: &mut output,
+                operation: pending_operation(),
+                held: status.to_vec(),
+            };
+            gate.unknown().await.unwrap();
+            drop(gate);
+            drop(output);
+            let mut bytes = Vec::new();
+            reader.read_to_end(&mut bytes).await.unwrap();
+            let text = String::from_utf8_lossy(&bytes);
+            assert!(text.contains("write outcome unknown; fetch before retrying"));
+            assert!(!text.contains("unpack ok"));
+            assert_eq!(bytes[4] == 3, status[4] == 1);
+        }
+    }
+
     #[test]
     fn busy_session_refusals_keep_the_public_reason() {
         assert_eq!(
@@ -892,15 +916,27 @@ impl Gateway {
             write,
         )
         .await;
-        if self.complete_quorum(&operation).await.is_err() {
-            let _ = streams
-                .errors
-                .write_all(b"write outcome unknown; fetch before retrying\n")
-                .await;
+        let completion = self.complete_quorum(&operation).await;
+        let committed = completion.as_ref().is_ok_and(|committed| *committed);
+        if completion.is_err() || (committed && status.is_err()) {
+            let _ = timeout(Duration::from_secs(5), output.unknown()).await;
+            let _ = timeout(
+                Duration::from_secs(5),
+                streams
+                    .errors
+                    .write_all(b"write outcome unknown; fetch before retrying\n"),
+            )
+            .await;
             return Err(crate::backend::cluster::writes::OutcomeUnknown.into());
         }
         let status = status?;
-        output.release().await?;
+        if let Err(error) = output.release().await {
+            return if committed {
+                Err(crate::backend::cluster::writes::OutcomeUnknown.into())
+            } else {
+                Err(error)
+            };
+        }
         let (dispatch_failed, missing_post, _publication) = {
             let mut state = operation
                 .state
@@ -1002,9 +1038,29 @@ struct ReceiveOutput<'a> {
 }
 
 impl ReceiveOutput<'_> {
-    async fn release(&mut self) -> Result<()> {
-        self.output.write_all(&self.held).await?;
+    async fn unknown(&mut self) -> Result<()> {
+        let sideband = self.held.get(4).is_some_and(|byte| (1..=3).contains(byte));
+        self.held.clear();
+        let payload: &[u8] = if sideband {
+            b"\x03write outcome unknown; fetch before retrying\n"
+        } else {
+            b"ERR write outcome unknown; fetch before retrying\n"
+        };
+        self.output
+            .write_all(format!("{:04x}", payload.len() + 4).as_bytes())
+            .await?;
+        self.output.write_all(payload).await?;
+        self.output.write_all(b"0000").await?;
         self.output.flush().await?;
+        Ok(())
+    }
+
+    async fn release(&mut self) -> Result<()> {
+        timeout(git_process::IDLE_TIMEOUT, async {
+            self.output.write_all(&self.held).await?;
+            self.output.flush().await
+        })
+        .await??;
         self.held.clear();
         Ok(())
     }
@@ -1116,6 +1172,9 @@ async fn framed_output<R: AsyncRead + Unpin, E: AsyncRead + Unpin, W: AsyncWrite
 #[cfg(test)]
 #[path = "policy_tests.rs"]
 pub(super) mod policy_tests;
+#[cfg(test)]
+#[path = "quorum_tests.rs"]
+mod quorum_tests;
 #[cfg(test)]
 #[path = "broker_tests.rs"]
 mod tests;

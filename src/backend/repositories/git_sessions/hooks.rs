@@ -164,7 +164,7 @@ impl Gateway {
         }
         // HEAD may be included as an alias for the branch Git is updating. Receive-pack
         // cannot change symbolic HEAD itself; only the branch's oid enters this batch.
-        let changes: Vec<_> = updates
+        let mut changes: Vec<_> = updates
             .iter()
             .filter(|update| update.reference != "HEAD" && update.old != update.new)
             .map(|update| db::models::RefChange {
@@ -174,6 +174,7 @@ impl Gateway {
                 new_target: (update.new != ZERO_SHA).then(|| update.new.clone()),
             })
             .collect();
+        changes.sort_by(|a, b| a.name.cmp(&b.name));
         if changes.is_empty() {
             return Ok(());
         }
@@ -211,12 +212,9 @@ impl Gateway {
                     .authorize(&self.pool, &repo, true)
                     .await?;
                 ensure!(actor.id == operation.actor_id, "identity changed");
-                let primary = self
-                    .ci
-                    .cluster
-                    .as_ref()
-                    .context("cluster unavailable")?
-                    .node_id;
+                let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+                let primary = cluster.node_id;
+                let repository = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
                 let view = journal::recovery_view(&self.pool, repo.id).await?;
                 let id = uuid::Uuid::new_v4().to_string();
                 let write = match coordinator::begin(
@@ -246,17 +244,59 @@ impl Gateway {
                     state.transaction = Some(index);
                     index
                 };
-                let votes = coordinator::collect_votes(&self.pool, &write)
+                let lease = operation
+                    .publication_lease
+                    .as_ref()
+                    .context("publication lease missing")?;
+                let prepared = lease
+                    .scope(cluster.prepare_push_write(repository, &operation.path, write.record()))
+                    .await;
+                let votes = prepared.is_ok()
+                    && coordinator::collect_votes(&self.pool, &write)
+                        .await
+                        .unwrap_or(false);
+                // Recheck after network and disk waits, immediately before the decision.
+                let authorized = async {
+                    let (repo, path) = self.operation_repository(operation).await?;
+                    let (actor, _) = operation
+                        .credential
+                        .authorize(&self.pool, &repo, true)
+                        .await?;
+                    ensure!(actor.id == operation.actor_id, "identity changed");
+                    let via = if matches!(operation.credential, ReceiveCredential::DeployKey(_)) {
+                        WriteVia::DeployKey
+                    } else {
+                        WriteVia::Direct
+                    };
+                    self.check_publication_branches(
+                        &repo,
+                        &actor,
+                        updates,
+                        &History::Stored { repository: &path },
+                        via,
+                    )
+                    .await?;
+                    crate::backend::repositories::releases::immutable::check_current_tag_updates(
+                        &self.pool, &repo, updates,
+                    )
                     .await
-                    .unwrap_or(false);
-                let decided = coordinator::decide(&self.pool, &write, votes).await?;
+                };
+                let decided =
+                    coordinator::decide(&self.pool, &write, votes && authorized.await.is_ok())
+                        .await?;
                 operation
                     .state
                     .lock()
                     .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
                     .writes[index] = decided.clone();
                 if decided.decision != "commit" {
-                    journal::finish_write(&self.pool, &decided.id, decided.term).await?;
+                    if lease
+                        .scope(cluster.abort_push_write(repository, &operation.path, &decided))
+                        .await
+                        .is_ok()
+                    {
+                        journal::finish_write(&self.pool, &decided.id, decided.term).await?;
+                    }
                     return Err(quorum_refusal());
                 }
                 Ok(())
@@ -285,7 +325,17 @@ impl Gateway {
                         phase == TransactionPhase::Committed,
                         coordinator::OutcomeUnknown
                     );
-                    coordinator::publish(&self.pool, &write).await
+                    let (repo, _) = self.operation_repository(operation).await?;
+                    let repository =
+                        crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
+                    let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+                    let lease = operation
+                        .publication_lease
+                        .as_ref()
+                        .context("publication lease missing")?;
+                    lease
+                        .scope(cluster.publish_push_write(repository, &operation.path, &write))
+                        .await
                 } else {
                     let aborted = journal::decide_write(
                         &self.pool,
@@ -296,14 +346,28 @@ impl Gateway {
                     )
                     .await?;
                     ensure!(aborted.decision == "abort", coordinator::OutcomeUnknown);
-                    journal::finish_write(&self.pool, &write.id, write.term).await?;
+                    let (repo, _) = self.operation_repository(operation).await?;
+                    let repository =
+                        crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
+                    let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+                    let lease = operation
+                        .publication_lease
+                        .as_ref()
+                        .context("publication lease missing")?;
+                    if lease
+                        .scope(cluster.abort_push_write(repository, &operation.path, &aborted))
+                        .await
+                        .is_ok()
+                    {
+                        journal::finish_write(&self.pool, &write.id, write.term).await?;
+                    }
                     Ok(())
                 }
             }
         }
     }
 
-    pub(super) async fn complete_quorum(&self, operation: &Operation) -> Result<()> {
+    pub(super) async fn complete_quorum(&self, operation: &Operation) -> Result<bool> {
         use crate::backend::cluster::writes::OutcomeUnknown;
         let writes = {
             let state = operation
@@ -313,6 +377,7 @@ impl Gateway {
             ensure!(!state.quorum_unknown, OutcomeUnknown);
             state.writes.clone()
         };
+        let mut committed = false;
         for write in writes {
             let current = tokio::time::timeout(
                 std::time::Duration::from_secs(5),
@@ -324,8 +389,9 @@ impl Gateway {
                 current.decision == "abort" || (current.decision == "commit" && current.finished),
                 OutcomeUnknown
             );
+            committed |= current.decision == "commit";
         }
-        Ok(())
+        Ok(committed)
     }
 
     pub(super) async fn hook(

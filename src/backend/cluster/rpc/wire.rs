@@ -555,6 +555,15 @@ pub enum Operation {
     ReplicaPack {
         have: Vec<String>,
     },
+    PrepareWrite {
+        id: String,
+    },
+    ApplyWrite {
+        id: String,
+    },
+    WritePack {
+        id: String,
+    },
 }
 
 impl Operation {
@@ -660,7 +669,10 @@ impl Operation {
             | Self::CreateTag { .. }
             | Self::DeleteTag { .. }
             | Self::RefreshStorageSize
-            | Self::ReplicaPack { .. } => false,
+            | Self::ReplicaPack { .. }
+            | Self::PrepareWrite { .. }
+            | Self::ApplyWrite { .. }
+            | Self::WritePack { .. } => false,
         }
     }
 }

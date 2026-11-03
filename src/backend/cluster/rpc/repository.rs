@@ -129,9 +129,18 @@ pub fn authorize_operation(
         Operation::AdvertiseRefs { .. } => ("AdvertiseRefs", false),
         Operation::GitSession(session) => ("GitSession", session.service == GitService::UploadPack),
         Operation::ReplicaPack { .. } => ("ReplicaPack", false),
+        Operation::PrepareWrite { .. } => ("PrepareWrite", false),
+        Operation::ApplyWrite { .. } => ("ApplyWrite", false),
+        Operation::WritePack { .. } => ("WritePack", false),
     };
     // A copy holder asks only for packs of its own copies; authorize_request checks the copy.
-    if matches!(operation, Operation::ReplicaPack { .. }) {
+    if matches!(
+        operation,
+        Operation::ReplicaPack { .. }
+            | Operation::PrepareWrite { .. }
+            | Operation::ApplyWrite { .. }
+            | Operation::WritePack { .. }
+    ) {
         return if roles.iter().any(|role| role == "storage") {
             Ok(name)
         } else {
@@ -371,6 +380,14 @@ impl RpcHandler {
             tracing::warn!(operation, caller = %node.name, "repository RPC refused: mutation has no actor");
             return Err(invalid("repository mutation requires an actor"));
         }
+        if matches!(
+            request.operation,
+            Operation::PrepareWrite { .. }
+                | Operation::ApplyWrite { .. }
+                | Operation::WritePack { .. }
+        ) {
+            return self.write_admission(request, node.id).await;
+        }
         let (repo_id, directory) = self
             .check_repository(
                 request.repository,
@@ -436,6 +453,71 @@ impl RpcHandler {
             }
         }
         Ok((store_at(&directory, self.context.node_id)?, repo_id))
+    }
+
+    async fn write_admission(
+        &self,
+        request: &Request,
+        caller: i64,
+    ) -> Result<(RepoStore, Option<i64>), RepoError> {
+        use db::cluster::writes as journal;
+        let pool = self.context.database()?;
+        let id = match &request.operation {
+            Operation::PrepareWrite { id }
+            | Operation::ApplyWrite { id }
+            | Operation::WritePack { id } => id,
+            _ => return Err(invalid("write operation required")),
+        };
+        journal::validate_id(id).map_err(|_| invalid("invalid write id"))?;
+        let write = journal::load_write(pool, id)
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+        let repo = db::cluster::get_repository_by_uuid(pool, &request.repository.to_string())
+            .await
+            .map_err(|_| unavailable())?
+            .ok_or_else(unavailable)?;
+        let view = journal::recovery_view(pool, repo.id)
+            .await
+            .map_err(|_| unavailable())?;
+        if repo.id != write.repository_id
+            || view.term != write.term
+            || view.primary_id != write.primary_id
+            || view.voters.len() != 2
+            || !view
+                .voters
+                .iter()
+                .any(|voter| voter.node_id == caller && voter.term == write.term)
+            || !view
+                .voters
+                .iter()
+                .any(|voter| voter.node_id == self.context.node_id && voter.term == write.term)
+            || caller == self.context.node_id
+        {
+            return Err(unavailable());
+        }
+        let pack = matches!(request.operation, Operation::WritePack { .. });
+        if (pack && (self.context.node_id != write.primary_id || caller == write.primary_id))
+            || (!pack && (caller != write.primary_id || self.context.node_id == write.primary_id))
+        {
+            return Err(invalid("write RPC requires the assigned primary and voter"));
+        }
+        if matches!(request.operation, Operation::PrepareWrite { .. })
+            && (!view.serving || write.decision != "pending")
+        {
+            return Err(unavailable());
+        }
+        if pack && write.decision == "abort" {
+            return Err(unavailable());
+        }
+        if matches!(request.operation, Operation::ApplyWrite { .. }) && write.decision == "pending"
+        {
+            return Err(unavailable());
+        }
+        let (_, path) = self
+            .check_repository(request.repository, false, !pack)
+            .await?;
+        Ok((store_at(&path, self.context.node_id)?, Some(repo.id)))
     }
 
     /// Performs the admission checks needed before accepting an editor body.
@@ -1379,7 +1461,27 @@ impl RpcHandler {
             Operation::GitSession(_) => {
                 return Err(invalid("Git session requires streaming").into())
             }
-            Operation::ReplicaPack { .. } => {
+            Operation::PrepareWrite { id } => {
+                let limits = super::git_session::WriteLimits::load(pool)
+                    .await
+                    .map_err(RepoError::from)?;
+                tokio::time::timeout(limits.timeout, self.prepare_write(&store, &id, limits))
+                    .await
+                    .map_err(|_| unavailable())?
+                    .map_err(RepoError::from)?;
+                Value::Null
+            }
+            Operation::ApplyWrite { id } => {
+                let limits = super::git_session::WriteLimits::load(pool)
+                    .await
+                    .map_err(RepoError::from)?;
+                tokio::time::timeout(limits.timeout, self.apply_write(&store, &id, limits))
+                    .await
+                    .map_err(|_| unavailable())?
+                    .map_err(RepoError::from)?;
+                Value::Null
+            }
+            Operation::ReplicaPack { .. } | Operation::WritePack { .. } => {
                 return Err(invalid("replica pack requires streaming").into())
             }
         };

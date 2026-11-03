@@ -45,6 +45,17 @@ and the rest) open the node connection in either mode; they do not change the mo
   dial with `IROH_ADVERTISE=host:port`. If UDP cannot reach the nodes, use one TCP port
   instead; see [Reachable only over TCP](#reachable-only-over-tcp).
 
+## Quorum push preparation
+
+The opt-in two-voter push path requires both fixed storage voters. Preparation uses the
+stored `write_timeout_seconds` deadline (default 10 seconds). On each storage node,
+`WRITE_QUORUM_MAX_PACK_BYTES` limits a prepared pack (default 128 MiB, maximum 1 GiB).
+Keep `codeyard-writes/` inside each repository with its objects: it retains undecided
+and committed-but-unpublished writes for recovery. A refused preparation reports
+"write quorum unavailable". An unknown outcome means fetch and check refs before retrying;
+it does not mean the write was rolled back. Clusters without `write_quorum` keep the
+existing push path.
+
 ## Monitoring
 
 `/health` is liveness; `/ready` checks the database with a 2-second deadline. Nodes with
