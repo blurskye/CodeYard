@@ -681,11 +681,11 @@ pub(super) async fn prepare_upload(
     .await
 }
 
-pub(super) async fn publish_staged(
+pub(super) async fn validate_staged(
     path: &Path,
     prepared: &PreparedFile,
     staged: Option<&StagedFile>,
-) -> Result<CommitInfo, RepoError> {
+) -> Result<(), RepoError> {
     let repo = Repo(path);
     let objects = Repo(staged.map_or(path, StagedFile::path));
     if crate::backend::git::branch_ref(&prepared.branch).as_deref()
@@ -733,6 +733,17 @@ pub(super) async fn publish_staged(
     if commit != prepared.commit || !valid_parents {
         return Err(invalid("Invalid prepared file publication."));
     }
+    Ok(())
+}
+
+pub(super) async fn publish_staged(
+    path: &Path,
+    prepared: &PreparedFile,
+    staged: Option<&StagedFile>,
+) -> Result<CommitInfo, RepoError> {
+    validate_staged(path, prepared, staged).await?;
+    let repo = Repo(path);
+    let objects = Repo(staged.map_or(path, StagedFile::path));
     let transaction = format!(
         "start\noption no-deref\nupdate {} {} {}\nprepare\ncommit\n",
         prepared.reference,

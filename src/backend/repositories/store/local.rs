@@ -911,7 +911,6 @@ impl LocalStore {
             .collect::<Result<Vec<_>, RepoError>>()?;
         let change = Arc::new(self.begin_publisher_change(pool, repo_id).await?);
         if !updates.is_empty() {
-            let held = (publication.clone(), change.clone());
             self.prepare_publications(
                 pool,
                 repo_id,
@@ -919,6 +918,7 @@ impl LocalStore {
                 &user.username,
                 &updates,
                 publication,
+                &change,
                 async {
                     for write in writes {
                         live_write(
@@ -938,7 +938,6 @@ impl LocalStore {
                 },
             )
             .await?;
-            drop(held);
         }
         // Preparing a large push can take time. Its intent is not permission to publish after
         // access or branch policy changed while the metadata objects were being written.
@@ -2718,6 +2717,9 @@ impl LocalStore {
         let staged = editor::claim_staged(self.path(), prepared)?;
         let prepared_path = staged.as_ref().map_or(self.path(), |staged| staged.path());
         let quarantine = staged.as_ref().map(|staged| staged.path().join("objects"));
+        if self.quorum_context(pool, repo_id).await?.is_some() {
+            editor::validate_staged(self.path(), prepared, staged.as_deref()).await?;
+        }
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -3147,6 +3149,7 @@ impl LocalStore {
             &user.username,
             &updates,
             &publication,
+            &_change,
             async {
                 live_pull_head_write(
                     pool,
@@ -3539,7 +3542,7 @@ impl LocalStore {
                         }
                     })?;
             }
-            self.verify_merge_heads(heads).await?;
+            self.verify_merge_heads(heads, Some(base_branch)).await?;
             Ok(())
         };
         authorize().await?;
@@ -3764,9 +3767,10 @@ impl LocalStore {
                 if current != versions {
                     return Err(RepoError::stack_changed());
                 }
-                self.verify_merge_heads(&[(base_branch, base)]).await?;
+                self.verify_merge_heads(&[(base_branch, base)], None)
+                    .await?;
                 for restack in moves {
-                    self.verify_merge_heads(&[(&restack.branch, &restack.old)])
+                    self.verify_merge_heads(&[(&restack.branch, &restack.old)], None)
                         .await?;
                 }
                 Ok(())

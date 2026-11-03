@@ -449,6 +449,67 @@ async fn retain_write(path: &Path, write: &WriteRecord, limits: WriteLimits) -> 
     ] {
         tokio::fs::File::open(directory).await?.sync_all().await?;
     }
+    let repository = path.to_owned();
+    let changes = write.changes.clone();
+    let committed = write.decision == "commit";
+    git_process::blocking_until(std::time::Instant::now() + limits.timeout, move || {
+        let repo = git2::Repository::open_bare(repository)?;
+        let mut created = Vec::new();
+        for change in changes {
+            let actual = match repo.find_reference(&change.name) {
+                Ok(reference) => Some(reference_target(&reference, &change.kind)?),
+                Err(error) if error.code() == git2::ErrorCode::NotFound => None,
+                Err(error) => return Err(error.into()),
+            };
+            ensure!(
+                actual == change.old_target || (committed && actual == change.new_target),
+                "voter reference old value mismatch"
+            );
+            if change.kind == "oid" {
+                if let Some(target) = &change.new_target {
+                    if change.name.starts_with("refs/heads/") {
+                        let object = repo.find_object(git2::Oid::from_str(target)?, None)?;
+                        ensure!(
+                            object.kind() == Some(git2::ObjectType::Commit),
+                            "branch target must be a commit"
+                        );
+                    }
+                    if change.old_target.is_none() && actual.is_none() {
+                        let mut parent = change.name.as_str();
+                        while let Some((prefix, _)) = parent.rsplit_once('/') {
+                            parent = prefix;
+                            if !parent.starts_with("refs/") {
+                                break;
+                            }
+                            match repo.find_reference(parent) {
+                                Ok(_) => anyhow::bail!("reference namespace conflict"),
+                                Err(error) if error.code() == git2::ErrorCode::NotFound => {}
+                                Err(error) => return Err(error.into()),
+                            }
+                        }
+                        ensure!(
+                            repo.references_glob(&format!("{}/*", change.name))?
+                                .next()
+                                .is_none(),
+                            "reference namespace conflict"
+                        );
+                        created.push(change.name);
+                    }
+                }
+            }
+        }
+        created.sort();
+        for names in created.windows(2) {
+            ensure!(
+                !names[1]
+                    .strip_prefix(names[0].as_str())
+                    .is_some_and(|tail| tail.starts_with('/')),
+                "reference namespace conflict"
+            );
+        }
+        Ok(())
+    })
+    .await?;
     let pins = pin_names(write)?;
     let mut script = String::from("start\n");
     for (name, target) in &pins {

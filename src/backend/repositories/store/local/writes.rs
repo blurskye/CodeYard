@@ -11,7 +11,7 @@ pub(super) fn oid_change(name: &str, old: Option<&str>, new: Option<&str>) -> Wr
 }
 
 impl LocalStore {
-    async fn quorum_context(
+    pub(super) async fn quorum_context(
         &self,
         pool: &db::DbPool,
         repo: i64,
@@ -45,7 +45,7 @@ impl LocalStore {
         Ok(Some((context, term)))
     }
 
-    async fn begin_publisher_change(
+    pub(super) async fn begin_publisher_change(
         &self,
         pool: &db::DbPool,
         repo: i64,
@@ -55,7 +55,7 @@ impl LocalStore {
     }
 
     /// False leaves the legacy publication unchanged. The caller holds and scopes the lease.
-    async fn publish_quorum_refs<F>(
+    pub(super) async fn publish_quorum_refs<F>(
         &self,
         pool: &db::DbPool,
         repo: i64,
@@ -93,7 +93,7 @@ impl LocalStore {
         Ok(true)
     }
 
-    async fn prepare_publications<F>(
+    pub(super) async fn prepare_publications<F>(
         &self,
         pool: &db::DbPool,
         repo: i64,
@@ -101,6 +101,7 @@ impl LocalStore {
         login: &str,
         updates: &[git::PublicationUpdate],
         publication: &Arc<git::locks::PublicationGuard>,
+        change: &Arc<RefChange>,
         authorize: F,
     ) -> Result<(), RepoError>
     where
@@ -109,7 +110,7 @@ impl LocalStore {
         let quorum = self.quorum_context(pool, repo).await?.is_some();
         let updates = updates.to_vec();
         let login = login.to_owned();
-        let held = publication.clone();
+        let held = (publication.clone(), change.clone());
         let changes = self
             .blocking(move |path| {
                 let _held = held;
@@ -139,7 +140,7 @@ impl LocalStore {
         Ok(())
     }
 
-    async fn check_ref_publication(
+    pub(super) async fn check_ref_publication(
         &self,
         pool: &db::DbPool,
         repo: i64,
@@ -186,18 +187,26 @@ impl LocalStore {
         Ok(())
     }
 
-    async fn verify_merge_heads(&self, heads: &[(&str, &str)]) -> Result<(), RepoError> {
+    pub(super) async fn verify_merge_heads(
+        &self,
+        heads: &[(&str, &str)],
+        base_branch: Option<&str>,
+    ) -> Result<(), RepoError> {
+        let base_ref = base_branch
+            .map(|branch| {
+                git::branch_ref(branch).ok_or_else(|| super::super::invalid_ref("branch"))
+            })
+            .transpose()?;
         let heads = heads
             .iter()
             .map(|(name, target)| {
-                let name = if name.starts_with("refs/") {
-                    (*name).to_owned()
-                } else {
-                    format!("refs/heads/{name}")
-                };
-                (name, (*target).to_owned())
+                let name = git::merge_head_ref(name, target).map_err(RepoError::from)?;
+                if base_ref.as_deref() == Some(name.as_str()) {
+                    return Err(super::super::invalid_ref("merge head"));
+                }
+                Ok((name, (*target).to_owned()))
             })
-            .collect::<Vec<_>>();
+            .collect::<Result<Vec<_>, RepoError>>()?;
         self.blocking(move |path| {
             let repo = git2::Repository::open_bare(path)?;
             for (name, target) in heads {
@@ -216,7 +225,7 @@ impl LocalStore {
     }
 
     /// Staged publishers import objects only, never refs, before asking stores to vote.
-    async fn import_prepared_objects(
+    pub(super) async fn import_prepared_objects(
         &self,
         pool: &db::DbPool,
         repo: i64,

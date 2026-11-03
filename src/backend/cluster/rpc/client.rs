@@ -26,6 +26,7 @@ impl NodeContext {
         use crate::backend::cluster::writes as coordinator;
         use db::cluster::writes as journal;
         let pool = self.database()?;
+        let limits = super::git_session::WriteLimits::load(pool).await?;
         let id = Uuid::new_v4().to_string();
         let write = coordinator::begin(pool, repo, self.node_id, term, &id, changes).await?;
         let prepared = self
@@ -53,7 +54,6 @@ impl NodeContext {
             }
             anyhow::bail!("write quorum unavailable");
         }
-        let limits = super::git_session::WriteLimits::load(pool).await?;
         // After the SQL decision every failure is an unknown outcome, never a rollback.
         if super::git_session::apply_refs(path, &decided, limits.timeout)
             .await
