@@ -11,6 +11,10 @@ async fn begin(pool: &SqlitePool) -> Result<Tx<'_>> {
     Ok(pool.begin_with("BEGIN IMMEDIATE").await?)
 }
 
+async fn read(pool: &SqlitePool) -> Result<Tx<'_>> {
+    Ok(pool.begin().await?)
+}
+
 async fn actor<'a>(
     tx: &mut Tx<'_>,
     token: Option<impl Into<Credential<'a>>>,
@@ -264,7 +268,7 @@ pub async fn find(
     permission: Permission,
     deleted: bool,
 ) -> Result<Package> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     let id: Option<i64> = sqlx::query_scalar("SELECT id FROM packages WHERE owner_kind=$1 AND COALESCE(owner_user_id,owner_org_id)=$2 AND package_type=$3 AND name=$4")
         .bind(&owner.kind).bind(owner.id).bind(kind).bind(name).fetch_optional(&mut *tx).await?;
     let result = authorize(
@@ -316,7 +320,7 @@ async fn listing(
     query: Listing<'_>,
     before: Option<i64>,
 ) -> Result<Vec<Package>> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     let actor = actor(&mut tx, token, Permission::Read).await?;
     let actor = match query.owner {
         Some(owner) => actor.for_owner(&owner.kind, Some(owner.id)),
@@ -334,7 +338,7 @@ pub async fn count_linked(
     token: Option<Credential<'_>>,
     repo: i64,
 ) -> Result<i64> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     let actor = actor(&mut tx, token, Permission::Read).await?;
     // A fine-grained token counts public packages; its own owner's are listed on their page.
     let actor = if actor.owner.is_some() {
@@ -464,7 +468,7 @@ pub async fn versions(
     offset: i64,
     limit: i64,
 ) -> Result<Vec<Version>> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     authorize(
         &mut tx,
         package,
@@ -490,7 +494,7 @@ pub async fn version_page(
     before: i64,
     names_only: bool,
 ) -> Result<Vec<Version>> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     let p = authorize(&mut tx, package, token, Permission::Read, false).await?;
     let metadata = if names_only {
         "'{}'"
@@ -511,7 +515,7 @@ pub async fn version(
     token: Option<Credential<'_>>,
     reference: &str,
 ) -> Result<Version> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
     let result = sqlx::query_as("SELECT v.* FROM package_versions v WHERE v.package_id=$1 AND v.deleted_at IS NULL AND (v.name=$2 OR EXISTS(SELECT 1 FROM package_tags t WHERE t.package_id=v.package_id AND t.version_id=v.id AND t.tag=$2)) ORDER BY (v.name=$2) DESC,v.id DESC LIMIT 1")
         .bind(package).bind(reference).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
@@ -525,7 +529,7 @@ pub async fn version_by_id(
     token: Option<Credential<'_>>,
     id: i64,
 ) -> Result<Version> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
     let version = sqlx::query_as(
         "SELECT * FROM package_versions WHERE id=$1 AND package_id=$2 AND deleted_at IS NULL",
@@ -554,7 +558,7 @@ pub async fn version_count(
     package: i64,
     token: Option<Credential<'_>>,
 ) -> Result<i64> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
     let count = sqlx::query_scalar(
         "SELECT COUNT(*) FROM package_versions WHERE package_id=$1 AND deleted_at IS NULL",
@@ -573,7 +577,7 @@ pub async fn tag_page(
     after: &str,
     limit: i64,
 ) -> Result<Vec<(String, String)>> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
     let tags = sqlx::query_as("SELECT t.tag,v.name FROM package_tags t JOIN package_versions v ON v.id=t.version_id AND v.package_id=t.package_id WHERE t.package_id=$1 AND v.deleted_at IS NULL AND t.tag>$2 ORDER BY t.tag LIMIT $3")
         .bind(package).bind(after).bind(limit).fetch_all(&mut *tx).await?;
@@ -628,7 +632,7 @@ pub async fn rubygems_file(
     filename: &str,
 ) -> Result<Blob> {
     ensure!(filename.len() <= 465, Refusal::Missing);
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     let rows: Vec<(i64, String, i64)> = sqlx::query_as("SELECT p.id,b.digest,b.size FROM packages p JOIN package_versions v ON v.package_id=p.id JOIN package_blobs b ON b.digest=v.digest WHERE p.owner_kind=$1 AND COALESCE(p.owner_user_id,p.owner_org_id)=$2 AND p.package_type='rubygems' AND p.deleted_at IS NULL AND v.deleted_at IS NULL AND b.ready AND NOT b.deleting AND p.name||'-'||v.name=$3 LIMIT 2")
         .bind(&owner.kind).bind(owner.id).bind(filename).fetch_all(&mut *tx).await?;
     for (package, _, _) in &rows {
@@ -646,7 +650,7 @@ pub async fn tags(
     token: Option<Credential<'_>>,
     version: i64,
 ) -> Result<Vec<String>> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
     let tags = sqlx::query_scalar(
         "SELECT tag FROM package_tags WHERE version_id=$1 AND package_id=$2 ORDER BY tag",
@@ -674,7 +678,7 @@ pub async fn maven_file(
     token: Option<Credential<'_>>,
     path: &str,
 ) -> Result<(Package, Blob)> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     let package: i64 = sqlx::query_scalar("SELECT f.package_id FROM package_files f JOIN packages p ON p.id=f.package_id WHERE p.repo_id=$1 AND p.package_type='maven' AND f.path=$2").bind(repo).bind(path).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     let p = authorize(&mut tx, package, token, Permission::Read, false).await?;
     let blob = sqlx::query_as("SELECT b.digest,b.size FROM package_files f JOIN package_versions v ON v.id=f.version_id JOIN package_blobs b ON b.digest=f.digest WHERE f.package_id=$1 AND f.path=$2 AND v.deleted_at IS NULL AND b.ready AND NOT b.deleting")
@@ -1019,7 +1023,7 @@ pub async fn blob(
     token: Option<Credential<'_>>,
     digest: &str,
 ) -> Result<Blob> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     authorize(&mut tx, package, token, Permission::Read, false).await?;
     let result = sqlx::query_as("SELECT b.digest,b.size FROM package_blobs b WHERE b.digest=$2 AND b.ready AND NOT b.deleting AND (EXISTS(SELECT 1 FROM package_blob_grants g WHERE g.package_id=$1 AND g.digest=b.digest AND g.expires_at>$3) OR EXISTS(SELECT 1 FROM package_version_blobs vb JOIN package_versions v ON v.id=vb.version_id WHERE v.package_id=$1 AND v.deleted_at IS NULL AND vb.digest=b.digest))")
         .bind(package).bind(digest).bind(packages::now()).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
@@ -1043,7 +1047,7 @@ async fn get_upload(tx: &mut Tx<'_>, package: i64, token: i64, id: &str) -> Resu
 }
 
 pub async fn upload(pool: &SqlitePool, package: i64, token: i64, id: &str) -> Result<Upload> {
-    let mut tx = begin(pool).await?;
+    let mut tx = read(pool).await?;
     let result = get_upload(&mut tx, package, token, id).await?;
     tx.commit().await?;
     Ok(result)

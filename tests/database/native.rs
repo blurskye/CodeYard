@@ -89,6 +89,54 @@ async fn new_pr(
     .unwrap()
 }
 
+async fn package_read_during_mutation(pool: &db::DbPool, package: i64) {
+    let count = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        db::packages::version_count(pool, package, None),
+    )
+    .await
+    .expect("package reads must not wait for metadata mutations")
+    .unwrap();
+    assert_eq!(count, 0);
+}
+
+#[tokio::test]
+async fn sqlite_package_read_does_not_wait_for_mutation() {
+    let f = NativeDatabase::new().await;
+    let owner = setup(&f.pool, "public").await;
+    let package: i64 = sqlx::query_scalar("INSERT INTO packages(owner_kind,owner_user_id,name,package_type,visibility,created_at,updated_at) VALUES('user',?1,'read-lock','npm','public',0,0) RETURNING id")
+        .bind(owner.id).fetch_one(&f.raw).await.unwrap();
+    let mut mutation = f.raw.begin_with("BEGIN IMMEDIATE").await.unwrap();
+    sqlx::query("UPDATE packages SET visibility='private' WHERE id=?1")
+        .bind(package)
+        .execute(&mut *mutation)
+        .await
+        .unwrap();
+    package_read_during_mutation(&f.pool, package).await;
+    mutation.rollback().await.unwrap();
+    f.close().await;
+}
+
+#[tokio::test]
+async fn postgres_package_read_does_not_wait_for_mutation() {
+    let mut f = PostgresDatabase::new().await;
+    let owner = setup(&f.pool, "public").await;
+    let package: i64 = sqlx::query_scalar("INSERT INTO packages(owner_kind,owner_user_id,name,package_type,visibility,created_at,updated_at) VALUES('user',$1,'read-lock','npm','public',0,0) RETURNING id")
+        .bind(owner.id).fetch_one(&f.raw).await.unwrap();
+    let mut mutation = f.raw.begin().await.unwrap();
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':package:' || $1, 723947120))")
+        .bind(serde_json::to_string(&("user", owner.id, "npm", "read-lock")).unwrap())
+        .execute(&mut *mutation).await.unwrap();
+    sqlx::query("UPDATE packages SET visibility='private' WHERE id=$1")
+        .bind(package)
+        .execute(&mut *mutation)
+        .await
+        .unwrap();
+    package_read_during_mutation(&f.pool, package).await;
+    mutation.rollback().await.unwrap();
+    f.finish().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn simultaneous_setup_has_one_winner_and_constraint_failure_rolls_back() {
     let fixture = NativeDatabase::new().await;
