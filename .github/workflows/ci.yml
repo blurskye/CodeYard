@@ -11,12 +11,17 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
+  # Smaller debug info and no incremental data make the large crate build faster and use less disk.
+  CARGO_INCREMENTAL: 0
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
 
 jobs:
   test:
     name: Format, lint and test
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # A cold build of the large crate takes more than an hour on a free runner.
+    timeout-minutes: 300
     services:
       postgres:
         image: postgres:18
@@ -56,6 +61,8 @@ jobs:
           rustup toolchain install 1.99.0 --profile minimal -c rustfmt -c clippy
           rustup default 1.99.0
           rustc --version
+      - name: Cache dependencies
+        uses: Swatinem/rust-cache@aa7c1c80a07a27a84c0aa76d0cef0aad3830e330 # v2.7.8
       - name: Free disk space
         # The runner was stopped while Clippy checked the large crate, which points to running out
         # of memory. Remove the preinstalled tools this project does not use, to make room for swap
