@@ -11,10 +11,10 @@ description = "GitHub GraphQL types and resolver traits derived from the publish
 doctest = false
 
 [dependencies]
-async-graphql = { version = "=7.2.1", default-features = false }
-async-graphql-derive = "=7.2.1"
-async-graphql-parser = "=7.2.1"
-async-graphql-value = "=7.2.1"
+async-graphql.workspace = true
+async-graphql-derive.workspace = true
+async-graphql-parser.workspace = true
+async-graphql-value.workspace = true
 chrono.workspace = true
 serde_json.workspace = true
 

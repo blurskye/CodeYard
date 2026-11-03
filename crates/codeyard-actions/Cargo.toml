@@ -12,26 +12,26 @@ name = "codeyard-actions"
 path = "src/main.rs"
 
 [dependencies]
-codeyard-support = { path = "../../backend/support" }
+codeyard-support.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_yaml = "0.9"
+serde_yaml.workspace = true
 tokio.workspace = true
 clap.workspace = true
-tempfile = "3"
-libc = "0.2"
-aho-corasick = "=1.1.4"
-base64 = "=0.22.1"
-dotenvy = "=0.15.7"
-url = "2"
+tempfile.workspace = true
+libc.workspace = true
+aho-corasick.workspace = true
+base64.workspace = true
+dotenvy.workspace = true
+url.workspace = true
 sha2.workspace = true
-regex = "=1.12.2"
-fancy-regex = "=0.16.2"
+regex.workspace = true
+fancy-regex.workspace = true
 
 [dev-dependencies]
-tempfile = "3"
+tempfile.workspace = true
 
 [lints]
 workspace = true
