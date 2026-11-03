@@ -43,6 +43,63 @@ pub(crate) fn encode(lines: &[LogLine]) -> Result<(Vec<u8>, i64)> {
     Ok((data, size as i64))
 }
 
+pub(crate) struct LogRange {
+    pub after: i64,
+    pub before: i64,
+    limit: usize,
+    reverse: bool,
+    lines: Vec<CiLogLine>,
+}
+
+impl LogRange {
+    pub(crate) fn new(after: i64, before: i64, limit: i64, reverse: bool) -> Result<Self> {
+        ensure!(
+            after >= 0 && (0..=100_000).contains(&before) && (0..=100_000).contains(&limit),
+            "invalid CI log range"
+        );
+        Ok(Self {
+            after,
+            before,
+            limit: limit as usize,
+            reverse,
+            lines: Vec::new(),
+        })
+    }
+
+    pub(crate) fn complete(&self) -> bool {
+        self.after >= self.before || self.lines.len() == self.limit
+    }
+
+    pub(crate) fn extend(&mut self, chunks: Vec<Chunk>) -> Result<()> {
+        for chunk in chunks {
+            let first = chunk.first_line;
+            let last = first + chunk.line_count - 1;
+            let mut decoded = chunk.decode()?;
+            if self.reverse {
+                decoded.reverse();
+            }
+            for line in decoded {
+                if line.id > self.after && line.id <= self.before {
+                    self.lines.push(line);
+                    if self.lines.len() == self.limit {
+                        return Ok(());
+                    }
+                }
+            }
+            if self.reverse {
+                self.before = first - 1;
+            } else {
+                self.after = last;
+            }
+        }
+        Ok(())
+    }
+
+    pub(crate) fn finish(self) -> Vec<CiLogLine> {
+        self.lines
+    }
+}
+
 impl Chunk {
     pub(crate) fn decode(self) -> Result<Vec<CiLogLine>> {
         ensure!(

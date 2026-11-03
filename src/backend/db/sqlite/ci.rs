@@ -1516,47 +1516,24 @@ pub async fn list_ci_log_history(
 pub(super) async fn read_log_range(
     connection: &mut sqlx::SqliteConnection,
     run: i64,
-    mut after: i64,
-    mut before: i64,
+    after: i64,
+    before: i64,
     limit: i64,
     reverse: bool,
 ) -> Result<Vec<CiLogLine>> {
-    ensure!(
-        after >= 0 && (0..=100_000).contains(&before) && (0..=100_000).contains(&limit),
-        "invalid CI log range"
-    );
-    let mut lines = Vec::new();
-    while after < before && lines.len() < limit as usize {
+    let mut range =
+        crate::backend::db::ci::log_chunks::LogRange::new(after, before, limit, reverse)?;
+    while !range.complete() {
         let order = if reverse { "DESC" } else { "ASC" };
         let chunks = sqlx::query_as::<_, crate::backend::db::ci::log_chunks::Chunk>(&format!(
             "SELECT l.* FROM ci_log_chunks l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND l.first_line+l.line_count-1>$2 AND l.first_line<=$3 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.sequence {order} LIMIT 64"
-        )).bind(run).bind(after).bind(before).fetch_all(&mut *connection).await?;
+        )).bind(run).bind(range.after).bind(range.before).fetch_all(&mut *connection).await?;
         if chunks.is_empty() {
             break;
         }
-        for chunk in chunks {
-            let first = chunk.first_line;
-            let last = first + chunk.line_count - 1;
-            let mut decoded = chunk.decode()?;
-            if reverse {
-                decoded.reverse();
-            }
-            for line in decoded {
-                if line.id > after && line.id <= before {
-                    lines.push(line);
-                    if lines.len() == limit as usize {
-                        return Ok(lines);
-                    }
-                }
-            }
-            if reverse {
-                before = first - 1;
-            } else {
-                after = last;
-            }
-        }
+        range.extend(chunks)?;
     }
-    Ok(lines)
+    Ok(range.finish())
 }
 
 pub async fn get_ci_deployment_by_run_id(
