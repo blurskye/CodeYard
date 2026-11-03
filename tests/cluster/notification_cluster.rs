@@ -1,6 +1,6 @@
-//! A notification event sent on one node reaches the browsers connected to the
-//! other nodes. Needs PostgreSQL (GITSERV_TEST_DATABASE_URL).
+//! Notification hints cross web nodes through a bounded database cursor.
 #![cfg(all(not(target_arch = "wasm32"), target_os = "linux"))]
+use crate::support::database::Database;
 use codeyard::backend::{
     db::DbPool,
     notifications::{broadcast::MAX_SOCKETS_PER_USER, NotificationBroadcaster, NotificationEvent},
@@ -8,9 +8,7 @@ use codeyard::backend::{
 use std::time::Duration;
 use tokio::sync::broadcast;
 
-/// Sends from `from` until `to` hears it, and returns what `to` heard. A listener that connects
-/// closes the subscriptions made before it, as after any gap, so a closed one is made again, as
-/// a browser reconnects.
+/// Sends from `from` until `to` hears it, reconnecting after a database outage.
 async fn hear(
     from: &NotificationBroadcaster,
     to: &NotificationBroadcaster,
@@ -35,18 +33,15 @@ async fn hear(
     .expect("the other node never heard the event")
 }
 
-#[tokio::test]
-async fn an_event_reaches_the_other_node_and_is_not_echoed_back() {
-    let url = std::env::var("GITSERV_TEST_DATABASE_URL")
-        .expect("GITSERV_TEST_DATABASE_URL must point at a test PostgreSQL database");
-    let pool = DbPool::from(sqlx::PgPool::connect(&url).await.unwrap());
+async fn cross_node_delivery(pg: bool) {
+    let mut database = Database::new(pg).await;
+    let pool = database.pool().clone();
     let (a, b) = (
         NotificationBroadcaster::new(&pool),
         NotificationBroadcaster::new(&pool),
     );
-    a.start().await;
-    b.start().await;
-    // Ids no other test uses: every test database node hears the same channel.
+    a.start().await.unwrap();
+    b.start().await.unwrap();
     let user_id = 9_000_000_001;
     let heard = hear(&a, &b, user_id).await;
     // Other nodes get a hint; they read the content and the count from the database.
@@ -54,7 +49,6 @@ async fn an_event_reaches_the_other_node_and_is_not_echoed_back() {
         heard,
         NotificationEvent::ReadAll { user_id: id, unread_count: 0 } if id == user_id
     ));
-    // Node a's listener is connected once it hears node b, so later subscriptions stay open.
     // Another account keeps node b's extra sends away from the count below.
     hear(&b, &a, 9_000_000_002).await;
 
@@ -78,14 +72,25 @@ async fn an_event_reaches_the_other_node_and_is_not_echoed_back() {
     assert_eq!(local, sent);
     a.shutdown().await;
     b.shutdown().await;
-    pool.close().await;
+    database.finish().await;
 }
 
 #[tokio::test]
-async fn sqlite_delivery_needs_no_remote_listener() {
-    let pool = DbPool::from(sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap());
+async fn sqlite_cross_node_delivery_without_echo() {
+    cross_node_delivery(false).await;
+}
+
+#[tokio::test]
+async fn postgres_cross_node_delivery_without_echo() {
+    cross_node_delivery(true).await;
+}
+
+#[tokio::test]
+async fn sqlite_local_delivery_and_poller_shutdown() {
+    let mut database = Database::new(false).await;
+    let pool = database.pool().clone();
     let broadcaster = NotificationBroadcaster::new(&pool);
-    broadcaster.start().await;
+    broadcaster.start().await.unwrap();
     let mut receiver = broadcaster.subscribe(42);
     broadcaster
         .send(NotificationEvent::ReadAll {
@@ -108,7 +113,11 @@ async fn sqlite_delivery_needs_no_remote_listener() {
     tokio::time::timeout(Duration::from_secs(1), broadcaster.shutdown())
         .await
         .unwrap();
-    pool.close().await;
+    assert!(matches!(
+        receiver.recv().await,
+        Err(broadcast::error::RecvError::Closed)
+    ));
+    database.finish().await;
 }
 
 #[tokio::test]

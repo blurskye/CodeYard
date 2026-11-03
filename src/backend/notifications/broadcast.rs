@@ -42,7 +42,7 @@ pub struct NotificationBroadcaster {
     pool: db::DbPool,
     origin: String,
     stop: watch::Sender<bool>,
-    listener: Mutex<Option<AbortOnDropHandle<()>>>,
+    poller: Mutex<Option<AbortOnDropHandle<()>>>,
     sockets: SocketCounts,
 }
 
@@ -55,13 +55,13 @@ impl NotificationBroadcaster {
             pool: pool.clone(),
             origin: uuid::Uuid::new_v4().to_string(),
             stop,
-            listener: Mutex::new(None),
+            poller: Mutex::new(None),
             sockets: SocketCounts::default(),
         }
     }
 
     pub async fn start(&self) -> Result<(), sqlx::Error> {
-        let mut task = self.listener.lock().await;
+        let mut task = self.poller.lock().await;
         if task.is_none() && !*self.stop.borrow() {
             let cursor =
                 tokio::time::timeout(Duration::from_secs(5), EventCursor::connect(&self.pool))
@@ -80,9 +80,13 @@ impl NotificationBroadcaster {
 
     pub async fn shutdown(&self) {
         self.stop.send_replace(true);
-        if let Some(task) = self.listener.lock().await.take() {
+        if let Some(task) = self.poller.lock().await.take() {
             let _ = task.await;
         }
+        self.subscriptions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clear();
     }
 
     pub fn subscribe(&self, user_id: i64) -> broadcast::Receiver<NotificationEvent> {
