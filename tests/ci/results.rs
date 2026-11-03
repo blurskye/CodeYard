@@ -1002,7 +1002,7 @@ async fn shared_s3_across_routers(pg: bool) {
         );
     }
     // Shut down the uploading router and issue both capabilities on the other node.
-    routers.remove(0);
+    drop(routers.remove(0));
     let cache = restore(&routers[0], token, "shared-cache", &[]).await;
     let artifact = rpc(
         &routers[0],
