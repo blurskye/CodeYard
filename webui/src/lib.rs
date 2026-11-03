@@ -1,5 +1,6 @@
 //! Shared safe Dioxus views: useful server HTML and identical browser hydration.
 //! No backend/DB authority crosses into this module.
+#![recursion_limit = "256"]
 pub mod app;
 pub mod bootstrap;
 pub mod components;
