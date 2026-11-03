@@ -73,6 +73,7 @@ pub mod interactions;
 pub mod issue_attributes;
 pub mod issues;
 pub mod labels;
+pub mod metrics;
 mod migrations;
 pub mod milestones;
 pub mod models;

@@ -16,6 +16,7 @@ pub(crate) mod graphql;
 pub(crate) mod health;
 pub(crate) mod help;
 pub(crate) mod http;
+mod metrics;
 pub(crate) mod notifications;
 pub(crate) mod organizations;
 pub(crate) mod packages;

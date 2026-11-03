@@ -10,6 +10,7 @@ pub fn router() -> Router<Arc<AppState>> {
             get(|| async { Json(serde_json::json!({ "status": "ok" })) }),
         )
         .route("/ready", get(ready))
+        .route("/metrics", get(super::metrics::metrics))
 }
 
 async fn ready(State(state): State<Arc<AppState>>) -> (StatusCode, Json<serde_json::Value>) {

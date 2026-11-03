@@ -52,6 +52,7 @@ pub(crate) mod interactions;
 pub(crate) mod issue_attributes;
 pub(crate) mod issues;
 pub(crate) mod labels;
+pub(crate) mod metrics;
 pub(super) mod migrations;
 pub(crate) mod milestones;
 pub(crate) mod node_config;

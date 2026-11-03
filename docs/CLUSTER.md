@@ -44,6 +44,26 @@ and the rest) open the node connection in either mode; they do not change the mo
   dial with `IROH_ADVERTISE=host:port`. If UDP cannot reach the nodes, use one TCP port
   instead; see [Reachable only over TCP](#reachable-only-over-tcp).
 
+## Monitoring
+
+`/metrics` returns Prometheus text to a site administrator's personal token or a bearer
+matching `METRICS_TOKEN` (1–4096 bearer-token characters). Other callers receive 404;
+browser sessions and repository-scoped tokens do not grant access. Scrapes have a
+2-second collection deadline and support at most 1,000 storage nodes.
+
+- `codeyard_repository_bytes{node_id}`: recorded repository sizes, including initialized
+  replicas using their primary's recorded size; not a filesystem usage scan.
+- `codeyard_storage_free_bytes{node_id}`: last reported available disk bytes (`NaN` until
+  reported). Alert below the storage reserve and on missing reports.
+- `codeyard_replica_lag_versions`: largest write-version gap, including pending copies.
+  Alert when nonzero for several minutes.
+- `codeyard_ci_queued_runs`, `codeyard_ci_oldest_queued_seconds`: queue depth and oldest
+  age (zero for an empty queue). Alert when age exceeds 120 seconds.
+- `codeyard_database_pool_size`: open connections in this process, including idle ones.
+  `codeyard_database_pool_waiters` is `NaN`: SQLx does not expose its acquisition queue.
+- `codeyard_nodes{state}`: counts of pending, active and revoked memberships, not
+  heartbeat health. Alert on unexpected membership changes and scrape failures.
+
 ## Roles
 
 `codeyard serve --roles <list>` (or `GITSERV_NODE_ROLES`). In cluster mode `server` splits
