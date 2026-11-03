@@ -1452,15 +1452,18 @@ pub async fn append_ci_logs(
 }
 pub async fn list_ci_logs(pool: &SqlitePool, run_id: i64, limit: i64) -> Result<Vec<CiLogLine>> {
     ensure!(limit >= 0, "Result limit must be nonnegative");
-    let rows = sqlx::query_as::<_, CiLogLine>(
-        "SELECT l.* FROM ci_logs l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=?1 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.id DESC LIMIT ?2",
+    let mut connection = pool.acquire().await?;
+    let mut lines = read_log_range(
+        &mut connection,
+        run_id,
+        0,
+        100_000,
+        limit.min(100_000),
+        true,
     )
-    .bind(run_id)
-    .bind(limit)
-    .fetch_all(pool)
     .await?;
-
-    Ok(rows.into_iter().rev().collect())
+    lines.reverse();
+    Ok(lines)
 }
 pub async fn ci_repository_owner(pool: &SqlitePool, repo_id: i64) -> Result<Option<String>> {
     Ok(sqlx::query_scalar::<_,Option<String>>(r#"SELECT COALESCE(u.username,o.name) FROM repositories r
@@ -1506,15 +1509,56 @@ pub async fn list_ci_log_history(
         after >= 0 && (1..=5000).contains(&limit),
         "invalid CI history cursor/window"
     );
-    Ok(sqlx::query_as::<_, CiLogLine>(
-        "SELECT l.* FROM ci_logs l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=?1 AND l.id>?2 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.id LIMIT ?3",
-    )
-    .bind(run_id)
-    .bind(after)
-    .bind(limit)
-    .fetch_all(pool)
-    .await?)
+    let mut connection = pool.acquire().await?;
+    read_log_range(&mut connection, run_id, after, 100_000, limit, false).await
 }
+/// Read bounded pages of compressed chunks, including a cursor inside a chunk.
+pub(super) async fn read_log_range(
+    connection: &mut sqlx::SqliteConnection,
+    run: i64,
+    mut after: i64,
+    mut before: i64,
+    limit: i64,
+    reverse: bool,
+) -> Result<Vec<CiLogLine>> {
+    ensure!(
+        after >= 0 && (0..=100_000).contains(&before) && (0..=100_000).contains(&limit),
+        "invalid CI log range"
+    );
+    let mut lines = Vec::new();
+    while after < before && lines.len() < limit as usize {
+        let order = if reverse { "DESC" } else { "ASC" };
+        let chunks = sqlx::query_as::<_, crate::backend::db::ci::log_chunks::Chunk>(&format!(
+            "SELECT l.* FROM ci_log_chunks l JOIN ci_runs r ON r.id=l.run_id WHERE l.run_id=$1 AND l.first_line+l.line_count-1>$2 AND l.first_line<=$3 AND (r.log_expires_at IS NULL OR r.log_expires_at>CAST(strftime('%s','now') AS INTEGER)) ORDER BY l.sequence {order} LIMIT 64"
+        )).bind(run).bind(after).bind(before).fetch_all(&mut *connection).await?;
+        if chunks.is_empty() {
+            break;
+        }
+        for chunk in chunks {
+            let first = chunk.first_line;
+            let last = first + chunk.line_count - 1;
+            let mut decoded = chunk.decode()?;
+            if reverse {
+                decoded.reverse();
+            }
+            for line in decoded {
+                if line.id > after && line.id <= before {
+                    lines.push(line);
+                    if lines.len() == limit as usize {
+                        return Ok(lines);
+                    }
+                }
+            }
+            if reverse {
+                before = first - 1;
+            } else {
+                after = last;
+            }
+        }
+    }
+    Ok(lines)
+}
+
 pub async fn get_ci_deployment_by_run_id(
     pool: &SqlitePool,
     run_id: i64,

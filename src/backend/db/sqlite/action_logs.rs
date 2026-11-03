@@ -48,7 +48,12 @@ pub async fn issue(
     let Some(manifest) = Manifest::capture(jobs, steps, target.step) else {
         return Ok(false);
     };
-    let max:i64=sqlx::query_scalar("SELECT COALESCE(MAX(id),0) FROM ci_logs WHERE run_id=$1 AND ($2 IS NULL OR job_id=$2) AND ($3 IS NULL OR step_number=$3)").bind(target.run).bind(target.job).bind(target.step).fetch_one(&mut *tx).await?;
+    let max: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(first_line+line_count-1),0) FROM ci_log_chunks WHERE run_id=$1",
+    )
+    .bind(target.run)
+    .fetch_one(&mut *tx)
+    .await?;
     if target.job.is_none() && max == 0 {
         return Ok(false);
     }
@@ -68,7 +73,18 @@ pub async fn read(pool: &SqlitePool, hash: &str, resource: &str) -> Result<Optio
     let Some(grant) = grant else {
         return Ok(None);
     };
-    let lines:Vec<Line>=sqlx::query_as("SELECT id,job_id,step_number,stage,line,created_at FROM ci_logs WHERE run_id=$1 AND id<=$2 AND ($3 IS NULL OR job_id=$3) AND ($4 IS NULL OR step_number=$4) ORDER BY id").bind(grant.run_id).bind(grant.max_log_id).bind(grant.job_id).bind(grant.step_number).fetch_all(&mut *tx).await?;
+    let lines =
+        super::ci::read_log_range(&mut tx, grant.run_id, 0, grant.max_log_id, 100_000, false)
+            .await?
+            .into_iter()
+            .filter(|line| {
+                grant.job_id.is_none_or(|job| line.job_id == Some(job))
+                    && grant
+                        .step_number
+                        .is_none_or(|step| line.step_number == Some(step))
+            })
+            .map(Line::from)
+            .collect();
     tx.commit().await?;
     Ok(Some(Snapshot { grant, lines }))
 }
@@ -96,7 +112,7 @@ pub(super) async fn retain_completed(
 /// Manual deletion and retention invalidate the same frozen download manifests.
 pub(super) async fn clear(connection: &mut SqliteConnection, runs: &[i64]) -> Result<()> {
     let runs = serde_json::to_string(runs)?;
-    sqlx::query("DELETE FROM ci_logs WHERE run_id IN (SELECT value FROM json_each(?1))")
+    sqlx::query("DELETE FROM ci_log_chunks WHERE run_id IN (SELECT value FROM json_each(?1))")
         .bind(&runs)
         .execute(&mut *connection)
         .await?;
