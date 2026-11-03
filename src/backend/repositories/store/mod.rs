@@ -92,6 +92,19 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
 }
 
 impl RepoStore {
+    pub(crate) async fn recover_term(
+        pool: &crate::backend::db::DbPool,
+        repository: i64,
+        node: i64,
+        root: &Path,
+    ) -> anyhow::Result<()> {
+        tokio::time::timeout(
+            process::RPC_TIMEOUT,
+            local::recover_term(pool, repository, node, root),
+        )
+        .await?
+    }
+
     /// Storage RPC admission keeps the database and captured term with the local store.
     pub(crate) async fn on_context(
         disk_path: &str,

@@ -98,6 +98,10 @@ async fn clock(pool: &DbPool) -> DateTime<Utc> {
 }
 
 async fn setup(pool: &DbPool, count: usize, setting: &str) -> Fixture {
+    setup_with_refs(pool, count, setting, &initial_refs()).await
+}
+
+async fn setup_with_refs(pool: &DbPool, count: usize, setting: &str, refs: &[RefValue]) -> Fixture {
     db::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
@@ -125,7 +129,7 @@ async fn setup(pool: &DbPool, count: usize, setting: &str) -> Fixture {
     assert!(db::cluster::place_repository(pool, repo, primary)
         .await
         .unwrap());
-    writes::bootstrap_writes(pool, repo, primary, &voters, &initial_refs())
+    writes::bootstrap_writes(pool, repo, primary, &voters, refs)
         .await
         .unwrap();
     let view = writes::recovery_view(pool, repo).await.unwrap();
@@ -1147,6 +1151,126 @@ async fn term_directory_admission(pool: &DbPool) {
     assert!(path.exists());
 }
 
+async fn quorum_promotion_fences(pool: &DbPool) {
+    use codeyard::backend::cluster::replicas;
+    let f = setup(pool, 2, "2").await;
+    let target = f.voters[1];
+    let node = db::cluster::get_node_by_id(pool, target)
+        .await
+        .unwrap()
+        .unwrap();
+    db::cluster::record_node_heartbeat(pool, &node.public_key, "test", "{}", Some(1024))
+        .await
+        .unwrap();
+    assert!(replicas::promote(pool, f.repo, Some(target), true)
+        .await
+        .is_err());
+    let before = writes::recovery_view(pool, f.repo).await.unwrap();
+    assert_eq!(
+        (before.primary_id, before.term, before.serving),
+        (f.primary, 1, true)
+    );
+    let pending = replicas::promote(pool, f.repo, Some(target), false)
+        .await
+        .unwrap_err();
+    assert!(pending.is::<replicas::RecoveryPending>());
+    let view = writes::recovery_view(pool, f.repo).await.unwrap();
+    assert_eq!(
+        (view.primary_id, view.term, view.serving),
+        (target, 2, false)
+    );
+    assert!(view
+        .voters
+        .iter()
+        .all(|voter| voter.term == 2 && voter.applied_version == -1));
+    assert!(replicas::promote(pool, f.repo, Some(target), false)
+        .await
+        .unwrap_err()
+        .is::<replicas::RecoveryPending>());
+    assert_eq!(writes::recovery_view(pool, f.repo).await.unwrap().term, 2);
+    assert!(replicas::promote(pool, f.repo, Some(f.primary), false)
+        .await
+        .is_err());
+}
+
+async fn quorum_directory_recovery(pool: &DbPool) {
+    use codeyard::backend::cluster::{self, context::term_path, replicas};
+    let seed = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init_bare(seed.path()).unwrap();
+    let signature = git2::Signature::now("owner", "owner@example.test").unwrap();
+    let tree_id = repo.treebuilder(None).unwrap().write().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    let commit = repo
+        .commit(Some(MAIN), &signature, &signature, "initial", &tree, &[])
+        .unwrap();
+    repo.set_head(MAIN).unwrap();
+    let refs = vec![
+        RefValue {
+            name: "HEAD".into(),
+            kind: "symbolic".into(),
+            target: MAIN.into(),
+        },
+        RefValue {
+            name: MAIN.into(),
+            kind: "oid".into(),
+            target: commit.to_string(),
+        },
+    ];
+    let f = setup_with_refs(pool, 2, "2", &refs).await;
+    let row = db::repositories::records::get_repository_by_id(pool, f.repo)
+        .await
+        .unwrap()
+        .unwrap();
+    let uuid = cluster::rpc::repository_uuid(&row.disk_path).unwrap();
+    let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+    for root in &roots {
+        let path = term_path(root.path(), uuid, 1);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        git2::build::RepoBuilder::new()
+            .bare(true)
+            .clone(seed.path().to_str().unwrap(), &path)
+            .unwrap();
+    }
+    let target = f.voters[1];
+    let node = db::cluster::get_node_by_id(pool, target)
+        .await
+        .unwrap()
+        .unwrap();
+    db::cluster::record_node_heartbeat(pool, &node.public_key, "test", "{}", Some(1024))
+        .await
+        .unwrap();
+    assert!(replicas::promote(pool, f.repo, Some(target), false)
+        .await
+        .unwrap_err()
+        .is::<replicas::RecoveryPending>());
+    assert!(
+        !replicas::recover_family(pool, f.repo, f.primary, roots[0].path())
+            .await
+            .unwrap()
+    );
+    assert!(!writes::recovery_view(pool, f.repo).await.unwrap().serving);
+    assert!(
+        replicas::recover_family(pool, f.repo, target, roots[1].path())
+            .await
+            .unwrap()
+    );
+    assert!(writes::recovery_view(pool, f.repo).await.unwrap().serving);
+    let retired = git2::Repository::open_bare(term_path(roots[0].path(), uuid, 1)).unwrap();
+    retired
+        .reference("refs/heads/stale-child", commit, true, "stale child")
+        .unwrap();
+    for root in &roots {
+        let recovered = git2::Repository::open_bare(term_path(root.path(), uuid, 2)).unwrap();
+        assert_eq!(
+            recovered.find_reference(MAIN).unwrap().target(),
+            Some(commit)
+        );
+        assert_eq!(recovered.head().unwrap().name(), Some(MAIN));
+        assert!(recovered.find_reference("refs/heads/stale-child").is_err());
+        assert!(term_path(root.path(), uuid, 1).exists());
+    }
+}
+
 macro_rules! engine_pair {
     ($sqlite:ident, $postgres:ident, $contract:ident) => {
         #[tokio::test]
@@ -1199,6 +1323,16 @@ engine_pair!(
     coordinator_duplicate_begin
 );
 engine_pair!(sqlite_two_of_two, postgres_two_of_two, two_voters);
+engine_pair!(
+    sqlite_quorum_promotion_fences,
+    postgres_quorum_promotion_fences,
+    quorum_promotion_fences
+);
+engine_pair!(
+    sqlite_quorum_directory_recovery,
+    postgres_quorum_directory_recovery,
+    quorum_directory_recovery
+);
 engine_pair!(
     sqlite_term_directory_admission,
     postgres_term_directory_admission,

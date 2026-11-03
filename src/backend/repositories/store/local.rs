@@ -543,7 +543,172 @@ fn ensure_pull_head_room(held: git::RefsInUse, reference: &str) -> Result<(), Re
     )
 }
 
+/// Reconstructs a non-serving tenure without moving or modifying its predecessor.
+/// Missing retained objects leave the repository fenced rather than guessing at refs.
+pub(super) async fn recover_term(
+    pool: &db::DbPool,
+    repository: i64,
+    node: i64,
+    root: &Path,
+) -> anyhow::Result<()> {
+    use crate::backend::cluster::{context::term_path, writes};
+    use anyhow::{ensure, Context};
+    let view = db::cluster::writes::recovery_view(pool, repository).await?;
+    if view.serving || !view.voters.iter().any(|voter| voter.node_id == node) {
+        return Ok(());
+    }
+    let row = db::repositories::records::get_repository_by_id(pool, repository)
+        .await?
+        .context("repository was deleted during recovery")?;
+    let uuid = super::rpc::repository_uuid(&row.disk_path)?;
+    let target = term_path(root, uuid, view.term);
+    ensure!(
+        view.refs.iter().any(|value| value.name == "HEAD"),
+        "canonical HEAD is missing"
+    );
+    let _lock = git::locks::lock(&target).await;
+    let _readers = git::locks::exclusive(&target).await;
+    let view = writes::recover(pool, repository, view.primary_id, view.term).await?;
+    let target_store = LocalStore::new(target.to_str().context("invalid term path")?, None);
+    if !tokio::fs::try_exists(&target).await? {
+        let previous = term_path(root, uuid, view.term - 1);
+        let source = if tokio::fs::try_exists(&previous).await? {
+            crate::backend::cluster::context::literal_directory(root, &previous).await?;
+            previous
+        } else if view.term == 1 {
+            let primary = super::primary_path(root, uuid);
+            let mirror = crate::backend::cluster::replicas::copy_path(root, uuid);
+            if tokio::fs::try_exists(&primary).await? {
+                primary
+            } else {
+                mirror
+            }
+        } else {
+            anyhow::bail!("previous term objects are unavailable; repository remains fenced");
+        };
+        let parent = target.parent().context("invalid term path")?;
+        tokio::fs::create_dir_all(parent).await?;
+        crate::backend::cluster::context::literal_directory(root, parent).await?;
+        let stage = tempfile::tempdir_in(parent)?;
+        git::mirror::mirror(&source, stage.path()).await?;
+        let staged = LocalStore::new(stage.path().to_str().context("invalid staging path")?, None);
+        let current = staged.mirror_refs().await?;
+        let mut remove = String::from("start\n");
+        for name in current.keys() {
+            remove.push_str(&format!("delete {name}\n"));
+        }
+        remove.push_str("prepare\ncommit\n");
+        staged.recovery_refs(&remove).await?;
+        let mut install = String::from("start\n");
+        for value in &view.refs {
+            if value.kind == "oid" {
+                install.push_str(&format!("update {} {}\n", value.name, value.target));
+            }
+        }
+        install.push_str("prepare\ncommit\n");
+        staged.recovery_refs(&install).await?;
+        for value in &view.refs {
+            if value.kind == "symbolic" {
+                let (status, _) = staged
+                    .git(&["symbolic-ref", &value.name, &value.target])
+                    .await?;
+                ensure!(status.success(), "could not restore canonical symbolic ref");
+            }
+        }
+        staged.verify_canonical(&view.refs).await?;
+        ensure!(
+            git::mirror::check(stage.path()).await?.is_none(),
+            "canonical objects are incomplete"
+        );
+        let current = db::cluster::writes::recovery_view(pool, repository).await?;
+        ensure!(
+            !current.serving
+                && current.term == view.term
+                && current.committed_version == view.committed_version,
+            "recovery term changed"
+        );
+        tokio::fs::rename(stage.path(), &target).await?;
+        let parent = parent.to_owned();
+        let root = root.to_owned();
+        process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
+            for directory in parent.ancestors() {
+                std::fs::File::open(directory)?.sync_all()?;
+                if directory == root {
+                    break;
+                }
+            }
+            Ok(())
+        })
+        .await?;
+    }
+    crate::backend::cluster::context::literal_directory(root, &target).await?;
+    target_store.verify_canonical(&view.refs).await?;
+    ensure!(
+        git::mirror::check(&target).await?.is_none(),
+        "canonical objects are incomplete"
+    );
+    ensure!(
+        db::cluster::writes::mark_write_applied(
+            pool,
+            repository,
+            node,
+            view.term,
+            view.committed_version
+        )
+        .await?,
+        "recovery term changed"
+    );
+    if let Some(write) = &view.unfinished {
+        // A committed operation is released only once both reconstructed copies are durable.
+        db::cluster::writes::finish_write(pool, &write.id, view.term).await?;
+    }
+    Ok(())
+}
+
 impl LocalStore {
+    async fn recovery_refs(&self, script: &str) -> anyhow::Result<()> {
+        let mut command = process::git_command()?;
+        command
+            .arg("--git-dir")
+            .arg(self.path())
+            .args(["update-ref", "--no-deref", "--stdin"]);
+        let (status, _) = process::buffered(
+            command,
+            script.as_bytes(),
+            MAX_GIT_OUTPUT,
+            process::RPC_TIMEOUT,
+        )
+        .await?;
+        anyhow::ensure!(status.success(), "could not restore canonical refs");
+        Ok(())
+    }
+
+    async fn verify_canonical(&self, values: &[db::models::RefValue]) -> anyhow::Result<()> {
+        let values = values.to_vec();
+        self.blocking(move |path| {
+            let refs = git::list_mirror_refs(path)?;
+            anyhow::ensure!(
+                refs.len() == values.iter().filter(|value| value.name != "HEAD").count(),
+                "unexpected term refs"
+            );
+            let repo = git2::Repository::open_bare(path)?;
+            for value in values {
+                let reference = repo.find_reference(&value.name)?;
+                let matches = if value.kind == "symbolic" {
+                    reference.symbolic_target() == Some(value.target.as_str())
+                } else {
+                    reference.symbolic_target().is_none()
+                        && reference.target().map(|oid| oid.to_string()).as_deref()
+                            == Some(value.target.as_str())
+                };
+                anyhow::ensure!(matches, "term refs differ from canonical refs");
+            }
+            Ok(())
+        })
+        .await?;
+        Ok(())
+    }
+
     pub(super) fn new(disk_path: &str, node_id: Option<Option<i64>>) -> Self {
         Self {
             disk_path: disk_path.to_owned(),

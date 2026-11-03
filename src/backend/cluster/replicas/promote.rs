@@ -1,7 +1,6 @@
-//! Promotion. `promote` makes a copy the primary of its repository on an operator's
-//! request, and `take_over` does it for a copy that holds every write when its primary has
-//! been offline for a while. A copy that is behind is never promoted automatically: only
-//! the operator knows whether losing those writes is acceptable.
+//! Promotion. Quorum repositories change terms and reconstruct canonical refs before
+//! serving again. Silence only starts that recovery attempt. Legacy asynchronous copies
+//! retain their version-based promotion and explicit forced-loss behavior.
 //!
 //! A fork is stored on the same node as its source, because pull requests between them need
 //! both there. So a promotion moves the whole fork family that shares the repository's
@@ -56,6 +55,14 @@ pub async fn promote(
     to: Option<i64>,
     force: bool,
 ) -> Result<Vec<Promotion>> {
+    if db::cluster::writes::write_settings(pool)
+        .await?
+        .write_quorum
+        .is_some()
+    {
+        ensure!(!force, "--force is not allowed with write quorum");
+        return promote_quorum(pool, repository, to).await;
+    }
     // The family is read once, so the repository's primary and its members agree.
     let family = db::cluster::list_fork_family(pool, repository).await?;
     let &(_, primary, _) = family
@@ -152,6 +159,131 @@ pub async fn promote(
     Ok(promoted)
 }
 
+#[derive(Debug, thiserror::Error)]
+#[error("repository {repository} is fenced on node {target}; canonical recovery is pending")]
+pub struct RecoveryPending {
+    pub repository: i64,
+    pub target: i64,
+}
+
+async fn promote_quorum(
+    pool: &DbPool,
+    repository: i64,
+    target: Option<i64>,
+) -> Result<Vec<Promotion>> {
+    use db::cluster::writes as journal;
+    let family = db::cluster::list_fork_family(pool, repository).await?;
+    ensure!(
+        !family.is_empty() && family.len() <= journal::MAX_FAMILY,
+        "invalid fork family size"
+    );
+    let first = journal::recovery_view(pool, repository).await?;
+    let from = first.primary_id;
+    let nodes = db::cluster::list_nodes(pool).await?;
+    let to = match target {
+        Some(target) => target,
+        None if !first.serving => from,
+        None => first
+            .voters
+            .iter()
+            .find(|voter| voter.node_id != from && is_reporting_storage(&nodes, voter.node_id))
+            .map(|voter| voter.node_id)
+            .context("no voting copy is reporting in")?,
+    };
+    ensure!(
+        is_reporting_storage(&nodes, to),
+        "target storage node is not reporting in"
+    );
+    let mut voters: Vec<_> = first.voters.iter().map(|voter| voter.node_id).collect();
+    voters.sort_unstable();
+    ensure!(
+        voters.len() == 2 && voters.contains(&to),
+        "promotion requires the same two fixed voters"
+    );
+    let mut terms = Vec::with_capacity(family.len());
+    for (member, primary, _) in &family {
+        ensure!(
+            *primary == Some(from),
+            "fork family has different primaries"
+        );
+        let view = journal::recovery_view(pool, *member).await?;
+        let mut membership: Vec<_> = view.voters.iter().map(|voter| voter.node_id).collect();
+        membership.sort_unstable();
+        ensure!(
+            view.primary_id == from && view.serving == first.serving && membership == voters,
+            "fork family terms changed"
+        );
+        if first.serving && from != to {
+            ensure!(
+                view.voters.iter().any(|voter| voter.node_id == to
+                    && voter.term == view.term
+                    && voter.applied_version == view.committed_version),
+                "voting copy has not applied canonical refs"
+            );
+        }
+        terms.push((*member, view.term));
+    }
+    if first.serving {
+        if from == to {
+            return Ok(Vec::new());
+        }
+        ensure!(
+            journal::switch_write_family(pool, repository, from, &terms, to, &voters).await?,
+            "fork family changed during promotion; nothing changed"
+        );
+        for (_, term) in &mut terms {
+            *term = term.checked_add(1).context("write term overflow")?;
+        }
+    } else {
+        ensure!(
+            from == to,
+            "resume canonical recovery on the fenced primary before moving it again"
+        );
+    }
+    if !journal::enable_write_family(pool, &terms).await? {
+        return Err(RecoveryPending {
+            repository,
+            target: to,
+        }
+        .into());
+    }
+    Ok(terms
+        .into_iter()
+        .map(|(repository, _)| Promotion {
+            repository,
+            from,
+            to,
+            lost_writes: 0,
+        })
+        .collect())
+}
+
+/// Each voter reconstructs only its own directories. Enabling still requires both
+/// voters' durable applied versions and no unfinished operation in the whole family.
+pub async fn recover_family(
+    pool: &DbPool,
+    repository: i64,
+    node: i64,
+    repos: &Path,
+) -> Result<bool> {
+    use db::cluster::writes as journal;
+    let family = db::cluster::list_fork_family(pool, repository).await?;
+    ensure!(
+        !family.is_empty() && family.len() <= journal::MAX_FAMILY,
+        "invalid fork family size"
+    );
+    let mut terms = Vec::with_capacity(family.len());
+    for (member, _, _) in family {
+        let view = journal::recovery_view(pool, member).await?;
+        if !view.serving && view.voters.iter().any(|voter| voter.node_id == node) {
+            crate::backend::repositories::store::RepoStore::recover_term(pool, member, node, repos)
+                .await?;
+        }
+        terms.push((member, view.term));
+    }
+    journal::enable_write_family(pool, &terms).await
+}
+
 /// Makes `node` the primary of every fork family whose members are all on a primary it has
 /// seen offline for `after`, when it holds a current copy of each member. Returns the
 /// repositories taken over. The family moves in one transaction (`promote_fork_family`), so
@@ -166,7 +298,13 @@ pub async fn take_over(
     silent: &mut Silent,
     after: Duration,
 ) -> Result<Vec<i64>> {
-    super::reconcile(pool, node, repos).await?;
+    let quorum = db::cluster::writes::write_settings(pool)
+        .await?
+        .write_quorum
+        .is_some();
+    if !quorum {
+        super::reconcile(pool, node, repos).await?;
+    }
     let nodes = db::cluster::list_nodes(pool).await?;
     let now = Instant::now();
     let offline: Vec<i64> = nodes
@@ -194,6 +332,15 @@ pub async fn take_over(
         .map(|row| (row.repository_id, row.applied_version))
         .collect();
     for row in held {
+        if quorum {
+            let view = db::cluster::writes::recovery_view(pool, row.repository_id).await?;
+            if !view.serving {
+                if let Err(error) = recover_family(pool, row.repository_id, node, repos).await {
+                    warn!(repository = row.repository_id, %error, "canonical recovery remains fenced");
+                }
+                continue;
+            }
+        }
         let Some(from) = row.primary_node_id.filter(|from| *from != node) else {
             continue;
         };
@@ -209,6 +356,24 @@ pub async fn take_over(
         decided.extend(members.iter().map(|(member, _)| *member));
         if members.is_empty() {
             // Another node has already taken the family off this primary.
+            continue;
+        }
+        if quorum {
+            match promote_quorum(pool, row.repository_id, Some(node)).await {
+                Ok(promotions) => {
+                    taken.extend(promotions.into_iter().map(|promotion| promotion.repository))
+                }
+                Err(error) if error.is::<RecoveryPending>() => {
+                    if recover_family(pool, row.repository_id, node, repos).await? {
+                        taken.extend(members.iter().map(|(member, _)| *member));
+                    }
+                }
+                Err(error) => {
+                    if silent.skipped.insert(row.repository_id, from) != Some(from) {
+                        warn!(repository = row.repository_id, %error, "primary offline; canonical recovery was refused");
+                    }
+                }
+            }
             continue;
         }
         let problem = if members.len() < family.len() {
