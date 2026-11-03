@@ -156,6 +156,62 @@ async fn metrics_access_is_hidden_and_rechecks_administrator_tokens() {
 }
 
 #[tokio::test]
+async fn readiness_checks_storage_only_for_storage_roles() {
+    use std::os::unix::fs::PermissionsExt;
+    for pg in [false, true] {
+        let mut database = Database::new(pg).await;
+        let root = tempfile::tempdir().unwrap();
+        let repos = root.path().join("repositories");
+        std::fs::create_dir(&repos).unwrap();
+        let mut state = state(&database, root.path()).await;
+        state.roles = "web,storage".parse().unwrap();
+        state.repos_path = repos.clone();
+        state.storage_min_free_bytes = 0;
+        let router = create_router(state.clone());
+        assert_eq!(get(&router, "/ready", None).await.0, StatusCode::OK);
+        assert_eq!(
+            std::fs::read_dir(&repos).unwrap().count(),
+            0,
+            "probe file was removed"
+        );
+        std::fs::set_permissions(&repos, std::fs::Permissions::from_mode(0o500)).unwrap();
+        let response = get(&router, "/ready", None).await;
+        std::fs::set_permissions(&repos, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(response.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(
+            response.2.contains("repository storage not writable"),
+            "{}",
+            response.2
+        );
+        assert!(!response.2.contains(repos.to_str().unwrap()));
+        assert_eq!(get(&router, "/health", None).await.0, StatusCode::OK);
+
+        state.storage_min_free_bytes = u64::MAX;
+        let router = create_router(state.clone());
+        let response = get(&router, "/ready", None).await;
+        assert_eq!(response.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.2.contains("storage free space below minimum"));
+        assert_eq!(std::fs::read_dir(&repos).unwrap().count(), 0);
+
+        state.roles = "web".parse().unwrap();
+        state.repos_path = root.path().join("missing");
+        let router = create_router(state.clone());
+        assert_eq!(get(&router, "/ready", None).await.0, StatusCode::OK);
+        state.roles = "storage".parse().unwrap();
+        let router = create_router(state);
+        let response = get(&router, "/ready", None).await;
+        assert_eq!(response.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.2.contains("repository storage not writable"));
+        database.pool().close().await;
+        let response = get(&router, "/ready", None).await;
+        assert_eq!(response.0, StatusCode::SERVICE_UNAVAILABLE);
+        assert!(response.2.contains("database unavailable"));
+        assert_eq!(get(&router, "/health", None).await.0, StatusCode::OK);
+        database.finish().await;
+    }
+}
+
+#[tokio::test]
 async fn metrics_aggregate_storage_replicas_queue_and_node_states() {
     for pg in [false, true] {
         let mut database = Database::new(pg).await;

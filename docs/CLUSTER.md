@@ -46,6 +46,12 @@ and the rest) open the node connection in either mode; they do not change the mo
 
 ## Monitoring
 
+`/health` is liveness; `/ready` checks the database with a 2-second deadline. Nodes with
+`storage` also probe repository-root writes and available space with a 2-second deadline.
+`STORAGE_MIN_FREE_BYTES` sets the reserve (unsigned bytes, default 1 GiB). Failed checks
+return 503 with the check name, never a path. Storage nodes without `web` expose only
+these probes and `/metrics` on `HTTP_ADDR`; keep that listener on a private network.
+
 `/metrics` returns Prometheus text to a site administrator's personal token or a bearer
 matching `METRICS_TOKEN` (1–4096 bearer-token characters). Other callers receive 404;
 browser sessions and repository-scoped tokens do not grant access. Scrapes have a

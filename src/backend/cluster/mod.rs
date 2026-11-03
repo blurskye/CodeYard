@@ -627,7 +627,7 @@ pub async fn wait_for_address(endpoint: &Endpoint) {
 }
 
 /// Free space, in bytes, on the filesystem that holds `path`.
-fn disk_free(path: &Path) -> Result<i64> {
+pub(crate) fn disk_free(path: &Path) -> Result<i64> {
     use std::os::unix::ffi::OsStrExt;
     let path = std::ffi::CString::new(path.as_os_str().as_bytes())?;
     // statvfs reads the filesystem containing the repository root.

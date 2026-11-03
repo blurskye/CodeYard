@@ -52,9 +52,17 @@ async fn prepare_application(
     pool: DbPool,
     repos_path: PathBuf,
     state_dir: &Path,
-    serves_web: bool,
+    roles: &super::NodeRoles,
     cluster: Option<crate::backend::cluster::NodeContext>,
 ) -> Result<AppState> {
+    let serves_web = roles.contains(NodeRole::Web);
+    let storage_min_free_bytes = match std::env::var("STORAGE_MIN_FREE_BYTES") {
+        Ok(value) => value
+            .parse::<u64>()
+            .context("STORAGE_MIN_FREE_BYTES must be an unsigned byte count")?,
+        Err(std::env::VarError::NotPresent) => 1024 * 1024 * 1024,
+        Err(_) => anyhow::bail!("STORAGE_MIN_FREE_BYTES must be an unsigned byte count"),
+    };
     crate::backend::api::http::config::public_url()?;
     if cluster.is_none() {
         let (state_dir, repos) = (state_dir.to_owned(), repos_path.clone());
@@ -90,14 +98,17 @@ async fn prepare_application(
         cluster.as_ref().map(|n| n.node_id),
     )
     .await?;
-    Ok(AppState::new(
+    let mut state = AppState::new(
         pool,
         repos_path,
         storage,
         secret_encryptor,
         CiConfig::from_env()?,
         cluster,
-    ))
+    );
+    state.roles = roles.clone();
+    state.storage_min_free_bytes = storage_min_free_bytes;
+    Ok(state)
 }
 
 async fn shutdown_signal() -> Result<()> {
@@ -368,7 +379,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             pool.clone(),
             repos_path.clone(),
             &config.state_dir,
-            config.roles.contains(NodeRole::Web),
+            &config.roles,
             member.as_ref().map(|node| node.context.clone()),
         )
         .await?;
@@ -523,8 +534,10 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let web_server = async {
         if config.roles.contains(NodeRole::Web) {
             api::run_web_server(config.http_addr, state, stop.clone()).await
+        } else if config.roles.contains(NodeRole::Storage) {
+            api::health::run_server(config.http_addr, state, stop.clone()).await
         } else {
-            // Without a web listener, this future ends with the shutdown signal.
+            // Without an HTTP listener, this future ends with the shutdown signal.
             let _ = stop.clone().wait_for(|stopped| *stopped).await;
             Ok(())
         }
