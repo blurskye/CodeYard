@@ -42,7 +42,6 @@
 # `systemd-run --user --scope -p Delegate=yes bash scripts/e2e.sh`. Without one, the checks
 # that need a finished run are reported as SKIP, so the run still exits non-zero.
 set -uo pipefail
-export CODEYARD_EXPERIMENTAL_CLUSTER=1
 
 # Stop a hung run: run again under timeout, once.
 if [[ -z ${E2E_UNDER_TIMEOUT:-} ]]; then
@@ -355,7 +354,7 @@ configure_node() {
         "PATH=${PG_BIN:+$PG_BIN:}$PATH" "HOME=$NODE_DIR/home" "LANG=C.UTF-8" "NO_COLOR=1" "RUST_LOG=warn,codeyard=info"
         "GITSERV_STATE_DIR=$NODE_DIR/state" "REPOS_PATH=$NODE_DIR/repos" "HOST_KEY_PATH=$NODE_DIR/host_key"
         "HTTP_ADDR=127.0.0.1:${HTTP_PORTS[$node]:-0}" "SSH_ADDR=127.0.0.1:${SSH_PORTS[$node]:-0}" "SSH_MODE=builtin"
-        "GITSERV_NODE_ROLES=$roles"
+        "GITSERV_NODE_ROLES=$roles" "CODEYARD_EXPERIMENTAL_CLUSTER=1"
         "PUBLIC_URL=$BASE" "PUBLIC_HTTP_CLONE_BASE=$BASE" "COOKIE_SECURE=false"
         "WEBUI_DIST=$WEBUI_DIST"
         "CI_EXECUTION_MODE=local" "CI_ACT_BINARY=$ACT" "CI_ACTIONS_BINARY=$ACTIONS_BIN"
@@ -488,7 +487,10 @@ start_server() { # inline: starts a node and waits for its actual services
                 if curl -q --noproxy '*' -fsS --max-time 2 -o "$dir/health.json" "$BASE/health" 2>/dev/null; then
                     grep -q '"status":"ok"' "$dir/health.json" && ready=1
                 fi ;;
-            store1 | store2) tail -n +"$first_line" "$dir/server.log" | grep 'cluster node ready' >/dev/null && ready=1 ;;
+            store1 | store2)
+                if curl -q --noproxy '*' -fsS --max-time 2 -o "$dir/health.json" "http://127.0.0.1:${HTTP_PORTS[$node]}/ready" 2>/dev/null; then
+                    grep -q '"status":"ready"' "$dir/health.json" && ready=1
+                fi ;;
             ci1 | r1 | r2) tail -n +"$first_line" "$dir/server.log" | grep 'database-free runner ready' >/dev/null && ready=1 ;;
         esac
         ((ready)) && break
@@ -2154,16 +2156,27 @@ t_cluster_worker_token() {
 }
 
 t_cluster_membership() {
-    local node roles listing port
+    local node roles listing port path
     listing=$(cluster_cli web1 list)
     printf '%s\n' "$listing"
     for node in "${CLUSTER_NODES[@]}"; do
         case $node in web1) roles=web,ssh ;; ci1) roles=runner ;; *) roles=storage ;; esac
         grep -Eq "^$node +active +$roles +" <<<"$listing"
         [[ $(pg_query "SELECT status FROM nodes WHERE name='$node'") == active ]]
+        if [[ $node == store1 || $node == store2 ]]; then
+            # Storage exposes probes, not the web application or public metrics.
+            for path in /health /ready; do
+                [[ $(curl -q --noproxy '*' -sS --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HTTP_PORTS[$node]}$path") == 200 ]] || return 1
+            done
+            for path in /metrics /login /api/v3/user; do
+                [[ $(curl -q --noproxy '*' -sS --max-time 2 -o /dev/null -w '%{http_code}' "http://127.0.0.1:${HTTP_PORTS[$node]}$path") == 404 ]] || return 1
+            done
+        fi
         if [[ $node != web1 ]]; then
-            # Storage nodes and database-free workers expose no user listeners.
-            for port in "${HTTP_PORTS[$node]}" "${SSH_PORTS[$node]}"; do
+            # Only web1 serves SSH; database-free workers also have no HTTP listener.
+            local -a closed_ports=("${SSH_PORTS[$node]}")
+            if is_runner "$node"; then closed_ports+=("${HTTP_PORTS[$node]}"); fi
+            for port in "${closed_ports[@]}"; do
                 if (exec 3<>"/dev/tcp/127.0.0.1/$port") 2>/dev/null; then
                     echo "$node unexpectedly exposes user port $port" >&2
                     return 1
