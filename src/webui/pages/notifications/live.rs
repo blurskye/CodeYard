@@ -48,7 +48,7 @@ async fn receive() {
                 futures_util::pin_mut!(ready, timeout);
                 matches!(select(ready, timeout).await, Either::Left((Ok(()), _)))
             };
-            if connected && socket.state() == State::Open {
+            if connected && matches!(socket.state(), State::Open) {
                 delay = 500;
                 // Reload after connecting as well: hints sent during a gap are not history.
                 crate::webui::navigation::refresh_page();
