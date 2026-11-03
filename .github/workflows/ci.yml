@@ -59,10 +59,11 @@ jobs:
       - name: Free disk space
         # The runner was stopped while Clippy checked the large crate, which points to running out
         # of memory. Remove the preinstalled tools this project does not use, to make room for swap
-        # and the build. The Docker images stay: the PostgreSQL service container is running.
+        # and the build. The Docker images stay because the PostgreSQL service container is running,
+        # and the tool cache stays because the act build needs the preinstalled Go.
         uses: jlumbroso/free-disk-space@ceedf095f4ec1a097402bc6bd80831f2e1a6fde6 # v2.0.0
         with:
-          tool-cache: true
+          tool-cache: false
           docker-images: false
       - name: Add swap
         run: |
