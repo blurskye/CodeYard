@@ -2,7 +2,9 @@ use anyhow::{ensure, Context, Result};
 
 pub const DEFAULT_CANDIDATE_LIMIT: i64 = 128;
 
-/// Maximum compatible queue candidates checked by one claim.
+/// Maximum compatible queue candidates returned to one claim's authority checks.
+/// This is not a database scan budget: incompatible/blocked rows are filtered before
+/// LIMIT, so the query may examine the entire queued backlog on either engine.
 pub fn candidate_limit() -> Result<i64> {
     let limit = match std::env::var("CI_CLAIM_CANDIDATES") {
         Ok(value) => value

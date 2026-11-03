@@ -380,6 +380,12 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
     .fetch_optional(&mut *connection)
     .await?;
 
+    // Trusted bot calls may have no token whose issuer lock retains the App owner.
+    // Discovering that owner here is too late to wait in account/row lock order.
+    // Retain its availability without waiting; the projection below rechecks it.
+    sqlx::query("SELECT id FROM users WHERE id IN (SELECT owner_id FROM github_apps WHERE bot_id=$1) ORDER BY id FOR SHARE NOWAIT")
+        .bind(user_id).execute(&mut *connection).await?;
+
     // Retain the installation supplying App-derived authority until the effect commits.
     // Recheck its bounds in the subsequent projection after any revocation lock wait.
     let _: Vec<i64> = sqlx::query_scalar("SELECT i.id FROM github_app_installations i JOIN github_apps a ON a.id=i.app_id WHERE a.bot_id=$1 AND (i.user_id=$2 OR i.org_id=$3) ORDER BY i.id FOR SHARE OF i")

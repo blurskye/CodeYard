@@ -1,7 +1,10 @@
 use crate::support::database::{wait_until_blocked, Database};
-use codeyard::backend::db::users::{
-    accounts,
-    transitions::{self, BanChange},
+use codeyard::backend::db::{
+    self,
+    users::{
+        accounts,
+        transitions::{self, BanChange},
+    },
 };
 use std::time::Duration;
 
@@ -179,4 +182,82 @@ async fn sqlite_reciprocal_bans_recheck_live_authority() {
 #[tokio::test]
 async fn postgres_reciprocal_bans_recheck_live_authority() {
     reciprocal_bans_recheck_live_authority(true).await;
+}
+
+async fn app_owner_revocation_rechecks_bot_writes(pg: bool) {
+    let mut fixture = Database::new(pg).await;
+    let admin = fixture.actor("admin").await;
+    let owner = fixture.actor("app_owner").await;
+    let bot = fixture.actor("app_bot").await;
+    fixture
+        .execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[admin])
+        .await;
+    let repo = db::repositories::records::create_repository(
+        fixture.pool(),
+        admin,
+        "private",
+        None,
+        true,
+        "/unused/app-owner.git",
+    )
+    .await
+    .unwrap();
+    fixture.execute("INSERT INTO oauth_applications(owner_id,client_id,secret_hash,name,homepage,redirect_uri,is_github_app) VALUES($1,'test-app','unused','App','','',TRUE)", &[owner]).await;
+    fixture.execute("INSERT INTO github_apps(id,owner_id,bot_id,client_id,slug,name,description,homepage,public_key,permissions,events,access_level) VALUES(9000,$1,$2,'test-app','test-app','App','','','','{}','[]',3)", &[owner, bot]).await;
+    fixture
+        .execute(
+            "INSERT INTO github_app_installations(app_id,user_id,all_repos) VALUES(9000,$1,TRUE)",
+            &[admin],
+        )
+        .await;
+
+    if pg {
+        // A trusted bot call has no token issuer to retain its owner's availability.
+        // A late-discovered owner must never introduce a reverse-order row wait.
+        let mut gate = fixture.pg().begin().await.unwrap();
+        sqlx::query("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE")
+            .bind(owner)
+            .execute(&mut *gate)
+            .await
+            .unwrap();
+        assert!(tokio::time::timeout(
+            Duration::from_secs(10),
+            db::issues::create_issue(fixture.pool(), repo.id, bot, "Blocked", "Body"),
+        )
+        .await
+        .expect("late issuer discovery must fail closed, not wait")
+        .is_err());
+        gate.rollback().await.unwrap();
+    }
+    db::issues::create_issue(fixture.pool(), repo.id, bot, "Allowed", "Body")
+        .await
+        .unwrap();
+    assert!(matches!(
+        transitions::change_ban(fixture.pool(), admin, owner, true)
+            .await
+            .unwrap(),
+        BanChange::Updated(_)
+    ));
+    assert!(
+        db::issues::create_issue(fixture.pool(), repo.id, bot, "Revoked", "Body")
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        fixture
+            .scalar("SELECT COUNT(*) FROM issues WHERE repo_id=$1", &[repo.id])
+            .await,
+        1
+    );
+    fixture.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_app_owner_revocation_rechecks_bot_writes() {
+    app_owner_revocation_rechecks_bot_writes(false).await;
+}
+
+#[tokio::test]
+async fn postgres_app_owner_revocation_rechecks_bot_writes() {
+    app_owner_revocation_rechecks_bot_writes(true).await;
 }
