@@ -391,7 +391,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         .await?;
         // Only the web socket subscribes to inbound notifications.
         if config.roles.contains(NodeRole::Web) {
-            state.notification_broadcaster.start().await;
+            state.notification_broadcaster.start().await?;
         }
         Ok::<_, anyhow::Error>((transport, repos_path, state))
     };

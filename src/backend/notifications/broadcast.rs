@@ -1,7 +1,7 @@
 use super::NotificationEvent;
 use crate::backend::db;
 use crate::backend::db::notifications::events;
-use crate::backend::db::notifications::events::NotificationListener;
+use crate::backend::db::notifications::events::EventCursor;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -42,7 +42,7 @@ pub struct NotificationBroadcaster {
     pool: db::DbPool,
     origin: String,
     stop: watch::Sender<bool>,
-    listener: Mutex<Option<AbortOnDropHandle<()>>>,
+    poller: Mutex<Option<AbortOnDropHandle<()>>>,
     sockets: SocketCounts,
 }
 
@@ -55,28 +55,38 @@ impl NotificationBroadcaster {
             pool: pool.clone(),
             origin: uuid::Uuid::new_v4().to_string(),
             stop,
-            listener: Mutex::new(None),
+            poller: Mutex::new(None),
             sockets: SocketCounts::default(),
         }
     }
 
-    pub async fn start(&self) {
-        let mut task = self.listener.lock().await;
-        if matches!(&self.pool, db::DbPool::Postgres(_)) && task.is_none() {
-            *task = Some(AbortOnDropHandle::new(tokio::spawn(listen(
+    pub async fn start(&self) -> Result<(), sqlx::Error> {
+        let mut task = self.poller.lock().await;
+        if task.is_none() && !*self.stop.borrow() {
+            let cursor =
+                tokio::time::timeout(Duration::from_secs(5), EventCursor::connect(&self.pool))
+                    .await
+                    .map_err(|_| sqlx::Error::PoolTimedOut)??;
+            *task = Some(AbortOnDropHandle::new(tokio::spawn(poll(
                 self.pool.clone(),
                 self.origin.clone(),
                 self.subscriptions.clone(),
                 self.stop.subscribe(),
+                cursor,
             ))));
         }
+        Ok(())
     }
 
     pub async fn shutdown(&self) {
         self.stop.send_replace(true);
-        if let Some(task) = self.listener.lock().await.take() {
+        if let Some(task) = self.poller.lock().await.take() {
             let _ = task.await;
         }
+        self.subscriptions
+            .lock()
+            .unwrap_or_else(|poison| poison.into_inner())
+            .clear();
     }
 
     pub fn subscribe(&self, user_id: i64) -> broadcast::Receiver<NotificationEvent> {
@@ -175,56 +185,91 @@ impl Drop for SocketSlot {
     }
 }
 
-async fn listen(
+async fn poll(
     pool: db::DbPool,
     origin: String,
     subscriptions: Subscriptions,
     mut stop: watch::Receiver<bool>,
+    mut cursor: EventCursor,
 ) {
-    let mut wait = Duration::from_secs(1);
+    let mut wait = Duration::from_millis(50);
+    let mut prune_at = tokio::time::Instant::now() + Duration::from_secs(60);
     loop {
         if *stop.borrow() {
             return;
         }
-        let connected = tokio::select! {
+        let received = tokio::select! {
             _ = stop.changed() => return,
-            value = NotificationListener::connect(&pool) => value,
+            value = tokio::time::timeout(Duration::from_secs(5), cursor.next(&pool)) => value,
         };
-        let mut listener = match connected {
-            Ok(Some(listener)) => {
-                wait = Duration::from_secs(1);
-                // Hints sent while no listener was connected are lost. Dropping every
-                // subscription closes the open sockets, and their clients reload the inbox.
-                subscriptions
-                    .lock()
-                    .unwrap_or_else(|poison| poison.into_inner())
-                    .clear();
-                listener
-            }
-            Ok(None) => return,
-            Err(_) => {
-                tracing::warn!("Notification listener connection unavailable");
-                tokio::select! { _ = stop.changed() => return, _ = tokio::time::sleep(wait) => {} }
-                wait = (wait * 2).min(Duration::from_secs(30));
-                continue;
-            }
-        };
-        loop {
-            let received =
-                tokio::select! { _ = stop.changed() => return, value = listener.recv() => value };
-            match received {
-                Ok(Some(payload)) => {
+        let full = match received {
+            Ok(Ok(payloads)) => {
+                let full = payloads.len() == events::BATCH_SIZE;
+                wait = if payloads.is_empty() {
+                    (wait * 2).min(Duration::from_millis(500))
+                } else {
+                    Duration::from_millis(50)
+                };
+                for payload in payloads {
                     if let Ok(announcement) = serde_json::from_str::<Announcement>(&payload) {
                         if announcement.origin != origin {
                             dispatch(&subscriptions, announcement.event);
                         }
                     }
                 }
-                Ok(None) | Err(_) => {
-                    tracing::warn!("Notification listener connection lost");
-                    break;
+                full
+            }
+            _ => {
+                tracing::warn!("Notification polling unavailable");
+                // A browser must reload after an outage: retained hints may have expired.
+                subscriptions
+                    .lock()
+                    .unwrap_or_else(|poison| poison.into_inner())
+                    .clear();
+                loop {
+                    tokio::select! {
+                        _ = stop.changed() => return,
+                        _ = tokio::time::sleep(Duration::from_millis(500)) => {}
+                    }
+                    let connected = tokio::select! {
+                        _ = stop.changed() => return,
+                        value = tokio::time::timeout(Duration::from_secs(5), EventCursor::connect(&pool)) => value,
+                    };
+                    if let Ok(Ok(connected)) = connected {
+                        cursor = connected;
+                        // Also close clients that connected while recovery was waiting.
+                        subscriptions
+                            .lock()
+                            .unwrap_or_else(|poison| poison.into_inner())
+                            .clear();
+                        break;
+                    }
+                }
+                false
+            }
+        };
+        if tokio::time::Instant::now() >= prune_at {
+            tokio::select! {
+                _ = stop.changed() => return,
+                result = tokio::time::timeout(Duration::from_secs(5), events::prune(&pool)) => {
+                    prune_at = match result {
+                        Ok(Ok(1024)) => tokio::time::Instant::now(),
+                        result => {
+                            if !matches!(result, Ok(Ok(_))) {
+                                tracing::warn!("Notification hint cleanup unavailable");
+                            }
+                            tokio::time::Instant::now() + Duration::from_secs(60)
+                        }
+                    };
                 }
             }
+        }
+        if full {
+            continue;
+        }
+        tokio::select! {
+            _ = stop.changed() => return,
+            _ = tokio::time::sleep(wait) => {}
         }
     }
 }

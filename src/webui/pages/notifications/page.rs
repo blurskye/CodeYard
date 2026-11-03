@@ -1,4 +1,4 @@
-//! Recipient-scoped notification presentation and polling.
+//! Recipient-scoped notification presentation.
 use crate::webui::components::{Avatar, DraftInput};
 use crate::webui::encode_component;
 use crate::webui::navigation::{safe_page_target as safe_notification_link, NavLink, RefreshLink};
@@ -7,18 +7,6 @@ use serde::{Deserialize, Serialize};
 
 #[component]
 pub(crate) fn NotificationsView(model: NotificationsPage) -> Element {
-    use_future(move || async move {
-        #[cfg(target_arch = "wasm32")]
-        loop {
-            gloo_timers::future::TimeoutFuture::new(15000).await;
-            if web_sys::window()
-                .and_then(|window| window.document())
-                .is_some_and(|document| !document.hidden())
-            {
-                crate::webui::navigation::refresh_page();
-            }
-        }
-    });
     notifications_page(model)
 }
 
@@ -207,7 +195,7 @@ pub fn notifications_page(model: NotificationsPage) -> Element {
                     if model.unread_only {
                         input { r#type: "hidden", name: "unread_only", value: "1" }
                     }
-                    // A draft, so the 15-second refresh does not overwrite text not yet searched.
+                    // Live refresh must not overwrite text not yet searched.
                     DraftInput { name: "q", input_type: "search".to_string(), class: "notification-search-input".to_string(), placeholder: "Search notifications".to_string(), aria_label: Some("Search notifications".to_string()), initial_value: model.query.clone().unwrap_or_default() }
                     button { r#type: "submit", class: "btn btn-sm", "Search" }
                 }

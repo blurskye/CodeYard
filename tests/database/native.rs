@@ -3519,41 +3519,25 @@ async fn check_list_display_projections(pool: &db::DbPool) {
 async fn sqlite_list_author_label_and_owner_projections() {
     let fixture = NativeDatabase::new().await;
     check_list_display_projections(&fixture.pool).await;
-    assert!(
-        db::notifications::events::NotificationListener::connect(&fixture.pool)
-            .await
-            .unwrap()
-            .is_none()
-    );
-    db::notifications::events::announce(&fixture.pool, "local-only")
-        .await
-        .unwrap();
+    check_notification_cursor(&fixture.pool).await;
     fixture.close().await;
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn postgres_list_projections_and_owned_notification_listener() {
+async fn postgres_list_projections_and_owned_notification_cursor() {
     let fixture = PostgresDatabase::new().await;
     check_list_display_projections(&fixture.pool).await;
-    let mut listener = db::notifications::events::NotificationListener::connect(&fixture.pool)
-        .await
-        .unwrap()
-        .unwrap();
-    let payload = format!("projection-test-{}", uuid::Uuid::new_v4());
-    db::notifications::events::announce(&fixture.pool, &payload)
-        .await
-        .unwrap();
-    tokio::time::timeout(std::time::Duration::from_secs(5), async {
-        loop {
-            if listener.recv().await.unwrap().as_deref() == Some(payload.as_str()) {
-                break;
-            }
-        }
-    })
-    .await
-    .unwrap();
-    drop(listener);
+    check_notification_cursor(&fixture.pool).await;
     fixture.pool.close().await;
+}
+
+async fn check_notification_cursor(pool: &db::DbPool) {
+    use db::notifications::events::{announce, EventCursor};
+    let mut cursor = EventCursor::connect(pool).await.unwrap();
+    let payload = format!("projection-test-{}", uuid::Uuid::new_v4());
+    announce(pool, &payload).await.unwrap();
+    assert_eq!(cursor.next(pool).await.unwrap(), [payload]);
+    assert!(cursor.next(pool).await.unwrap().is_empty());
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

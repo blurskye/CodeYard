@@ -73,8 +73,8 @@ src/backend/
     repositories/ users/     qualified facades, mirrored by both native engines
     organizations/            profiles, membership, teams, access and recovery
     labels.rs following.rs    no combined metadata/social operation buckets
-    notifications/            records/inbox/delivery and events transport; PostgreSQL
-                              owns LISTEN/NOTIFY, SQLite has only local fan-out
+    notifications/            records/inbox/delivery and bounded event cursor polling
+                              on both PostgreSQL and SQLite
 
 src/webui/                  Dioxus views shared by SSR and the browser
   pages/                      feature view modules (no data access, no policy),
@@ -624,20 +624,20 @@ field, and their tests assert the key never appears in serialized page data.
 
 ### Events
 
-Runtime constructs `NotificationBroadcaster`, calls `start` before serving, and
-calls `shutdown` before closing the pool. `notifications/broadcast.rs` owns the
-channel/listener task; `db/notifications/events.rs` dispatches to the PostgreSQL
-LISTEN/NOTIFY implementation. Construction alone starts no task. The upload
-sweep and `CiWorkers` also have retained stop/join owners in node runtime;
-`AppState.ci_runs` carries admission/control, not worker task handles.
+Runtime starts one notification cursor poller per web node before serving and
+stops and joins it before closing the pool. Both database engines store bounded
+hints in `notification_events`; batches contain at most 256 rows. Polling backs
+off from 50 to 500 ms when idle and holds no connection between queries. Hints
+expire after one hour through bounded cleanup. PostgreSQL transaction ids and
+remembered active transactions prevent late commits from being skipped without
+a shared commit lock. An outage closes local subscriptions so browsers reload
+the inbox when reconnecting.
 
-Notifications are written to PostgreSQL and announced with `NOTIFY` (a hint with
-the user and notification ids only); every node `LISTEN`s and forwards the hint to
-the browsers connected to it, and each browser connection re-reads the content and
-the unread count from the database. A node ignores its own announcements. Live CI
-status and logs are read from the database, so any node serves them. There is no
-shared cache: every node reads PostgreSQL, and a cache is added only if
-measurements call for it.
+The node fans hints out in memory and ignores its own announcements. The signed-in
+header owns one WebSocket and refreshes authorized page data on a hint or reconnect;
+there is no per-browser polling timer. Socket delivery checks the original live
+session and current repository access before loading content or counts. CI status
+and logs remain database reads.
 
 ### Schema additions
 

@@ -67,6 +67,9 @@ fn SiteHeader(chrome: Chrome, repo: Option<RepoChrome>, located: bool) -> Elemen
         .map(|repo| format!("{}/find/{}", repo.base(), encode_path(&repo.default_branch)));
     rsx! {
         header { class: "site-header",
+            if chrome.username.is_some() {
+                crate::webui::pages::notifications::NotificationUpdates {}
+            }
             div { class: if repo.is_some() { "site-header-row site-header-row-repo" } else { "site-header-row" },
                 details { id: "site-navigation-menu", class: "native-menu site-navigation", "name": "site-header-menu",
                     // While the menu is open, a phone shows the close icon in the same place.
