@@ -1,5 +1,6 @@
 //! The `codeyard` server as a child process, and a Git client that sends a token, for tests
 //! that speak smart HTTP the way a real client does.
+use crate::support::fake_s3::FakeS3;
 use crate::support::native_database as native;
 use crate::support::server::spawn_on_free_ports;
 use base64::{engine::general_purpose::STANDARD, Engine};
@@ -15,6 +16,7 @@ pub struct Server {
     pub child: Child,
     pub base: String,
     pub log: std::path::PathBuf,
+    _s3: Option<FakeS3>,
 }
 impl Drop for Server {
     fn drop(&mut self) {
@@ -51,6 +53,9 @@ impl Server {
         master_key: Option<&str>,
     ) -> Self {
         let log = root.join("server.log");
+        let pool = db::init_db(url).await.unwrap();
+        let s3 = FakeS3::for_database(&pool).await;
+        pool.close().await;
         let client = Client::new();
         let (child, addresses) = spawn_on_free_ports(
             &log,
@@ -74,6 +79,9 @@ impl Server {
                     .args(["serve", "--roles", "server", "--ssh-mode", "disabled"])
                     .args(["--http-addr", &address])
                     .current_dir(root);
+                if let Some(s3) = &s3 {
+                    command.envs(s3.environment());
+                }
                 if let Some(key) = master_key {
                     command.env("SECRETS_MASTER_KEY", key);
                 }
@@ -95,6 +103,7 @@ impl Server {
             child,
             base: format!("http://{}", addresses[0]),
             log,
+            _s3: s3,
         }
     }
 }

@@ -4,6 +4,7 @@
 )]
 
 pub mod database;
+pub mod fake_s3;
 pub mod fake_webui_bundle;
 pub mod git_remote;
 pub mod git_server;
