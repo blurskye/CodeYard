@@ -54,6 +54,7 @@ async fn prepare_application(
     state_dir: &Path,
     serves_web: bool,
     cluster: Option<crate::backend::cluster::NodeContext>,
+    s3: Option<S3Config>,
 ) -> Result<AppState> {
     crate::backend::api::http::config::public_url()?;
     if cluster.is_none() {
@@ -75,7 +76,6 @@ async fn prepare_application(
     if secret_encryptor.is_none() {
         tracing::warn!("SECRETS_MASTER_KEY not set, secrets API disabled");
     }
-    let s3 = S3Config::optional_from_env()?;
     if let Some(config) = s3.as_ref().filter(|_| serves_web) {
         config.validate_browser_cookie_scope_from_env()?;
     }
@@ -318,6 +318,11 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         pool.close().await;
         anyhow::bail!(super::SINGLE_NODE_ROLES);
     }
+    let s3 = S3Config::optional_from_env()?;
+    anyhow::ensure!(
+        !clustered || s3.is_some(),
+        "cluster mode needs a shared object store; configure the S3_* settings instead of node-local file storage"
+    );
     let repos_path = if config.roles.contains(NodeRole::Storage) {
         prepare_repository_root(&config.repos_path)?
     } else {
@@ -370,6 +375,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
             &config.state_dir,
             config.roles.contains(NodeRole::Web),
             member.as_ref().map(|node| node.context.clone()),
+            s3,
         )
         .await?;
         // Only the web socket subscribes to inbound notifications.
