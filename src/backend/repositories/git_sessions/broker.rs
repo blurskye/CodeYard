@@ -63,6 +63,11 @@ pub(super) struct HookState {
     // Released only when Git reports completed publication, before post-receive follow-up.
     pub(super) publication: Option<Arc<crate::backend::git::locks::PublicationGuard>>,
     pub(super) ref_change: Option<crate::backend::repositories::store::RefChange>,
+    pub(super) quorum: bool,
+    pub(super) quorum_started: bool,
+    pub(super) quorum_unknown: bool,
+    pub(super) writes: Vec<db::models::WriteRecord>,
+    pub(super) transaction: Option<usize>,
 }
 
 struct ActiveOperation {
@@ -170,7 +175,7 @@ pub(super) async fn receive_session(
                 hooks.spawn(async move {
                     let result = async {
                         let request = protocol::read_request(&mut stream).await?;
-                        ensure!(matches!(&request, Request::Hook { .. }), "hook request required");
+                        ensure!(matches!(&request, Request::Hook { .. } | Request::ReferenceTransaction { .. }), "hook request required");
                         gateway.handle(&mut stream, request).await
                     }.await;
                     if let Err(error) = &result {
@@ -276,7 +281,7 @@ async fn listen(
                         // A push that is already running still needs its hooks. Once shutdown
                         // has started, nothing else is admitted.
                         let shutting_down = *stopping.borrow();
-                        let result = if shutting_down && !matches!(&request, Request::Hook { .. }) {
+                        let result = if shutting_down && !matches!(&request, Request::Hook { .. } | Request::ReferenceTransaction { .. }) {
                             Err(anyhow::anyhow!("OpenSSH broker is shutting down"))
                         } else {
                             gateway.handle(&mut stream, request).await
@@ -328,6 +333,57 @@ mod admission_tests {
         for sessions in [16, 128, 512] {
             assert!(connection_budget(sessions) >= sessions * 2 + MAX_CONTROLS + MAX_HEADERS);
         }
+    }
+
+    fn pending_operation() -> Arc<Operation> {
+        Arc::new(Operation {
+            credential: ReceiveCredential::SshKey(1),
+            actor_id: 1,
+            repo_id: 1,
+            owner: "owner".into(),
+            path: PathBuf::new(),
+            publication_lease: None,
+            hooks: tempfile::tempdir().unwrap(),
+            state: Mutex::new(HookState {
+                quorum: true,
+                quorum_started: true,
+                ..HookState::default()
+            }),
+        })
+    }
+
+    #[tokio::test]
+    async fn receive_terminal_output_is_held_until_release() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: pending_operation(),
+            held: Vec::new(),
+        };
+        gate.write_all(b"ok refs/heads/main\n").await.unwrap();
+        let mut bytes = [0; 19];
+        assert!(timeout(Duration::from_millis(10), reader.read(&mut bytes))
+            .await
+            .is_err());
+        gate.release().await.unwrap();
+        let count = reader.read(&mut bytes).await.unwrap();
+        assert_eq!(&bytes[..count], b"ok refs/heads/main\n");
+    }
+
+    #[tokio::test]
+    async fn discarded_receive_status_never_reports_success() {
+        let (mut output, mut reader) = tokio::io::duplex(1024);
+        let mut gate = ReceiveOutput {
+            output: &mut output,
+            operation: pending_operation(),
+            held: Vec::new(),
+        };
+        gate.write_all(b"ok refs/heads/main\n").await.unwrap();
+        drop(gate);
+        drop(output);
+        let mut bytes = Vec::new();
+        reader.read_to_end(&mut bytes).await.unwrap();
+        assert!(bytes.is_empty());
     }
 
     #[test]
@@ -438,6 +494,31 @@ impl Gateway {
                 if let Some(line) = line {
                     protocol::write_frame(stream, STDOUT, line.as_bytes()).await?;
                 }
+                protocol::finish(stream, 0).await?;
+            }
+            Request::ReferenceTransaction {
+                key_id,
+                repo_id,
+                token,
+                phase,
+                updates,
+            } => {
+                let operation = self
+                    .operations
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+                    .get(&token)
+                    .cloned()
+                    .context("no active receive operation")?;
+                ensure!(
+                    key_id == operation.credential.id() && repo_id == operation.repo_id,
+                    "hook identity mismatch"
+                );
+                timeout(
+                    protocol::CONTROL_TIMEOUT,
+                    self.reference_transaction(&operation, phase, &updates),
+                )
+                .await??;
                 protocol::finish(stream, 0).await?;
             }
             Request::Hook {
@@ -751,6 +832,17 @@ impl Gateway {
             gateway.make_hooks(credential.id(), repo_id, write)
         })
         .await??;
+        let quorum = if write && self.ci.cluster.is_some() {
+            timeout(
+                Duration::from_secs(5),
+                db::cluster::writes::write_settings(&self.pool),
+            )
+            .await??
+            .write_quorum
+            .is_some()
+        } else {
+            false
+        };
         let operation = Arc::new(Operation {
             credential,
             actor_id: actor.id,
@@ -759,7 +851,10 @@ impl Gateway {
             path,
             publication_lease: publication_lease.clone(),
             hooks,
-            state: Mutex::new(HookState::default()),
+            state: Mutex::new(HookState {
+                quorum,
+                ..HookState::default()
+            }),
         });
         let _active = if write {
             self.operations
@@ -784,14 +879,28 @@ impl Gateway {
         if let Some(protocol) = validation::protocol(options.git_protocol.as_deref())? {
             command_process.env("GIT_PROTOCOL", protocol);
         }
+        let mut output = ReceiveOutput {
+            output: streams.output,
+            operation: operation.clone(),
+            held: Vec::new(),
+        };
         let status = git_process::stream(
             command_process,
             streams.input,
-            streams.output,
+            &mut output,
             &mut *streams.errors,
             write,
         )
-        .await?;
+        .await;
+        if self.complete_quorum(&operation).await.is_err() {
+            let _ = streams
+                .errors
+                .write_all(b"write outcome unknown; fetch before retrying\n")
+                .await;
+            return Err(crate::backend::cluster::writes::OutcomeUnknown.into());
+        }
+        let status = status?;
+        output.release().await?;
         let (dispatch_failed, missing_post, _publication) = {
             let mut state = operation
                 .state
@@ -856,7 +965,7 @@ impl Gateway {
             .tempdir_in(self.socket.parent().context("socket parent required")?)?;
         validation::shell_safe_path(directory.path())?;
         if write {
-            for name in ["pre-receive", "post-receive"] {
+            for name in ["pre-receive", "post-receive", "reference-transaction"] {
                 let path = directory.path().join(name);
                 let mut file = OpenOptions::new()
                     .write(true)
@@ -865,17 +974,80 @@ impl Gateway {
                     .open(&path)?;
                 writeln!(
                     file,
-                    "#!/bin/sh\nexec {} ssh {} --socket {} --key-id {} --repo-id {}",
+                    "#!/bin/sh\nexec {} ssh {} --socket {} --key-id {} --repo-id {}{}",
                     validation::shell_safe_path(&self.executable)?,
                     name,
                     validation::shell_safe_path(&self.socket)?,
                     key_id,
-                    repo_id
+                    repo_id,
+                    if name == "reference-transaction" {
+                        " \"$1\""
+                    } else {
+                        ""
+                    }
                 )?;
                 file.sync_all()?;
             }
         }
         Ok(directory)
+    }
+}
+
+// Git ignores committed-hook failures. Hold its terminal output until the broker has
+// independently checked the durable decision, while negotiation still streams normally.
+struct ReceiveOutput<'a> {
+    output: &'a mut (dyn AsyncWrite + Unpin + Send),
+    operation: Arc<Operation>,
+    held: Vec<u8>,
+}
+
+impl ReceiveOutput<'_> {
+    async fn release(&mut self) -> Result<()> {
+        self.output.write_all(&self.held).await?;
+        self.output.flush().await?;
+        self.held.clear();
+        Ok(())
+    }
+}
+
+impl AsyncWrite for ReceiveOutput<'_> {
+    fn poll_write(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+        bytes: &[u8],
+    ) -> std::task::Poll<std::io::Result<usize>> {
+        let hold = self
+            .operation
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .quorum_started;
+        if hold {
+            if bytes.len() > crate::backend::cluster::rpc::MAX_JSON.saturating_sub(self.held.len())
+            {
+                return std::task::Poll::Ready(Err(std::io::Error::other(
+                    "receive status exceeds limit",
+                )));
+            }
+            self.held.extend_from_slice(bytes);
+            std::task::Poll::Ready(Ok(bytes.len()))
+        } else {
+            std::pin::Pin::new(&mut *self.output).poll_write(cx, bytes)
+        }
+    }
+
+    fn poll_flush(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        std::pin::Pin::new(&mut *self.output).poll_flush(cx)
+    }
+
+    fn poll_shutdown(
+        self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        self.poll_flush(cx)
     }
 }
 

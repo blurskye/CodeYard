@@ -17,6 +17,14 @@ pub(crate) const SESSION_TIMEOUT: Duration =
     crate::backend::git::repository::process::SESSION_TIMEOUT;
 const IO_TIMEOUT: Duration = crate::backend::git::repository::process::IDLE_TIMEOUT;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub(crate) enum TransactionPhase {
+    Prepared,
+    Committed,
+    Aborted,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 #[serde(tag = "operation", rename_all = "snake_case", deny_unknown_fields)]
 pub(crate) enum Request {
@@ -30,6 +38,13 @@ pub(crate) enum Request {
         credential: super::ReceiveCredential,
         command: String,
         git_protocol: Option<String>,
+    },
+    ReferenceTransaction {
+        key_id: i64,
+        repo_id: i64,
+        token: String,
+        phase: TransactionPhase,
+        updates: Vec<RefUpdate>,
     },
     Hook {
         key_id: i64,

@@ -79,15 +79,38 @@ pub(super) async fn run(command: Commands) -> Result<i32> {
             key_id,
             repo_id,
         } => {
-            let request = hook_request(key_id, repo_id, false).await?;
+            let request = hook_request(key_id, repo_id, false, None).await?;
             refuse_unreadable_objects().await?;
             (socket, request, false)
+        }
+        Commands::ReferenceTransaction {
+            socket,
+            key_id,
+            repo_id,
+            phase,
+        } => {
+            use protocol::TransactionPhase;
+            let phase = match phase.as_str() {
+                "prepared" => TransactionPhase::Prepared,
+                "committed" => TransactionPhase::Committed,
+                "aborted" => TransactionPhase::Aborted,
+                _ => anyhow::bail!("invalid reference transaction phase"),
+            };
+            (
+                socket,
+                hook_request(key_id, repo_id, false, Some(phase)).await?,
+                false,
+            )
         }
         Commands::PostReceive {
             socket,
             key_id,
             repo_id,
-        } => (socket, hook_request(key_id, repo_id, true).await?, false),
+        } => (
+            socket,
+            hook_request(key_id, repo_id, true, None).await?,
+            false,
+        ),
     };
     let mut connection = connect_private(&socket).await?;
     protocol::write_request(&mut connection, &request).await?;
@@ -170,7 +193,12 @@ async fn refuse_unreadable_objects() -> Result<()> {
     Ok(())
 }
 
-async fn hook_request(key_id: i64, repo_id: i64, post: bool) -> Result<Request> {
+async fn hook_request(
+    key_id: i64,
+    repo_id: i64,
+    post: bool,
+    phase: Option<protocol::TransactionPhase>,
+) -> Result<Request> {
     ensure!(key_id > 0 && repo_id > 0, "invalid key/repository ID");
     let token = std::env::var("GITSERV_OPENSSH_OPERATION")
         .map_err(|_| anyhow::anyhow!("receive hooks must belong to an active broker operation"))?;
@@ -186,6 +214,18 @@ async fn hook_request(key_id: i64, repo_id: i64, post: bool) -> Result<Request> 
             .read_to_end(&mut bytes),
     )
     .await??;
+    if let Some(phase) = phase {
+        return Ok(Request::ReferenceTransaction {
+            key_id,
+            repo_id,
+            token,
+            phase,
+            updates:
+                crate::backend::repositories::git_sessions::validation::parse_transaction_updates(
+                    &bytes,
+                )?,
+        });
+    }
     let updates = parse_updates(&bytes)?;
     Ok(Request::Hook {
         key_id,

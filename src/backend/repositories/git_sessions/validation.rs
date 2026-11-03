@@ -148,6 +148,40 @@ pub(crate) fn validate_updates(updates: &[RefUpdate]) -> Result<()> {
 }
 
 pub(crate) fn parse_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
+    let updates = parse_update_lines(input)?;
+    validate_updates(&updates)?;
+    Ok(updates)
+}
+
+pub(crate) fn validate_transaction_updates(updates: &[RefUpdate]) -> Result<()> {
+    ensure!(updates.len() <= MAX_UPDATES, "too many ref updates");
+    let mut names = HashSet::new();
+    let mut bytes = 0;
+    for update in updates {
+        bytes += update.old.len() + update.new.len() + update.reference.len() + 3;
+        ensure!(sha(&update.old) && sha(&update.new), "invalid SHA");
+        ensure!(
+            update.reference == "HEAD"
+                || (update.reference.starts_with("refs/")
+                    && git2::Reference::is_valid_name(&update.reference)),
+            "invalid transaction ref"
+        );
+        ensure!(names.insert(&update.reference), "duplicate ref update");
+    }
+    ensure!(bytes <= MAX_HOOK_BYTES, "hook input too large");
+    Ok(())
+}
+
+pub(crate) fn parse_transaction_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
+    if input.is_empty() {
+        return Ok(Vec::new());
+    }
+    let updates = parse_update_lines(input)?;
+    validate_transaction_updates(&updates)?;
+    Ok(updates)
+}
+
+fn parse_update_lines(input: &[u8]) -> Result<Vec<RefUpdate>> {
     ensure!(
         input.len() <= MAX_HOOK_BYTES && input.ends_with(b"\n"),
         "invalid hook input"
@@ -166,7 +200,6 @@ pub(crate) fn parse_updates(input: &[u8]) -> Result<Vec<RefUpdate>> {
             reference: fields[2].to_owned(),
         });
     }
-    validate_updates(&updates)?;
     Ok(updates)
 }
 

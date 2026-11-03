@@ -39,6 +39,16 @@ pub enum Commands {
         #[arg(long, value_parser = positive_id)]
         repo_id: i64,
     },
+    ReferenceTransaction {
+        #[arg(long)]
+        socket: PathBuf,
+        #[arg(long, value_parser = positive_id)]
+        key_id: i64,
+        #[arg(long, value_parser = positive_id)]
+        repo_id: i64,
+        #[arg(value_parser = ["prepared", "committed", "aborted"])]
+        phase: String,
+    },
     PostReceive {
         #[arg(long)]
         socket: PathBuf,

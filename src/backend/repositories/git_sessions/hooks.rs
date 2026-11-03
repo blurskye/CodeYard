@@ -27,6 +27,10 @@ use std::{
     sync::{Arc, Mutex},
 };
 
+fn quorum_refusal() -> anyhow::Error {
+    RepoError::new(ErrorKind::Invalid, "write quorum unavailable").into()
+}
+
 /// The directory where Git holds the objects of a push it has not accepted yet. The helper
 /// sends it, so it counts only when it really is one of this repository's `incoming-*`
 /// (older Git) or `tmp_objdir-incoming-*` directories.
@@ -140,6 +144,190 @@ fn admit_updates(
 }
 
 impl Gateway {
+    pub(super) async fn reference_transaction(
+        self: &Arc<Self>,
+        operation: &Arc<Operation>,
+        phase: super::protocol::TransactionPhase,
+        updates: &[RefUpdate],
+    ) -> Result<()> {
+        use super::protocol::TransactionPhase;
+        use crate::backend::cluster::writes as coordinator;
+        use db::cluster::writes as journal;
+        validation::validate_transaction_updates(updates)?;
+        if !operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .quorum
+        {
+            return Ok(());
+        }
+        // HEAD may be included as an alias for the branch Git is updating. Receive-pack
+        // cannot change symbolic HEAD itself; only the branch's oid enters this batch.
+        let changes: Vec<_> = updates
+            .iter()
+            .filter(|update| update.reference != "HEAD" && update.old != update.new)
+            .map(|update| db::models::RefChange {
+                name: update.reference.clone(),
+                kind: "oid".into(),
+                old_target: (update.old != ZERO_SHA).then(|| update.old.clone()),
+                new_target: (update.new != ZERO_SHA).then(|| update.new.clone()),
+            })
+            .collect();
+        if changes.is_empty() {
+            return Ok(());
+        }
+        match phase {
+            TransactionPhase::Prepared => {
+                {
+                    let mut state = operation
+                        .state
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+                    ensure!(
+                        state.transaction.is_none() && state.publication.is_some(),
+                        "unadmitted reference transaction"
+                    );
+                    let proposed = state
+                        .proposed
+                        .as_ref()
+                        .context("missing pre-receive admission")?;
+                    ensure!(
+                        updates.iter().all(|update| proposed.contains(update)
+                            || (update.reference == "HEAD"
+                                && proposed.iter().any(|proposal| proposal.old == update.old
+                                    && proposal.new == update.new))),
+                        "reference transaction differs from admission"
+                    );
+                    ensure!(
+                        state.writes.len() < validation::MAX_UPDATES,
+                        "too many reference transactions"
+                    );
+                    state.quorum_started = true;
+                }
+                let (repo, _) = self.operation_repository(operation).await?;
+                let (actor, _) = operation
+                    .credential
+                    .authorize(&self.pool, &repo, true)
+                    .await?;
+                ensure!(actor.id == operation.actor_id, "identity changed");
+                let primary = self
+                    .ci
+                    .cluster
+                    .as_ref()
+                    .context("cluster unavailable")?
+                    .node_id;
+                let view = journal::recovery_view(&self.pool, repo.id).await?;
+                let id = uuid::Uuid::new_v4().to_string();
+                let write = match coordinator::begin(
+                    &self.pool, repo.id, primary, view.term, &id, &changes,
+                )
+                .await
+                {
+                    Ok(write) => write,
+                    Err(error) => {
+                        if error.is::<coordinator::OutcomeUnknown>() {
+                            operation
+                                .state
+                                .lock()
+                                .unwrap_or_else(|error| error.into_inner())
+                                .quorum_unknown = true;
+                        }
+                        return Err(quorum_refusal());
+                    }
+                };
+                let index = {
+                    let mut state = operation
+                        .state
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+                    let index = state.writes.len();
+                    state.writes.push(write.record().clone());
+                    state.transaction = Some(index);
+                    index
+                };
+                let votes = coordinator::collect_votes(&self.pool, &write)
+                    .await
+                    .unwrap_or(false);
+                let decided = coordinator::decide(&self.pool, &write, votes).await?;
+                operation
+                    .state
+                    .lock()
+                    .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+                    .writes[index] = decided.clone();
+                if decided.decision != "commit" {
+                    journal::finish_write(&self.pool, &decided.id, decided.term).await?;
+                    return Err(quorum_refusal());
+                }
+                Ok(())
+            }
+            TransactionPhase::Committed | TransactionPhase::Aborted => {
+                let write = {
+                    let mut state = operation
+                        .state
+                        .lock()
+                        .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+                    let index = state
+                        .transaction
+                        .take()
+                        .context("missing prepared transaction")?;
+                    state.writes[index].clone()
+                };
+                ensure!(
+                    write.changes == changes,
+                    "reference transaction changed after preparation"
+                );
+                let write = journal::load_write(&self.pool, &write.id)
+                    .await?
+                    .context("write disappeared")?;
+                if write.decision == "commit" {
+                    ensure!(
+                        phase == TransactionPhase::Committed,
+                        coordinator::OutcomeUnknown
+                    );
+                    coordinator::publish(&self.pool, &write).await
+                } else {
+                    let aborted = journal::decide_write(
+                        &self.pool,
+                        &write.id,
+                        write.primary_id,
+                        write.term,
+                        false,
+                    )
+                    .await?;
+                    ensure!(aborted.decision == "abort", coordinator::OutcomeUnknown);
+                    journal::finish_write(&self.pool, &write.id, write.term).await?;
+                    Ok(())
+                }
+            }
+        }
+    }
+
+    pub(super) async fn complete_quorum(&self, operation: &Operation) -> Result<()> {
+        use crate::backend::cluster::writes::OutcomeUnknown;
+        let writes = {
+            let state = operation
+                .state
+                .lock()
+                .map_err(|_| anyhow::anyhow!("operation state unavailable"))?;
+            ensure!(!state.quorum_unknown, OutcomeUnknown);
+            state.writes.clone()
+        };
+        for write in writes {
+            let current = tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                db::cluster::writes::load_write(&self.pool, &write.id),
+            )
+            .await??
+            .context("write disappeared")?;
+            ensure!(
+                current.decision == "abort" || (current.decision == "commit" && current.finished),
+                OutcomeUnknown
+            );
+        }
+        Ok(())
+    }
+
     pub(super) async fn hook(
         self: &Arc<Self>,
         operation: &Arc<Operation>,
