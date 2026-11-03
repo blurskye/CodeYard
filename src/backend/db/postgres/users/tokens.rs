@@ -313,7 +313,8 @@ pub(crate) async fn permits_write(
     org: Option<i64>,
     permission: &str,
 ) -> Result<bool> {
-    super::transitions::lock_membership_shared(tx).await?;
+    super::transitions::lock_accounts_shared(tx, &[actor]).await?;
+    super::super::oauth_apps::lock_token_issuer(tx, token).await?;
     let live: Option<String> = sqlx::query_scalar("SELECT u.username FROM personal_access_tokens t JOIN users u ON u.id=t.user_id WHERE t.id=$1 AND u.id=$2 AND t.scope='write' AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF t")
         .bind(token).bind(actor).fetch_optional(&mut *tx).await?;
     let Some(username) = live else {

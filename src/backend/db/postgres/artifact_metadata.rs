@@ -10,7 +10,6 @@ type Tx<'a> = Transaction<'a, Postgres>;
 
 async fn begin(pool: &PgPool) -> Result<Tx<'_>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     sqlx::query("SELECT pg_advisory_xact_lock(723947121)")
         .execute(&mut *tx)
         .await?;

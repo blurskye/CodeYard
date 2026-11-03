@@ -19,7 +19,7 @@ pub async fn save_settings(
 ) -> Result<()> {
     let settings = settings.normalized()?;
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     ensure!(
         super::users::transitions::active_admin(&mut tx, actor).await?
             && super::users::transitions::live_session(&mut tx, actor, session).await?,
@@ -122,7 +122,6 @@ pub async fn save_snapshot(
 ) -> Result<()> {
     snapshot.validate_native()?;
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     let branch: Option<String> = sqlx::query_scalar(
         "SELECT default_branch FROM repositories WHERE id=$1 AND NOT is_archived FOR NO KEY UPDATE",
     )

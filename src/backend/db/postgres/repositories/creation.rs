@@ -18,6 +18,7 @@ pub(crate) async fn creation_authority(
     connection: &mut sqlx::PgConnection,
     owner: RepositoryCreationOwner,
 ) -> Result<bool> {
+    super::super::users::transitions::lock_accounts_shared(connection, &[owner.actor_id]).await?;
     match owner.target {
         RepositoryTarget::Personal(user) if user == owner.actor_id => {
             sqlx::query_scalar("SELECT is_admin FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE")
@@ -48,7 +49,7 @@ pub(crate) async fn creation_authority(
 
 pub async fn check_creation_authority(pool: &PgPool, owner: RepositoryCreationOwner) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::super::users::transitions::lock_accounts_shared(&mut tx, &[owner.actor_id]).await?;
     creation_authority(&mut tx, owner).await?;
     tx.commit().await?;
     Ok(())
@@ -171,7 +172,9 @@ async fn insert_kind(
     admission: CreationAdmission<'_>,
 ) -> Result<Option<Repository>> {
     let mut tx = pool.begin().await?;
-    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::super::gists::lock_name(&mut tx, input.name).await?;
+    super::super::users::transitions::lock_accounts_shared(&mut tx, &[input.owner.actor_id])
+        .await?;
     let creator = input.owner.actor_id;
     if let Some(authority) = admission.authority {
         anyhow::ensure!(

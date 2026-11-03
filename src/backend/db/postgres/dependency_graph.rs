@@ -47,9 +47,6 @@ async fn authorize_in(
             }
         }
         Reader::Viewer(None) | Reader::Scan(_) => {
-            super::users::transitions::lock_membership_shared(tx)
-                .await
-                .map_err(GraphError::Authority)?;
             let source_lock = if exclusive {
                 "FOR NO KEY UPDATE"
             } else {

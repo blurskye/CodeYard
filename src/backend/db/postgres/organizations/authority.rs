@@ -130,8 +130,8 @@ pub(in crate::backend::db::postgres) async fn authority(
     actor: i64,
     org: i64,
 ) -> Result<OrganizationOutcome<OrgRole>> {
-    // Callers must not lock rows before this: account bans take the exclusive form first.
-    crate::backend::db::postgres::users::transitions::lock_membership_shared(connection).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(connection, &[actor])
+        .await?;
     if sqlx::query_scalar::<_, i64>("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
         .bind(org)
         .fetch_optional(&mut *connection)
@@ -264,13 +264,10 @@ pub(super) async fn remaining_active_owner(
     org: i64,
     target: i64,
 ) -> Result<bool> {
-    // Org FOR UPDATE serializes tenant role mutations. Lock every other known
-    // owner's user/membership facts, including inactive rows, before deciding.
-    // Account restrictions and membership changes take the same membership
-    // advisory lock before these parent and child rows.
-    let owners: Vec<bool> = sqlx::query_scalar("SELECT NOT u.is_banned AND NOT u.must_change_password FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.role='owner' AND m.user_id<>$2 ORDER BY u.id FOR SHARE OF u,m")
-        .bind(org).bind(target).fetch_all(connection).await?;
-    Ok(owners.into_iter().any(|active| active))
+    // The organization row pins ownership and owner restrictions. Taking owner
+    // account rows here would invert account restrictions' account-before-org order.
+    Ok(sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.role='owner' AND m.user_id<>$2 AND NOT u.is_banned AND NOT u.must_change_password)")
+        .bind(org).bind(target).fetch_one(connection).await?)
 }
 
 pub(crate) async fn organization_repo_access_in_transaction(

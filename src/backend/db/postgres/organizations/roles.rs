@@ -116,7 +116,17 @@ pub async fn change(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    let target_user: Option<i64> = if let RoleTarget::User(name) = target {
+        sqlx::query_scalar("SELECT id FROM users WHERE username=$1")
+            .bind(name)
+            .fetch_optional(&mut *tx)
+            .await?
+    } else {
+        None
+    };
+    let accounts: Vec<i64> = [Some(actor), target_user].into_iter().flatten().collect();
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &accounts)
+        .await?;
     if require_org!(tx, actor, org) != OrgRole::Owner {
         return Ok(Denied);
     }
@@ -130,6 +140,9 @@ pub async fn change(
                     .bind(name)
                     .fetch_optional(&mut *tx)
                     .await?;
+            if id != target_user {
+                return Ok(Conflict);
+            }
             if let Some(id) = id {
                 if assigned {
                     if !active(&mut tx, id).await? {

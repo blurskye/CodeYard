@@ -84,7 +84,7 @@ async fn set_setting(
     value: &str,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     if !super::users::transitions::active_admin(&mut tx, actor).await?
         || !super::users::transitions::live_session(&mut tx, actor, session).await?
     {

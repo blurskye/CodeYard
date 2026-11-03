@@ -10,7 +10,6 @@ pub async fn issue_token(
     backend_id: &str,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     let live: Option<i64> = sqlx::query_scalar("SELECT id FROM ci_runs WHERE id=$1 AND worker=$2 AND status='running' AND NOT cancel_requested FOR UPDATE")
         .bind(run_id).bind(worker).fetch_optional(&mut *tx).await?;
     anyhow::ensure!(live.is_some(), "run is not active");

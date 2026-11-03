@@ -608,7 +608,8 @@ async fn contract(pg: bool) {
             .fetch_one(&mut *gate)
             .await
             .unwrap();
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37002)")
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':account:' || $1::bigint::text,0))")
+            .bind(bob)
             .execute(&mut *gate)
             .await
             .unwrap();

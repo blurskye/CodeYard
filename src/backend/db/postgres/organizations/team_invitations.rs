@@ -20,7 +20,11 @@ pub async fn invite_team_member(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor, target],
+    )
+    .await?;
     let actor_role = require_org!(tx, actor, org);
     if !administers(actor_role) {
         return Ok(Denied);

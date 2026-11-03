@@ -28,7 +28,23 @@ pub async fn is_identifier(pool: &PgPool, id: &str) -> Result<bool> {
             .await?,
     )
 }
-/// Membership authority serializes this check against gist name reservation.
+pub(super) async fn lock_name(connection: &mut PgConnection, name: &str) -> Result<()> {
+    if name.len() != 32 || !name.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Ok(());
+    }
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(COALESCE(current_schema(),'') || ':gist-name:' || lower($1),0))")
+        .bind(name).execute(connection).await?;
+    Ok(())
+}
+
+async fn lock_accounts(connection: &mut PgConnection, actor: i64, repo: i64) -> Result<()> {
+    let mut accounts: Vec<i64> = sqlx::query_scalar("SELECT owner_user_id FROM repositories WHERE (id=$1 OR id=(SELECT forked_from_id FROM repositories WHERE id=$1)) AND owner_user_id IS NOT NULL")
+        .bind(repo).fetch_all(&mut *connection).await?;
+    accounts.push(actor);
+    super::users::transitions::lock_accounts_shared(connection, &accounts).await
+}
+
+/// Callers retain the name reservation through insertion or rename.
 pub(super) async fn ordinary_name_available(
     connection: &mut sqlx::PgConnection,
     user: Option<i64>,
@@ -182,7 +198,8 @@ pub async fn reserve(
         GistRefusal::Invalid
     );
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    lock_name(&mut tx, input.id).await?;
+    lock_accounts(&mut tx, actor, input.repo_id).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     let repo = authority(&mut tx, actor, input.repo_id, true, false).await?;
     if let Some(source) = repo.forked_from_id {
@@ -227,7 +244,7 @@ pub async fn admit(
     input: &Admission<'_>,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    lock_accounts(&mut tx, actor, input.repo_id).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     let repo = authority(&mut tx, actor, input.repo_id, true, false).await?;
     anyhow::ensure!(
@@ -301,7 +318,7 @@ pub async fn delete(
     repo: i64,
 ) -> Result<Repository> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    lock_accounts(&mut tx, actor, repo).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     let repo = authority(&mut tx, actor, repo, true, false).await?;
     sqlx::query("DELETE FROM repositories WHERE id=$1")
@@ -313,7 +330,6 @@ pub async fn delete(
 }
 pub async fn discard(pool: &PgPool, repo: i64, orphan_only: bool) -> Result<Option<Repository>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
     let deleted = sqlx::query_as("DELETE FROM repositories r WHERE r.id=$1 AND r.is_gist AND NOT EXISTS(SELECT 1 FROM gists g WHERE g.repo_id=r.id AND ($2 OR g.ready OR g.pending_sha IS NOT NULL)) RETURNING r.*").bind(repo).bind(orphan_only).fetch_optional(&mut *tx).await?;
     tx.commit().await?;
     Ok(deleted)
@@ -335,7 +351,7 @@ pub async fn star(
     adding: bool,
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    lock_accounts(&mut tx, actor, repo).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     authority(&mut tx, actor, repo, false, adding).await?;
     if adding {
@@ -388,7 +404,7 @@ pub async fn create_comment(
 ) -> Result<Comment> {
     validate_comment(body)?;
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    lock_accounts(&mut tx, actor, repo).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     authority(&mut tx, actor, repo, false, true).await?;
     let comment=sqlx::query_as("INSERT INTO gist_comments(repo_id,user_id,body) SELECT repo_id,$2,$3 FROM gists WHERE repo_id=$1 AND ready RETURNING *").bind(repo).bind(actor).bind(body).fetch_optional(&mut *tx).await?.ok_or(GistRefusal::Missing)?;
@@ -407,7 +423,7 @@ pub async fn change_comment(
         validate_comment(body)?;
     }
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    lock_accounts(&mut tx, actor, repo).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     let repository = authority(&mut tx, actor, repo, false, body.is_some()).await?;
     let comment: Comment =

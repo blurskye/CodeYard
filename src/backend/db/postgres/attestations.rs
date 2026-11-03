@@ -13,7 +13,6 @@ pub(super) async fn lock(tx: &mut Transaction<'_, Postgres>) -> Result<()> {
 
 async fn begin(pool: &PgPool) -> Result<Transaction<'_, Postgres>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     lock(&mut tx).await?;
     Ok(tx)
 }

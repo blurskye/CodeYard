@@ -12,7 +12,8 @@ pub async fn create_organization(
 ) -> Result<OrganizationOutcome<OrganizationMetadata>> {
     let mut tx = begin(pool).await?;
     // Ownership and namespace locks precede the new organization and membership.
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(&mut tx, &[actor])
+        .await?;
     crate::backend::db::postgres::users::transitions::lock_namespace(&mut tx).await?;
     if !active(&mut tx, actor).await? {
         return Ok(Denied);

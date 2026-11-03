@@ -3,7 +3,18 @@ use crate::backend::db::{
     models::{PersonalAccessToken, Repository},
 };
 use anyhow::Result;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
+
+async fn lock_app_accounts(
+    connection: &mut PgConnection,
+    app: i64,
+    actor: Option<i64>,
+) -> Result<()> {
+    let mut accounts: Vec<i64> = sqlx::query_scalar("SELECT owner_id FROM github_apps WHERE id=$1 UNION SELECT bot_id FROM github_apps WHERE id=$1")
+        .bind(app).fetch_all(&mut *connection).await?;
+    accounts.extend(actor);
+    super::users::transitions::lock_accounts_shared(connection, &accounts).await
+}
 
 pub async fn delete_registration(
     pool: &PgPool,
@@ -12,7 +23,7 @@ pub async fn delete_registration(
     id: i64,
 ) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts(&mut tx, &[actor]).await?;
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR UPDATE")
         .bind(actor)
         .fetch_optional(&mut *tx)
@@ -48,6 +59,8 @@ pub async fn register(
     secret_hash: &str,
 ) -> Result<Option<App>> {
     let mut tx = pool.begin().await?;
+    super::users::transitions::lock_accounts(&mut tx, &[actor]).await?;
+    super::users::transitions::lock_namespace(&mut tx).await?;
     let registered = register_in_connection(&mut tx, actor, session, app, secret_hash).await?;
     tx.commit().await?;
     Ok(registered)
@@ -127,6 +140,7 @@ pub async fn install(
     repos: Option<&[i64]>,
 ) -> Result<Option<Installation>> {
     let mut tx = pool.begin().await?;
+    lock_app_accounts(&mut tx, app, Some(actor)).await?;
     if !super::users::transitions::active_session(&mut tx, actor, session).await? {
         return Ok(None);
     }
@@ -331,7 +345,7 @@ pub async fn uninstall(pool: &PgPool, actor: i64, session: &str, id: i64) -> Res
 /// account owner uninstalls through `uninstall` whatever the app's state.
 pub async fn change_installation(pool: &PgPool, app: i64, id: i64, action: &str) -> Result<bool> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    lock_app_accounts(&mut tx, app, None).await?;
     let usable: Option<i64> = sqlx::query_scalar("SELECT a.id FROM github_apps a JOIN users owner ON owner.id=a.owner_id JOIN users bot ON bot.id=a.bot_id WHERE a.id=$1 AND NOT owner.is_banned AND NOT owner.must_change_password AND NOT bot.is_banned AND NOT bot.must_change_password FOR SHARE OF owner, bot")
         .bind(app)
         .fetch_optional(&mut *tx)
@@ -391,7 +405,18 @@ pub async fn change_repository(
     let credential = actor.into();
     let actor = credential.user_id;
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    if super::repositories::access::lock_user_repo_access_in_transaction(
+        &mut tx,
+        actor,
+        repo,
+        super::repositories::access::RepositoryRowLock::Shared,
+        true,
+    )
+    .await?
+    .is_none()
+    {
+        return Ok(RepositoryChange::Missing);
+    }
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR SHARE")
         .bind(actor)
         .fetch_optional(&mut *tx)
@@ -446,7 +471,9 @@ pub async fn issue(
     write: bool,
 ) -> Result<Option<PersonalAccessToken>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    lock_app_accounts(&mut tx, app, actor).await?;
+    sqlx::query("SELECT id FROM organizations WHERE id=(SELECT org_id FROM github_app_installations WHERE id=$1 AND app_id=$2) FOR SHARE")
+        .bind(installation).bind(app).execute(&mut *tx).await?;
     let owner: Option<i64>=sqlx::query_scalar("SELECT COALESCE($3,a.bot_id) FROM github_apps a JOIN github_app_installations i ON i.app_id=a.id JOIN users u ON u.id=a.owner_id WHERE a.id=$1 AND i.id=$2 AND i.suspended_at IS NULL AND NOT u.is_banned AND NOT u.must_change_password FOR SHARE OF a,i,u").bind(app).bind(installation).bind(actor).fetch_optional(&mut *tx).await?;
     let Some(owner) = owner else {
         return Ok(None);

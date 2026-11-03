@@ -8,9 +8,7 @@ use sqlx::{PgPool, Postgres, Transaction};
 type Tx<'a> = Transaction<'a, Postgres>;
 
 async fn begin(pool: &PgPool) -> Result<Tx<'_>> {
-    let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
-    Ok(tx)
+    Ok(pool.begin().await?)
 }
 
 async fn read(pool: &PgPool) -> Result<Tx<'_>> {
@@ -19,7 +17,6 @@ async fn read(pool: &PgPool) -> Result<Tx<'_>> {
     sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
         .execute(&mut *tx)
         .await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     Ok(tx)
 }
 
@@ -63,6 +60,22 @@ async fn actor<'a>(
         );
         return Ok(Actor::ANONYMOUS);
     };
+    let account: Option<i64> = match &token {
+        Credential::Token(id) => {
+            sqlx::query_scalar("SELECT user_id FROM personal_access_tokens WHERE id=$1")
+                .bind(*id)
+                .fetch_optional(&mut **tx)
+                .await?
+        }
+        Credential::Session(session) => {
+            sqlx::query_scalar("SELECT user_id FROM sessions WHERE id=$1")
+                .bind(*session)
+                .fetch_optional(&mut **tx)
+                .await?
+        }
+    };
+    let account = account.ok_or(Refusal::Unauthorized)?;
+    super::users::transitions::lock_accounts_shared(tx, &[account]).await?;
     let token = match token {
         Credential::Token(id) => id,
         Credential::Session(session) => {
@@ -187,6 +200,12 @@ async fn authorize<'a>(
             .fetch_optional(&mut **tx)
             .await?
             .ok_or(Refusal::Missing)?;
+    if let Some(org) = package.owner_org_id {
+        sqlx::query("SELECT id FROM organizations WHERE id=$1 FOR SHARE")
+            .bind(org)
+            .execute(&mut **tx)
+            .await?;
+    }
     let actor = actor.for_owner(
         &package.owner_kind,
         package.owner_user_id.or(package.owner_org_id),

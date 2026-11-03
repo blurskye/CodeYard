@@ -53,7 +53,7 @@ async fn authorize(
     let allowed = match scope {
         InteractionScope::User(user) => user==actor && sqlx::query_scalar::<_,bool>("SELECT EXISTS(SELECT 1 FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password)").bind(actor).fetch_one(&mut *connection).await?,
         InteractionScope::Organization(org) => match super::organizations::authority::authority(&mut *connection,actor,org).await? {OrganizationOutcome::Applied(OrgRole::Owner)=>true,OrganizationOutcome::Applied(OrgRole::Admin)=>!write,_=>false},
-        InteractionScope::Repository(repo) => super::repositories::access::lock_user_repo_access_in_transaction(&mut *connection,actor,repo,super::repositories::access::RepositoryRowLock::Shared,true).await?.is_some_and(|authority|(!authority.organization || authority.organization_usable) && (authority.access.can_admin() || (!authority.organization && (authority.is_admin || authority.owner_user_id==Some(actor))))),
+        InteractionScope::Repository(repo) => super::repositories::access::lock_user_repo_access_in_transaction(&mut *connection,actor,repo,super::repositories::access::RepositoryRowLock::Exclusive,true).await?.is_some_and(|authority|(!authority.organization || authority.organization_usable) && (authority.access.can_admin() || (!authority.organization && (authority.is_admin || authority.owner_user_id==Some(actor))))),
     };
     anyhow::ensure!(allowed, InteractionRefusal::Denied);
     Ok(())
@@ -64,7 +64,7 @@ pub async fn get_restriction(
     scope: InteractionScope,
 ) -> Result<Option<Restriction>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     authorize(&mut tx, actor, scope, false).await?;
     let result = scoped(&mut tx, scope).await?;
     tx.commit().await?;
@@ -78,8 +78,14 @@ pub async fn set_restriction(
     input: Option<NewRestriction>,
 ) -> Result<Option<Restriction>> {
     let mut tx = pool.begin().await?;
-    // Policy writers wait for all in-flight contributions before replacing their authority.
-    super::users::transitions::lock_membership(&mut tx).await?;
+    if let InteractionScope::User(user) = scope {
+        super::users::transitions::lock_accounts(&mut tx, &[actor, user]).await?;
+        // New personal repositories require this owner's account lock too.
+        sqlx::query("SELECT id FROM repositories WHERE owner_kind='user' AND owner_user_id=$1 ORDER BY id FOR UPDATE")
+            .bind(user).execute(&mut *tx).await?;
+    } else {
+        super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
+    }
     authorize(&mut tx, actor, scope, true).await?;
     super::users::transitions::require_account(&mut tx, actor, credential).await?;
     if let InteractionScope::Repository(repo) = scope {

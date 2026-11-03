@@ -4298,11 +4298,11 @@ async fn postgres_processed_signup_verifiers_are_cleared() {
     fixture.pool.close().await;
 }
 
-/// An acknowledgement queues behind an account or membership transition before it locks
-/// the recipient row. A ban takes the membership lock first and then organization rows,
+/// An acknowledgement queues behind an account transition before it locks
+/// the recipient row. A ban takes the account advisory lock first and then organization rows,
 /// so an acknowledgement that locked the recipient first could deadlock with it.
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn postgres_acknowledgement_waits_for_membership_transition() {
+async fn postgres_acknowledgement_waits_for_account_transition() {
     let fixture = PostgresDatabase::new().await;
     let owner = db::users::accounts::create_user(&fixture.pool, "ack_owner", None)
         .await
@@ -4325,9 +4325,10 @@ async fn postgres_acknowledgement_waits_for_membership_transition() {
     .unwrap();
     let raw = &fixture.raw;
 
-    // A transition holds the membership lock until it commits.
+    // A transition retains its account advisory lock until it commits.
     let mut transition = raw.begin().await.unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()), 37002)")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':account:' || $1::bigint::text,0))")
+        .bind(recipient)
         .execute(&mut *transition)
         .await
         .unwrap();
@@ -4356,7 +4357,7 @@ async fn postgres_acknowledgement_waits_for_membership_transition() {
         }
     })
     .await
-    .expect("acknowledgement queues behind the membership transition");
+    .expect("acknowledgement queues behind the account transition");
     sqlx::query("SELECT id FROM users WHERE id=$1 FOR NO KEY UPDATE NOWAIT")
         .bind(recipient)
         .fetch_one(raw)

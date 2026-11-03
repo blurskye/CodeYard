@@ -1,5 +1,5 @@
 use crate::backend::db::models::{AccessLevel, RepoAccess, Repository, User};
-use crate::backend::db::postgres::users::transitions::lock_membership_shared;
+use crate::backend::db::postgres::users::transitions::lock_accounts_shared;
 use crate::backend::db::repositories::access::CollaboratorChange;
 use anyhow::Result;
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
@@ -222,7 +222,7 @@ pub(crate) struct LockedRepositoryAccess {
 /// The owner, archival state and source of a repository row, read before any lock.
 type RepositoryScopeRow = (String, Option<i64>, Option<i64>, bool, Option<i64>);
 
-/// Take the shared membership lock, then lock the authority scope in parent-to-child order:
+/// Retain the actor's account, then lock the authority scope in parent-to-child order:
 /// organization, account, the fork's sources (see `lock_fork_ancestors`), repository, then
 /// memberships and grants. Mutation paths use the same rows.
 pub(crate) async fn lock_user_repo_access_in_transaction(
@@ -232,9 +232,7 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
     repository_lock: RepositoryRowLock,
     include_archived: bool,
 ) -> Result<Option<LockedRepositoryAccess>> {
-    // Before any row lock. A ban holds this lock exclusively while it locks the owner's
-    // organizations and account, so rows taken before it here could deadlock with that ban.
-    lock_membership_shared(connection).await?;
+    lock_accounts_shared(connection, &[user_id]).await?;
     let scope: Option<RepositoryScopeRow> = sqlx::query_as(
         "SELECT owner_kind,owner_user_id,owner_org_id,is_archived,forked_from_id FROM repositories WHERE id=$1 AND NOT is_gist",
     )
@@ -338,11 +336,11 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
         .bind(user_id)
         .fetch_optional(&mut *connection)
         .await?;
-        let owners: Vec<bool> = sqlx::query_scalar(
-            "SELECT NOT u.is_banned AND NOT u.must_change_password FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.role='owner' ORDER BY u.id FOR SHARE OF u,m",
+        let usable: bool = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM org_memberships m JOIN users u ON u.id=m.user_id WHERE m.org_id=$1 AND m.role='owner' AND NOT u.is_banned AND NOT u.must_change_password)",
         )
         .bind(org_id)
-        .fetch_all(&mut *connection)
+        .fetch_one(&mut *connection)
         .await?;
 
         let team_ids: Vec<i64> = sqlx::query_scalar(
@@ -369,7 +367,7 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
             .fetch_all(&mut *connection)
             .await?;
         }
-        owners.into_iter().any(|active| active)
+        usable
     } else {
         true
     };
@@ -398,7 +396,6 @@ pub(crate) async fn lock_user_repo_access_in_transaction(
 }
 
 async fn lock_access_repository(connection: &mut PgConnection, repo_id: i64) -> Result<bool> {
-    lock_membership_shared(&mut *connection).await?;
     // Conflicts with authority readers even when no direct grant existed at their first read.
     Ok(
         sqlx::query_scalar::<_, i64>("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
@@ -476,7 +473,14 @@ pub async fn change_personal_repository_collaborator(
     let admission = actor.into();
     let actor = admission.user_id;
     let mut tx = pool.begin().await?;
-    lock_membership_shared(&mut tx).await?;
+    let target_id: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE username=$1")
+        .bind(username)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let Some(target_id) = target_id else {
+        return Ok(CollaboratorChange::NotFound);
+    };
+    lock_accounts_shared(&mut tx, &[actor, target_id]).await?;
     if let Some(credential) = admission.credential() {
         super::super::users::transitions::require_account(&mut tx, actor, &credential).await?;
     }
@@ -498,7 +502,7 @@ pub async fn change_personal_repository_collaborator(
         .bind(username)
         .fetch_optional(&mut *tx)
         .await?;
-    let Some(target) = target else {
+    let Some(target) = target.filter(|target| target.id == target_id) else {
         return Ok(CollaboratorChange::NotFound);
     };
     if permission.is_some()

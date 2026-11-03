@@ -5,7 +5,6 @@ use sqlx::PgPool;
 
 pub async fn create_user(pool: &PgPool, username: &str, email: Option<&str>) -> Result<User> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_membership(&mut tx).await?;
     super::transitions::lock_namespace(&mut tx).await?;
     super::transitions::require_user_namespace(&mut tx, username).await?;
     let result = sqlx::query_as::<_, User>(
@@ -41,7 +40,6 @@ pub async fn create_user_with_password_and_flags(
     must_change_password: bool,
 ) -> Result<User> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_membership(&mut tx).await?;
     super::transitions::lock_namespace(&mut tx).await?;
     super::transitions::require_user_namespace(&mut tx, username).await?;
     let result = sqlx::query_as::<_, User>(
@@ -229,7 +227,6 @@ pub async fn create_user_from_oauth(
     display_name: Option<&str>,
 ) -> Result<User> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_membership(&mut tx).await?;
     super::transitions::lock_namespace(&mut tx).await?;
     super::transitions::require_user_namespace(&mut tx, username).await?;
     let result = sqlx::query_as::<_, User>(
@@ -355,7 +352,7 @@ pub async fn admin_users_page(
     requested: usize,
 ) -> Result<crate::backend::db::users::accounts::AdminUserPage> {
     let mut tx = pool.begin().await?;
-    super::transitions::lock_membership_shared(&mut tx).await?;
+    super::transitions::lock_accounts_shared(&mut tx, &[administrator.user_id]).await?;
     anyhow::ensure!(
         super::transitions::active_admin_session(&mut tx, administrator).await?,
         crate::backend::db::users::accounts::AccountRestricted

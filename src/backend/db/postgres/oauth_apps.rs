@@ -8,7 +8,31 @@ use crate::backend::db::{
 use crate::backend::identity::{oauth_apps as oauth, tokens::token_hash};
 use anyhow::Result;
 use chrono::Utc;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
+
+async fn lock_client_accounts(
+    connection: &mut PgConnection,
+    client: &str,
+    user: Option<i64>,
+    exclusive: bool,
+) -> Result<()> {
+    let mut accounts: Vec<i64> = sqlx::query_scalar("SELECT owner_id FROM oauth_applications WHERE client_id=$1 UNION SELECT owner_id FROM github_apps WHERE client_id=$1 UNION SELECT bot_id FROM github_apps WHERE client_id=$1")
+        .bind(client).fetch_all(&mut *connection).await?;
+    accounts.extend(user);
+    if exclusive {
+        super::users::transitions::lock_accounts(connection, &accounts).await
+    } else {
+        super::users::transitions::lock_accounts_shared(connection, &accounts).await
+    }
+}
+
+/// Credentials discover their issuer after resource locks. Do not wait in the
+/// reverse account order: a concurrent issuer restriction makes this effect retry.
+pub(crate) async fn lock_token_issuer(connection: &mut PgConnection, token: i64) -> Result<()> {
+    sqlx::query("SELECT id FROM users WHERE id IN (SELECT c.owner_id FROM oauth_app_tokens t JOIN oauth_applications c ON c.client_id=t.client_id WHERE t.token_id=$1 UNION SELECT a.owner_id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id JOIN github_apps a ON a.id=i.app_id WHERE t.token_id=$1 UNION SELECT a.bot_id FROM github_app_tokens t JOIN github_app_installations i ON i.id=t.installation_id JOIN github_apps a ON a.id=i.app_id WHERE t.token_id=$1 UNION SELECT a.owner_id FROM oauth_app_tokens t JOIN github_apps a ON a.client_id=t.client_id WHERE t.token_id=$1 UNION SELECT a.bot_id FROM oauth_app_tokens t JOIN github_apps a ON a.client_id=t.client_id WHERE t.token_id=$1) ORDER BY id FOR SHARE NOWAIT")
+        .bind(token).execute(connection).await?;
+    Ok(())
+}
 
 #[expect(
     clippy::too_many_arguments,
@@ -25,7 +49,7 @@ pub async fn register(
     redirect_uri: &str,
 ) -> Result<Option<Application>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor]).await?;
     sqlx::query("SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR UPDATE").bind(actor).fetch_optional(&mut *tx).await?;
     sqlx::query("SELECT id FROM sessions WHERE id=$1 AND user_id=$2 FOR SHARE")
         .bind(session)
@@ -56,7 +80,7 @@ pub async fn applications(
 ) -> Result<Option<Vec<ApplicationSummary>>> {
     let actor = actor.into();
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor.user_id]).await?;
     let active: Option<i64> = sqlx::query_scalar(
         "SELECT id FROM users WHERE id=$1 AND NOT is_banned AND NOT must_change_password FOR SHARE",
     )
@@ -121,7 +145,15 @@ pub async fn exchange(
     value: &str,
 ) -> Result<Exchange> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let candidate: Option<i64> = sqlx::query_scalar::<_, Option<i64>>(
+        "SELECT user_id FROM oauth_app_grants WHERE hash=$1 AND client_id=$2",
+    )
+    .bind(hash)
+    .bind(client_id)
+    .fetch_optional(&mut *tx)
+    .await?
+    .flatten();
+    lock_client_accounts(&mut tx, client_id, candidate, false).await?;
     let active: bool = sqlx::query_scalar(&format!(
         "SELECT $1=$2 OR {}",
         oauth_apps::client_condition("$1")
@@ -142,6 +174,9 @@ pub async fn exchange(
     let Some(grant) = grant else {
         return Ok(Exchange::Invalid);
     };
+    if grant.user_id != candidate {
+        return Ok(Exchange::Pending);
+    }
     let now = Utc::now().timestamp();
     if grant.kind != kind {
         return Ok(Exchange::Invalid);
@@ -232,7 +267,9 @@ pub async fn reset_token(
     new_hash: &str,
 ) -> Result<Option<crate::backend::db::models::PersonalAccessToken>> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let user: Option<i64> = sqlx::query_scalar("SELECT t.user_id FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id WHERE o.client_id=$1 AND t.token_hash=$2")
+        .bind(client).bind(hash).fetch_optional(&mut *tx).await?;
+    lock_client_accounts(&mut tx, client, user, false).await?;
     // A token from an app that is no longer available is not refreshed.
     let issuer = oauth_apps::token_issuer_condition("t", "$3");
     let old: Option<crate::backend::db::models::PersonalAccessToken> = sqlx::query_as(&format!("SELECT t.id,t.user_id,t.name,t.scope,t.expires_at,t.created_at FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id JOIN users u ON u.id=t.user_id WHERE o.client_id=$1 AND t.token_hash=$2 AND (t.expires_at IS NULL OR t.expires_at>clock_timestamp()) AND NOT u.is_banned AND NOT u.must_change_password AND {issuer} FOR UPDATE OF t"))
@@ -256,7 +293,9 @@ pub async fn reset_token(
 
 pub async fn revoke(pool: &PgPool, client: &str, hash: &str, authorization: bool) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership(&mut tx).await?;
+    let candidate: Option<i64> = sqlx::query_scalar("SELECT t.user_id FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id WHERE o.client_id=$1 AND t.token_hash=$2")
+        .bind(client).bind(hash).fetch_optional(&mut *tx).await?;
+    lock_client_accounts(&mut tx, client, candidate, true).await?;
     let active: bool = sqlx::query_scalar(&format!(
         "SELECT $1=$2 OR {}",
         oauth_apps::client_condition("$1")
@@ -269,7 +308,7 @@ pub async fn revoke(pool: &PgPool, client: &str, hash: &str, authorization: bool
         return Ok(());
     }
     let user: Option<i64>=sqlx::query_scalar("SELECT t.user_id FROM personal_access_tokens t JOIN oauth_app_tokens o ON o.token_id=t.id WHERE o.client_id=$1 AND t.token_hash=$2").bind(client).bind(hash).fetch_optional(&mut *tx).await?;
-    if let Some(user) = user {
+    if let Some(user) = user.filter(|user| Some(*user) == candidate) {
         if authorization {
             sqlx::query("DELETE FROM oauth_app_grants WHERE client_id=$1 AND user_id=$2")
                 .bind(client)

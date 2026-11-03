@@ -9,7 +9,16 @@ pub async fn issue(
     tokens: &[NewJobToken<'_>],
 ) -> Result<()> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let existing_bot: Option<i64> = sqlx::query_scalar("SELECT id FROM users WHERE username=$1")
+        .bind(BOT)
+        .fetch_optional(&mut *tx)
+        .await?;
+    if let Some(bot) = existing_bot {
+        super::users::transitions::lock_accounts_shared(&mut tx, &[bot]).await?;
+    } else {
+        // Initial bot creation participates in setup's account-count exclusion.
+        super::users::transitions::lock_namespace(&mut tx).await?;
+    }
     let repo: i64 = sqlx::query_scalar("SELECT repo_id FROM ci_runs WHERE id=$1")
         .bind(run_id)
         .fetch_one(&mut *tx)
@@ -26,7 +35,7 @@ pub async fn issue(
     );
     sqlx::query("INSERT INTO users(username,display_name,email_verified) VALUES ($1,'GitHub Actions',true) ON CONFLICT(username) DO NOTHING")
         .bind(BOT).execute(&mut *tx).await?;
-    let bot: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username=$1 AND password_hash IS NULL AND email IS NULL AND NOT is_admin AND NOT is_banned FOR SHARE")
+    let bot: i64 = sqlx::query_scalar("SELECT id FROM users WHERE username=$1 AND password_hash IS NULL AND email IS NULL AND NOT is_admin AND NOT is_banned FOR SHARE NOWAIT")
         .bind(BOT).fetch_one(&mut *tx).await?;
     sqlx::query("INSERT INTO repo_access(user_id,repo_id,access_level) VALUES($1,$2,3) ON CONFLICT(user_id,repo_id) DO NOTHING")
         .bind(bot).bind(repo).execute(&mut *tx).await?;

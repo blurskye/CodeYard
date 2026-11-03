@@ -1075,7 +1075,7 @@ async fn request_cancellation(
     credential: Option<&crate::backend::db::ci::CiCredential>,
 ) -> Result<crate::backend::db::ci::Cancellation> {
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(&mut tx, &[actor_id]).await?;
     let user = sqlx::query_as::<_, super::models::User>("SELECT * FROM users WHERE id = $1")
         .bind(actor_id)
         .fetch_optional(&mut *tx)

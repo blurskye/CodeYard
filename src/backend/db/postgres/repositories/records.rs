@@ -450,6 +450,9 @@ async fn patch_core(
     };
     let actor = authority.user_id;
     let mut tx = pool.begin().await?;
+    if let Some(name) = changes.name {
+        super::super::gists::lock_name(&mut tx, name).await?;
+    }
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_archive_authority(&mut tx, actor, repo_id)
@@ -669,7 +672,6 @@ pub async fn delete_unwritten_repository(
     repo_id: i64,
 ) -> Result<Option<Repository>> {
     let mut tx = pool.begin().await?;
-    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
     lock_fork_ancestors(&mut tx, repo_id, "FOR NO KEY UPDATE").await?;
     sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR UPDATE")
         .bind(repo_id)
@@ -742,6 +744,7 @@ pub async fn rename_repository(
     let authority = actor_id.into();
     let actor_id = authority.user_id;
     let mut tx = pool.begin().await?;
+    super::super::gists::lock_name(&mut tx, new_name).await?;
     require_settings_actor(&mut tx, &authority).await?;
     anyhow::ensure!(
         crate::backend::db::postgres::discussions::lock_repository_mutation_authority(
@@ -787,7 +790,7 @@ async fn check_namespace(
     expected_owner: Option<&str>,
 ) -> Result<()> {
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
-    let owner:String=sqlx::query_scalar("SELECT COALESCE((SELECT username FROM users WHERE id=$1 FOR SHARE),(SELECT name FROM organizations WHERE id=$2 FOR SHARE))").bind(user).bind(org).fetch_one(&mut **tx).await?;
+    let owner:String=sqlx::query_scalar("SELECT COALESCE((SELECT username FROM users WHERE id=$1 FOR KEY SHARE),(SELECT name FROM organizations WHERE id=$2 FOR SHARE))").bind(user).bind(org).fetch_one(&mut **tx).await?;
     if let Some(expected) = expected_owner {
         anyhow::ensure!(owner.eq_ignore_ascii_case(expected), Refusal::NameConflict);
     } else {
@@ -839,7 +842,13 @@ async fn transfer_repository_once(
     use crate::backend::db::repositories::creation::{RepositoryCreationOwner, RepositoryTarget};
     use crate::backend::db::repositories::records::RepositorySettingsRefusal as Refusal;
     let mut tx = pool.begin().await?;
-    super::super::users::transitions::lock_membership_shared(&mut tx).await?;
+    let locked_name: String = sqlx::query_scalar("SELECT name FROM repositories WHERE id=$1")
+        .bind(repo_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(Refusal::Denied)?;
+    super::super::gists::lock_name(&mut tx, &locked_name).await?;
+    super::super::users::transitions::lock_accounts_shared(&mut tx, &[authority.user_id]).await?;
     require_settings_actor(&mut tx, authority).await?;
     let actor_id = authority.user_id;
     let original: (String, Option<i64>, Option<i64>) = sqlx::query_as(
@@ -957,6 +966,7 @@ async fn transfer_repository_once(
         .bind(repo_id)
         .fetch_one(&mut *tx)
         .await?;
+    anyhow::ensure!(name == locked_name, Refusal::NameConflict);
     anyhow::ensure!(
         super::super::gists::ordinary_name_available(&mut tx, user, org, &name).await?,
         Refusal::NameConflict

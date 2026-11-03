@@ -60,7 +60,11 @@ pub async fn add_organization_member(
     role: OrgRole,
 ) -> Result<OrganizationOutcome<OrgMembership>> {
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor, target],
+    )
+    .await?;
     let actor_role = require_org!(tx, actor, org);
     if !can_change_member(actor_role, None, Some(role)) {
         return Ok(Denied);
@@ -121,7 +125,11 @@ async fn update_member_role(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor, target],
+    )
+    .await?;
     let actor_role = require_org!(tx, actor, org);
     if !credential(&mut tx, &grant, org, "members").await?
         || !administers(actor_role)
@@ -217,7 +225,11 @@ async fn remove_member(
     let grant = actor.into();
     let actor = grant.user_id;
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor, target],
+    )
+    .await?;
     let actor_role = require_org!(tx, actor, org);
     if !credential(&mut tx, &grant, org, "members").await? {
         return Ok(Denied);

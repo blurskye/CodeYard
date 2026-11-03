@@ -240,7 +240,7 @@ async fn postgres_unstar_locks_parent_before_the_star() {
 }
 
 #[tokio::test]
-async fn postgres_collaborator_takes_membership_lock_before_accounts() {
+async fn postgres_collaborator_takes_account_locks_before_rows() {
     let mut f = Database::new(true).await;
     let owner = f.actor("collaborator_owner").await;
     let admin = f.actor("collaborator_admin").await;
@@ -251,7 +251,8 @@ async fn postgres_collaborator_takes_membership_lock_before_accounts() {
         .fetch_one(&mut *banning)
         .await
         .unwrap();
-    sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37002)")
+    sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':account:' || $1::bigint::text,0))")
+        .bind(admin)
         .execute(&mut *banning)
         .await
         .unwrap();
@@ -276,7 +277,7 @@ async fn postgres_collaborator_takes_membership_lock_before_accounts() {
         .bind(owner)
         .execute(&mut *banning)
         .await
-        .expect("membership lock precedes the actor row");
+        .expect("account advisory locks precede the actor row");
     banning.commit().await.unwrap();
     request.await.unwrap().unwrap();
     f.finish().await;

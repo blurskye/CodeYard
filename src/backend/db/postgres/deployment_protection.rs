@@ -223,7 +223,6 @@ pub async fn review(
 ) -> Result<()> {
     input.validate()?;
     let mut tx = pool.begin().await?;
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
     sqlx::query("SELECT id FROM repositories WHERE id=$1 FOR SHARE")
         .bind(repo)
         .fetch_optional(&mut *tx)

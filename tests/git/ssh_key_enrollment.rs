@@ -582,7 +582,7 @@ async fn session_enrollment_contract(pg: bool) {
 }
 
 #[tokio::test]
-async fn postgres_enrollment_locks_membership_before_accounts_and_fingerprints() {
+async fn postgres_enrollment_locks_accounts_before_rows_and_fingerprints() {
     let mut f = Database::new(true).await;
     let actor = f.actor("ordered_key_owner").await;
     let repository = db::repositories::records::create_repository(
@@ -620,7 +620,8 @@ async fn postgres_enrollment_locks_membership_before_accounts_and_fingerprints()
             .fetch_one(&mut *gate)
             .await
             .unwrap();
-        sqlx::query("SELECT pg_advisory_xact_lock(hashtext(current_schema()),37002)")
+        sqlx::query("SELECT pg_advisory_xact_lock(hashtextextended(current_schema() || ':account:' || $1::bigint::text,0))")
+            .bind(actor)
             .execute(&mut *gate)
             .await
             .unwrap();
@@ -661,7 +662,7 @@ async fn postgres_enrollment_locks_membership_before_accounts_and_fingerprints()
                 .unwrap();
         assert!(
             free,
-            "enrollment must not retain a fingerprint while waiting for membership"
+            "enrollment must not retain a fingerprint while waiting for the account"
         );
         gate.rollback().await.unwrap();
         tokio::time::timeout(std::time::Duration::from_secs(5), task)

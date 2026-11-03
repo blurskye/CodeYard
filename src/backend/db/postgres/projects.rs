@@ -18,7 +18,10 @@ async fn owner_authority(
     owner: Owner,
     allocate: bool,
 ) -> Result<()> {
-    super::users::transitions::lock_membership_shared(tx).await?;
+    if let Owner::User(user) = owner {
+        anyhow::ensure!(user == actor, Refusal::Denied);
+    }
+    super::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
     let (kind, id) = owner.parts();
     let table = if kind == "user" {
         "users"
@@ -63,7 +66,7 @@ async fn write_project(
     credential: &AccountCredential<'_>,
     id: i64,
 ) -> Result<Project> {
-    super::users::transitions::lock_membership_shared(tx).await?;
+    super::users::transitions::lock_accounts_shared(tx, &[actor]).await?;
     let project: Project =
         sqlx::query_as("SELECT * FROM projects WHERE id=$1 AND deleted_at IS NULL")
             .bind(id)
@@ -99,7 +102,8 @@ async fn readable_at(
     id: i64,
     include_deleted: bool,
 ) -> Result<()> {
-    super::users::transitions::lock_membership_shared(tx).await?;
+    super::users::transitions::lock_accounts_shared(tx, &viewer.into_iter().collect::<Vec<_>>())
+        .await?;
     let visible: Option<i64> = sqlx::query_scalar(&format!(
         "SELECT p.id FROM projects p WHERE p.id=$1 AND ($3 OR p.deleted_at IS NULL) AND {} FOR SHARE",
         crate::backend::db::projects::readable_owner_condition("$2")
@@ -220,7 +224,11 @@ pub async fn list(
 pub async fn get(pool: &PgPool, viewer: Option<i64>, owner: Owner, number: i64) -> Result<Project> {
     let mut tx = pool.begin().await?;
     let (kind, id) = owner.parts();
-    super::users::transitions::lock_membership_shared(&mut tx).await?;
+    super::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &viewer.into_iter().collect::<Vec<_>>(),
+    )
+    .await?;
     let project: Project = sqlx::query_as(&format!("SELECT p.* FROM projects p WHERE p.owner_kind=$1 AND p.owner_id=$2 AND p.number=$3 AND {} FOR SHARE", crate::backend::db::projects::readable_condition("$4")))
         .bind(kind).bind(id).bind(number).bind(viewer).fetch_optional(&mut *tx).await?.ok_or(Refusal::Missing)?;
     tx.commit().await?;

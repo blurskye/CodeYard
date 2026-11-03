@@ -13,7 +13,11 @@ pub async fn recover_suspended_organization_owner(
 ) -> Result<OrganizationOutcome<OrgMembership>> {
     let actor = actor.into();
     let mut tx = begin(pool).await?;
-    crate::backend::db::postgres::users::transitions::lock_membership(&mut tx).await?;
+    crate::backend::db::postgres::users::transitions::lock_accounts_shared(
+        &mut tx,
+        &[actor.user_id, target],
+    )
+    .await?;
     if sqlx::query_scalar::<_, i64>("SELECT id FROM organizations WHERE id=$1 FOR UPDATE")
         .bind(org)
         .fetch_optional(&mut *tx)
