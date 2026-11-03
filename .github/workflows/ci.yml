@@ -104,6 +104,9 @@ jobs:
           CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=0.2.89-codeyard.1" -o "$RUNNER_TEMP/bin/act" .
       - name: Test
         env:
+          # Compiling the large crate for tests needs more than 12 GiB for one compiler process
+          # (measured for Clippy), so a runner with 16 GiB is stopped when more than one runs.
+          CARGO_BUILD_JOBS: 1
           # The OpenSSH tests run this CLI as a separate process.
           GITSERV_TEST_OPENSSH_HELPER: ${{ github.workspace }}/target/debug/codeyard
           CODEYARD_ACTIONS_BIN: ${{ github.workspace }}/target/debug/codeyard-actions
