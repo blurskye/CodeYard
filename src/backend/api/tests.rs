@@ -105,6 +105,9 @@ async fn shutdown_keeps_git_task_admission_open_while_http_handlers_drain() {
     let held = raw.acquire().await.unwrap();
     let mut state = closed_state().await;
     state.pool = raw.clone().into();
+    // Readiness also writes to the repository root, so it must exist for /ready to answer.
+    let repositories = tempfile::tempdir().unwrap();
+    state.repos_path = repositories.path().to_path_buf();
     let tasks = state.git_tasks.clone();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
