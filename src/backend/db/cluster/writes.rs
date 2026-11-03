@@ -86,6 +86,10 @@ pub(crate) fn validate_terms(terms: &[(i64, i64)]) -> Result<()> {
 
 pub(crate) fn required_votes(setting: &str, count: usize) -> Result<i64> {
     ensure!(count > 0 && count <= MAX_VOTERS, "invalid voter count");
+    ensure!(
+        count > 1 || setting == "1",
+        "one voter requires write_quorum=1"
+    );
     let required = if setting == "majority" {
         count as i64 / 2 + 1
     } else {

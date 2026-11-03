@@ -754,7 +754,43 @@ async fn input_and_config(pool: &DbPool) {
     )
     .await
     .is_err());
+    configure(pool, "majority").await.unwrap();
+    let singleton = db::repositories::records::create_repository(
+        pool,
+        f.owner,
+        "singleton",
+        None,
+        false,
+        &format!("/srv/repos/{}.git", Uuid::new_v4()),
+    )
+    .await
+    .unwrap()
+    .id;
+    assert!(db::cluster::place_repository(pool, singleton, f.primary)
+        .await
+        .unwrap());
+    assert!(
+        writes::bootstrap_writes(pool, singleton, f.primary, &[f.primary], &initial_refs())
+            .await
+            .is_err()
+    );
     configure(pool, "1").await.unwrap();
+    assert!(!writes::switch_write_family(
+        pool,
+        f.repo,
+        f.primary,
+        &[(f.repo, 1)],
+        f.primary,
+        &[f.primary]
+    )
+    .await
+    .unwrap());
+    writes::bootstrap_writes(pool, singleton, f.primary, &[f.primary], &initial_refs())
+        .await
+        .unwrap();
+    assert!(writes::enable_write_family(pool, &[(singleton, 1)])
+        .await
+        .unwrap());
     let id = begin(pool, &f).await;
     assert_eq!(
         writes::load_write(pool, &id)

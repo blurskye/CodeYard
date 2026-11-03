@@ -46,6 +46,10 @@ async fn quorum(conn: &mut PgConnection, repo: i64, term: i64) -> Result<i64> {
             .fetch_optional(&mut *conn)
             .await?
             .unwrap_or_else(|| "majority".to_owned());
+    rules::required_votes(&setting, voter_count(conn, repo, term).await?)
+}
+
+async fn voter_count(conn: &mut PgConnection, repo: i64, term: i64) -> Result<usize> {
     let count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM repository_voters WHERE repository_id=$1 AND term=$2",
     )
@@ -53,7 +57,7 @@ async fn quorum(conn: &mut PgConnection, repo: i64, term: i64) -> Result<i64> {
     .bind(term)
     .fetch_one(conn)
     .await?;
-    rules::required_votes(&setting, usize::try_from(count)?)
+    Ok(usize::try_from(count)?)
 }
 
 async fn canonical_refs(conn: &mut PgConnection, repo: i64) -> Result<Vec<RefValue>> {
@@ -443,6 +447,12 @@ pub async fn switch_write_family(
             .await?
             .unwrap_or_else(|| "majority".to_owned());
     rules::required_votes(&setting, voters.len())?;
+    for (repo, control) in &controls {
+        // Replacing failed voters must not silently lower the denominator.
+        if voters.len() < voter_count(&mut tx, *repo, control.term).await? {
+            return Ok(false);
+        }
+    }
     for (repo, control) in controls {
         sqlx::query("UPDATE repository_write_control SET term=term+1,serving=0 WHERE repository_id=$1 AND term=$2 AND committed_version=$3")
             .bind(repo).bind(control.term).bind(control.committed_version).execute(&mut *tx).await?;
