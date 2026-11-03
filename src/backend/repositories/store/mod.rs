@@ -25,7 +25,7 @@ use crate::backend::{
         NodeContext,
     },
     db::{self, models::Repository},
-    git,
+    git::{self, repository::process},
     repositories::protection::WriteVia,
 };
 use std::{collections::HashMap, path::Path, time::Instant};
@@ -2591,7 +2591,6 @@ impl RepoStore {
 
     /// A slot for one Git session: a local one runs Git here, a remote one forwards it.
     pub(crate) async fn session_permit(&self) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit> {
-        use crate::backend::git::repository::process;
         match &self.0 {
             Backend::Local(_) => process::session_permit().await,
             Backend::Remote(_) => process::forwarding_permit().await,

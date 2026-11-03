@@ -463,7 +463,7 @@ async fn promote_with_recovery(
     if !replicas::recover_family(pool, repository, local.id, repos_path).await? {
         return Err(error);
     }
-    Ok(db::cluster::list_fork_family(pool, repository)
+    Ok(db::cluster::writes::write_family(pool, repository)
         .await?
         .into_iter()
         .map(|(repository, _, _)| Promotion {

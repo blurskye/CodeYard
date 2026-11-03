@@ -52,6 +52,10 @@ native_operation!(crate::backend::db::postgres::cluster::writes::enable_write_fa
     crate::backend::db::sqlite::cluster::writes::enable_write_family,
     fn enable_write_family(pool: &DbPool, terms: &[(i64, i64)]) -> Result<bool>);
 
+native_operation!(crate::backend::db::postgres::cluster::writes::write_family,
+    crate::backend::db::sqlite::cluster::writes::write_family,
+    fn write_family(pool: &DbPool, repo: i64) -> Result<Vec<(i64, Option<i64>, i64)>>);
+
 pub(crate) fn validate_id(id: &str) -> Result<()> {
     ensure!(
         id.len() == 36 && uuid::Uuid::parse_str(id).is_ok(),

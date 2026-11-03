@@ -61,7 +61,11 @@ pub async fn promote(
         .is_some()
     {
         ensure!(!force, "--force is not allowed with write quorum");
-        return promote_quorum(pool, repository, to).await;
+        return tokio::time::timeout(
+            Duration::from_secs(10),
+            promote_quorum(pool, repository, to),
+        )
+        .await?;
     }
     // The family is read once, so the repository's primary and its members agree.
     let family = db::cluster::list_fork_family(pool, repository).await?;
@@ -172,14 +176,23 @@ async fn promote_quorum(
     target: Option<i64>,
 ) -> Result<Vec<Promotion>> {
     use db::cluster::writes as journal;
-    let family = db::cluster::list_fork_family(pool, repository).await?;
-    ensure!(
-        !family.is_empty() && family.len() <= journal::MAX_FAMILY,
-        "invalid fork family size"
-    );
+    let family = journal::write_family(pool, repository).await?;
     let first = journal::recovery_view(pool, repository).await?;
     let from = first.primary_id;
-    let nodes = db::cluster::list_nodes(pool).await?;
+    let mut voters: Vec<_> = first.voters.iter().map(|voter| voter.node_id).collect();
+    voters.sort_unstable();
+    ensure!(
+        voters.len() == 2,
+        "promotion requires the same two fixed voters"
+    );
+    let mut nodes = Vec::with_capacity(2);
+    for voter in &voters {
+        nodes.push(
+            db::cluster::get_node_by_id(pool, *voter)
+                .await?
+                .context("voting node is missing")?,
+        );
+    }
     let to = match target {
         Some(target) => target,
         None if !first.serving => from,
@@ -194,12 +207,7 @@ async fn promote_quorum(
         is_reporting_storage(&nodes, to),
         "target storage node is not reporting in"
     );
-    let mut voters: Vec<_> = first.voters.iter().map(|voter| voter.node_id).collect();
-    voters.sort_unstable();
-    ensure!(
-        voters.len() == 2 && voters.contains(&to),
-        "promotion requires the same two fixed voters"
-    );
+    ensure!(voters.contains(&to), "target is not a fixed voter");
     let mut terms = Vec::with_capacity(family.len());
     for (member, primary, _) in &family {
         ensure!(
@@ -267,11 +275,7 @@ pub async fn recover_family(
     repos: &Path,
 ) -> Result<bool> {
     use db::cluster::writes as journal;
-    let family = db::cluster::list_fork_family(pool, repository).await?;
-    ensure!(
-        !family.is_empty() && family.len() <= journal::MAX_FAMILY,
-        "invalid fork family size"
-    );
+    let family = journal::write_family(pool, repository).await?;
     let mut terms = Vec::with_capacity(family.len());
     for (member, _, _) in family {
         let view = journal::recovery_view(pool, member).await?;
@@ -351,7 +355,11 @@ pub async fn take_over(
         if !gone || decided.contains(&row.repository_id) {
             continue;
         }
-        let family = db::cluster::list_fork_family(pool, row.repository_id).await?;
+        let family = if quorum {
+            db::cluster::writes::write_family(pool, row.repository_id).await?
+        } else {
+            db::cluster::list_fork_family(pool, row.repository_id).await?
+        };
         let members = members_on(&family, from);
         decided.extend(members.iter().map(|(member, _)| *member));
         if members.is_empty() {

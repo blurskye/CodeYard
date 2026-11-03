@@ -428,6 +428,19 @@ async fn lock_family(
     Ok(Some(controls))
 }
 
+pub async fn write_family(pool: &PgPool, repo: i64) -> Result<Vec<(i64, Option<i64>, i64)>> {
+    let family: Vec<(i64, Option<i64>, i64)> =
+        sqlx::query_as(&format!("{} LIMIT {}", super::FORK_FAMILY, MAX_FAMILY + 1))
+            .bind(repo)
+            .fetch_all(pool)
+            .await?;
+    ensure!(
+        !family.is_empty() && family.len() <= MAX_FAMILY,
+        "invalid fork family size"
+    );
+    Ok(family)
+}
+
 pub async fn switch_write_family(
     pool: &PgPool,
     repo: i64,

@@ -1,4 +1,4 @@
-//! SQL and coordinator contracts run unchanged on both engines; no Git or network transfer.
+//! SQL, coordinator and local term-recovery contracts run unchanged on both engines.
 #![cfg(not(target_arch = "wasm32"))]
 use crate::support::native_database as native;
 use chrono::{DateTime, Utc};
@@ -1065,11 +1065,34 @@ async fn coordinator_recovery(pool: &DbPool) {
         .unwrap());
 }
 
+async fn replace_node_key(pool: &DbPool, node: i64) -> NodeKey {
+    let key = NodeKey::generate();
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query("UPDATE nodes SET public_key=$1 WHERE id=$2")
+                .bind(key.public_hex())
+                .bind(node)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query("UPDATE nodes SET public_key=$1 WHERE id=$2")
+                .bind(key.public_hex())
+                .bind(node)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+    }
+    key
+}
+
 async fn term_directory_admission(pool: &DbPool) {
     use codeyard::backend::cluster::{self, context::term_path};
     let f = setup(pool, 2, "2").await;
     let root = tempfile::tempdir().unwrap();
-    let key = NodeKey::generate();
+    let key = replace_node_key(pool, f.primary).await;
     let mut context = cluster::NodeContext {
         pool: Some(pool.clone()),
         iroh: cluster::IrohDialer::new(cluster::Relay::Off, key.clone()),
@@ -1100,7 +1123,14 @@ async fn term_directory_admission(pool: &DbPool) {
     assert_eq!(term, Some(1));
     let store = context.repository_store(&repository, true).await.unwrap();
     assert!(store.refs().await.unwrap().is_empty());
+    let mut wrong_identity = context.clone();
+    wrong_identity.key = NodeKey::generate();
+    assert!(wrong_identity
+        .repository_path(f.repo, uuid, true, Some(1))
+        .await
+        .is_err());
     context.node_id = f.voters[1];
+    context.key = replace_node_key(pool, context.node_id).await;
     assert!(context
         .repository_path(f.repo, uuid, true, Some(1))
         .await

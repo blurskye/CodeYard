@@ -14,6 +14,21 @@ use std::{
 /// and reads go to a copy, instead of each one waiting out the dial.
 const UNREACHABLE_FOR: Duration = Duration::from_secs(5);
 
+async fn active_storage(pool: &DbPool, node: i64, key: Option<&str>) -> Result<(), RepoError> {
+    let active = db::cluster::get_node_by_id(pool, node)
+        .await
+        .map_err(|_| unavailable())?
+        .is_some_and(|node| {
+            node.status == "active"
+                && node.roles.iter().any(|role| role == "storage")
+                && key.is_none_or(|key| node.public_key == key)
+        });
+    if !active {
+        return Err(unavailable());
+    }
+    Ok(())
+}
+
 fn current_copy(
     view: &db::models::RecoveryView,
     node: i64,
@@ -52,7 +67,9 @@ pub(crate) async fn check_term_directory(
         let view = db::cluster::writes::recovery_view(pool, repository.id)
             .await
             .map_err(|_| unavailable())?;
-        if !current_copy(&view, node.ok_or_else(unavailable)?, false, None) {
+        let node = node.ok_or_else(unavailable)?;
+        active_storage(pool, node, None).await?;
+        if !current_copy(&view, node, false, None) {
             return Err(unavailable());
         }
         let root = path.ancestors().nth(4).ok_or_else(unavailable)?;
@@ -195,6 +212,7 @@ impl NodeContext {
         let view = db::cluster::writes::recovery_view(pool, repository)
             .await
             .map_err(|_| unavailable())?;
+        active_storage(pool, self.node_id, Some(&self.key.public_hex())).await?;
         if !current_copy(&view, self.node_id, read_only, expected_term) {
             return Err(unavailable());
         }

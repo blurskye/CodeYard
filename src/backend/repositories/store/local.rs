@@ -603,8 +603,30 @@ pub(super) async fn recover_term(
         tokio::fs::create_dir_all(parent).await?;
         crate::backend::cluster::context::literal_directory(root, parent).await?;
         let stage = tempfile::tempdir_in(parent)?;
-        git::mirror::mirror(&source, stage.path()).await?;
+        let source = std::path::absolute(source)?;
+        let source_store = LocalStore::new(source.to_str().context("invalid source path")?, None);
+        source_store.mirror_refs().await?;
         let staged = LocalStore::new(stage.path().to_str().context("invalid staging path")?, None);
+        staged.initialize(None, "main").await?;
+        // Fetch uses an owned, bounded Git child rather than copying files in a
+        // blocking task that could outlive the staging directory on cancellation.
+        let (status, _) = staged
+            .git(&[
+                "-c",
+                "transfer.hideRefs=!refs/codeyard/",
+                "fetch",
+                "--quiet",
+                "--no-write-fetch-head",
+                "--no-tags",
+                "--",
+                source.to_str().context("invalid source path")?,
+                "+refs/*:refs/*",
+            ])
+            .await?;
+        ensure!(
+            status.success(),
+            "retained objects are unavailable; repository remains fenced"
+        );
         let current = staged.mirror_refs().await?;
         let mut remove = String::from("start\n");
         for name in current.keys() {
@@ -629,10 +651,6 @@ pub(super) async fn recover_term(
             }
         }
         staged.verify_canonical(&view.refs).await?;
-        ensure!(
-            git::mirror::check(stage.path()).await?.is_none(),
-            "canonical objects are incomplete"
-        );
         let current = db::cluster::writes::recovery_view(pool, repository).await?;
         ensure!(
             !current.serving
@@ -656,10 +674,6 @@ pub(super) async fn recover_term(
     }
     crate::backend::cluster::context::literal_directory(root, &target).await?;
     target_store.verify_canonical(&view.refs).await?;
-    ensure!(
-        git::mirror::check(&target).await?.is_none(),
-        "canonical objects are incomplete"
-    );
     ensure!(
         db::cluster::writes::mark_write_applied(
             pool,
@@ -719,6 +733,20 @@ impl LocalStore {
             Ok(())
         })
         .await?;
+        let (status, _) = self
+            .git(&[
+                "fsck",
+                "--strict",
+                "--full",
+                "--no-dangling",
+                "--no-reflogs",
+                "--no-progress",
+            ])
+            .await?;
+        anyhow::ensure!(
+            status.success(),
+            "canonical objects are incomplete or corrupt"
+        );
         Ok(())
     }
 
@@ -1112,6 +1140,7 @@ impl LocalStore {
         options: &super::CopyOptions,
     ) -> Result<(), RepoError> {
         let actor = authority.user_id;
+        source.admitted_path(true).await?;
         let default_branch = options.default_branch.as_str();
         // The row is already discoverable. Keep copied objects outside its live path
         // until the source-access check, on the same filesystem for atomic publication.
@@ -2395,7 +2424,14 @@ impl LocalStore {
         author: &str,
         email: &str,
     ) -> Result<editor::PreparedFile, RepoError> {
-        editor::prepare(self.path(), write, content, author, email).await
+        editor::prepare(
+            &self.admitted_path(true).await?,
+            write,
+            content,
+            author,
+            email,
+        )
+        .await
     }
 
     pub(super) async fn prepare_file_with_identities(
@@ -2406,8 +2442,15 @@ impl LocalStore {
         email: &str,
         identities: &editor::CommitIdentities,
     ) -> Result<editor::PreparedFile, RepoError> {
-        editor::prepare_with_identities(self.path(), write, content, author, email, identities)
-            .await
+        editor::prepare_with_identities(
+            &self.admitted_path(true).await?,
+            write,
+            content,
+            author,
+            email,
+            identities,
+        )
+        .await
     }
 
     pub(super) async fn prepare_upload(
@@ -2417,7 +2460,14 @@ impl LocalStore {
         author: &str,
         email: &str,
     ) -> Result<editor::PreparedFile, RepoError> {
-        editor::prepare_upload(self.path(), write, content, author, email).await
+        editor::prepare_upload(
+            &self.admitted_path(true).await?,
+            write,
+            content,
+            author,
+            email,
+        )
+        .await
     }
 
     /// Boxed with an explicit `Send` bound for the same reason as `rename_branch`.
@@ -2914,6 +2964,7 @@ impl LocalStore {
         &self,
         request: &super::RevertRequest,
     ) -> Result<String, RepoError> {
+        self.admitted_path(true).await?;
         let path = self.path();
         git::prepare_revert(
             path,
@@ -2925,6 +2976,7 @@ impl LocalStore {
     }
 
     pub(super) async fn prepare_merge(&self, request: &MergeRequest) -> Result<String, RepoError> {
+        self.admitted_path(true).await?;
         let path = self.path();
         let committer = git::Person {
             name: &request.name,
@@ -3222,10 +3274,16 @@ impl LocalStore {
             email,
             date: None,
         };
-        git::replay_commits(self.path(), from, head, onto, &committer)
-            .await
-            .map(|replayed| replayed.tip)
-            .map_err(RepoError::from)
+        git::replay_commits(
+            &self.admitted_path(true).await?,
+            from,
+            head,
+            onto,
+            &committer,
+        )
+        .await
+        .map(|replayed| replayed.tip)
+        .map_err(RepoError::from)
     }
 
     /// Moves each branch in `moves` after checking, under the repository lock, the actor's write
@@ -3380,9 +3438,14 @@ impl LocalStore {
         let _permit = git::repository::process::session_permit()
             .await
             .map_err(RepoError::from)?;
-        git::advertise_service_refs(&self.admitted_path(true).await?, service.name())
-            .await
-            .map_err(RepoError::from)
+        git::advertise_service_refs(
+            &self
+                .admitted_path(service == GitService::UploadPack)
+                .await?,
+            service.name(),
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     /// Runs one `git` command against this repository, with the usual scrubbed
