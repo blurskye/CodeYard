@@ -203,10 +203,9 @@ impl NodeContext {
         deadline: tokio::time::Instant,
     ) -> Result<(Reply, Vec<u8>), RepoError> {
         if node_id == self.node_id {
-            // Boxed: the handler's store operations lead back to `exchange`.
             return tokio::time::timeout_at(
                 deadline,
-                Box::pin(self.exchange_here(header, body, response_body_limit)),
+                self.exchange_here(header, body, response_body_limit),
             )
             .await
             .map_err(|_| unavailable())?;
@@ -247,25 +246,29 @@ impl NodeContext {
 
     /// The answer of this node's own handler. A node cannot dial itself, so a read that
     /// falls back to a copy held here is served in process, with the same checks.
-    async fn exchange_here(
-        &self,
-        header: &[u8],
-        body: &[u8],
+    // The handler can reach receive hooks that call back here. Explicit Send breaks
+    // that recursive proof when the receive broker spawns its hook tasks.
+    fn exchange_here<'a>(
+        &'a self,
+        header: &'a [u8],
+        body: &'a [u8],
         response_body_limit: usize,
-    ) -> Result<(Reply, Vec<u8>), RepoError> {
-        let request: Request = serde_json::from_slice(header).map_err(|_| unavailable())?;
-        let handler = RpcHandler::new(self.clone());
-        let (result, body) = match handler
-            .execute(request, body.to_vec(), self.key.public_key())
-            .await
-        {
-            Ok((value, body)) => (Ok(value), body),
-            Err(failure) => (Err(failure), Vec::new()),
-        };
-        if body.len() > response_body_limit {
-            return Err(unavailable());
-        }
-        Ok((Reply { result }, body))
+    ) -> futures_util::future::BoxFuture<'a, Result<(Reply, Vec<u8>), RepoError>> {
+        Box::pin(async move {
+            let request: Request = serde_json::from_slice(header).map_err(|_| unavailable())?;
+            let handler = RpcHandler::new(self.clone());
+            let (result, body) = match handler
+                .execute(request, body.to_vec(), self.key.public_key())
+                .await
+            {
+                Ok((value, body)) => (Ok(value), body),
+                Err(failure) => (Err(failure), Vec::new()),
+            };
+            if body.len() > response_body_limit {
+                return Err(unavailable());
+            }
+            Ok((Reply { result }, body))
+        })
     }
 
     /// Opens a request stream to `node_id` for `alpn`. A node whose last dial failed is

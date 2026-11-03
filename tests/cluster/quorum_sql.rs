@@ -1304,11 +1304,10 @@ async fn quorum_directory_recovery(pool: &DbPool) {
 async fn legacy_publishers_refused(pool: &DbPool) {
     use codeyard::backend::repositories::store;
     let f = setup(pool, 2, "2").await;
-    let before = db::repositories::records::get_repository_by_id(pool, f.repo)
+    let before = db::cluster::get_write_version(pool, f.repo)
         .await
         .unwrap()
-        .unwrap()
-        .write_version;
+        .unwrap();
     let error = coordinator::require_legacy_publisher(pool, f.repo)
         .await
         .unwrap_err();
@@ -1320,11 +1319,10 @@ async fn legacy_publishers_refused(pool: &DbPool) {
             .is_err()
     );
     assert_eq!(
-        db::repositories::records::get_repository_by_id(pool, f.repo)
+        db::cluster::get_write_version(pool, f.repo)
             .await
             .unwrap()
-            .unwrap()
-            .write_version,
+            .unwrap(),
         before
     );
     let standalone = db::repositories::records::create_repository(
@@ -1362,11 +1360,10 @@ async fn legacy_publishers_refused(pool: &DbPool) {
         .unwrap();
     drop(change);
     assert_eq!(
-        db::repositories::records::get_repository_by_id(pool, f.repo)
+        db::cluster::get_write_version(pool, f.repo)
             .await
             .unwrap()
-            .unwrap()
-            .write_version,
+            .unwrap(),
         before + 1
     );
 }
