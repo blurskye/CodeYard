@@ -311,6 +311,7 @@ async fn execute(
     let work = async {
         let (cleaned, cleanup) = oneshot::channel();
         let mut workspace = None;
+        let mut log_sequence = 0;
         let result = async {
             // A delayed claim must renew its live authority before any workflow process starts.
             tokio::select! {
@@ -327,6 +328,7 @@ async fn execute(
                 cleaned,
                 &mut workspace,
                 ownership.group.as_ref(),
+                &mut log_sequence,
             )
             .await
         }
@@ -356,6 +358,7 @@ async fn execute(
                         service,
                         worker,
                         run,
+                        &mut log_sequence,
                         &[LogLine {
                             stage: "setup".into(),
                             line: message.clone(),
@@ -481,6 +484,7 @@ async fn run_workflows(
     cleaned: oneshot::Sender<()>,
     workspace_owner: &mut Option<Workspace>,
     scope: Option<&codeyard_actions::process::Cgroup>,
+    log_sequence: &mut i64,
 ) -> Result<bool> {
     let timeout = claim
         .limits
@@ -517,7 +521,7 @@ async fn run_workflows(
     let variable_file = workspace.write_values("variables.env", &claim.variables, !native)?;
     workspace.write_event(claim)?;
     if !native && claim.github_tokens.act_limited {
-        send_log_lines(service, worker, run, &[LogLine { stage: "setup".into(), line: "act runs give every job the same token; use the codeyard-actions engine for per-job permissions".into(), level: "warn".into(), ..Default::default() }]).await?;
+        send_log_lines(service, worker, run, log_sequence, &[LogLine { stage: "setup".into(), line: "act runs give every job the same token; use the codeyard-actions engine for per-job permissions".into(), level: "warn".into(), ..Default::default() }]).await?;
     }
     let podman_label =
         (service.config.mode == CiExecutionMode::Podman).then(|| run_container_label(run.run_id));
@@ -776,7 +780,7 @@ async fn run_workflows(
         };
         let sending = async {
             tokio::select! {
-                sent = send_log_batches(service, worker, run, lines_rx, &mut log_open) => sent,
+                sent = send_log_batches(service, worker, run, lines_rx, &mut log_open, log_sequence) => sent,
                 _ = process::cancelled(cancel.clone()) => Ok(()),
                 _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => Ok(()),
             }
@@ -1697,17 +1701,12 @@ async fn send_log_lines(
     service: &CiWorkers,
     worker: &str,
     run: &CiRun,
+    sequence: &mut i64,
     lines: &[LogLine],
 ) -> Result<bool> {
-    let result = service.queue.logs(worker, run.id, lines).await;
-    // Log ingestion is best effort on both database and remote workers.
-    match result {
-        Err(error) => {
-            warn!(%error, "could not send CI log lines");
-            Ok(true)
-        }
-        result => result,
-    }
+    let open = deliver(|| service.queue.logs(worker, run.id, *sequence, lines)).await?;
+    *sequence += 1;
+    Ok(open)
 }
 
 /// Stores the lines a command prints, in order, in batches. A batch goes out when it is full,
@@ -1719,6 +1718,7 @@ async fn send_log_batches(
     run: &CiRun,
     mut lines: mpsc::Receiver<LogLine>,
     log_open: &mut bool,
+    sequence: &mut i64,
 ) -> Result<()> {
     let mut batch: Vec<LogLine> = Vec::new();
     let mut bytes = 0;
@@ -1740,14 +1740,14 @@ async fn send_log_batches(
             }
             _ = tick.tick(), if !batch.is_empty() => {}
         }
-        *log_open = send_log_lines(service, worker, run, &batch).await?;
+        *log_open = send_log_lines(service, worker, run, sequence, &batch).await?;
         batch.clear();
         bytes = 0;
     }
     if batch.is_empty() {
         return Ok(());
     }
-    *log_open = send_log_lines(service, worker, run, &batch).await?;
+    *log_open = send_log_lines(service, worker, run, sequence, &batch).await?;
     Ok(())
 }
 

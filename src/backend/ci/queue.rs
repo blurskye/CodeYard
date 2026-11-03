@@ -212,6 +212,7 @@ pub(crate) enum Operation {
     },
     Logs {
         id: i64,
+        sequence: i64,
         lines: Vec<LogLine>,
     },
     Finish {
@@ -894,11 +895,30 @@ impl RunQueue {
     }
 
     /// Returns false once the run's stored log is closed.
-    pub async fn logs(&self, worker: &str, id: i64, lines: &[LogLine]) -> Result<bool> {
+    pub async fn logs(
+        &self,
+        worker: &str,
+        id: i64,
+        sequence: i64,
+        lines: &[LogLine],
+    ) -> Result<bool> {
         let lines = prepare_logs(lines)?;
         match self {
-            Self::Database { pool, .. } => db::ci::append_ci_logs(pool, id, worker, &lines).await,
-            Self::Remote { .. } => self.call(worker, Operation::Logs { id, lines }, None).await,
+            Self::Database { pool, .. } => {
+                db::ci::append_ci_logs(pool, id, worker, sequence, &lines).await
+            }
+            Self::Remote { .. } => {
+                self.call(
+                    worker,
+                    Operation::Logs {
+                        id,
+                        sequence,
+                        lines,
+                    },
+                    None,
+                )
+                .await
+            }
         }
     }
 
@@ -964,8 +984,6 @@ impl RunQueue {
         else {
             unreachable!()
         };
-        // Log appends are not idempotent. Once sent, a lost reply must not replay the batch.
-        let replay_safe = !matches!(operation, Operation::Logs { .. });
         let header = serde_json::to_vec(&Request {
             worker: worker.into(),
             operation,
@@ -1036,16 +1054,10 @@ impl RunQueue {
                     Err(error) => return Err(CoreRefusal(error).into()),
                 },
                 Ok(Err(error)) => {
-                    if !replay_safe {
-                        return Err(error);
-                    }
                     last = error;
                 }
                 Err(_) => {
                     last = anyhow::anyhow!("core node request timed out");
-                    if !replay_safe {
-                        return Err(last);
-                    }
                 }
             }
         }

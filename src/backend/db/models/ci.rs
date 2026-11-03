@@ -194,6 +194,8 @@ mod tests {
 pub struct CiLogLine {
     pub id: i64,
     pub run_id: i64,
+    pub job_id: Option<i64>,
+    pub step_number: Option<i32>,
     pub stage: String,
     pub line: String,
     pub level: String,

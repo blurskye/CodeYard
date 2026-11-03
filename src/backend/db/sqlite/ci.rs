@@ -1352,9 +1352,15 @@ pub async fn append_ci_logs(
     pool: &SqlitePool,
     run_id: i64,
     worker: &str,
+    sequence: i64,
     lines: &[crate::backend::ci::queue::LogLine],
 ) -> Result<bool> {
+    ensure!(
+        (0..100_000).contains(&sequence),
+        "invalid CI upload sequence"
+    );
     let lines = crate::backend::ci::queue::prepare_logs(lines)?;
+    let hash = crate::backend::db::ci::log_chunks::request_hash(&lines)?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let totals: Option<(i64, i64)> = sqlx::query_as(
         "SELECT log_lines, log_bytes FROM ci_runs WHERE id = ?1 AND worker = ?2 AND status = 'running'",
@@ -1390,18 +1396,48 @@ pub async fn append_ci_logs(
             ensure!(exists, "log step is outside its job");
         }
     }
+    let previous: Option<String> = sqlx::query_scalar(
+        "SELECT request_hash FROM ci_log_chunks WHERE run_id=$1 AND upload_sequence=$2 LIMIT 1",
+    )
+    .bind(run_id)
+    .bind(sequence)
+    .fetch_optional(&mut *tx)
+    .await?;
+    if let Some(previous) = previous {
+        ensure!(
+            previous == hash,
+            "CI upload sequence has different contents"
+        );
+        return Ok(stored_lines < crate::backend::ci::logs::MAX_RUN_LOG_LINES);
+    }
+    if stored_lines >= crate::backend::ci::logs::MAX_RUN_LOG_LINES {
+        return Ok(false);
+    }
+    let next: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(MAX(upload_sequence)+1,0) FROM ci_log_chunks WHERE run_id=$1",
+    )
+    .bind(run_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    ensure!(sequence == next, "CI upload sequence is out of order");
     let (kept, lines_total, bytes_total) =
         crate::backend::ci::logs::admit_log_lines(stored_lines, stored_bytes, &lines);
-    for line in &kept {
-        sqlx::query("INSERT INTO ci_logs (run_id, stage, line, level,job_id,step_number) VALUES (?1, ?2, ?3, ?4,?5,?6)")
-            .bind(run_id)
-            .bind(&line.stage)
-            .bind(&line.line)
-            .bind(&line.level)
-            .bind(line.job_id)
-            .bind(line.step_number)
-            .execute(&mut *tx)
-            .await?;
+    // A runner batch can interleave jobs. Split only at job boundaries, preserving line order.
+    let mut offset = 0;
+    let mut part = 0_i64;
+    while offset < kept.len() {
+        let count = kept[offset..]
+            .iter()
+            .take_while(|line| line.job_id == kept[offset].job_id)
+            .count();
+        let batch = &kept[offset..offset + count];
+        let (data, size) = crate::backend::db::ci::log_chunks::encode(batch)?;
+        sqlx::query("INSERT INTO ci_log_chunks(run_id,job_id,sequence,upload_sequence,request_hash,first_line,line_count,byte_size,data) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)")
+            .bind(run_id).bind(batch[0].job_id).bind(sequence * 64 + part).bind(sequence).bind(&hash)
+            .bind(stored_lines + offset as i64 + 1).bind(count as i64).bind(size).bind(data)
+            .execute(&mut *tx).await?;
+        offset += count;
+        part += 1;
     }
     if lines_total != stored_lines || bytes_total != stored_bytes {
         sqlx::query("UPDATE ci_runs SET log_lines = ?2, log_bytes = ?3 WHERE id = ?1")
