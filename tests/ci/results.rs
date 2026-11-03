@@ -886,6 +886,153 @@ async fn postgres_results_pending_uploads_share_quota() {
     pending_uploads_share_the_cache_quota(true).await;
 }
 
+async fn shared_s3_across_routers(pg: bool) {
+    use axum::{extract::State, http::Method, response::IntoResponse};
+    use codeyard::backend::{
+        app::AppState,
+        ci::CiConfig,
+        storage::{s3::S3Config, ObjectStore},
+    };
+    use std::{
+        collections::HashMap,
+        sync::{Arc, Mutex},
+    };
+
+    // Like the storage tests, this checks S3 transport, not S3 signatures.
+    type Bucket = Arc<Mutex<HashMap<String, Vec<u8>>>>;
+    async fn s3(
+        State(bucket): State<Bucket>,
+        method: Method,
+        uri: axum::http::Uri,
+        bytes: axum::body::Bytes,
+    ) -> axum::response::Response {
+        let mut bucket = bucket.lock().unwrap();
+        match method {
+            Method::PUT => {
+                bucket.insert(uri.path().into(), bytes.to_vec());
+                StatusCode::OK.into_response()
+            }
+            Method::GET => match bucket.get(uri.path()) {
+                Some(bytes) => bytes.clone().into_response(),
+                None => StatusCode::NOT_FOUND.into_response(),
+            },
+            _ => StatusCode::METHOD_NOT_ALLOWED.into_response(),
+        }
+    }
+    fake_webui_bundle::install();
+    let bucket = Bucket::default();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let config = S3Config {
+        endpoint: format!("http://{}", listener.local_addr().unwrap()),
+        public_endpoint: None,
+        access_key: "fixture".into(),
+        secret_key: "fixture".into(),
+        bucket: "actions-fixture".into(),
+        region: "us-east-1".into(),
+    };
+    let s3_router = Router::new().fallback(s3).with_state(bucket.clone());
+    let _server = tokio_util::task::AbortOnDropHandle::new(tokio::spawn(async move {
+        axum::serve(listener, s3_router).await.unwrap();
+    }));
+    let mut f = Database::new(pg).await;
+    f.complete_setup().await;
+    let actor = f.actor("shared_actions").await;
+    let first = tempfile::tempdir().unwrap();
+    let second = tempfile::tempdir().unwrap();
+    let repo = codeyard::backend::repositories::lifecycle::provision(
+        (f.pool(), None),
+        first.path(),
+        db::repositories::creation::RepositoryCreationOwner::personal(actor),
+        "shared",
+        None,
+        false,
+        None,
+    )
+    .await
+    .unwrap();
+    let mut routers = Vec::new();
+    for root in [first.path(), second.path()] {
+        let storage = ObjectStore::open(root, Some(config.clone())).await.unwrap();
+        routers.push(codeyard::backend::api::create_router(AppState::new(
+            f.pool().clone(),
+            root.to_owned(),
+            Arc::new(storage),
+            None,
+            CiConfig::default(),
+            None,
+        )));
+    }
+    let (run, credentials) = run(&f, repo.id, actor, "main").await;
+    let token = &credentials.token;
+    let bytes = b"shared object store bytes\0\xff";
+    cache(&routers[0], token, "shared-cache", bytes).await;
+    let mut body = artifact_body(&run, "shared-artifact");
+    body["version"] = json!(4);
+    let created = rpc(
+        &routers[0],
+        token,
+        ARTIFACT,
+        "CreateArtifact",
+        body.clone(),
+        StatusCode::OK,
+    )
+    .await;
+    put(
+        &routers[0],
+        created["signedUploadUrl"].as_str().unwrap(),
+        bytes,
+        StatusCode::CREATED,
+    )
+    .await;
+    body["size"] = json!(bytes.len().to_string());
+    rpc(
+        &routers[0],
+        token,
+        ARTIFACT,
+        "FinalizeArtifact",
+        body.clone(),
+        StatusCode::OK,
+    )
+    .await;
+    assert_eq!(bucket.lock().unwrap().len(), 2);
+    for root in [first.path(), second.path()] {
+        assert!(
+            !root.join("objects/actions").exists(),
+            "S3 bytes must not be node-local"
+        );
+    }
+    // Shut down the uploading router and issue both capabilities on the other node.
+    drop(routers.remove(0));
+    let cache = restore(&routers[0], token, "shared-cache", &[]).await;
+    let artifact = rpc(
+        &routers[0],
+        token,
+        ARTIFACT,
+        "GetSignedArtifactURL",
+        body,
+        StatusCode::OK,
+    )
+    .await;
+    for url in [
+        cache["signedDownloadUrl"].as_str().unwrap(),
+        artifact["signedUrl"].as_str().unwrap(),
+    ] {
+        let (status, _, downloaded) = request(&routers[0], "GET", url, None, vec![], None).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(downloaded, bytes);
+    }
+    f.finish().await;
+}
+
+#[tokio::test]
+async fn sqlite_results_shared_s3_across_routers() {
+    shared_s3_across_routers(false).await;
+}
+#[tokio::test]
+async fn postgres_results_shared_s3_across_routers() {
+    shared_s3_across_routers(true).await;
+}
+
 #[tokio::test]
 async fn sqlite_results_protocol() {
     contract(false).await;
