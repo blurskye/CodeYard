@@ -1,6 +1,9 @@
 use crate::backend::db::notifications::events::EventBatch;
 use sqlx::PgPool;
 
+/// The high-water mark, the active transactions, and the event ids, transactions and payloads.
+type PollRow = (i64, Vec<i64>, Vec<i64>, Vec<Option<i64>>, Vec<String>);
+
 pub(crate) async fn poll(
     pool: &PgPool,
     cursor: i64,
@@ -8,9 +11,7 @@ pub(crate) async fn poll(
 ) -> Result<EventBatch, sqlx::Error> {
     // The snapshot and the rows must come from one statement. A separate snapshot
     // could miss a transaction that starts and commits between the two queries.
-    let (high_water, active, ids, transactions, payloads): (
-        i64, Vec<i64>, Vec<i64>, Vec<Option<i64>>, Vec<String>,
-    ) =
+    let (high_water, active, ids, transactions, payloads): PollRow =
         sqlx::query_as(
             "WITH snapshot AS MATERIALIZED (SELECT pg_current_snapshot() AS value),
          events AS MATERIALIZED (
