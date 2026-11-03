@@ -577,7 +577,7 @@ impl Gateway {
         } else {
             false
         };
-        let ref_change = crate::backend::repositories::store::begin_ref_change(
+        let ref_change = crate::backend::repositories::store::begin_coordinated_ref_change(
             &self.pool,
             repo.id,
             &operation.path,
@@ -589,7 +589,12 @@ impl Gateway {
             (operation.clone(), path.clone(), updates.to_vec());
         let admitted_quarantine = quarantine.clone();
         let held = publication.clone();
-        tokio::task::spawn_blocking(move || {
+        let quorum = operation
+            .state
+            .lock()
+            .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
+            .quorum;
+        let publications = tokio::task::spawn_blocking(move || {
             let _held = held;
             if check_workflows {
                 crate::backend::git::oauth::check_workflows(
@@ -636,15 +641,67 @@ impl Gateway {
                     crate::backend::git::PublicationActor::User(admitted.actor_id)
                 }
             };
-            crate::backend::git::prepare_branch_publications(
-                &admitted_path,
-                repo.id,
-                actor,
-                &identity.username,
-                &publications,
-            )
+            if quorum {
+                crate::backend::git::plan_branch_publications(
+                    &admitted_path,
+                    repo.id,
+                    actor,
+                    &identity.username,
+                    &publications,
+                )
+            } else {
+                crate::backend::git::prepare_branch_publications(
+                    &admitted_path,
+                    repo.id,
+                    actor,
+                    &identity.username,
+                    &publications,
+                )?;
+                Ok(Vec::new())
+            }
         })
         .await??;
+        if !publications.is_empty() {
+            let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+            let uuid = crate::backend::cluster::rpc::repository_uuid(&repo.disk_path)?;
+            let term = db::cluster::writes::recovery_view(&self.pool, repo.id)
+                .await?
+                .term;
+            let changes = publications
+                .into_iter()
+                .map(|change| db::models::RefChange {
+                    name: change.reference,
+                    kind: "oid".into(),
+                    old_target: change.old,
+                    new_target: change.new,
+                })
+                .collect::<Vec<_>>();
+            let result = publication
+                .scope(
+                    cluster.publish_ref_changes(uuid, &path, repo.id, term, &changes, async {
+                        let (repo, _) = self.operation_repository(operation).await?;
+                        let (actor, _) = operation
+                            .credential
+                            .authorize(&self.pool, &repo, true)
+                            .await?;
+                        ensure!(actor.id == operation.actor_id, "identity changed");
+                        self.check_publication_branches(&repo, &actor, updates, &history, via)
+                            .await?;
+                        Ok(())
+                    }),
+                )
+                .await;
+            if let Err(error) = result {
+                if error.is::<crate::backend::cluster::writes::OutcomeUnknown>() {
+                    operation
+                        .state
+                        .lock()
+                        .unwrap_or_else(|error| error.into_inner())
+                        .quorum_unknown = true;
+                }
+                return Err(error);
+            }
+        }
         // An intent written before a slow batch is not authority to publish after revocation.
         let (current, _) = self.operation_repository(operation).await?;
         let (identity, _) = operation

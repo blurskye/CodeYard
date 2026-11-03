@@ -204,6 +204,8 @@ impl LocalStore {
         token: Option<i64>,
     ) -> Result<super::super::UpstreamMerge, RepoError> {
         use super::super::{UpstreamMerge, UpstreamMergeType};
+        self.admitted_path(false).await?;
+        source.1.admitted_path(true).await?;
         let reference =
             git::branch_ref(branch).ok_or_else(|| super::super::invalid_ref("branch"))?;
         self.upstream_authority(pool, repo, actor, source, token)
@@ -294,15 +296,47 @@ impl LocalStore {
             )
             .await
             .map_err(RepoError::from)?;
-        publication
-            .scope(git::repository::publish_pull_branch_update(
-                self.path(),
-                branch,
-                &old,
-                &prepared,
-            ))
-            .await
-            .map_err(RepoError::from)?;
+        self.import_prepared_objects(pool, repo, prepared.path(), &[target.clone()])
+            .await?;
+        let changes = [oid_change(&reference, Some(&old), Some(&target))];
+        if !publication
+            .scope(self.publish_quorum_refs(pool, repo, &changes, async {
+                self.upstream_authority(pool, repo, actor, source, token)
+                    .await?;
+                live_write(
+                    pool,
+                    repo,
+                    actor,
+                    Some(&write),
+                    &History::Stored {
+                        repository: prepared.path(),
+                    },
+                    self.path(),
+                    self.node_id,
+                )
+                .await?;
+                self.check_publication_grant(
+                    pool,
+                    repo,
+                    actor,
+                    token,
+                    vec![(old.clone(), target.clone())],
+                    Some(prepared.path().to_owned()),
+                )
+                .await
+            }))
+            .await?
+        {
+            publication
+                .scope(git::repository::publish_pull_branch_update(
+                    self.path(),
+                    branch,
+                    &old,
+                    &prepared,
+                ))
+                .await
+                .map_err(RepoError::from)?;
+        }
         let followup = self
             .after_ref_change(
                 pool,

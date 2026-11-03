@@ -96,6 +96,8 @@ native_operation!(crate::backend::db::postgres::gists::reserve,crate::backend::d
     fn reserve(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,input:&NewGist<'_>) -> Result<()>);
 native_operation!(crate::backend::db::postgres::gists::admit,crate::backend::db::sqlite::gists::admit,
     fn admit(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,input:&Admission<'_>) -> Result<()>);
+native_operation!(crate::backend::db::postgres::gists::check_write,crate::backend::db::sqlite::gists::check_write,
+    fn check_write(pool:&DbPool,actor:i64,credential:&AccountCredential<'_>,repo:i64) -> Result<Repository>);
 native_operation!(crate::backend::db::postgres::gists::pending,crate::backend::db::sqlite::gists::pending,
     fn pending(pool:&DbPool,repo:i64) -> Result<Option<PendingWrite>>);
 native_operation!(crate::backend::db::postgres::gists::finish,crate::backend::db::sqlite::gists::finish,

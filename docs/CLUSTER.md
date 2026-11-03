@@ -331,8 +331,11 @@ The CLI attempts canonical recovery on its local voter. A pending-recovery error
 ownership changed but serving is still disabled. Retry on each voter with the same
 `--to` target. Both voters must reconstruct before serving is enabled, so this two-voter
 mode does not yet provide read availability while either voter remains down.
-Non-push publishers (editor, merges, imports, gists, refs and retained Git-data objects)
-are refused in quorum mode until their journaled preparation and apply paths exist.
+Editor saves, merges, restacks, imports, gist edits, branch/tag updates, pull heads,
+provenance and retained Git-data refs use the same two-voter journal. Branch renames,
+repository initialization/copy and default-branch settings changes remain refused in
+quorum mode: they still need journaled namespace transitions or lifecycle recovery.
+Automatic HEAD selection after publication and imported HEAD changes are journaled.
 
 ## Runners
 
