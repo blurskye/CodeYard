@@ -1,0 +1,11 @@
+apiVersion: v2
+name: codeyard
+description: Codeyard with external PostgreSQL and S3-compatible object storage
+type: application
+version: 0.1.0
+appVersion: "0.1.5"
+kubeVersion: ">=1.27.0-0"
+keywords:
+  - git
+  - codeyard
+  - forge

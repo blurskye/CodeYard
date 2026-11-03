@@ -1,0 +1,266 @@
+{{- $fullname := include "codeyard.fullname" . -}}
+{{- range $role := list "web" "ssh" "storage" "runner" }}
+{{- $settings := index $.Values $role }}
+{{- if or (eq $role "web") (eq $role "storage") $settings.enabled }}
+---
+apiVersion: apps/v1
+kind: {{ ternary "StatefulSet" "Deployment" (eq $role "storage") }}
+metadata:
+  name: {{ $fullname }}-{{ $role }}
+  labels:
+    {{- include "codeyard.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+spec:
+  {{- if eq $role "storage" }}
+  serviceName: {{ $fullname }}-storage
+  podManagementPolicy: OrderedReady
+  # Repository placement must be checked before replacing each storage pod.
+  updateStrategy:
+    type: OnDelete
+  {{- else }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  {{- end }}
+  {{- if not (or (and (eq $role "web") $.Values.web.autoscaling.enabled) (and (eq $role "runner") $.Values.runner.keda.enabled)) }}
+  replicas: {{ $settings.replicas }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "codeyard.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $role }}
+  template:
+    metadata:
+      labels:
+        {{- include "codeyard.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: {{ $role }}
+        {{- with omit $.Values.podLabels "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/component" }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        {{- if eq $role "runner" }}
+        checksum/config: {{ toJson $.Values.runner | sha256sum }}
+        {{- else }}
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") $ | sha256sum }}
+        checksum/secret: {{ include (print $.Template.BasePath "/secret.yaml") $ | sha256sum }}
+        {{- end }}
+        {{- with omit $.Values.podAnnotations "checksum/config" "checksum/secret" }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      serviceAccountName: {{ include "codeyard.serviceAccountName" $ }}
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: {{ $.Values.terminationGracePeriodSeconds }}
+      securityContext:
+        {{- toYaml $.Values.podSecurityContext | nindent 8 }}
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $settings.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $settings.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $settings.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if and (eq $role "storage") $.Values.storage.join.existingSecret }}
+      initContainers:
+        - name: join
+          image: {{ include "codeyard.image" $ | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              if [ ! -s /data/state/cluster-peer.json ]; then
+                timeout 60s codeyard cluster join
+              fi
+          env:
+            - name: GITSERV_STATE_DIR
+              value: /data/state
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            - name: CLUSTER_JOIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ $.Values.storage.join.existingSecret }}
+                  key: {{ $.Values.storage.join.tokenKey }}
+          resources:
+            {{- toYaml $settings.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      {{- end }}
+      containers:
+        - name: codeyard
+          image: {{ include "codeyard.image" $ | quote }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml $.Values.securityContext | nindent 12 }}
+          args: ["codeyard", "serve", "--roles", {{ $role | quote }}{{ if ne $role "runner" }}, "--cluster"{{ end }}]
+          {{- if ne $role "runner" }}
+          envFrom:
+            - configMapRef:
+                name: {{ $fullname }}
+          {{- end }}
+          env:
+            - name: GITSERV_STATE_DIR
+              value: /data/state
+            - name: REPOS_PATH
+              value: /data/repos
+            - name: HOST_KEY_PATH
+              value: /data/host_key
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
+            {{- if eq $role "runner" }}
+            - name: CLUSTER_JOIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ default (printf "%s-runner" $fullname) $.Values.runner.existingSecret }}
+                  key: CLUSTER_JOIN_TOKEN
+            - name: CLUSTER_PEERS
+              value: {{ $.Values.runner.peers | quote }}
+            - name: CI_EXECUTION_MODE
+              value: podman
+            - name: CI_WORK_ROOT
+              value: {{ $.Values.runner.podman.workRoot | quote }}
+            - name: TMPDIR
+              value: {{ $.Values.runner.podman.workRoot | quote }}
+            - name: CI_PODMAN_SOCKET
+              value: {{ $.Values.runner.podman.socketHostPath | quote }}
+            - name: CI_MAX_ACTIVE_RUNS
+              value: {{ $.Values.runner.maxActiveRuns | quote }}
+            - name: CI_RUN_TIMEOUT_SECONDS
+              value: {{ $.Values.runner.runTimeoutSeconds | quote }}
+            - name: CI_TRUSTED_ACTOR_IDS
+              value: {{ $.Values.runner.trustedActorIds | quote }}
+            {{- with $.Values.runner.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- else }}
+            - name: POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: CLUSTER_TCP_BIND
+              value: 0.0.0.0:7445
+            - name: CLUSTER_TCP_ADVERTISE
+              value: "$(POD_IP):7445"
+            - name: HTTP_ADDR
+              value: 0.0.0.0:3000
+            - name: SSH_MODE
+              value: {{ ternary "builtin" "disabled" (eq $role "ssh") }}
+            - name: SSH_ADDR
+              value: 0.0.0.0:2222
+            {{- range $key := list "DATABASE_URL" "SECRETS_MASTER_KEY" "S3_ACCESS_KEY" "S3_SECRET_KEY" "ADMIN_SECRET" "METRICS_TOKEN" }}
+            - name: {{ $key }}
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "codeyard.secretName" $ }}
+                  key: {{ $key }}
+                  {{- if or (eq $key "ADMIN_SECRET") (eq $key "METRICS_TOKEN") }}
+                  optional: true
+                  {{- end }}
+            {{- end }}
+            {{- with $.Values.config.extraEnv }}
+            {{- toYaml . | nindent 12 }}
+            {{- end }}
+            {{- end }}
+          {{- if ne $role "runner" }}
+          ports:
+            - name: cluster
+              containerPort: 7445
+            {{- if eq $role "ssh" }}
+            - name: ssh
+              containerPort: 2222
+            {{- else }}
+            - name: http
+              containerPort: 3000
+            {{- end }}
+          {{- range $probe := list "readiness" "liveness" "startup" }}
+          {{ $probe }}Probe:
+            {{- if eq $role "ssh" }}
+            # SSH-only nodes do not yet have an HTTP health listener.
+            tcpSocket:
+              port: ssh
+            {{- else }}
+            httpGet:
+              path: {{ $.Values.probes.path }}
+              port: http
+            {{- end }}
+            periodSeconds: {{ $.Values.probes.periodSeconds }}
+            timeoutSeconds: {{ $.Values.probes.timeoutSeconds }}
+            failureThreshold: {{ index $.Values.probes (printf "%sFailureThreshold" $probe) }}
+          {{- end }}
+          {{- end }}
+          resources:
+            {{- toYaml $settings.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+            {{- if eq $role "runner" }}
+            - name: work
+              mountPath: {{ $.Values.runner.podman.workRoot | quote }}
+            {{- if $.Values.runner.podman.socketHostPath }}
+            - name: podman
+              mountPath: {{ $.Values.runner.podman.socketHostPath | quote }}
+              readOnly: true
+            {{- end }}
+            {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: {{ $.Values.tmpSizeLimit }}
+        {{- if ne $role "storage" }}
+        - name: data
+          emptyDir:
+            sizeLimit: {{ $.Values.scratchSizeLimit }}
+        {{- end }}
+        {{- if eq $role "runner" }}
+        - name: work
+          hostPath:
+            path: {{ $.Values.runner.podman.workRoot | quote }}
+            type: Directory
+        {{- if $.Values.runner.podman.socketHostPath }}
+        - name: podman
+          hostPath:
+            path: {{ $.Values.runner.podman.socketHostPath | quote }}
+            type: Socket
+        {{- end }}
+        {{- end }}
+  {{- if eq $role "storage" }}
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          {{- include "codeyard.labels" $ | nindent 10 }}
+          app.kubernetes.io/component: storage
+      spec:
+        accessModes:
+          {{- toYaml $.Values.storage.persistence.accessModes | nindent 10 }}
+        {{- if ne $.Values.storage.persistence.storageClass nil }}
+        storageClassName: {{ $.Values.storage.persistence.storageClass | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ $.Values.storage.persistence.size }}
+  {{- end }}
+{{- end }}
+{{- end }}

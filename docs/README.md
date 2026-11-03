@@ -8,6 +8,7 @@ Start with the [README](../README.md) for setup.
 - [HTTP API](API.md): the JSON endpoints, account rules, errors and limits.
 - [Gists](GISTS.md): native snippets, Git transport, secret links, limits and recovery.
 - [Running a cluster](CLUSTER.md): roles, pairing nodes, storage nodes, CI workers and limits.
+- [Kubernetes](KUBERNETES.md): Helm installation, external services, role scaling and current limits.
 - [Cluster readiness plan](CLUSTER_PLAN.md): checks on the cluster that exists, what is still missing, and the decision for each open question.
 - [Crate split plan](CRATE_SPLIT_PLAN.md): how the one big crate becomes crates under `backend/`, with the order and the circles to cut.
 - [CI API](CI_API.md): workflow runs, who may start them, statuses and known gaps.

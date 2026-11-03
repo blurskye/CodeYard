@@ -1,0 +1,80 @@
+image:
+  repository: registry.example.net/codeyard
+  digest: sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
+imagePullSecrets:
+  - name: registry-credentials
+serviceAccount:
+  annotations:
+    example.net/workload: codeyard
+secrets:
+  existingSecret: codeyard-config
+config:
+  publicUrl: https://git.example.com
+  publicSshCloneBase: ssh://git@git.example.com
+  httpTrustedProxyIps: 10.0.0.10,10.0.0.11
+  s3:
+    endpoint: https://objects.example.net
+    publicEndpoint: https://objects.example.net
+  extraEnv:
+    - name: RUST_LOG
+      value: info
+podLabels:
+  example.net/team: forge
+podAnnotations:
+  example.net/owner: forge
+web:
+  replicas: 2
+  pdb:
+    enabled: true
+  autoscaling:
+    enabled: true
+ssh:
+  enabled: true
+  replicas: 2
+  service:
+    annotations:
+      example.net/load-balancer: public
+    loadBalancerSourceRanges: [192.0.2.0/24]
+  pdb:
+    enabled: true
+storage:
+  replicas: 3
+  persistence:
+    storageClass: fast
+  join:
+    existingSecret: codeyard-storage-join
+  pdb:
+    enabled: true
+runner:
+  enabled: true
+  existingSecret: codeyard-runner-join
+  peers: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@tcp://core.example.net:7445
+  podman:
+    socketHostPath: /run/user/1000/podman/podman.sock
+  nodeSelector:
+    codeyard-runner: "true"
+  tolerations:
+    - key: codeyard-runner
+      operator: Exists
+      effect: NoSchedule
+  extraEnv:
+    - name: RUST_LOG
+      value: info
+  pdb:
+    enabled: true
+  keda:
+    enabled: true
+    prometheusAddress: http://prometheus.monitoring.svc:9090
+    query: max(codeyard_ci_queued_runs{namespace="forge",service="codeyard-web"})
+    authenticationRef: prometheus-auth
+ingress:
+  enabled: true
+  className: nginx
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+  host: git.example.com
+  tlsSecretName: codeyard-tls
+serviceMonitor:
+  enabled: true
+  labels:
+    release: monitoring

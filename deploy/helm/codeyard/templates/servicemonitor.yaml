@@ -1,0 +1,33 @@
+{{- if .Values.serviceMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: {{ include "codeyard.fullname" . }}
+  labels:
+    {{- include "codeyard.labels" . | nindent 4 }}
+    {{- with omit .Values.serviceMonitor.labels "app.kubernetes.io/name" "app.kubernetes.io/instance" "app.kubernetes.io/version" "app.kubernetes.io/managed-by" "helm.sh/chart" }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  namespaceSelector:
+    matchNames:
+      - {{ .Release.Namespace }}
+  selector:
+    matchLabels:
+      {{- include "codeyard.selectorLabels" . | nindent 6 }}
+    matchExpressions:
+      - key: app.kubernetes.io/component
+        operator: In
+        values: [web, storage]
+  endpoints:
+    - port: http
+      path: /metrics
+      scheme: http
+      interval: {{ .Values.serviceMonitor.interval }}
+      scrapeTimeout: {{ .Values.serviceMonitor.scrapeTimeout }}
+      authorization:
+        type: Bearer
+        credentials:
+          name: {{ include "codeyard.secretName" . }}
+          key: METRICS_TOKEN
+{{- end }}

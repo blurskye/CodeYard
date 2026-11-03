@@ -1,0 +1,19 @@
+{{- range $role := list "web" "ssh" "storage" "runner" }}
+{{- $settings := index $.Values $role }}
+{{- if and $settings.pdb.enabled (or (eq $role "web") (eq $role "storage") $settings.enabled) }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "codeyard.fullname" $ }}-{{ $role }}
+  labels:
+    {{- include "codeyard.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: {{ $role }}
+spec:
+  maxUnavailable: {{ $settings.pdb.maxUnavailable }}
+  selector:
+    matchLabels:
+      {{- include "codeyard.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: {{ $role }}
+{{- end }}
+{{- end }}
