@@ -1061,6 +1061,92 @@ async fn coordinator_recovery(pool: &DbPool) {
         .unwrap());
 }
 
+async fn term_directory_admission(pool: &DbPool) {
+    use codeyard::backend::cluster::{self, context::term_path};
+    let f = setup(pool, 2, "2").await;
+    let root = tempfile::tempdir().unwrap();
+    let key = NodeKey::generate();
+    let mut context = cluster::NodeContext {
+        pool: Some(pool.clone()),
+        iroh: cluster::IrohDialer::new(cluster::Relay::Off, key.clone()),
+        key,
+        node_id: f.primary,
+        repos_path: root.path().to_owned(),
+        peers: Default::default(),
+        unreachable: Default::default(),
+        ci_replicas: Default::default(),
+    };
+    let repository = db::repositories::records::get_repository_by_id(pool, f.repo)
+        .await
+        .unwrap()
+        .unwrap();
+    let uuid = cluster::rpc::repository_uuid(&repository.disk_path).unwrap();
+    assert!(context
+        .repository_path(f.repo, uuid, true, None)
+        .await
+        .is_err());
+    let path = term_path(root.path(), uuid, 1);
+    std::fs::create_dir_all(&path).unwrap();
+    git2::Repository::init_bare(&path).unwrap();
+    let (admitted, term) = context
+        .repository_path(f.repo, uuid, false, None)
+        .await
+        .unwrap();
+    assert_eq!(admitted, path);
+    assert_eq!(term, Some(1));
+    let store = context.repository_store(&repository, true).await.unwrap();
+    assert!(store.refs().await.unwrap().is_empty());
+    context.node_id = f.voters[1];
+    assert!(context
+        .repository_path(f.repo, uuid, true, Some(1))
+        .await
+        .is_ok());
+    assert!(context
+        .repository_path(f.repo, uuid, false, Some(1))
+        .await
+        .is_err());
+    assert!(writes::switch_write_family(
+        pool,
+        f.repo,
+        f.primary,
+        &[(f.repo, 1)],
+        f.voters[1],
+        &f.voters
+    )
+    .await
+    .unwrap());
+    assert!(context
+        .repository_path(f.repo, uuid, true, Some(1))
+        .await
+        .is_err());
+    assert!(store.refs().await.is_err());
+    for voter in &f.voters {
+        assert!(writes::mark_write_applied(pool, f.repo, *voter, 2, 0)
+            .await
+            .unwrap());
+    }
+    assert!(writes::enable_write_family(pool, &[(f.repo, 2)])
+        .await
+        .unwrap());
+    let next = term_path(root.path(), uuid, 2);
+    std::fs::create_dir_all(&next).unwrap();
+    git2::Repository::init_bare(&next).unwrap();
+    assert!(context
+        .repository_path(f.repo, uuid, true, Some(1))
+        .await
+        .is_err());
+    assert!(store.refs().await.is_err());
+    assert_eq!(
+        context
+            .repository_path(f.repo, uuid, false, Some(2))
+            .await
+            .unwrap()
+            .0,
+        next
+    );
+    assert!(path.exists());
+}
+
 macro_rules! engine_pair {
     ($sqlite:ident, $postgres:ident, $contract:ident) => {
         #[tokio::test]
@@ -1113,6 +1199,11 @@ engine_pair!(
     coordinator_duplicate_begin
 );
 engine_pair!(sqlite_two_of_two, postgres_two_of_two, two_voters);
+engine_pair!(
+    sqlite_term_directory_admission,
+    postgres_term_directory_admission,
+    term_directory_admission
+);
 engine_pair!(sqlite_two_of_three, postgres_two_of_three, three_voters);
 engine_pair!(
     sqlite_duplicate_vote,

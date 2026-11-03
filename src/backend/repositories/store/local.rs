@@ -48,6 +48,8 @@ pub(super) struct LocalStore {
     /// old primary afterwards. `Some(None)` expects an unplaced repository;
     /// `None` is reserved for internal stores opened from a bare path.
     node_id: Option<Option<i64>>,
+    context: Option<(crate::backend::cluster::NodeContext, i64)>,
+    term: Arc<tokio::sync::OnceCell<(i64, PathBuf)>>,
 }
 
 fn unavailable(message: &'static str) -> RepoError {
@@ -546,7 +548,43 @@ impl LocalStore {
         Self {
             disk_path: disk_path.to_owned(),
             node_id,
+            context: None,
+            term: Arc::new(tokio::sync::OnceCell::new()),
         }
+    }
+
+    pub(super) fn with_context(
+        mut self,
+        context: &crate::backend::cluster::NodeContext,
+        repository: i64,
+    ) -> Self {
+        self.context = Some((context.clone(), repository));
+        self
+    }
+
+    pub(super) async fn admitted_path(&self, read_only: bool) -> Result<PathBuf, RepoError> {
+        let Some((context, repository)) = &self.context else {
+            return Ok(self.path().to_owned());
+        };
+        let uuid = super::rpc::repository_uuid(&self.disk_path)?;
+        let (path, term) = context
+            .repository_path(
+                *repository,
+                uuid,
+                read_only,
+                self.term.get().map(|(term, _)| *term),
+            )
+            .await?;
+        if let Some(term) = term {
+            let bound = self
+                .term
+                .get_or_init(|| async { (term, path.clone()) })
+                .await;
+            if bound.0 != term || bound.1 != path {
+                return Err(unavailable("Repository term is no longer serving"));
+            }
+        }
+        Ok(path)
     }
 
     pub(super) fn disk_path(&self) -> &str {
@@ -554,7 +592,9 @@ impl LocalStore {
     }
 
     pub(super) fn path(&self) -> &Path {
-        Path::new(&self.disk_path)
+        self.term
+            .get()
+            .map_or_else(|| Path::new(&self.disk_path), |(_, path)| path.as_path())
     }
 
     /// Runs blocking Git code against this repository on a worker thread.
@@ -571,7 +611,7 @@ impl LocalStore {
         deadline: Instant,
         work: impl FnOnce(&Path) -> anyhow::Result<T> + Send + 'static,
     ) -> Result<T, RepoError> {
-        let path: PathBuf = self.path().to_owned();
+        let path = self.admitted_path(true).await?;
         process::blocking_until(deadline, move || work(&path))
             .await
             .map_err(RepoError::from)
@@ -588,6 +628,7 @@ impl LocalStore {
         repo_id: i64,
         reference: &str,
     ) -> Result<Option<git::PublicationRecord>, RepoError> {
+        self.admitted_path(true).await?;
         let _lock = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -1085,21 +1126,21 @@ impl LocalStore {
     }
 
     pub(super) async fn info(&self) -> Result<RepoInfo, RepoError> {
-        git::get_repo_info(self.path())
+        git::get_repo_info(&self.admitted_path(true).await?)
             .await
             .map_err(RepoError::from)
     }
 
     /// The advertised default branch alone, for callers that already hold the refs.
     pub(super) async fn default_branch(&self) -> Result<String, RepoError> {
-        let branch = git::repository::default_branch(self.path())
+        let branch = git::repository::default_branch(&self.admitted_path(true).await?)
             .await
             .map_err(RepoError::from)?;
         Ok(branch.unwrap_or_else(|| "main".into()))
     }
 
     pub(super) async fn commit_count(&self) -> Result<u64, RepoError> {
-        git::count_commits(self.path())
+        git::count_commits(&self.admitted_path(true).await?)
             .await
             .map_err(RepoError::from)
     }
@@ -1110,10 +1151,11 @@ impl LocalStore {
         path: &str,
         metadata_only: bool,
     ) -> Result<Vec<TreeEntry>, RepoError> {
+        let directory = self.admitted_path(true).await?;
         if metadata_only {
-            git::list_tree_with_history(self.path(), git_ref, path, false, true).await
+            git::list_tree_with_history(&directory, git_ref, path, false, true).await
         } else {
-            git::list_tree(self.path(), git_ref, path).await
+            git::list_tree(&directory, git_ref, path).await
         }
         .map_err(RepoError::from)
     }
@@ -1123,7 +1165,7 @@ impl LocalStore {
         git_ref: &str,
         paths: &[String],
     ) -> Result<Vec<(String, Vec<TreeEntry>)>, RepoError> {
-        git::repository::list_sidebar_trees(self.path(), git_ref, paths)
+        git::repository::list_sidebar_trees(&self.admitted_path(true).await?, git_ref, paths)
             .await
             .map_err(RepoError::from)
     }
@@ -1134,7 +1176,7 @@ impl LocalStore {
         limit: usize,
         query: &str,
     ) -> Result<FileList, RepoError> {
-        git::list_file_paths(self.path(), git_ref, limit, query)
+        git::list_file_paths(&self.admitted_path(true).await?, git_ref, limit, query)
             .await
             .map_err(RepoError::from)
     }
@@ -1153,7 +1195,7 @@ impl LocalStore {
         revision: &str,
         paths: &[String],
     ) -> Result<Vec<Option<(String, String)>>, RepoError> {
-        git::repository::template_texts(self.path(), revision, paths)
+        git::repository::template_texts(&self.admitted_path(true).await?, revision, paths)
             .await
             .map_err(RepoError::from)
     }
@@ -1165,13 +1207,14 @@ impl LocalStore {
         mode: u32,
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
+        let directory = self.admitted_path(true).await?;
         if let BlobRange::Preview { offset, line } = range {
             // The preview reader starts its own `git cat-file`, so it takes a slot like any other Git work.
             let _permit =
                 git::repository::process::operation_slot(git::repository::process::RPC_TIMEOUT)
                     .await
                     .map_err(|_| unavailable("Git operation timed out"))?;
-            let preview = git::repository::read_blob_preview(self.path(), id, size, offset, line)
+            let preview = git::repository::read_blob_preview(&directory, id, size, offset, line)
                 .await
                 .map_err(RepoError::from)?;
             return Ok(BlobBytes {
@@ -1188,7 +1231,7 @@ impl LocalStore {
             });
         }
         let (offset, length) = normalize_blob_range(range, size)?;
-        let (bytes, is_binary) = git::read_blob_range(self.path(), id, size, offset, length)
+        let (bytes, is_binary) = git::read_blob_range(&directory, id, size, offset, length)
             .await
             .map_err(RepoError::from)?;
         Ok(BlobBytes {
@@ -1268,7 +1311,7 @@ impl LocalStore {
     }
 
     pub(super) async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
-        git::get_blob_by_id(self.path(), id)
+        git::get_blob_by_id(&self.admitted_path(true).await?, id)
             .await
             .map_err(RepoError::from)
     }
@@ -1296,9 +1339,15 @@ impl LocalStore {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<git::CodeMatch>, RepoError> {
-        git::search_code(self.path(), git_ref, text, offset, limit)
-            .await
-            .map_err(RepoError::from)
+        git::search_code(
+            &self.admitted_path(true).await?,
+            git_ref,
+            text,
+            offset,
+            limit,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn pull_request_commits(
@@ -1308,7 +1357,7 @@ impl LocalStore {
         offset: usize,
         limit: usize,
     ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
-        git::pull_request_commits(self.path(), base, head, offset, limit)
+        git::pull_request_commits(&self.admitted_path(true).await?, base, head, offset, limit)
             .await
             .map_err(RepoError::from)
     }
@@ -1320,9 +1369,15 @@ impl LocalStore {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        git::range_commits(self.path(), base_ref, head_ref, offset, limit)
-            .await
-            .map_err(RepoError::from)
+        git::range_commits(
+            &self.admitted_path(true).await?,
+            base_ref,
+            head_ref,
+            offset,
+            limit,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn release_history(
@@ -1331,9 +1386,14 @@ impl LocalStore {
         previous: Option<&str>,
         exclude_tag: &str,
     ) -> Result<git::ReleaseHistory, RepoError> {
-        git::release_history(self.path(), head, previous, exclude_tag)
-            .await
-            .map_err(RepoError::from)
+        git::release_history(
+            &self.admitted_path(true).await?,
+            head,
+            previous,
+            exclude_tag,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn path_commits(
@@ -1344,9 +1404,16 @@ impl LocalStore {
         limit: usize,
         filter: &CommitFilter,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        git::list_path_commits(self.path(), git_ref, path, offset, limit, filter)
-            .await
-            .map_err(RepoError::from)
+        git::list_path_commits(
+            &self.admitted_path(true).await?,
+            git_ref,
+            path,
+            offset,
+            limit,
+            filter,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn branch_statuses(
@@ -1355,7 +1422,7 @@ impl LocalStore {
         heads: &[String],
     ) -> Result<Vec<BranchStatus>, RepoError> {
         git::branch_statuses(
-            self.path(),
+            &self.admitted_path(true).await?,
             base,
             heads,
             std::time::Instant::now() + std::time::Duration::from_secs(5),
@@ -1371,13 +1438,13 @@ impl LocalStore {
     }
 
     pub(super) async fn commit_diff(&self, revision: &str) -> Result<DiffInfo, RepoError> {
-        git::get_commit_diff(self.path(), revision)
+        git::get_commit_diff(&self.admitted_path(true).await?, revision)
             .await
             .map_err(RepoError::from)
     }
 
     pub(super) async fn diff(&self, base_ref: &str, head_ref: &str) -> Result<DiffInfo, RepoError> {
-        git::get_diff(self.path(), base_ref, head_ref)
+        git::get_diff(&self.admitted_path(true).await?, base_ref, head_ref)
             .await
             .map_err(RepoError::from)
     }
@@ -1387,7 +1454,7 @@ impl LocalStore {
         base_ref: &str,
         head_ref: &str,
     ) -> Result<DiffInfo, RepoError> {
-        git::get_diff_stats(self.path(), base_ref, head_ref)
+        git::get_diff_stats(&self.admitted_path(true).await?, base_ref, head_ref)
             .await
             .map_err(RepoError::from)
     }
@@ -1398,7 +1465,7 @@ impl LocalStore {
         head_ref: &str,
         path: &str,
     ) -> Result<DiffInfo, RepoError> {
-        git::get_file_diff(self.path(), base_ref, head_ref, path)
+        git::get_file_diff(&self.admitted_path(true).await?, base_ref, head_ref, path)
             .await
             .map_err(RepoError::from)
     }
@@ -1410,9 +1477,15 @@ impl LocalStore {
         endpoints: bool,
         renames: bool,
     ) -> Result<Vec<String>, RepoError> {
-        git::changed_paths(self.path(), base_ref, head_ref, endpoints, renames)
-            .await
-            .map_err(RepoError::from)
+        git::changed_paths(
+            &self.admitted_path(true).await?,
+            base_ref,
+            head_ref,
+            endpoints,
+            renames,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn diff_from(
@@ -1421,9 +1494,14 @@ impl LocalStore {
         base_ref: &str,
         head_ref: &str,
     ) -> Result<DiffInfo, RepoError> {
-        git::compare_repositories(self.path(), source.path(), base_ref, head_ref)
-            .await
-            .map_err(RepoError::from)
+        git::compare_repositories(
+            &self.admitted_path(true).await?,
+            &source.admitted_path(true).await?,
+            base_ref,
+            head_ref,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn comparison_from(
@@ -1435,8 +1513,8 @@ impl LocalStore {
         limit: usize,
     ) -> Result<CommitComparison, RepoError> {
         git::compare_commits(
-            self.path(),
-            source.path(),
+            &self.admitted_path(true).await?,
+            &source.admitted_path(true).await?,
             base_ref,
             head_ref,
             offset,
@@ -1461,7 +1539,7 @@ impl LocalStore {
             .blocking(move |repo| git::resolve_archive_revision(repo, &git_ref))
             .await?;
         git::archive(
-            self.path(),
+            &self.admitted_path(true).await?,
             revision,
             prefix,
             format,
@@ -1472,13 +1550,13 @@ impl LocalStore {
     }
 
     pub(super) async fn languages(&self, git_ref: &str) -> Result<Vec<LanguageStat>, RepoError> {
-        git::compute_language_stats(self.path(), git_ref)
+        git::compute_language_stats(&self.admitted_path(true).await?, git_ref)
             .await
             .map_err(RepoError::from)
     }
 
     pub(super) async fn blame(&self, git_ref: &str, path: &str) -> Result<FileBlame, RepoError> {
-        git::blame_file(self.path(), git_ref, path)
+        git::blame_file(&self.admitted_path(true).await?, git_ref, path)
             .await
             .map_err(RepoError::from)
     }
@@ -1487,13 +1565,13 @@ impl LocalStore {
         &self,
         branch: &str,
     ) -> Result<Vec<ContributorInfo>, RepoError> {
-        git::get_branch_contributors(self.path(), branch)
+        git::get_branch_contributors(&self.admitted_path(true).await?, branch)
             .await
             .map_err(RepoError::from)
     }
 
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
-        git::get_contributors(self.path())
+        git::get_contributors(&self.admitted_path(true).await?)
             .await
             .map_err(RepoError::from)
     }
@@ -1503,13 +1581,13 @@ impl LocalStore {
         branch: &str,
         mode: git::StatisticsMode,
     ) -> Result<git::CommitStatistics, RepoError> {
-        git::get_commit_statistics(self.path(), branch, mode)
+        git::get_commit_statistics(&self.admitted_path(true).await?, branch, mode)
             .await
             .map_err(RepoError::from)
     }
 
     pub(super) async fn code_frequency(&self, branch: &str) -> Result<Vec<WeekChanges>, RepoError> {
-        git::get_code_frequency(self.path(), branch)
+        git::get_code_frequency(&self.admitted_path(true).await?, branch)
             .await
             .map_err(RepoError::from)
     }
@@ -1519,7 +1597,7 @@ impl LocalStore {
         ancestor: &str,
         descendant: &str,
     ) -> Result<bool, RepoError> {
-        git::commit_is_ancestor(self.path(), ancestor, descendant)
+        git::commit_is_ancestor(&self.admitted_path(true).await?, ancestor, descendant)
             .await
             .map_err(RepoError::from)
     }
@@ -1550,7 +1628,7 @@ impl LocalStore {
     }
 
     pub(super) async fn checkout(&self, destination: &Path, sha: &str) -> Result<(), RepoError> {
-        git::checkout(self.path(), destination, sha)
+        git::checkout(&self.admitted_path(true).await?, destination, sha)
             .await
             .map_err(RepoError::from)
     }
@@ -3117,7 +3195,7 @@ impl LocalStore {
         let _permit = git::repository::process::session_permit()
             .await
             .map_err(RepoError::from)?;
-        git::advertise_service_refs(self.path(), service.name())
+        git::advertise_service_refs(&self.admitted_path(true).await?, service.name())
             .await
             .map_err(RepoError::from)
     }
@@ -3126,7 +3204,10 @@ impl LocalStore {
     /// environment and limits.
     async fn git(&self, args: &[&str]) -> Result<(std::process::ExitStatus, Vec<u8>), RepoError> {
         let mut command = process::git_command().map_err(RepoError::from)?;
-        command.arg("--git-dir").arg(self.path()).args(args);
+        command
+            .arg("--git-dir")
+            .arg(self.admitted_path(true).await?)
+            .args(args);
         process::buffered(command, b"", MAX_GIT_OUTPUT, process::RPC_TIMEOUT)
             .await
             .map_err(RepoError::from)
@@ -3167,7 +3248,7 @@ impl LocalStore {
         &self,
         ids: &[String],
     ) -> Result<std::collections::HashSet<String>, RepoError> {
-        crate::backend::git::mirror::existing_commits(self.path(), ids)
+        crate::backend::git::mirror::existing_commits(&self.admitted_path(true).await?, ids)
             .await
             .map_err(RepoError::from)
     }
@@ -3776,6 +3857,9 @@ impl LocalStore {
         streams: super::GitStreams<'_>,
     ) -> anyhow::Result<std::process::ExitStatus> {
         use crate::backend::{db, repositories::git_sessions};
+        let path = self
+            .admitted_path(session.service == GitService::UploadPack)
+            .await?;
         if session.service == GitService::ReceivePack {
             let (pool, ci) =
                 receive.ok_or_else(|| anyhow::anyhow!("receive resources required"))?;
@@ -3783,12 +3867,19 @@ impl LocalStore {
             let repo = db::cluster::get_repository_by_uuid(&pool, &uuid.to_string())
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
+            crate::backend::cluster::context::check_term_directory(
+                &pool,
+                &repo,
+                self.node_id.flatten(),
+                &path,
+            )
+            .await?;
             let result = git_sessions::receive_session(
                 pool.clone(),
                 ci,
                 git_sessions::ReceiveSession {
                     repo_id: repo.id,
-                    path: self.path(),
+                    path: &path,
                     executable: hook_executable()?,
                     session,
                 },
@@ -3809,7 +3900,7 @@ impl LocalStore {
         {
             command.env("GIT_PROTOCOL", protocol);
         }
-        command.arg(self.path());
+        command.arg(&path);
         process::stream(
             command,
             streams.input,

@@ -69,10 +69,13 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
         Some(id) if context.is_some_and(|context| context.node_id == id) => {
             let context = context.expect("this node owns the repository");
             match rpc::repository_uuid(&repo.disk_path) {
-                Ok(uuid) => RepoStore::on_node(
-                    &primary_path(&context.repos_path, uuid).to_string_lossy(),
-                    id,
-                ),
+                Ok(uuid) => RepoStore(Backend::Local(
+                    local::LocalStore::new(
+                        &primary_path(&context.repos_path, uuid).to_string_lossy(),
+                        Some(Some(id)),
+                    )
+                    .with_context(context, repo.id),
+                )),
                 Err(_) => RepoStore(Backend::Remote(remote::RemoteStore::new(
                     &repo.disk_path,
                     id,
@@ -89,6 +92,20 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
 }
 
 impl RepoStore {
+    /// Storage RPC admission keeps the database and captured term with the local store.
+    pub(crate) async fn on_context(
+        disk_path: &str,
+        repository: i64,
+        context: &NodeContext,
+    ) -> Result<Self, RepoError> {
+        let local = local::LocalStore::new(disk_path, Some(Some(context.node_id)))
+            .with_context(context, repository);
+        if local.admitted_path(true).await? != Path::new(disk_path) {
+            return Err(RepoError::storage_node_unavailable());
+        }
+        Ok(Self(Backend::Local(local)))
+    }
+
     /// CI workers receive a storage node and UUID, not a repository database row.
     pub fn remote(uuid: uuid::Uuid, node_id: i64, context: &NodeContext) -> Self {
         Self(Backend::Remote(remote::RemoteStore::new(

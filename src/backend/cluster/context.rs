@@ -1,8 +1,11 @@
 use super::{identity::NodeKey, rpc::unavailable, CorePeer, IrohDialer};
-use crate::backend::{db::DbPool, repositories::store::RepoError};
+use crate::backend::{
+    db::{self, DbPool},
+    repositories::store::RepoError,
+};
 use std::{
     collections::HashMap,
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
     time::{Duration, Instant},
 };
@@ -10,6 +13,116 @@ use std::{
 /// How long a node that could not be dialed is left alone. Requests for it fail at once,
 /// and reads go to a copy, instead of each one waiting out the dial.
 const UNREACHABLE_FOR: Duration = Duration::from_secs(5);
+
+fn current_copy(
+    view: &db::models::RecoveryView,
+    node: i64,
+    read_only: bool,
+    expected_term: Option<i64>,
+) -> bool {
+    view.serving
+        && expected_term.is_none_or(|term| term == view.term)
+        && (read_only || view.primary_id == node)
+        && view.voters.iter().any(|voter| {
+            voter.node_id == node
+                && voter.term == view.term
+                && voter.applied_version == view.committed_version
+        })
+}
+
+/// Checks the literal directory handed to a receive child, including stores made by RPC.
+pub(crate) async fn check_term_directory(
+    pool: &DbPool,
+    repository: &db::models::Repository,
+    node: Option<i64>,
+    path: &Path,
+) -> Result<(), RepoError> {
+    if repository.storage_node_id.is_none() {
+        return Ok(());
+    }
+    tokio::time::timeout(Duration::from_secs(5), async {
+        if db::cluster::writes::write_settings(pool)
+            .await
+            .map_err(|_| unavailable())?
+            .write_quorum
+            .is_none()
+        {
+            return Ok(());
+        }
+        let view = db::cluster::writes::recovery_view(pool, repository.id)
+            .await
+            .map_err(|_| unavailable())?;
+        if !current_copy(&view, node.ok_or_else(unavailable)?, false, None) {
+            return Err(unavailable());
+        }
+        let root = path.ancestors().nth(4).ok_or_else(unavailable)?;
+        let uuid = super::rpc::repository_uuid(&repository.disk_path)?;
+        if term_path(root, uuid, view.term) != path {
+            return Err(unavailable());
+        }
+        literal_directory(root, path).await
+    })
+    .await
+    .map_err(|_| unavailable())?
+}
+
+/// A tenure owns a directory for its lifetime, including any surviving Git children.
+/// Promotion reconstructs a new directory; it never renames or retargets the old one.
+pub fn term_path(root: &Path, uuid: uuid::Uuid, term: i64) -> PathBuf {
+    root.join("terms")
+        .join(uuid.to_string())
+        .join(term.to_string())
+        .join(format!("{uuid}.git"))
+}
+
+pub(crate) async fn literal_directory(root: &Path, path: &Path) -> Result<(), RepoError> {
+    let relative = path.strip_prefix(root).map_err(|_| unavailable())?;
+    let mut current = root.to_owned();
+    for component in relative.components() {
+        if !matches!(component, std::path::Component::Normal(_)) {
+            return Err(unavailable());
+        }
+        current.push(component);
+        let metadata = tokio::fs::symlink_metadata(&current)
+            .await
+            .map_err(|_| unavailable())?;
+        if !metadata.is_dir() || metadata.file_type().is_symlink() {
+            return Err(unavailable());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn terms_have_distinct_literal_directories() {
+        let uuid = uuid::Uuid::new_v4();
+        let root = Path::new("/repos");
+        assert_eq!(
+            term_path(root, uuid, 7),
+            root.join("terms")
+                .join(uuid.to_string())
+                .join("7")
+                .join(format!("{uuid}.git"))
+        );
+        assert_ne!(term_path(root, uuid, 7), term_path(root, uuid, 8));
+    }
+
+    #[tokio::test]
+    async fn term_admission_rejects_missing_directories_and_symlinks() {
+        let root = tempfile::tempdir().unwrap();
+        let path = term_path(root.path(), uuid::Uuid::new_v4(), 1);
+        assert!(literal_directory(root.path(), &path).await.is_err());
+        tokio::fs::create_dir_all(&path).await.unwrap();
+        literal_directory(root.path(), &path).await.unwrap();
+        tokio::fs::remove_dir(&path).await.unwrap();
+        std::os::unix::fs::symlink(root.path(), &path).unwrap();
+        assert!(literal_directory(root.path(), &path).await.is_err());
+    }
+}
 
 /// Resources belonging to one node, never process-global.
 #[derive(Clone)]
@@ -40,6 +153,71 @@ impl std::fmt::Debug for NodeContext {
 impl NodeContext {
     pub fn database(&self) -> Result<&DbPool, RepoError> {
         self.pool.as_ref().ok_or_else(unavailable)
+    }
+
+    /// Resolves only a current, applied copy. Call again at admission with the term
+    /// captured by the caller; a retired directory is never redirected to a new term.
+    pub async fn repository_path(
+        &self,
+        repository: i64,
+        uuid: uuid::Uuid,
+        read_only: bool,
+        expected_term: Option<i64>,
+    ) -> Result<(PathBuf, Option<i64>), RepoError> {
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            self.resolve_repository_path(repository, uuid, read_only, expected_term),
+        )
+        .await
+        .map_err(|_| unavailable())?
+    }
+
+    async fn resolve_repository_path(
+        &self,
+        repository: i64,
+        uuid: uuid::Uuid,
+        read_only: bool,
+        expected_term: Option<i64>,
+    ) -> Result<(PathBuf, Option<i64>), RepoError> {
+        let pool = self.database()?;
+        let settings = db::cluster::writes::write_settings(pool)
+            .await
+            .map_err(|_| unavailable())?;
+        if settings.write_quorum.is_none() {
+            if expected_term.is_some() {
+                return Err(unavailable());
+            }
+            return Ok((
+                crate::backend::repositories::store::primary_path(&self.repos_path, uuid),
+                None,
+            ));
+        }
+        let view = db::cluster::writes::recovery_view(pool, repository)
+            .await
+            .map_err(|_| unavailable())?;
+        if !current_copy(&view, self.node_id, read_only, expected_term) {
+            return Err(unavailable());
+        }
+        let path = term_path(&self.repos_path, uuid, view.term);
+        literal_directory(&self.repos_path, &path).await?;
+        Ok((path, Some(view.term)))
+    }
+
+    pub async fn repository_store(
+        &self,
+        repository: &db::models::Repository,
+        read_only: bool,
+    ) -> Result<crate::backend::repositories::store::RepoStore, RepoError> {
+        let uuid = super::rpc::repository_uuid(&repository.disk_path)?;
+        let (path, _) = self
+            .repository_path(repository.id, uuid, read_only, None)
+            .await?;
+        crate::backend::repositories::store::RepoStore::on_context(
+            path.to_str().ok_or_else(unavailable)?,
+            repository.id,
+            self,
+        )
+        .await
     }
 
     pub(super) fn recently_unreachable(&self, node_id: i64) -> bool {
