@@ -26,13 +26,22 @@ impl LocalStore {
         id: i64,
         read: bool,
     ) -> Result<db::models::Repository, RepoError> {
+        self.admitted_path(read).await?;
         let repo = db::repositories::records::get_repository_by_id(pool, id)
             .await
             .map_err(failure)?
             .filter(|repo| repo.is_gist)
             .ok_or_else(|| RepoError::new(ErrorKind::NotFound, "Gist not found"))?;
         if !super::repository_matches_path(&repo, self.path(), self.node_id) {
-            let replica = if let Some(node) = self.node_id.flatten().filter(|_| read) {
+            let current_term = read
+                && self.term.get().is_some()
+                && self
+                    .context
+                    .as_ref()
+                    .is_some_and(|(_, repository)| *repository == id);
+            let replica = if current_term {
+                true
+            } else if let Some(node) = self.node_id.flatten().filter(|_| read) {
                 self.path().file_name() == std::path::Path::new(&repo.disk_path).file_name()
                     && self
                         .path()
@@ -151,6 +160,7 @@ impl LocalStore {
         if repo.owner_user_id != Some(actor) {
             return Err(RepoError::write_denied());
         }
+        super::require_legacy_publisher(pool, id).await?;
         self.finish_pending(pool, id).await?;
         let user = db::users::accounts::get_user_by_id(pool, actor)
             .await

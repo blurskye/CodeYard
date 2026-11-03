@@ -48,10 +48,24 @@ pub(super) struct LocalStore {
     /// old primary afterwards. `Some(None)` expects an unplaced repository;
     /// `None` is reserved for internal stores opened from a bare path.
     node_id: Option<Option<i64>>,
+    context: Option<(crate::backend::cluster::NodeContext, i64)>,
+    term: Arc<tokio::sync::OnceCell<(i64, PathBuf)>>,
 }
 
 fn unavailable(message: &'static str) -> RepoError {
     RepoError::new(ErrorKind::Unavailable, message)
+}
+
+async fn require_legacy_publisher(pool: &db::DbPool, repo: i64) -> Result<(), RepoError> {
+    crate::backend::cluster::writes::require_legacy_publisher(pool, repo)
+        .await
+        .map_err(|error| {
+            if error.is::<crate::backend::cluster::writes::PublisherUnavailable>() {
+                RepoError::new(ErrorKind::Unavailable, error.to_string())
+            } else {
+                RepoError::authority_unavailable()
+            }
+        })
 }
 
 async fn record_secret_bypasses(
@@ -470,6 +484,7 @@ pub async fn begin_ref_change(
     path: &Path,
     node_id: Option<Option<i64>>,
 ) -> Result<RefChange, RepoError> {
+    require_legacy_publisher(pool, repo_id).await?;
     let key = counting_key(path).await;
     let change = {
         let mut counts = ref_change_counts();
@@ -541,12 +556,241 @@ fn ensure_pull_head_room(held: git::RefsInUse, reference: &str) -> Result<(), Re
     )
 }
 
+/// Reconstructs a non-serving tenure without moving or modifying its predecessor.
+/// Missing retained objects leave the repository fenced rather than guessing at refs.
+pub(super) async fn recover_term(
+    pool: &db::DbPool,
+    repository: i64,
+    node: i64,
+    root: &Path,
+) -> anyhow::Result<()> {
+    use crate::backend::cluster::{context::term_path, writes};
+    use anyhow::{ensure, Context};
+    let view = db::cluster::writes::recovery_view(pool, repository).await?;
+    if view.serving || !view.voters.iter().any(|voter| voter.node_id == node) {
+        return Ok(());
+    }
+    let row = db::repositories::records::get_repository_by_id(pool, repository)
+        .await?
+        .context("repository was deleted during recovery")?;
+    let uuid = super::rpc::repository_uuid(&row.disk_path)?;
+    let target = term_path(root, uuid, view.term);
+    ensure!(
+        view.refs.iter().any(|value| value.name == "HEAD"),
+        "canonical HEAD is missing"
+    );
+    let _lock = git::locks::lock(&target).await;
+    let _readers = git::locks::exclusive(&target).await;
+    let view = writes::recover(pool, repository, view.primary_id, view.term).await?;
+    let target_store = LocalStore::new(target.to_str().context("invalid term path")?, None);
+    if !tokio::fs::try_exists(&target).await? {
+        let previous = term_path(root, uuid, view.term - 1);
+        let source = if tokio::fs::try_exists(&previous).await? {
+            crate::backend::cluster::context::literal_directory(root, &previous).await?;
+            previous
+        } else if view.term == 1 {
+            let primary = super::primary_path(root, uuid);
+            let mirror = crate::backend::cluster::replicas::copy_path(root, uuid);
+            if tokio::fs::try_exists(&primary).await? {
+                primary
+            } else {
+                mirror
+            }
+        } else {
+            anyhow::bail!("previous term objects are unavailable; repository remains fenced");
+        };
+        let parent = target.parent().context("invalid term path")?;
+        tokio::fs::create_dir_all(parent).await?;
+        crate::backend::cluster::context::literal_directory(root, parent).await?;
+        let stage = tempfile::tempdir_in(parent)?;
+        let source = std::path::absolute(source)?;
+        let source_store = LocalStore::new(source.to_str().context("invalid source path")?, None);
+        source_store.mirror_refs().await?;
+        let staged = LocalStore::new(stage.path().to_str().context("invalid staging path")?, None);
+        staged.initialize(None, "main").await?;
+        // Fetch uses an owned, bounded Git child rather than copying files in a
+        // blocking task that could outlive the staging directory on cancellation.
+        let (status, _) = staged
+            .git(&[
+                "-c",
+                "transfer.hideRefs=!refs/codeyard/",
+                "fetch",
+                "--quiet",
+                "--no-write-fetch-head",
+                "--no-tags",
+                "--",
+                source.to_str().context("invalid source path")?,
+                "+refs/*:refs/*",
+            ])
+            .await?;
+        ensure!(
+            status.success(),
+            "retained objects are unavailable; repository remains fenced"
+        );
+        let current = staged.mirror_refs().await?;
+        let mut remove = String::from("start\n");
+        for name in current.keys() {
+            remove.push_str(&format!("delete {name}\n"));
+        }
+        remove.push_str("prepare\ncommit\n");
+        staged.recovery_refs(&remove).await?;
+        let mut install = String::from("start\n");
+        for value in &view.refs {
+            if value.kind == "oid" {
+                install.push_str(&format!("update {} {}\n", value.name, value.target));
+            }
+        }
+        install.push_str("prepare\ncommit\n");
+        staged.recovery_refs(&install).await?;
+        for value in &view.refs {
+            if value.kind == "symbolic" {
+                let (status, _) = staged
+                    .git(&["symbolic-ref", &value.name, &value.target])
+                    .await?;
+                ensure!(status.success(), "could not restore canonical symbolic ref");
+            }
+        }
+        staged.verify_canonical(&view.refs).await?;
+        let current = db::cluster::writes::recovery_view(pool, repository).await?;
+        ensure!(
+            !current.serving
+                && current.term == view.term
+                && current.committed_version == view.committed_version,
+            "recovery term changed"
+        );
+        tokio::fs::rename(stage.path(), &target).await?;
+        let parent = parent.to_owned();
+        let root = root.to_owned();
+        process::blocking_until(Instant::now() + process::RPC_TIMEOUT, move || {
+            for directory in parent.ancestors() {
+                std::fs::File::open(directory)?.sync_all()?;
+                if directory == root {
+                    break;
+                }
+            }
+            Ok(())
+        })
+        .await?;
+    }
+    crate::backend::cluster::context::literal_directory(root, &target).await?;
+    target_store.verify_canonical(&view.refs).await?;
+    ensure!(
+        db::cluster::writes::mark_write_applied(
+            pool,
+            repository,
+            node,
+            view.term,
+            view.committed_version
+        )
+        .await?,
+        "recovery term changed"
+    );
+    if let Some(write) = &view.unfinished {
+        // A committed operation is released only once both reconstructed copies are durable.
+        db::cluster::writes::finish_write(pool, &write.id, view.term).await?;
+    }
+    Ok(())
+}
+
 impl LocalStore {
+    async fn recovery_refs(&self, script: &str) -> anyhow::Result<()> {
+        let mut command = process::git_command()?;
+        command
+            .arg("--git-dir")
+            .arg(self.path())
+            .args(["update-ref", "--no-deref", "--stdin"]);
+        let (status, _) = process::buffered(
+            command,
+            script.as_bytes(),
+            MAX_GIT_OUTPUT,
+            process::RPC_TIMEOUT,
+        )
+        .await?;
+        anyhow::ensure!(status.success(), "could not restore canonical refs");
+        Ok(())
+    }
+
+    async fn verify_canonical(&self, values: &[db::models::RefValue]) -> anyhow::Result<()> {
+        let values = values.to_vec();
+        self.blocking(move |path| {
+            let refs = git::list_mirror_refs(path)?;
+            anyhow::ensure!(
+                refs.len() == values.iter().filter(|value| value.name != "HEAD").count(),
+                "unexpected term refs"
+            );
+            let repo = git2::Repository::open_bare(path)?;
+            for value in values {
+                let reference = repo.find_reference(&value.name)?;
+                let matches = if value.kind == "symbolic" {
+                    reference.symbolic_target() == Some(value.target.as_str())
+                } else {
+                    reference.symbolic_target().is_none()
+                        && reference.target().map(|oid| oid.to_string()).as_deref()
+                            == Some(value.target.as_str())
+                };
+                anyhow::ensure!(matches, "term refs differ from canonical refs");
+            }
+            Ok(())
+        })
+        .await?;
+        let (status, _) = self
+            .git(&[
+                "fsck",
+                "--strict",
+                "--full",
+                "--no-dangling",
+                "--no-reflogs",
+                "--no-progress",
+            ])
+            .await?;
+        anyhow::ensure!(
+            status.success(),
+            "canonical objects are incomplete or corrupt"
+        );
+        Ok(())
+    }
+
     pub(super) fn new(disk_path: &str, node_id: Option<Option<i64>>) -> Self {
         Self {
             disk_path: disk_path.to_owned(),
             node_id,
+            context: None,
+            term: Arc::new(tokio::sync::OnceCell::new()),
         }
+    }
+
+    pub(super) fn with_context(
+        mut self,
+        context: &crate::backend::cluster::NodeContext,
+        repository: i64,
+    ) -> Self {
+        self.context = Some((context.clone(), repository));
+        self
+    }
+
+    pub(super) async fn admitted_path(&self, read_only: bool) -> Result<PathBuf, RepoError> {
+        let Some((context, repository)) = &self.context else {
+            return Ok(self.path().to_owned());
+        };
+        let uuid = super::rpc::repository_uuid(&self.disk_path)?;
+        let (path, term) = context
+            .repository_path(
+                *repository,
+                uuid,
+                read_only,
+                self.term.get().map(|(term, _)| *term),
+            )
+            .await?;
+        if let Some(term) = term {
+            let bound = self
+                .term
+                .get_or_init(|| async { (term, path.clone()) })
+                .await;
+            if bound.0 != term || bound.1 != path {
+                return Err(unavailable("Repository term is no longer serving"));
+            }
+        }
+        Ok(path)
     }
 
     pub(super) fn disk_path(&self) -> &str {
@@ -554,7 +798,9 @@ impl LocalStore {
     }
 
     pub(super) fn path(&self) -> &Path {
-        Path::new(&self.disk_path)
+        self.term
+            .get()
+            .map_or_else(|| Path::new(&self.disk_path), |(_, path)| path.as_path())
     }
 
     /// Runs blocking Git code against this repository on a worker thread.
@@ -571,7 +817,7 @@ impl LocalStore {
         deadline: Instant,
         work: impl FnOnce(&Path) -> anyhow::Result<T> + Send + 'static,
     ) -> Result<T, RepoError> {
-        let path: PathBuf = self.path().to_owned();
+        let path = self.admitted_path(true).await?;
         process::blocking_until(deadline, move || work(&path))
             .await
             .map_err(RepoError::from)
@@ -588,6 +834,7 @@ impl LocalStore {
         repo_id: i64,
         reference: &str,
     ) -> Result<Option<git::PublicationRecord>, RepoError> {
+        self.admitted_path(true).await?;
         let _lock = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -780,6 +1027,7 @@ impl LocalStore {
         .await?;
         self.check_contents_grant(pool, repo_id, actor, token)
             .await?;
+        require_legacy_publisher(pool, repo_id).await?;
         let bytes = bytes.to_vec();
         let path = self.path().to_owned();
         let held = lock.clone();
@@ -855,10 +1103,7 @@ impl LocalStore {
         tokio::fs::create_dir_all(&root)
             .await
             .map_err(|_| refused())?;
-        let store = Self {
-            disk_path,
-            node_id: None,
-        };
+        let store = Self::new(&disk_path, None);
         if let Err(error) = store.initialize(source, default_branch).await {
             // A leftover directory is logged by `remove`; the creation error is the
             // one to report.
@@ -873,7 +1118,14 @@ impl LocalStore {
         source: Option<&LocalStore>,
         default_branch: &str,
     ) -> Result<(), RepoError> {
-        git::initialize_repository(self.path(), source.map(LocalStore::path), default_branch)
+        if let Some((context, repository)) = &self.context {
+            require_legacy_publisher(context.database()?, *repository).await?;
+        }
+        let source = match source {
+            Some(source) => Some(source.admitted_path(true).await?),
+            None => None,
+        };
+        git::initialize_repository(self.path(), source.as_deref(), default_branch)
             .await
             .map_err(RepoError::from)
     }
@@ -888,6 +1140,7 @@ impl LocalStore {
         options: &super::CopyOptions,
     ) -> Result<(), RepoError> {
         let actor = authority.user_id;
+        source.admitted_path(true).await?;
         let default_branch = options.default_branch.as_str();
         // The row is already discoverable. Keep copied objects outside its live path
         // until the source-access check, on the same filesystem for atomic publication.
@@ -1012,6 +1265,7 @@ impl LocalStore {
         access::credential_user(pool, &authority, true)
             .await
             .map_err(RepoError::from)?;
+        require_legacy_publisher(pool, repo_id).await?;
         tokio::fs::rename(temporary.path(), self.path())
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
@@ -1085,21 +1339,21 @@ impl LocalStore {
     }
 
     pub(super) async fn info(&self) -> Result<RepoInfo, RepoError> {
-        git::get_repo_info(self.path())
+        git::get_repo_info(&self.admitted_path(true).await?)
             .await
             .map_err(RepoError::from)
     }
 
     /// The advertised default branch alone, for callers that already hold the refs.
     pub(super) async fn default_branch(&self) -> Result<String, RepoError> {
-        let branch = git::repository::default_branch(self.path())
+        let branch = git::repository::default_branch(&self.admitted_path(true).await?)
             .await
             .map_err(RepoError::from)?;
         Ok(branch.unwrap_or_else(|| "main".into()))
     }
 
     pub(super) async fn commit_count(&self) -> Result<u64, RepoError> {
-        git::count_commits(self.path())
+        git::count_commits(&self.admitted_path(true).await?)
             .await
             .map_err(RepoError::from)
     }
@@ -1110,10 +1364,11 @@ impl LocalStore {
         path: &str,
         metadata_only: bool,
     ) -> Result<Vec<TreeEntry>, RepoError> {
+        let directory = self.admitted_path(true).await?;
         if metadata_only {
-            git::list_tree_with_history(self.path(), git_ref, path, false, true).await
+            git::list_tree_with_history(&directory, git_ref, path, false, true).await
         } else {
-            git::list_tree(self.path(), git_ref, path).await
+            git::list_tree(&directory, git_ref, path).await
         }
         .map_err(RepoError::from)
     }
@@ -1123,7 +1378,7 @@ impl LocalStore {
         git_ref: &str,
         paths: &[String],
     ) -> Result<Vec<(String, Vec<TreeEntry>)>, RepoError> {
-        git::repository::list_sidebar_trees(self.path(), git_ref, paths)
+        git::repository::list_sidebar_trees(&self.admitted_path(true).await?, git_ref, paths)
             .await
             .map_err(RepoError::from)
     }
@@ -1134,7 +1389,7 @@ impl LocalStore {
         limit: usize,
         query: &str,
     ) -> Result<FileList, RepoError> {
-        git::list_file_paths(self.path(), git_ref, limit, query)
+        git::list_file_paths(&self.admitted_path(true).await?, git_ref, limit, query)
             .await
             .map_err(RepoError::from)
     }
@@ -1153,7 +1408,7 @@ impl LocalStore {
         revision: &str,
         paths: &[String],
     ) -> Result<Vec<Option<(String, String)>>, RepoError> {
-        git::repository::template_texts(self.path(), revision, paths)
+        git::repository::template_texts(&self.admitted_path(true).await?, revision, paths)
             .await
             .map_err(RepoError::from)
     }
@@ -1165,13 +1420,14 @@ impl LocalStore {
         mode: u32,
         range: BlobRange,
     ) -> Result<BlobBytes, RepoError> {
+        let directory = self.admitted_path(true).await?;
         if let BlobRange::Preview { offset, line } = range {
             // The preview reader starts its own `git cat-file`, so it takes a slot like any other Git work.
             let _permit =
                 git::repository::process::operation_slot(git::repository::process::RPC_TIMEOUT)
                     .await
                     .map_err(|_| unavailable("Git operation timed out"))?;
-            let preview = git::repository::read_blob_preview(self.path(), id, size, offset, line)
+            let preview = git::repository::read_blob_preview(&directory, id, size, offset, line)
                 .await
                 .map_err(RepoError::from)?;
             return Ok(BlobBytes {
@@ -1188,7 +1444,7 @@ impl LocalStore {
             });
         }
         let (offset, length) = normalize_blob_range(range, size)?;
-        let (bytes, is_binary) = git::read_blob_range(self.path(), id, size, offset, length)
+        let (bytes, is_binary) = git::read_blob_range(&directory, id, size, offset, length)
             .await
             .map_err(RepoError::from)?;
         Ok(BlobBytes {
@@ -1268,7 +1524,7 @@ impl LocalStore {
     }
 
     pub(super) async fn blob_by_id(&self, id: &str) -> Result<Vec<u8>, RepoError> {
-        git::get_blob_by_id(self.path(), id)
+        git::get_blob_by_id(&self.admitted_path(true).await?, id)
             .await
             .map_err(RepoError::from)
     }
@@ -1296,9 +1552,15 @@ impl LocalStore {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<git::CodeMatch>, RepoError> {
-        git::search_code(self.path(), git_ref, text, offset, limit)
-            .await
-            .map_err(RepoError::from)
+        git::search_code(
+            &self.admitted_path(true).await?,
+            git_ref,
+            text,
+            offset,
+            limit,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn pull_request_commits(
@@ -1308,7 +1570,7 @@ impl LocalStore {
         offset: usize,
         limit: usize,
     ) -> Result<(u64, Vec<CommitInfo>), RepoError> {
-        git::pull_request_commits(self.path(), base, head, offset, limit)
+        git::pull_request_commits(&self.admitted_path(true).await?, base, head, offset, limit)
             .await
             .map_err(RepoError::from)
     }
@@ -1320,9 +1582,15 @@ impl LocalStore {
         offset: usize,
         limit: usize,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        git::range_commits(self.path(), base_ref, head_ref, offset, limit)
-            .await
-            .map_err(RepoError::from)
+        git::range_commits(
+            &self.admitted_path(true).await?,
+            base_ref,
+            head_ref,
+            offset,
+            limit,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn release_history(
@@ -1331,9 +1599,14 @@ impl LocalStore {
         previous: Option<&str>,
         exclude_tag: &str,
     ) -> Result<git::ReleaseHistory, RepoError> {
-        git::release_history(self.path(), head, previous, exclude_tag)
-            .await
-            .map_err(RepoError::from)
+        git::release_history(
+            &self.admitted_path(true).await?,
+            head,
+            previous,
+            exclude_tag,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn path_commits(
@@ -1344,9 +1617,16 @@ impl LocalStore {
         limit: usize,
         filter: &CommitFilter,
     ) -> Result<Vec<CommitInfo>, RepoError> {
-        git::list_path_commits(self.path(), git_ref, path, offset, limit, filter)
-            .await
-            .map_err(RepoError::from)
+        git::list_path_commits(
+            &self.admitted_path(true).await?,
+            git_ref,
+            path,
+            offset,
+            limit,
+            filter,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn branch_statuses(
@@ -1355,7 +1635,7 @@ impl LocalStore {
         heads: &[String],
     ) -> Result<Vec<BranchStatus>, RepoError> {
         git::branch_statuses(
-            self.path(),
+            &self.admitted_path(true).await?,
             base,
             heads,
             std::time::Instant::now() + std::time::Duration::from_secs(5),
@@ -1371,13 +1651,13 @@ impl LocalStore {
     }
 
     pub(super) async fn commit_diff(&self, revision: &str) -> Result<DiffInfo, RepoError> {
-        git::get_commit_diff(self.path(), revision)
+        git::get_commit_diff(&self.admitted_path(true).await?, revision)
             .await
             .map_err(RepoError::from)
     }
 
     pub(super) async fn diff(&self, base_ref: &str, head_ref: &str) -> Result<DiffInfo, RepoError> {
-        git::get_diff(self.path(), base_ref, head_ref)
+        git::get_diff(&self.admitted_path(true).await?, base_ref, head_ref)
             .await
             .map_err(RepoError::from)
     }
@@ -1387,7 +1667,7 @@ impl LocalStore {
         base_ref: &str,
         head_ref: &str,
     ) -> Result<DiffInfo, RepoError> {
-        git::get_diff_stats(self.path(), base_ref, head_ref)
+        git::get_diff_stats(&self.admitted_path(true).await?, base_ref, head_ref)
             .await
             .map_err(RepoError::from)
     }
@@ -1398,7 +1678,7 @@ impl LocalStore {
         head_ref: &str,
         path: &str,
     ) -> Result<DiffInfo, RepoError> {
-        git::get_file_diff(self.path(), base_ref, head_ref, path)
+        git::get_file_diff(&self.admitted_path(true).await?, base_ref, head_ref, path)
             .await
             .map_err(RepoError::from)
     }
@@ -1410,9 +1690,15 @@ impl LocalStore {
         endpoints: bool,
         renames: bool,
     ) -> Result<Vec<String>, RepoError> {
-        git::changed_paths(self.path(), base_ref, head_ref, endpoints, renames)
-            .await
-            .map_err(RepoError::from)
+        git::changed_paths(
+            &self.admitted_path(true).await?,
+            base_ref,
+            head_ref,
+            endpoints,
+            renames,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn diff_from(
@@ -1421,9 +1707,14 @@ impl LocalStore {
         base_ref: &str,
         head_ref: &str,
     ) -> Result<DiffInfo, RepoError> {
-        git::compare_repositories(self.path(), source.path(), base_ref, head_ref)
-            .await
-            .map_err(RepoError::from)
+        git::compare_repositories(
+            &self.admitted_path(true).await?,
+            &source.admitted_path(true).await?,
+            base_ref,
+            head_ref,
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     pub(super) async fn comparison_from(
@@ -1435,8 +1726,8 @@ impl LocalStore {
         limit: usize,
     ) -> Result<CommitComparison, RepoError> {
         git::compare_commits(
-            self.path(),
-            source.path(),
+            &self.admitted_path(true).await?,
+            &source.admitted_path(true).await?,
             base_ref,
             head_ref,
             offset,
@@ -1461,7 +1752,7 @@ impl LocalStore {
             .blocking(move |repo| git::resolve_archive_revision(repo, &git_ref))
             .await?;
         git::archive(
-            self.path(),
+            &self.admitted_path(true).await?,
             revision,
             prefix,
             format,
@@ -1472,13 +1763,13 @@ impl LocalStore {
     }
 
     pub(super) async fn languages(&self, git_ref: &str) -> Result<Vec<LanguageStat>, RepoError> {
-        git::compute_language_stats(self.path(), git_ref)
+        git::compute_language_stats(&self.admitted_path(true).await?, git_ref)
             .await
             .map_err(RepoError::from)
     }
 
     pub(super) async fn blame(&self, git_ref: &str, path: &str) -> Result<FileBlame, RepoError> {
-        git::blame_file(self.path(), git_ref, path)
+        git::blame_file(&self.admitted_path(true).await?, git_ref, path)
             .await
             .map_err(RepoError::from)
     }
@@ -1487,13 +1778,13 @@ impl LocalStore {
         &self,
         branch: &str,
     ) -> Result<Vec<ContributorInfo>, RepoError> {
-        git::get_branch_contributors(self.path(), branch)
+        git::get_branch_contributors(&self.admitted_path(true).await?, branch)
             .await
             .map_err(RepoError::from)
     }
 
     pub(super) async fn contributors(&self) -> Result<Vec<ContributorInfo>, RepoError> {
-        git::get_contributors(self.path())
+        git::get_contributors(&self.admitted_path(true).await?)
             .await
             .map_err(RepoError::from)
     }
@@ -1503,13 +1794,13 @@ impl LocalStore {
         branch: &str,
         mode: git::StatisticsMode,
     ) -> Result<git::CommitStatistics, RepoError> {
-        git::get_commit_statistics(self.path(), branch, mode)
+        git::get_commit_statistics(&self.admitted_path(true).await?, branch, mode)
             .await
             .map_err(RepoError::from)
     }
 
     pub(super) async fn code_frequency(&self, branch: &str) -> Result<Vec<WeekChanges>, RepoError> {
-        git::get_code_frequency(self.path(), branch)
+        git::get_code_frequency(&self.admitted_path(true).await?, branch)
             .await
             .map_err(RepoError::from)
     }
@@ -1519,7 +1810,7 @@ impl LocalStore {
         ancestor: &str,
         descendant: &str,
     ) -> Result<bool, RepoError> {
-        git::commit_is_ancestor(self.path(), ancestor, descendant)
+        git::commit_is_ancestor(&self.admitted_path(true).await?, ancestor, descendant)
             .await
             .map_err(RepoError::from)
     }
@@ -1550,7 +1841,7 @@ impl LocalStore {
     }
 
     pub(super) async fn checkout(&self, destination: &Path, sha: &str) -> Result<(), RepoError> {
-        git::checkout(self.path(), destination, sha)
+        git::checkout(&self.admitted_path(true).await?, destination, sha)
             .await
             .map_err(RepoError::from)
     }
@@ -2133,7 +2424,14 @@ impl LocalStore {
         author: &str,
         email: &str,
     ) -> Result<editor::PreparedFile, RepoError> {
-        editor::prepare(self.path(), write, content, author, email).await
+        editor::prepare(
+            &self.admitted_path(true).await?,
+            write,
+            content,
+            author,
+            email,
+        )
+        .await
     }
 
     pub(super) async fn prepare_file_with_identities(
@@ -2144,8 +2442,15 @@ impl LocalStore {
         email: &str,
         identities: &editor::CommitIdentities,
     ) -> Result<editor::PreparedFile, RepoError> {
-        editor::prepare_with_identities(self.path(), write, content, author, email, identities)
-            .await
+        editor::prepare_with_identities(
+            &self.admitted_path(true).await?,
+            write,
+            content,
+            author,
+            email,
+            identities,
+        )
+        .await
     }
 
     pub(super) async fn prepare_upload(
@@ -2155,7 +2460,14 @@ impl LocalStore {
         author: &str,
         email: &str,
     ) -> Result<editor::PreparedFile, RepoError> {
-        editor::prepare_upload(self.path(), write, content, author, email).await
+        editor::prepare_upload(
+            &self.admitted_path(true).await?,
+            write,
+            content,
+            author,
+            email,
+        )
+        .await
     }
 
     /// Boxed with an explicit `Send` bound for the same reason as `rename_branch`.
@@ -2234,6 +2546,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        require_legacy_publisher(pool, repo_id).await?;
         if prepared.web_commit {
             let settings =
                 db::organizations::settings::repository_requires_web_signoff(pool, repo_id)
@@ -2651,6 +2964,7 @@ impl LocalStore {
         &self,
         request: &super::RevertRequest,
     ) -> Result<String, RepoError> {
+        self.admitted_path(true).await?;
         let path = self.path();
         git::prepare_revert(
             path,
@@ -2662,6 +2976,7 @@ impl LocalStore {
     }
 
     pub(super) async fn prepare_merge(&self, request: &MergeRequest) -> Result<String, RepoError> {
+        self.admitted_path(true).await?;
         let path = self.path();
         let committer = git::Person {
             name: &request.name,
@@ -2959,10 +3274,16 @@ impl LocalStore {
             email,
             date: None,
         };
-        git::replay_commits(self.path(), from, head, onto, &committer)
-            .await
-            .map(|replayed| replayed.tip)
-            .map_err(RepoError::from)
+        git::replay_commits(
+            &self.admitted_path(true).await?,
+            from,
+            head,
+            onto,
+            &committer,
+        )
+        .await
+        .map(|replayed| replayed.tip)
+        .map_err(RepoError::from)
     }
 
     /// Moves each branch in `moves` after checking, under the repository lock, the actor's write
@@ -3117,16 +3438,24 @@ impl LocalStore {
         let _permit = git::repository::process::session_permit()
             .await
             .map_err(RepoError::from)?;
-        git::advertise_service_refs(self.path(), service.name())
-            .await
-            .map_err(RepoError::from)
+        git::advertise_service_refs(
+            &self
+                .admitted_path(service == GitService::UploadPack)
+                .await?,
+            service.name(),
+        )
+        .await
+        .map_err(RepoError::from)
     }
 
     /// Runs one `git` command against this repository, with the usual scrubbed
     /// environment and limits.
     async fn git(&self, args: &[&str]) -> Result<(std::process::ExitStatus, Vec<u8>), RepoError> {
         let mut command = process::git_command().map_err(RepoError::from)?;
-        command.arg("--git-dir").arg(self.path()).args(args);
+        command
+            .arg("--git-dir")
+            .arg(self.admitted_path(true).await?)
+            .args(args);
         process::buffered(command, b"", MAX_GIT_OUTPUT, process::RPC_TIMEOUT)
             .await
             .map_err(RepoError::from)
@@ -3167,7 +3496,7 @@ impl LocalStore {
         &self,
         ids: &[String],
     ) -> Result<std::collections::HashSet<String>, RepoError> {
-        crate::backend::git::mirror::existing_commits(self.path(), ids)
+        crate::backend::git::mirror::existing_commits(&self.admitted_path(true).await?, ids)
             .await
             .map_err(RepoError::from)
     }
@@ -3776,6 +4105,9 @@ impl LocalStore {
         streams: super::GitStreams<'_>,
     ) -> anyhow::Result<std::process::ExitStatus> {
         use crate::backend::{db, repositories::git_sessions};
+        let path = self
+            .admitted_path(session.service == GitService::UploadPack)
+            .await?;
         if session.service == GitService::ReceivePack {
             let (pool, ci) =
                 receive.ok_or_else(|| anyhow::anyhow!("receive resources required"))?;
@@ -3783,12 +4115,19 @@ impl LocalStore {
             let repo = db::cluster::get_repository_by_uuid(&pool, &uuid.to_string())
                 .await?
                 .ok_or_else(|| anyhow::anyhow!("repository unavailable"))?;
+            crate::backend::cluster::context::check_term_directory(
+                &pool,
+                &repo,
+                self.node_id.flatten(),
+                &path,
+            )
+            .await?;
             let result = git_sessions::receive_session(
                 pool.clone(),
                 ci,
                 git_sessions::ReceiveSession {
                     repo_id: repo.id,
-                    path: self.path(),
+                    path: &path,
                     executable: hook_executable()?,
                     session,
                 },
@@ -3809,7 +4148,7 @@ impl LocalStore {
         {
             command.env("GIT_PROTOCOL", protocol);
         }
-        command.arg(self.path());
+        command.arg(&path);
         process::stream(
             command,
             streams.input,

@@ -6,7 +6,10 @@
 mod promote;
 mod transfer;
 
-pub use promote::{promote, repository_name, take_over, Promotion, Silent, TAKE_OVER_AFTER};
+pub use promote::{
+    promote, recover_family, repository_name, take_over, Promotion, RecoveryPending, Silent,
+    TAKE_OVER_AFTER,
+};
 
 use super::{rpc, NodeContext};
 use crate::backend::db::{
@@ -438,6 +441,16 @@ async fn locate(
     copying: &Copying,
 ) -> HashSet<i64> {
     let mut failed = HashSet::new();
+    match db::cluster::writes::write_settings(pool).await {
+        Ok(settings) if settings.write_quorum.is_some() => return failed,
+        Err(error) => {
+            warn!(%error, "could not check quorum before relocating storage");
+            failed.extend(primaries.iter().map(|row| row.repository_id));
+            failed.extend(held.iter().map(|row| row.repository_id));
+            return failed;
+        }
+        Ok(_) => {}
+    }
     for primary in primaries {
         let Ok(uuid) = rpc::repository_uuid(&primary.disk_path) else {
             continue;

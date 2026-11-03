@@ -322,6 +322,18 @@ Replication is asynchronous. A push is acknowledged when the primary has it, and
 follow it. If the primary is lost before a copy has a push, that push is lost. The loss
 window is the time since the last sync, about 5 seconds plus the transfer.
 
+### Quorum promotion
+
+The promotion rules above describe asynchronous replication. With experimental
+`write_quorum` enabled, `--force` is refused. Promotion fences the whole fork family
+in new `terms/<uuid>/<term>/<uuid>.git` directories; retired directories are never reused.
+The CLI attempts canonical recovery on its local voter. A pending-recovery error means
+ownership changed but serving is still disabled. Retry on each voter with the same
+`--to` target. Both voters must reconstruct before serving is enabled, so this two-voter
+mode does not yet provide read availability while either voter remains down.
+Non-push publishers (editor, merges, imports, gists, refs and retained Git-data objects)
+are refused in quorum mode until their journaled preparation and apply paths exist.
+
 ## Runners
 
 A machine that only runs Actions jobs needs no database and no inbound port, in either

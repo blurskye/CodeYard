@@ -1,4 +1,4 @@
-//! SQL and coordinator contracts run unchanged on both engines; no Git or network transfer.
+//! SQL, coordinator and local term-recovery contracts run unchanged on both engines.
 #![cfg(not(target_arch = "wasm32"))]
 use crate::support::native_database as native;
 use chrono::{DateTime, Utc};
@@ -98,6 +98,10 @@ async fn clock(pool: &DbPool) -> DateTime<Utc> {
 }
 
 async fn setup(pool: &DbPool, count: usize, setting: &str) -> Fixture {
+    setup_with_refs(pool, count, setting, &initial_refs()).await
+}
+
+async fn setup_with_refs(pool: &DbPool, count: usize, setting: &str, refs: &[RefValue]) -> Fixture {
     db::node_config::upsert_node_configuration(pool, "public", true)
         .await
         .unwrap();
@@ -125,7 +129,7 @@ async fn setup(pool: &DbPool, count: usize, setting: &str) -> Fixture {
     assert!(db::cluster::place_repository(pool, repo, primary)
         .await
         .unwrap());
-    writes::bootstrap_writes(pool, repo, primary, &voters, &initial_refs())
+    writes::bootstrap_writes(pool, repo, primary, &voters, refs)
         .await
         .unwrap();
     let view = writes::recovery_view(pool, repo).await.unwrap();
@@ -1061,6 +1065,312 @@ async fn coordinator_recovery(pool: &DbPool) {
         .unwrap());
 }
 
+async fn replace_node_key(pool: &DbPool, node: i64) -> NodeKey {
+    let key = NodeKey::generate();
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query("UPDATE nodes SET public_key=$1 WHERE id=$2")
+                .bind(key.public_hex())
+                .bind(node)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query("UPDATE nodes SET public_key=$1 WHERE id=$2")
+                .bind(key.public_hex())
+                .bind(node)
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+    }
+    key
+}
+
+async fn term_directory_admission(pool: &DbPool) {
+    use codeyard::backend::cluster::{self, context::term_path};
+    let f = setup(pool, 2, "2").await;
+    let root = tempfile::tempdir().unwrap();
+    let key = replace_node_key(pool, f.primary).await;
+    let mut context = cluster::NodeContext {
+        pool: Some(pool.clone()),
+        iroh: cluster::IrohDialer::new(cluster::Relay::Off, key.clone()),
+        key,
+        node_id: f.primary,
+        repos_path: root.path().to_owned(),
+        peers: Default::default(),
+        unreachable: Default::default(),
+        ci_replicas: Default::default(),
+    };
+    let repository = db::repositories::records::get_repository_by_id(pool, f.repo)
+        .await
+        .unwrap()
+        .unwrap();
+    let uuid = cluster::rpc::repository_uuid(&repository.disk_path).unwrap();
+    assert!(context
+        .repository_path(f.repo, uuid, true, None)
+        .await
+        .is_err());
+    let path = term_path(root.path(), uuid, 1);
+    std::fs::create_dir_all(&path).unwrap();
+    git2::Repository::init_bare(&path).unwrap();
+    let (admitted, term) = context
+        .repository_path(f.repo, uuid, false, None)
+        .await
+        .unwrap();
+    assert_eq!(admitted, path);
+    assert_eq!(term, Some(1));
+    let store = context.repository_store(&repository, true).await.unwrap();
+    assert!(store.refs().await.unwrap().is_empty());
+    let mut wrong_identity = context.clone();
+    wrong_identity.key = NodeKey::generate();
+    assert!(wrong_identity
+        .repository_path(f.repo, uuid, true, Some(1))
+        .await
+        .is_err());
+    context.node_id = f.voters[1];
+    context.key = replace_node_key(pool, context.node_id).await;
+    assert!(context
+        .repository_path(f.repo, uuid, true, Some(1))
+        .await
+        .is_ok());
+    assert!(context
+        .repository_path(f.repo, uuid, false, Some(1))
+        .await
+        .is_err());
+    assert!(writes::switch_write_family(
+        pool,
+        f.repo,
+        f.primary,
+        &[(f.repo, 1)],
+        f.voters[1],
+        &f.voters
+    )
+    .await
+    .unwrap());
+    assert!(context
+        .repository_path(f.repo, uuid, true, Some(1))
+        .await
+        .is_err());
+    assert!(store.refs().await.is_err());
+    for voter in &f.voters {
+        assert!(writes::mark_write_applied(pool, f.repo, *voter, 2, 0)
+            .await
+            .unwrap());
+    }
+    assert!(writes::enable_write_family(pool, &[(f.repo, 2)])
+        .await
+        .unwrap());
+    let next = term_path(root.path(), uuid, 2);
+    std::fs::create_dir_all(&next).unwrap();
+    git2::Repository::init_bare(&next).unwrap();
+    assert!(context
+        .repository_path(f.repo, uuid, true, Some(1))
+        .await
+        .is_err());
+    assert!(store.refs().await.is_err());
+    assert_eq!(
+        context
+            .repository_path(f.repo, uuid, false, Some(2))
+            .await
+            .unwrap()
+            .0,
+        next
+    );
+    assert!(path.exists());
+}
+
+async fn quorum_promotion_fences(pool: &DbPool) {
+    use codeyard::backend::cluster::replicas;
+    let f = setup(pool, 2, "2").await;
+    let target = f.voters[1];
+    let node = db::cluster::get_node_by_id(pool, target)
+        .await
+        .unwrap()
+        .unwrap();
+    db::cluster::record_node_heartbeat(pool, &node.public_key, "test", "{}", Some(1024))
+        .await
+        .unwrap();
+    assert!(replicas::promote(pool, f.repo, Some(target), true)
+        .await
+        .is_err());
+    let before = writes::recovery_view(pool, f.repo).await.unwrap();
+    assert_eq!(
+        (before.primary_id, before.term, before.serving),
+        (f.primary, 1, true)
+    );
+    let pending = replicas::promote(pool, f.repo, Some(target), false)
+        .await
+        .unwrap_err();
+    assert!(pending.is::<replicas::RecoveryPending>());
+    let view = writes::recovery_view(pool, f.repo).await.unwrap();
+    assert_eq!(
+        (view.primary_id, view.term, view.serving),
+        (target, 2, false)
+    );
+    assert!(view
+        .voters
+        .iter()
+        .all(|voter| voter.term == 2 && voter.applied_version == -1));
+    assert!(replicas::promote(pool, f.repo, Some(target), false)
+        .await
+        .unwrap_err()
+        .is::<replicas::RecoveryPending>());
+    assert_eq!(writes::recovery_view(pool, f.repo).await.unwrap().term, 2);
+    assert!(replicas::promote(pool, f.repo, Some(f.primary), false)
+        .await
+        .is_err());
+}
+
+async fn quorum_directory_recovery(pool: &DbPool) {
+    use codeyard::backend::cluster::{self, context::term_path, replicas};
+    let seed = tempfile::tempdir().unwrap();
+    let repo = git2::Repository::init_bare(seed.path()).unwrap();
+    let signature = git2::Signature::now("owner", "owner@example.test").unwrap();
+    let tree_id = repo.treebuilder(None).unwrap().write().unwrap();
+    let tree = repo.find_tree(tree_id).unwrap();
+    let commit = repo
+        .commit(Some(MAIN), &signature, &signature, "initial", &tree, &[])
+        .unwrap();
+    repo.set_head(MAIN).unwrap();
+    let refs = vec![
+        RefValue {
+            name: "HEAD".into(),
+            kind: "symbolic".into(),
+            target: MAIN.into(),
+        },
+        RefValue {
+            name: MAIN.into(),
+            kind: "oid".into(),
+            target: commit.to_string(),
+        },
+    ];
+    let f = setup_with_refs(pool, 2, "2", &refs).await;
+    let row = db::repositories::records::get_repository_by_id(pool, f.repo)
+        .await
+        .unwrap()
+        .unwrap();
+    let uuid = cluster::rpc::repository_uuid(&row.disk_path).unwrap();
+    let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
+    for root in &roots {
+        let path = term_path(root.path(), uuid, 1);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        git2::build::RepoBuilder::new()
+            .bare(true)
+            .clone(seed.path().to_str().unwrap(), &path)
+            .unwrap();
+    }
+    let target = f.voters[1];
+    let node = db::cluster::get_node_by_id(pool, target)
+        .await
+        .unwrap()
+        .unwrap();
+    db::cluster::record_node_heartbeat(pool, &node.public_key, "test", "{}", Some(1024))
+        .await
+        .unwrap();
+    assert!(replicas::promote(pool, f.repo, Some(target), false)
+        .await
+        .unwrap_err()
+        .is::<replicas::RecoveryPending>());
+    assert!(
+        !replicas::recover_family(pool, f.repo, f.primary, roots[0].path())
+            .await
+            .unwrap()
+    );
+    assert!(!writes::recovery_view(pool, f.repo).await.unwrap().serving);
+    assert!(
+        replicas::recover_family(pool, f.repo, target, roots[1].path())
+            .await
+            .unwrap()
+    );
+    assert!(writes::recovery_view(pool, f.repo).await.unwrap().serving);
+    let retired = git2::Repository::open_bare(term_path(roots[0].path(), uuid, 1)).unwrap();
+    retired
+        .reference("refs/heads/stale-child", commit, true, "stale child")
+        .unwrap();
+    for root in &roots {
+        let recovered = git2::Repository::open_bare(term_path(root.path(), uuid, 2)).unwrap();
+        assert_eq!(
+            recovered.find_reference(MAIN).unwrap().target(),
+            Some(commit)
+        );
+        assert_eq!(recovered.head().unwrap().name(), Some(MAIN));
+        assert!(recovered.find_reference("refs/heads/stale-child").is_err());
+        assert!(term_path(root.path(), uuid, 1).exists());
+    }
+}
+
+async fn legacy_publishers_refused(pool: &DbPool) {
+    use codeyard::backend::repositories::store;
+    let f = setup(pool, 2, "2").await;
+    let before = db::repositories::records::get_repository_by_id(pool, f.repo)
+        .await
+        .unwrap()
+        .unwrap()
+        .write_version;
+    let error = coordinator::require_legacy_publisher(pool, f.repo)
+        .await
+        .unwrap_err();
+    assert!(error.is::<coordinator::PublisherUnavailable>());
+    let root = tempfile::tempdir().unwrap();
+    assert!(
+        store::begin_ref_change(pool, f.repo, root.path(), Some(Some(f.primary)))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        db::repositories::records::get_repository_by_id(pool, f.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .write_version,
+        before
+    );
+    let standalone = db::repositories::records::create_repository(
+        pool,
+        f.owner,
+        "standalone",
+        None,
+        false,
+        &format!("/srv/repos/{}.git", Uuid::new_v4()),
+    )
+    .await
+    .unwrap();
+    coordinator::require_legacy_publisher(pool, standalone.id)
+        .await
+        .unwrap();
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query("UPDATE node_configuration SET write_quorum=NULL WHERE id=1")
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query("UPDATE node_configuration SET write_quorum=NULL WHERE id=1")
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+    }
+    coordinator::require_legacy_publisher(pool, f.repo)
+        .await
+        .unwrap();
+    let change = store::begin_ref_change(pool, f.repo, root.path(), Some(Some(f.primary)))
+        .await
+        .unwrap();
+    drop(change);
+    assert_eq!(
+        db::repositories::records::get_repository_by_id(pool, f.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .write_version,
+        before + 1
+    );
+}
+
 macro_rules! engine_pair {
     ($sqlite:ident, $postgres:ident, $contract:ident) => {
         #[tokio::test]
@@ -1113,6 +1423,26 @@ engine_pair!(
     coordinator_duplicate_begin
 );
 engine_pair!(sqlite_two_of_two, postgres_two_of_two, two_voters);
+engine_pair!(
+    sqlite_legacy_publishers_refused,
+    postgres_legacy_publishers_refused,
+    legacy_publishers_refused
+);
+engine_pair!(
+    sqlite_quorum_promotion_fences,
+    postgres_quorum_promotion_fences,
+    quorum_promotion_fences
+);
+engine_pair!(
+    sqlite_quorum_directory_recovery,
+    postgres_quorum_directory_recovery,
+    quorum_directory_recovery
+);
+engine_pair!(
+    sqlite_term_directory_admission,
+    postgres_term_directory_admission,
+    term_directory_admission
+);
 engine_pair!(sqlite_two_of_three, postgres_two_of_three, three_voters);
 engine_pair!(
     sqlite_duplicate_vote,

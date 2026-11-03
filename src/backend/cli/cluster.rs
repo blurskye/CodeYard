@@ -102,7 +102,7 @@ pub enum Command {
         #[arg(long, value_name = "NODE", conflicts_with = "repository")]
         all_from: Option<String>,
         /// Accept losing the writes that the new primary does not hold, and leave behind
-        /// fork family members that have no copy there
+        /// fork family members that have no copy there; unavailable with write quorum
         #[arg(long)]
         force: bool,
     },
@@ -320,6 +320,8 @@ pub async fn run(
                 to.as_deref(),
                 all_from.as_deref(),
                 *force,
+                state_dir,
+                repos_path,
             )
             .await
         }
@@ -409,6 +411,14 @@ async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     let repository = replicas::repository_name(pool, promotion.repository).await?;
     let from = node_name(pool, promotion.from).await?;
     let to = node_name(pool, promotion.to).await?;
+    if db::cluster::writes::write_settings(pool)
+        .await?
+        .write_quorum
+        .is_some()
+    {
+        println!("{repository}: '{to}' is serving canonical refs in the new term.");
+        return Ok(());
+    }
     println!(
         "{repository}: '{to}' is the primary now. '{from}' keeps a copy and catches up within {} seconds.",
         replicas::INTERVAL.as_secs()
@@ -422,12 +432,57 @@ async fn report_promotion(pool: &DbPool, promotion: Promotion) -> Result<()> {
     Ok(())
 }
 
+async fn promote_with_recovery(
+    pool: &DbPool,
+    repository: i64,
+    to: Option<i64>,
+    force: bool,
+    state_dir: &Path,
+    repos_path: &Path,
+) -> Result<Vec<Promotion>> {
+    let from = db::repositories::records::get_repository_by_id(pool, repository)
+        .await?
+        .and_then(|row| row.storage_node_id)
+        .context("repository has no primary")?;
+    let error = match replicas::promote(pool, repository, to, force).await {
+        Ok(promotions) => return Ok(promotions),
+        Err(error) => error,
+    };
+    let Some(target) = error
+        .downcast_ref::<replicas::RecoveryPending>()
+        .map(|pending| pending.target)
+    else {
+        return Err(error);
+    };
+    let Some(key) = load_existing(state_dir)? else {
+        return Err(error);
+    };
+    let Some(local) = db::cluster::get_node_by_public_key(pool, &key.public_hex()).await? else {
+        return Err(error);
+    };
+    if !replicas::recover_family(pool, repository, local.id, repos_path).await? {
+        return Err(error);
+    }
+    Ok(db::cluster::writes::write_family(pool, repository)
+        .await?
+        .into_iter()
+        .map(|(repository, _, _)| Promotion {
+            repository,
+            from,
+            to: target,
+            lost_writes: 0,
+        })
+        .collect())
+}
+
 async fn promote_command(
     pool: &DbPool,
     repository: Option<&str>,
     to: Option<&str>,
     all_from: Option<&str>,
     force: bool,
+    state_dir: &Path,
+    repos_path: &Path,
 ) -> Result<()> {
     match (repository, all_from) {
         (Some(name), None) => {
@@ -441,7 +496,9 @@ async fn promote_command(
                 Some(node) => Some(node_id(pool, node).await?),
                 None => None,
             };
-            for promotion in replicas::promote(pool, row.id, to, force).await? {
+            for promotion in
+                promote_with_recovery(pool, row.id, to, force, state_dir, repos_path).await?
+            {
                 report_promotion(pool, promotion).await?;
             }
             Ok(())
@@ -464,7 +521,9 @@ async fn promote_command(
                 if !is_primary(pool, repository, primary).await? {
                     continue;
                 }
-                match replicas::promote(pool, repository, None, force).await {
+                match promote_with_recovery(pool, repository, None, force, state_dir, repos_path)
+                    .await
+                {
                     Ok(promotions) => {
                         for promotion in promotions {
                             report_promotion(pool, promotion).await?;
@@ -476,7 +535,25 @@ async fn promote_command(
             // Check every remaining family member, including one whose root moved before
             // a later member failed. Successful later retries are not counted as failures.
             let remaining = db::cluster::list_primary_paths(pool, primary).await?;
-            let failed = remaining.len();
+            let mut fenced = 0;
+            if db::cluster::writes::write_settings(pool)
+                .await?
+                .write_quorum
+                .is_some()
+            {
+                for (repository, error) in &failures {
+                    if !remaining.iter().any(|(id, _)| id == repository)
+                        && !db::cluster::writes::recovery_view(pool, *repository)
+                            .await?
+                            .serving
+                    {
+                        let name = replicas::repository_name(pool, *repository).await?;
+                        eprintln!("{name}: {error:#}");
+                        fenced += 1;
+                    }
+                }
+            }
+            let failed = remaining.len() + fenced;
             for (repository, _) in remaining {
                 let name = replicas::repository_name(pool, repository).await?;
                 if let Some((_, error)) = failures.iter().find(|(id, _)| *id == repository) {

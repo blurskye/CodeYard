@@ -25,7 +25,7 @@ use crate::backend::{
         NodeContext,
     },
     db::{self, models::Repository},
-    git,
+    git::{self, repository::process},
     repositories::protection::WriteVia,
 };
 use std::{collections::HashMap, path::Path, time::Instant};
@@ -69,10 +69,13 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
         Some(id) if context.is_some_and(|context| context.node_id == id) => {
             let context = context.expect("this node owns the repository");
             match rpc::repository_uuid(&repo.disk_path) {
-                Ok(uuid) => RepoStore::on_node(
-                    &primary_path(&context.repos_path, uuid).to_string_lossy(),
-                    id,
-                ),
+                Ok(uuid) => RepoStore(Backend::Local(
+                    local::LocalStore::new(
+                        &primary_path(&context.repos_path, uuid).to_string_lossy(),
+                        Some(Some(id)),
+                    )
+                    .with_context(context, repo.id),
+                )),
                 Err(_) => RepoStore(Backend::Remote(remote::RemoteStore::new(
                     &repo.disk_path,
                     id,
@@ -89,6 +92,33 @@ pub fn repo_store(repo: &Repository, context: Option<&NodeContext>) -> RepoStore
 }
 
 impl RepoStore {
+    pub(crate) async fn recover_term(
+        pool: &crate::backend::db::DbPool,
+        repository: i64,
+        node: i64,
+        root: &Path,
+    ) -> anyhow::Result<()> {
+        tokio::time::timeout(
+            process::RPC_TIMEOUT,
+            local::recover_term(pool, repository, node, root),
+        )
+        .await?
+    }
+
+    /// Storage RPC admission keeps the database and captured term with the local store.
+    pub(crate) async fn on_context(
+        disk_path: &str,
+        repository: i64,
+        context: &NodeContext,
+    ) -> Result<Self, RepoError> {
+        let local = local::LocalStore::new(disk_path, Some(Some(context.node_id)))
+            .with_context(context, repository);
+        if local.admitted_path(true).await? != Path::new(disk_path) {
+            return Err(RepoError::storage_node_unavailable());
+        }
+        Ok(Self(Backend::Local(local)))
+    }
+
     /// CI workers receive a storage node and UUID, not a repository database row.
     pub fn remote(uuid: uuid::Uuid, node_id: i64, context: &NodeContext) -> Self {
         Self(Backend::Remote(remote::RemoteStore::new(
@@ -2561,7 +2591,6 @@ impl RepoStore {
 
     /// A slot for one Git session: a local one runs Git here, a remote one forwards it.
     pub(crate) async fn session_permit(&self) -> anyhow::Result<tokio::sync::OwnedSemaphorePermit> {
-        use crate::backend::git::repository::process;
         match &self.0 {
             Backend::Local(_) => process::session_permit().await,
             Backend::Remote(_) => process::forwarding_permit().await,
