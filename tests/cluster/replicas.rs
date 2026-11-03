@@ -200,6 +200,25 @@ async fn check_replica_rules(pool: &DbPool) {
     assert!(!db::cluster::replica_is_current(pool, repo, c)
         .await
         .unwrap());
+    let row = db::repositories::records::get_repository_by_id(pool, repo)
+        .await
+        .unwrap()
+        .unwrap();
+    let uuid = rpc::repository_uuid(&row.disk_path).unwrap().to_string();
+    assert_eq!(
+        db::cluster::read_candidates(pool, &uuid, a).await.unwrap(),
+        vec![(b, false)]
+    );
+    db::cluster::set_applied_version(pool, repo, b, a, 1)
+        .await
+        .unwrap();
+    assert!(db::cluster::read_candidates(pool, &uuid, a)
+        .await
+        .unwrap()
+        .is_empty());
+    db::cluster::set_applied_version(pool, repo, b, a, 2)
+        .await
+        .unwrap();
     let held = db::cluster::list_held_replicas(pool, b).await.unwrap();
     assert_eq!(held.len(), 1);
     assert_eq!(held[0].repository_id, repo);
@@ -3239,6 +3258,65 @@ async fn reads_are_served_by_a_copy_while_the_primary_is_down() {
     assert!(status.success());
     assert!(pack.windows(4).any(|window| window == b"PACK"));
 
+    web.shutdown().await;
+    copy.shutdown().await;
+}
+
+#[tokio::test]
+async fn git_fetches_use_the_primary_instead_of_a_lagging_copy() {
+    let database = native::PostgresDatabase::new().await;
+    db::cluster::enable_cluster(&database.pool).await.unwrap();
+    let root = tempfile::tempdir().unwrap();
+    let (primary, copy) = two_storage_nodes(&database.pool, root.path()).await;
+    let web = web_node(&database.pool, root.path()).await;
+    let repo = create_repository(&database.pool, &primary, "current-clone").await;
+    let uuid = rpc::repository_uuid(&repo.repository.disk_path).unwrap();
+    let base = repo.save("main", "README.md", "unborn", b"base\n").await;
+    assert_current(&primary, &copy, &repo).await;
+    let head = repo.save("main", "README.md", &base, b"new\n").await;
+    let primary_id = primary.context.node_id;
+    let input = fetch_input(&head);
+    let mut pack = Vec::new();
+    let (_, status) = web
+        .context
+        .git_session(
+            primary_id,
+            request(
+                uuid,
+                Operation::GitSession(GitSession::new(GitService::UploadPack, true)),
+            ),
+            GitStreams {
+                input: &mut input.as_bytes(),
+                output: &mut pack,
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .unwrap();
+    assert!(status.success());
+    assert!(pack.windows(4).any(|window| window == b"PACK"));
+    primary.shutdown().await;
+
+    // Even a fetch for an older commit cannot use a behind copy.
+    let input = fetch_input(&base);
+    pack.clear();
+    assert!(web
+        .context
+        .git_session(
+            primary_id,
+            request(
+                uuid,
+                Operation::GitSession(GitSession::new(GitService::UploadPack, true))
+            ),
+            GitStreams {
+                input: &mut input.as_bytes(),
+                output: &mut pack,
+                errors: &mut tokio::io::sink(),
+            },
+        )
+        .await
+        .is_err());
+    assert!(pack.is_empty());
     web.shutdown().await;
     copy.shutdown().await;
 }

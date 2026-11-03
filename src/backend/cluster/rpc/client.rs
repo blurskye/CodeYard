@@ -315,8 +315,8 @@ impl NodeContext {
 
     /// The nodes that may answer a read after `primary` gave no reply, best first: the
     /// repository's primary if it moved while the request waited, then online storage nodes
-    /// other than `primary` whose copy has been brought up to date at least once, the most
-    /// recently updated first. Only looked up after such a failure. Each node is paired with
+    /// other than `primary` whose copy has applied the repository's current write version.
+    /// Only looked up after such a failure. Each node is paired with
     /// whether it is the primary that moved.
     pub(crate) async fn read_copies(&self, repository: Uuid, primary: i64) -> Vec<(i64, bool)> {
         let Ok(pool) = self.database() else {
