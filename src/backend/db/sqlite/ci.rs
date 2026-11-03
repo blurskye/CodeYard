@@ -539,9 +539,6 @@ pub async fn claim_ci_run_on_node(
     claim_queued_run(pool, Some(node_key), worker, mode, trusted_ids, platforms).await
 }
 
-/// How many queued runs one write transaction of a claim looks at.
-const CLAIM_PAGE: usize = 64;
-
 /// The running run a worker holds. A worker runs one job at a time, so a claim retried after a
 /// lost reply, or one that overlapped another claim, gets back the run already claimed.
 async fn held_run(tx: &mut Transaction<'_, Sqlite>, worker: &str) -> Result<Option<CiRun>> {
@@ -583,6 +580,7 @@ async fn claim_queued_run(
         matches!(mode, "local" | "podman"),
         "invalid CI execution mode"
     );
+    let limit = crate::backend::db::ci::claims::candidate_limit()?;
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     // BEGIN IMMEDIATE holds the write lock until this claim commits, so a revocation waits
     // for it. Checking before any run is touched leaves every run queued when the node is
@@ -595,34 +593,16 @@ async fn claim_queued_run(
         tx.commit().await?;
         return Ok((!held.cancel_requested).then_some(held));
     }
-    let mut after = 0_i64;
-    let mut examined = 0;
-    loop {
-        // Other writers get the database between pages of the queue; the scan resumes after
-        // the last run it looked at.
-        if examined == CLAIM_PAGE {
-            tx.commit().await?;
-            tx = pool.begin_with("BEGIN IMMEDIATE").await?;
-            examined = 0;
-            if !runner_node_active(&mut tx, node_key).await? {
-                tx.rollback().await?;
-                return Ok(None);
-            }
-            // Another claim by this worker may have taken a run between the pages.
-            if let Some(held) = held_run(&mut tx, worker).await? {
-                tx.commit().await?;
-                return Ok((!held.cancel_requested).then_some(held));
-            }
-        }
-        examined += 1;
-        let next = sqlx::query_as::<_, CiRun>(
-            "SELECT * FROM ci_runs WHERE status = 'queued' AND NOT approval_required AND id > ?1 ORDER BY id LIMIT 1",
-        )
-        .bind(after)
-        .fetch_optional(&mut *tx)
-        .await?;
-        let Some(run) = next else { break };
-        after = run.id;
+    let candidates: Vec<CiRun> =
+        sqlx::query_as(&crate::backend::db::ci::claims::candidates_sql(false))
+            .bind(node_key)
+            .bind(mode)
+            .bind(serde_json::to_string(platforms)?)
+            .bind(0_i64)
+            .bind(limit)
+            .fetch_all(&mut *tx)
+            .await?;
+    for run in candidates {
         // A private repository's fork switch may have been turned off after admission.
         let fork_refused =
             run.is_fork && !super::action_settings::fork_runs_allowed(&mut tx, run.repo_id).await?;

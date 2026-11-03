@@ -4,6 +4,8 @@ use super::DbPool;
 use anyhow::Result;
 use uuid::Uuid;
 
+pub mod claims;
+
 /// Policy refusals from the native CI enqueue and cancellation transactions.
 #[derive(Debug, thiserror::Error)]
 pub enum CiAdmissionRefusal {

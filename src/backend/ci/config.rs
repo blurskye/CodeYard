@@ -105,6 +105,7 @@ impl CiConfig {
     }
 
     pub fn from_env() -> Result<Self> {
+        crate::backend::db::ci::claims::candidate_limit()?;
         let defaults = Self::default();
         let var = |key: &str| std::env::var(key).ok().filter(|value| !value.is_empty());
         let mode = match var("CI_EXECUTION_MODE").as_deref() {

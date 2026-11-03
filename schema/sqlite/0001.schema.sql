@@ -1160,6 +1160,8 @@ CREATE INDEX idx_auth_login_limits_expiry ON auth_login_limits (window_ends_at);
 
 CREATE INDEX idx_ci_runs_queue ON ci_runs(status, id)
     WHERE status IN ('queued', 'running');
+CREATE INDEX ci_runs_claim_candidates ON ci_runs(id, runner_group, runner_labels, repo_id)
+    WHERE status='queued' AND NOT approval_required;
 CREATE INDEX idx_files_pending ON files(upload_expires_at) WHERE NOT is_active;
 CREATE INDEX idx_notifications_scope ON notifications(user_id, scope_repository_id);
 CREATE INDEX notifications_user_id ON notifications(user_id, id DESC);

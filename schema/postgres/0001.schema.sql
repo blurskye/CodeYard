@@ -1091,6 +1091,8 @@ CREATE TABLE IF NOT EXISTS ci_runs (
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_runs_pull_revision ON ci_runs(pull_request_id, branch, head_sha, workflow_path, attempt)
     WHERE event = 'pull_request' AND pull_request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_queue ON ci_runs(status, id) WHERE status IN ('queued', 'running');
+CREATE INDEX ci_runs_claim_candidates ON ci_runs(id) INCLUDE (runner_group, runner_labels, repo_id)
+    WHERE status='queued' AND NOT approval_required;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_repo_created_at ON ci_runs(repo_id, created_at DESC);
 CREATE INDEX ci_runs_log_expiry ON ci_runs(log_expires_at,id) WHERE log_expires_at IS NOT NULL AND log_lines>0;
 CREATE INDEX IF NOT EXISTS idx_ci_runs_user_created_at ON ci_runs(triggered_by_id, created_at DESC);

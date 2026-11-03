@@ -397,6 +397,62 @@ async fn a_long_line_of_denied_runs_does_not_hide_later_work(db: &Database) {
     }
 }
 
+async fn claim_filters_incompatible_jobs_before_its_candidate_bound(db: &Database) {
+    let w = world(db, "bounded_claim").await;
+    let mut queued = Vec::new();
+    for _ in 0..200 {
+        queued.push(db.enqueue(w.repo, w.owner, false, &[]).await);
+    }
+    db.execute(
+        "UPDATE ci_runs SET runner_labels='[\"incompatible-platform\"]' WHERE repo_id=$1 AND id<=$2",
+        &[w.repo, queued[149].id],
+    ).await;
+    let claimed = db::ci::claim_ci_run(db.pool(), WORKER, "local", &[], &platforms())
+        .await
+        .unwrap()
+        .expect("incompatible jobs do not consume the candidate limit");
+    assert_eq!(claimed.id, queued[150].id);
+    assert_eq!(
+        db.scalar(
+            "SELECT COUNT(*) FROM ci_runs WHERE repo_id=$1 AND id<=$2 AND status='queued'",
+            &[w.repo, queued[149].id]
+        )
+        .await,
+        150
+    );
+    db.execute(
+        "UPDATE ci_runs SET approval_required=TRUE WHERE repo_id=$1 AND status='queued'",
+        &[w.repo],
+    )
+    .await;
+
+    let limit = db::ci::claims::candidate_limit().unwrap();
+    let mut denied = Vec::new();
+    for _ in 0..=limit {
+        denied.push(db.enqueue(w.repo, w.collab, false, &[w.collab]).await);
+    }
+    // Bypass eager revocation cancellation to exercise the claim's bounded live rechecks.
+    db.execute(
+        "DELETE FROM repo_access WHERE repo_id=$1 AND user_id=$2",
+        &[w.repo, w.collab],
+    )
+    .await;
+    assert!(db::ci::claim_ci_run(
+        db.pool(),
+        "bounded-worker",
+        "local",
+        &[w.collab],
+        &platforms()
+    )
+    .await
+    .unwrap()
+    .is_none());
+    for run in &denied[..limit as usize] {
+        assert_cancelled(&db.run(run.run_id).await, ACCESS_LOST);
+    }
+    assert_eq!(db.run(denied[limit as usize].run_id).await.status, "queued");
+}
+
 // ---- Revocations stop queued and running runs ----
 
 async fn revocations_stop_queued_and_running_runs(db: &Database) {
@@ -2364,6 +2420,7 @@ on_both_engines!(
     ci_lookup_indexes_and_one_deployment_per_run,
     claim_checks_the_starters_access_again,
     a_long_line_of_denied_runs_does_not_hide_later_work,
+    claim_filters_incompatible_jobs_before_its_candidate_bound,
     revocations_stop_queued_and_running_runs,
     banning_the_last_owner_stops_organization_work,
     forcing_the_last_owner_password_stops_organization_work,
