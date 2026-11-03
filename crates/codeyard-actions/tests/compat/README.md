@@ -107,9 +107,9 @@ variables and passed through a private dotenv secret file:
 
 Cache and artifact tests also need working Actions cache/artifact services.
 `ACTIONS_RUNTIME_TOKEN`, `ACTIONS_RUNTIME_URL` and `ACTIONS_RESULTS_URL`, if set,
-are forwarded through the CLI environment. The current runner intentionally does
-not implement those services; these tests measure that gap rather than pretending
-that merely creating the upload source file proves an upload worked. Upload checks
+are forwarded through the CLI environment. The Codeyard server provides these
+services; the standalone CLI does not. `scripts/e2e.sh` checks the pinned actions
+against a real server on SQLite and PostgreSQL. Upload checks
 `artifact-id`; download first uploads its own artifact and verifies its contents;
 cache save checks its success log. Missing credentials, tools or services cause an
 explicit failure when an ignored test is requested, never a successful early exit.
