@@ -22,7 +22,7 @@ dioxus-history = "=0.7.10"
 serde.workspace = true
 serde_json.workspace = true
 url = "2"
-futures-util = "0.3.31"
+futures-util = { version = "0.3.31", features = ["sink"] }
 chrono.workspace = true
 uuid = { version = "1", default-features = false, features = ["serde"] }
 bytes.workspace = true

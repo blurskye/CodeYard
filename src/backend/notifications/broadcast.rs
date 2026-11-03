@@ -202,7 +202,7 @@ async fn poll(
             _ = stop.changed() => return,
             value = tokio::time::timeout(Duration::from_secs(5), cursor.next(&pool)) => value,
         };
-        match received {
+        let full = match received {
             Ok(Ok(payloads)) => {
                 let full = payloads.len() == events::BATCH_SIZE;
                 wait = if payloads.is_empty() {
@@ -217,9 +217,7 @@ async fn poll(
                         }
                     }
                 }
-                if full {
-                    continue;
-                }
+                full
             }
             _ => {
                 tracing::warn!("Notification polling unavailable");
@@ -247,18 +245,27 @@ async fn poll(
                         break;
                     }
                 }
+                false
             }
-        }
+        };
         if tokio::time::Instant::now() >= prune_at {
             tokio::select! {
                 _ = stop.changed() => return,
                 result = tokio::time::timeout(Duration::from_secs(5), events::prune(&pool)) => {
-                    if !matches!(result, Ok(Ok(()))) {
-                        tracing::warn!("Notification hint cleanup unavailable");
-                    }
+                    prune_at = match result {
+                        Ok(Ok(1024)) => tokio::time::Instant::now(),
+                        result => {
+                            if !matches!(result, Ok(Ok(_))) {
+                                tracing::warn!("Notification hint cleanup unavailable");
+                            }
+                            tokio::time::Instant::now() + Duration::from_secs(60)
+                        }
+                    };
                 }
             }
-            prune_at = tokio::time::Instant::now() + Duration::from_secs(60);
+        }
+        if full {
+            continue;
         }
         tokio::select! {
             _ = stop.changed() => return,

@@ -633,9 +633,11 @@ remembered active transactions prevent late commits from being skipped without
 a shared commit lock. An outage closes local subscriptions so browsers reload
 the inbox when reconnecting.
 
-The node fans hints out in memory and ignores its own announcements. Existing
-socket delivery still checks the original live session and current repository
-access before loading content or counts. CI status and logs remain database reads.
+The node fans hints out in memory and ignores its own announcements. The signed-in
+header owns one WebSocket and refreshes authorized page data on a hint or reconnect;
+there is no per-browser polling timer. Socket delivery checks the original live
+session and current repository access before loading content or counts. CI status
+and logs remain database reads.
 
 ### Schema additions
 

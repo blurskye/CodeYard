@@ -182,9 +182,8 @@ async fn comment_reaches_connected_clients(pg: bool) {
     queries.0.store(0, Ordering::SeqCst);
     tokio::time::sleep(Duration::from_millis(1100)).await;
     let idle_queries = queries.0.load(Ordering::SeqCst);
-    let max_queries = if pg { 3 } else { 6 };
     assert!(
-        (1..=max_queries).contains(&idle_queries),
+        (1..=3).contains(&idle_queries),
         "100 idle clients issued {idle_queries} cursor queries"
     );
 

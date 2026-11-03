@@ -753,10 +753,12 @@ CREATE TABLE download_rate_limit (
 
 CREATE TABLE notification_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
+    transaction_id INTEGER,
     payload TEXT NOT NULL CHECK (length(CAST(payload AS BLOB))<=4096),
     created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%f000Z','now'))
 );
 CREATE INDEX notification_events_created ON notification_events(created_at,id);
+CREATE INDEX notification_events_transaction ON notification_events(transaction_id,id);
 
 CREATE TABLE notifications (
     id INTEGER PRIMARY KEY AUTOINCREMENT CHECK (id IS NULL OR typeof(id)='integer'),
