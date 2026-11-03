@@ -50,15 +50,15 @@ class Scripts(unittest.TestCase):
         return path
 
     def test_bundle_output_equality_aliases_and_ancestors(self):
-        for name in ["scripts", "src/webui/assets"]:
+        for name in ["scripts", "webui/src/assets"]:
             (self.work / name).mkdir(parents=True)
         for name in ["build-webui.sh", "check-web-dependencies.py"]:
             shutil.copy(ROOT / "scripts" / name, self.work / "scripts" / name)
-        (self.work / "src/webui/assets/tailwind.css").write_text("css\n")
+        (self.work / "webui/src/assets/tailwind.css").write_text("css\n")
         self.env["TAILWIND"] = str(self.executable(self.work / "bin/tailwind", '''#!/usr/bin/env bash
 if [[ $1 == --help ]]; then echo v4.1.18; exit; fi
 while (($#)); do
-    if [[ $1 == -o ]]; then cp src/webui/assets/tailwind.css "$2"; exit; fi
+    if [[ $1 == -o ]]; then cp webui/src/assets/tailwind.css "$2"; exit; fi
     shift
 done
 '''))
@@ -75,7 +75,7 @@ out=$CARGO_TARGET_DIR/dx/codeyard/$mode/web/public
 mkdir -p "$out"
 printf bundle >"$out/index.html"
 '''))
-        self.executable(self.work / "bin/cargo", "#!/bin/sh\nprintf 'codeyard v1.0\ndioxus-web v0.7.10\n'\n")
+        self.executable(self.work / "bin/cargo", "#!/bin/sh\nprintf 'codeyard-webui v1.0\ndioxus-web v0.7.10\n'\n")
         self.env["PATH"] = str(self.work / "bin") + ":" + self.env["PATH"]
         self.env["CARGO_TARGET_DIR"] = str(self.work / "target")
         public = self.work / "target/dx/codeyard/release/web/public"

@@ -313,7 +313,7 @@ and set `CI_PODMAN_SOCKET` if your user id is not 1000.
 Early-stage software. It has not had an independent security audit. Read the known limits in
 [CHANGELOG.md](CHANGELOG.md) before you expose an installation to people you do not trust.
 
-Artwork and its provenance are in `src/webui/assets/` and
+Artwork and its provenance are in `webui/src/assets/` and
 [branding/README.md](branding/README.md).
 
 ## License

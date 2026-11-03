@@ -1,11 +1,9 @@
 # Crate split plan
 
-Goal: edit one area and rebuild only that area. Today `codeyard` is one crate of about
-401,000 lines (`src/backend` 340k, `src/webui` 58k), so any edit recompiles all of it, and a
-cold build cannot use more than a few cores until the end. Behaviour does not change.
-
-The split starts after the audit merge has passed its gate and is pushed. It replaces the
-"one application, root package" rule in `AGENTS.md`; stage 1 updates that file.
+Goal: edit one area and rebuild only that area. Before the split, `codeyard` was one
+crate of about 401,000 lines (server 340k, views 58k), so any edit recompiled all of it.
+The views now live in `webui/` and their pure shared helpers in `backend/support/`.
+Behaviour does not change; this remains one application and one binary.
 
 ## Layout
 

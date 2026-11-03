@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Reject native authority in the actual resolved browser dependency graph.
 
-Feed `cargo tree --locked -p codeyard --target wasm32-unknown-unknown
+Feed `cargo tree --locked -p codeyard-webui --target wasm32-unknown-unknown
 --no-default-features --features web --edges normal --prefix none --format '{p}'`.
 This does not assert a host graph contains no WASM-support crates: Dioxus may
 legitimately depend on shared types there without enabling the web renderer.
@@ -19,8 +19,8 @@ for line in sys.stdin:
     match = re.match(r'^([A-Za-z0-9_-]+) v[0-9]', line.strip())
     if match:
         packages.add(match[1])
-if 'codeyard' not in packages or 'dioxus-web' not in packages:
-    raise SystemExit('Expected an actual root-package web dependency graph, not empty/skipped evidence')
+if 'codeyard-webui' not in packages or 'dioxus-web' not in packages:
+    raise SystemExit('Expected an actual webui dependency graph, not empty/skipped evidence')
 violations = sorted(packages & FORBIDDEN)
 if violations:
     raise SystemExit('Browser dependency graph imports native authority: ' + ', '.join(violations))

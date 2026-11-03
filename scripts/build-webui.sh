@@ -6,7 +6,7 @@
 # (TAILWIND, version 4.1.18), plus Rust:
 #
 #   DX=/path/to/dx TAILWIND=/path/to/tailwindcss bash scripts/build-webui.sh [release|debug]
-#   TAILWIND=/path/to/tailwindcss bash scripts/build-webui.sh css > src/webui/assets/tailwind.css
+#   TAILWIND=/path/to/tailwindcss bash scripts/build-webui.sh css > webui/src/assets/tailwind.css
 #
 # release|debug  Check that the committed CSS is what Tailwind generates, then build the
 #                bundle into $WEBUI_DIST (default <checkout>/dist/webui): index.html,
@@ -16,7 +16,7 @@
 # check          Check committed CSS without building the browser bundle.
 # css            Print the CSS Tailwind generates from the views to stdout (progress
 #                goes to stderr), changing nothing. Redirect it into
-#                src/webui/assets/tailwind.css to refresh the committed copy.
+#                webui/src/assets/tailwind.css to refresh the committed copy.
 set -euo pipefail
 
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -32,7 +32,7 @@ DX=${DX:-$(command -v dx || true)}
 TAILWIND=${TAILWIND:-$(command -v tailwindcss || true)}
 TARGET_DIR=${CARGO_TARGET_DIR:-$ROOT/target}
 OUT=${WEBUI_DIST:-$ROOT/dist/webui}
-CSS=src/webui/assets/tailwind.css
+CSS=webui/src/assets/tailwind.css
 
 [[ -x $TAILWIND ]] || { echo "Tailwind not found: set TAILWIND to the standalone 4.1.18 binary" >&2; exit 1; }
 tailwind_help=$("$TAILWIND" --help 2>&1 || true)
@@ -55,7 +55,7 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-"$TAILWIND" -i src/webui/input.css -o "$css_tmp" --minify >&2
+"$TAILWIND" -i webui/src/input.css -o "$css_tmp" --minify >&2
 
 if [[ $MODE == css ]]; then
     cat "$css_tmp"
@@ -107,7 +107,7 @@ dx_version=$("$DX" --version)
 
 echo "== browser dependency graph"
 # The browser build must not pull in the server crates (database, git, SSH, S3).
-cargo tree --locked -p codeyard --target wasm32-unknown-unknown --no-default-features \
+cargo tree --locked -p codeyard-webui --target wasm32-unknown-unknown --no-default-features \
     --features web --edges normal --prefix none --format '{p}' | python3 scripts/check-web-dependencies.py
 
 echo "== dx build ($MODE)"

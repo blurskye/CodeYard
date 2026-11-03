@@ -13,7 +13,8 @@ nodes, and the cluster's current limits.
 
 ```
 src/main.rs                 CLI entrypoint: serve, init, user/key/repo/cluster admin, ssh helper
-src/lib.rs                  backend (native only) + webui (native and wasm)
+src/lib.rs                  remaining backend (native only)
+backend/support/            pure helpers shared by server and browser
 
 src/backend/
   app.rs                    AppState: pool, repos path, object store, CI, broadcasters
@@ -76,7 +77,7 @@ src/backend/
     notifications/            records/inbox/delivery and bounded event cursor polling
                               on both PostgreSQL and SQLite
 
-src/webui/                  Dioxus views shared by SSR and the browser
+webui/src/                  Dioxus views shared by SSR and the browser
   pages/                      feature view modules (no data access, no policy),
                               including separate actions/ and notifications.rs
   components/ navigation/    shell/theme/copy/forms; scoped model loading/navigation
@@ -91,8 +92,8 @@ schema/                     SQL applied by db/{postgres,sqlite}/migrations.rs
 
 - **Page:** the resource adapter under `api/` uses `PageContext`, checks permissions,
   loads qualified DB operations and `repo_store(&repo, context)`, renders a
-  `webui::pages::*` view to HTML and
-  embeds the same view data for hydration. Markdown (`webui/components/markdown.rs`) links `#N`,
+  `codeyard_webui::pages::*` view to HTML and
+  embeds the same view data for hydration. Markdown (`webui/src/components/markdown.rs`) links `#N`,
   `@user`, commit SHAs and `owner/repo#N` only as far as the page's resolved references
   (`api/repos/references.rs`) allow, so the server and the browser agree.
 - **Editor save / API file write:** `repositories::files::write_file_bytes` →
@@ -609,7 +610,7 @@ explicit inputs to the store's receive operation.
 `local_path_for_spawning_git` is only for the host OpenSSH streaming gateway;
 a remote store refuses it with a message directing clients to HTTP or built-in SSH.
 
-No `disk_path` reaches page data: the `src/webui` page models have no path
+No `disk_path` reaches page data: the `webui/src` page models have no path
 field, and their tests assert the key never appears in serialized page data.
 
 ### Cluster flows

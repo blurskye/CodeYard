@@ -15,7 +15,7 @@ class SelectedDatabaseSessions(unittest.TestCase):
 
     def test_native_code_has_no_cache_client_or_placeholder_pool(self):
         forbidden = re.compile(r'\b(?:redis|deadpool_redis)::|\bRedisPool\b|backend::cache|cache::session|\.redis\b|init_redis')
-        for directory in ('src', 'examples'):
+        for directory in ('src', 'backend', 'webui', 'examples'):
             for path in (ROOT / directory).rglob('*.rs'):
                 with self.subTest(path=str(path.relative_to(ROOT))):
                     self.assertIsNone(forbidden.search(path.read_text()))
