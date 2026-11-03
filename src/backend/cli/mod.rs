@@ -201,6 +201,18 @@ async fn run_application(arguments: Vec<OsString>) -> Result<()> {
         .init();
 
     let mut cli = Cli::parse_from(arguments);
+    if matches!(
+        cli.command,
+        Commands::Serve { cluster: true, .. }
+            | Commands::Cluster {
+                action: self::cluster::Command::Enable,
+            }
+    ) {
+        anyhow::ensure!(
+            std::env::var("CODEYARD_EXPERIMENTAL_CLUSTER").as_deref() == Ok("1"),
+            "cluster mode is not ready yet"
+        );
+    }
     if let Commands::Cluster {
         action: self::cluster::Command::Join { ticket, .. },
     } = &mut cli.command

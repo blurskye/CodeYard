@@ -6,6 +6,10 @@ Actions jobs ([CI local runner](CI_LOCAL_RUNNER.md)). Use cluster mode when you 
 and SSH servers separate from the machines that hold the repositories, or several
 repository disks. [Architecture](ARCHITECTURE.md) section 2 explains how it works.
 
+Single node is the supported setup. Cluster mode is experimental: `cluster enable` and
+`serve --cluster` refuse with "cluster mode is not ready yet" unless
+`CODEYARD_EXPERIMENTAL_CLUSTER=1` is set in the environment.
+
 ## Turn on cluster mode
 
 On a machine with the installation's `DATABASE_URL` (PostgreSQL):

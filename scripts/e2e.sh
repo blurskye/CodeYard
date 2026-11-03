@@ -42,6 +42,7 @@
 # `systemd-run --user --scope -p Delegate=yes bash scripts/e2e.sh`. Without one, the checks
 # that need a finished run are reported as SKIP, so the run still exits non-zero.
 set -uo pipefail
+export CODEYARD_EXPERIMENTAL_CLUSTER=1
 
 # Stop a hung run: run again under timeout, once.
 if [[ -z ${E2E_UNDER_TIMEOUT:-} ]]; then
