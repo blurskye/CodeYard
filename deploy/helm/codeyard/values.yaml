@@ -100,7 +100,7 @@ securityContext:
     # Use the container runtime's syscall profile.
     type: RuntimeDefault
 probes:
-  # HTTP readiness/startup/liveness path for web and storage (requires cluster/a).
+  # HTTP readiness/startup/liveness path for web and storage.
   path: /ready
   # Probe interval in seconds.
   periodSeconds: 10
