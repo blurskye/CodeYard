@@ -93,7 +93,10 @@ impl LocalStore {
         Ok(true)
     }
 
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "The repository, actor, updates and both guards are each needed before the quorum vote."
+    )]
     pub(super) async fn prepare_publications<F>(
         &self,
         pool: &db::DbPool,

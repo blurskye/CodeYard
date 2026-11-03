@@ -345,7 +345,10 @@ pub(crate) fn prepare(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
+#[expect(
+    clippy::too_many_arguments,
+    reason = "The repository, actor, reference and both object ids are each needed to check one update."
+)]
 fn prepare_object(
     repo: &Repository,
     repository_id: i64,
