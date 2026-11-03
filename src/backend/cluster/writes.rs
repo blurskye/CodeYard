@@ -17,6 +17,28 @@ const VOTE_INTERVAL: Duration = Duration::from_millis(50);
 #[error("write outcome unknown; fetch before retrying")]
 pub struct OutcomeUnknown;
 
+#[derive(Debug, thiserror::Error)]
+#[error("this publisher is unavailable with write quorum")]
+pub struct PublisherUnavailable;
+
+/// Slice 1 admits only receive-pack. Other publishers must not escape the journal
+/// through the legacy attempted-write counter while their prepared/apply path is absent.
+pub async fn require_legacy_publisher(pool: &DbPool, repo: i64) -> Result<()> {
+    timeout(CONTROL_TIMEOUT, async {
+        let repository = db::repositories::records::get_repository_by_id(pool, repo)
+            .await?
+            .context("repository unavailable")?;
+        if repository.storage_node_id.is_some() {
+            ensure!(
+                journal::write_settings(pool).await?.write_quorum.is_none(),
+                PublisherUnavailable
+            );
+        }
+        Ok(())
+    })
+    .await?
+}
+
 /// A preparation's immutable inputs and local wait budget. The database deadline is
 /// authoritative; the monotonic budget also bounds waiting when a peer's clock differs.
 pub struct PreparedWrite {

@@ -1271,6 +1271,76 @@ async fn quorum_directory_recovery(pool: &DbPool) {
     }
 }
 
+async fn legacy_publishers_refused(pool: &DbPool) {
+    use codeyard::backend::repositories::store;
+    let f = setup(pool, 2, "2").await;
+    let before = db::repositories::records::get_repository_by_id(pool, f.repo)
+        .await
+        .unwrap()
+        .unwrap()
+        .write_version;
+    let error = coordinator::require_legacy_publisher(pool, f.repo)
+        .await
+        .unwrap_err();
+    assert!(error.is::<coordinator::PublisherUnavailable>());
+    let root = tempfile::tempdir().unwrap();
+    assert!(
+        store::begin_ref_change(pool, f.repo, root.path(), Some(Some(f.primary)))
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        db::repositories::records::get_repository_by_id(pool, f.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .write_version,
+        before
+    );
+    let standalone = db::repositories::records::create_repository(
+        pool,
+        f.owner,
+        "standalone",
+        None,
+        false,
+        &format!("/srv/repos/{}.git", Uuid::new_v4()),
+    )
+    .await
+    .unwrap();
+    coordinator::require_legacy_publisher(pool, standalone.id)
+        .await
+        .unwrap();
+    match pool {
+        DbPool::Postgres(raw) => {
+            sqlx::query("UPDATE node_configuration SET write_quorum=NULL WHERE id=1")
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+        DbPool::Sqlite(raw) => {
+            sqlx::query("UPDATE node_configuration SET write_quorum=NULL WHERE id=1")
+                .execute(raw)
+                .await
+                .unwrap();
+        }
+    }
+    coordinator::require_legacy_publisher(pool, f.repo)
+        .await
+        .unwrap();
+    let change = store::begin_ref_change(pool, f.repo, root.path(), Some(Some(f.primary)))
+        .await
+        .unwrap();
+    drop(change);
+    assert_eq!(
+        db::repositories::records::get_repository_by_id(pool, f.repo)
+            .await
+            .unwrap()
+            .unwrap()
+            .write_version,
+        before + 1
+    );
+}
+
 macro_rules! engine_pair {
     ($sqlite:ident, $postgres:ident, $contract:ident) => {
         #[tokio::test]
@@ -1323,6 +1393,11 @@ engine_pair!(
     coordinator_duplicate_begin
 );
 engine_pair!(sqlite_two_of_two, postgres_two_of_two, two_voters);
+engine_pair!(
+    sqlite_legacy_publishers_refused,
+    postgres_legacy_publishers_refused,
+    legacy_publishers_refused
+);
 engine_pair!(
     sqlite_quorum_promotion_fences,
     postgres_quorum_promotion_fences,

@@ -56,6 +56,18 @@ fn unavailable(message: &'static str) -> RepoError {
     RepoError::new(ErrorKind::Unavailable, message)
 }
 
+async fn require_legacy_publisher(pool: &db::DbPool, repo: i64) -> Result<(), RepoError> {
+    crate::backend::cluster::writes::require_legacy_publisher(pool, repo)
+        .await
+        .map_err(|error| {
+            if error.is::<crate::backend::cluster::writes::PublisherUnavailable>() {
+                RepoError::new(ErrorKind::Unavailable, error.to_string())
+            } else {
+                RepoError::authority_unavailable()
+            }
+        })
+}
+
 async fn record_secret_bypasses(
     pool: &db::DbPool,
     repo_id: i64,
@@ -472,6 +484,7 @@ pub async fn begin_ref_change(
     path: &Path,
     node_id: Option<Option<i64>>,
 ) -> Result<RefChange, RepoError> {
+    require_legacy_publisher(pool, repo_id).await?;
     let key = counting_key(path).await;
     let change = {
         let mut counts = ref_change_counts();
@@ -986,6 +999,7 @@ impl LocalStore {
         .await?;
         self.check_contents_grant(pool, repo_id, actor, token)
             .await?;
+        require_legacy_publisher(pool, repo_id).await?;
         let bytes = bytes.to_vec();
         let path = self.path().to_owned();
         let held = lock.clone();
@@ -1061,10 +1075,7 @@ impl LocalStore {
         tokio::fs::create_dir_all(&root)
             .await
             .map_err(|_| refused())?;
-        let store = Self {
-            disk_path,
-            node_id: None,
-        };
+        let store = Self::new(&disk_path, None);
         if let Err(error) = store.initialize(source, default_branch).await {
             // A leftover directory is logged by `remove`; the creation error is the
             // one to report.
@@ -1079,7 +1090,14 @@ impl LocalStore {
         source: Option<&LocalStore>,
         default_branch: &str,
     ) -> Result<(), RepoError> {
-        git::initialize_repository(self.path(), source.map(LocalStore::path), default_branch)
+        if let Some((context, repository)) = &self.context {
+            require_legacy_publisher(context.database()?, *repository).await?;
+        }
+        let source = match source {
+            Some(source) => Some(source.admitted_path(true).await?),
+            None => None,
+        };
+        git::initialize_repository(self.path(), source.as_deref(), default_branch)
             .await
             .map_err(RepoError::from)
     }
@@ -1218,6 +1236,7 @@ impl LocalStore {
         access::credential_user(pool, &authority, true)
             .await
             .map_err(RepoError::from)?;
+        require_legacy_publisher(pool, repo_id).await?;
         tokio::fs::rename(temporary.path(), self.path())
             .await
             .map_err(|error| RepoError::from(anyhow::Error::from(error)))?;
@@ -2477,6 +2496,7 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
+        require_legacy_publisher(pool, repo_id).await?;
         if prepared.web_commit {
             let settings =
                 db::organizations::settings::repository_requires_web_signoff(pool, repo_id)

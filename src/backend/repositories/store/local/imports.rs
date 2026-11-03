@@ -52,6 +52,7 @@ impl LocalStore {
         publication: &Arc<git::locks::PublicationGuard>,
     ) -> Result<(), RepoError> {
         self.import_authority(pool, repo_id, actor, &import).await?;
+        super::require_legacy_publisher(pool, repo_id).await?;
         // Failed preparations may leave intents, not published user refs. They must not
         // make an otherwise empty repository permanently impossible to import into.
         if self
