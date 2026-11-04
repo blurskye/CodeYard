@@ -956,7 +956,7 @@ impl RunQueue {
         }
     }
 
-    pub async fn call<T: serde::de::DeserializeOwned>(
+    async fn call<T: serde::de::DeserializeOwned>(
         &self,
         worker: &str,
         operation: Operation,

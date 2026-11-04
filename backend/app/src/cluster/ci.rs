@@ -355,11 +355,7 @@ impl CiHandler {
         Ok(node.is_some_and(|node| node.roles.iter().any(|role| role == "web" || role == "ssh")))
     }
 
-    pub async fn execute(
-        &self,
-        peer: iroh::PublicKey,
-        request: Request,
-    ) -> Result<serde_json::Value> {
+    async fn execute(&self, peer: iroh::PublicKey, request: Request) -> Result<serde_json::Value> {
         ensure!(
             !request.worker.is_empty()
                 && request.worker.len() <= 128

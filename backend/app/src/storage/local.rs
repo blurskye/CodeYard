@@ -93,7 +93,7 @@ impl LocalStore {
         self.stage(upload, reader, guard).await?.publish().await
     }
 
-    pub async fn stage(
+    pub(crate) async fn stage(
         &self,
         upload: &Upload<'_>,
         mut reader: impl AsyncRead + Unpin,

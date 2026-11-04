@@ -127,7 +127,7 @@ fn asset_body(
     Ok(private_response(response))
 }
 
-struct DownloadRead {
+pub struct DownloadRead {
     reader: std::fs::File,
     buffer: Vec<u8>,
     io_guard: Arc<tokio::sync::OwnedSemaphorePermit>,

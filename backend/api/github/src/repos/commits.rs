@@ -126,7 +126,7 @@ pub(super) fn file_status(status: &str) -> &str {
 }
 
 /// One page of a comparison's files with their patches; the totals cover every file.
-pub(super) struct FilePage {
+pub(crate) struct FilePage {
     pub additions: i32,
     pub deletions: i32,
     pub files: Vec<DiffFileInfo>,

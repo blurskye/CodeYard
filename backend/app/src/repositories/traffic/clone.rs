@@ -138,7 +138,7 @@ impl Observation {
             && state.input.header_len == 0
     }
 }
-pub(crate) struct Input<R> {
+pub struct Input<R> {
     inner: R,
     observation: Observation,
 }
@@ -157,7 +157,7 @@ impl<R: AsyncRead + Unpin> AsyncRead for Input<R> {
         result
     }
 }
-pub(crate) struct Output<W> {
+pub struct Output<W> {
     inner: W,
     observation: Observation,
 }

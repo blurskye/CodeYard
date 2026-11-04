@@ -438,7 +438,7 @@ impl PairingHandler {
 
     /// Turns a request into an answer. The answer for a bad secret never says whether
     /// the invite exists, expired, or was used.
-    pub async fn decide(&self, peer: PublicKey, request: &[u8]) -> JoinReply {
+    async fn decide(&self, peer: PublicKey, request: &[u8]) -> JoinReply {
         let refuse = |reason: &str| JoinReply::Refused {
             reason: reason.to_owned(),
         };

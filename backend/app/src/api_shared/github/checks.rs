@@ -92,9 +92,9 @@ fn pull_value(repo: &Repository, owner: &str, pull: &codeyard_db_actions::checks
 }
 
 pub struct SuiteDocuments<'a> {
-    publisher: &'a Value,
-    head_commit: &'a Value,
-    pull_requests: &'a Value,
+    pub publisher: &'a Value,
+    pub head_commit: &'a Value,
+    pub pull_requests: &'a Value,
 }
 
 pub fn suite_value(
