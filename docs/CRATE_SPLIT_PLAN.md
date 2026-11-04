@@ -92,9 +92,9 @@ and results stay the same. A stage can be the last one.
    (each linking the whole library) can become fewer. Decide the GraphQL question here.
 1. **Layout.** Complete: the runner is in `backend/ci/runner` and generated
    GraphQL types are in `backend/api/github-graphql`; build and generation paths follow them.
-2. **`webui`.** Check also `--target wasm32-unknown-unknown` with the `web` feature.
+2. **`webui`.** Native and `wasm32-unknown-unknown` with the `web` feature check.
 3. **`support` and `git`.** Moved to `backend/support/` and `backend/git/`; server
-   dependencies cut. Integration build and tests are pending.
+   dependencies cut. All workspace targets check; runtime tests are pending.
 4. **`model` and `db/core`.** Shared permissions, bounded YAML parsing and glob
    matching, advisory records and validation, snapshots, credential policies, mail
    configuration/texts and URL helpers now live in `model`. Native CI record/log
@@ -122,7 +122,8 @@ and results stay the same. A stage can be the last one.
    stages are committed before workspace, Clippy and WASM checks begin. Broker
    tests now live in `backend/app/tests/git_broker.rs` and link the app library
    with REST through one `AppState`. Hook barriers have one shared owner.
-   All workspace targets check and Clippy is clean. WASM validation is pending.
+   All workspace targets, Clippy with warnings denied and the web WASM target are
+   clean. Runtime tests remain for the lead.
 
 ## Move only: no behaviour change
 
