@@ -2567,7 +2567,6 @@ async fn collaborators_contract(pg: bool) {
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::membership;
     use codeyard_db_orgs::organizations::profiles;
-    use codeyard_db_orgs::organizations::roles::teams;
     let input = profiles::NewOrganization::new(
         "acme",
         profiles::OrganizationProfile::new(None, None).unwrap(),
@@ -2591,26 +2590,36 @@ async fn collaborators_contract(pg: bool) {
         .unwrap(),
         OrganizationOutcome::Applied(_)
     ));
-    let input = teams::NewTeam::new(
+    let input = codeyard_db_orgs::organizations::teams::NewTeam::new(
         "core",
-        teams::TeamProfile::new("Core", None, teams::TeamPrivacy::Visible).unwrap(),
+        codeyard_db_orgs::organizations::teams::TeamProfile::new(
+            "Core",
+            None,
+            codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
+        )
+        .unwrap(),
     )
     .unwrap();
     let OrganizationOutcome::Applied(team) =
-        teams::create_organization_team(f.pool(), alice, org.id, &input)
-            .await
-            .unwrap()
+        codeyard_db_orgs::organizations::teams::create_organization_team(
+            f.pool(),
+            alice,
+            org.id,
+            &input,
+        )
+        .await
+        .unwrap()
     else {
         panic!("team not created")
     };
     assert!(matches!(
-        teams::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             f.pool(),
             alice,
             org.id,
             team.id,
             bob,
-            teams::TeamRole::Member
+            codeyard_db_orgs::organizations::teams::TeamRole::Member
         )
         .await
         .unwrap(),
@@ -2627,13 +2636,13 @@ async fn collaborators_contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        teams::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             f.pool(),
             alice,
             org.id,
             team.id,
             org_repo["id"].as_i64().unwrap(),
-            teams::TeamRepositoryPermission::new(4).unwrap()
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(4).unwrap()
         )
         .await
         .unwrap(),

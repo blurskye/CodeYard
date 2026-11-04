@@ -1,4 +1,9 @@
-use super::{assert_github_schema, db, json, request, Client, Router, Value};
+use super::assert_github_schema;
+use super::json;
+use super::request;
+use super::Client;
+use super::Router;
+use super::Value;
 
 pub(super) async fn call(
     router: &Router,

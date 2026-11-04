@@ -1,4 +1,3 @@
-use super::db;
 use serde_json::{json, Value};
 
 pub use crate::support::database::Database as Fixture;

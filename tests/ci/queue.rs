@@ -14,16 +14,16 @@ use crate::support::native_database as native;
 use crate::support::organizations::applied;
 use crate::support::production_ci as production;
 
-use super::NewOrganization;
-use super::NewTeam;
-use super::OrganizationProfile;
-use super::TeamPrivacy;
-use super::TeamProfile;
-use super::TeamRepositoryPermission;
-use super::TeamRole;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::CiRun;
 use codeyard_db_core::models::OrgRole;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
+use codeyard_db_orgs::organizations::teams::NewTeam;
+use codeyard_db_orgs::organizations::teams::TeamPrivacy;
+use codeyard_db_orgs::organizations::teams::TeamProfile;
+use codeyard_db_orgs::organizations::teams::TeamRepositoryPermission;
+use codeyard_db_orgs::organizations::teams::TeamRole;
 use std::{
     future::Future,
     sync::atomic::{AtomicU64, Ordering},
@@ -668,7 +668,7 @@ struct OrganizationWork {
 
 async fn organization_repository(db: &Database, owner: i64, prefix: &str) -> OrganizationWork {
     let organization = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             db.pool(),
             owner,
             &NewOrganization::new(
@@ -751,9 +751,15 @@ async fn last_owner_restriction_stops_organization_work(db: &Database, forced_pa
     let survivor = db.actor(&format!("{kind}_survivor")).await;
     let retained = organization_repository(db, owner, &format!("{kind}_retained")).await;
     applied(
-        super::add_organization_member(db.pool(), owner, retained.id, survivor, OrgRole::Owner)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            db.pool(),
+            owner,
+            retained.id,
+            survivor,
+            OrgRole::Owner,
+        )
+        .await
+        .unwrap(),
     );
     codeyard_db_repos::repositories::access::grant_repo_access(
         db.pool(),
@@ -1409,7 +1415,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     let owner = db.actor("list_owner").await;
     let member = db.actor("list_member").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             db.pool(),
             owner,
             &NewOrganization::new(
@@ -1422,17 +1428,29 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     applied(
-        super::add_organization_member(db.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            db.pool(),
+            owner,
+            org.id,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     applied(
-        super::add_organization_member(db.pool(), owner, org.id, site, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            db.pool(),
+            owner,
+            org.id,
+            site,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let team = applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             db.pool(),
             owner,
             org.id,
@@ -1446,7 +1464,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
         .unwrap(),
     );
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             db.pool(),
             owner,
             org.id,
@@ -1464,7 +1482,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     )
     .await;
     applied(
-        super::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             db.pool(),
             owner,
             org.id,
@@ -1514,7 +1532,7 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     // With a team grant they see them, and once removed from the organization they
     // lose them again, administrator or not.
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             db.pool(),
             owner,
             org.id,
@@ -1529,9 +1547,14 @@ async fn the_global_run_list_follows_the_repository_read_rule(db: &Database) {
     seen.sort();
     assert_eq!(seen, [org_repo, personal, direct, public]);
     applied(
-        super::remove_organization_member(db.pool(), owner, org.id, site)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::remove_organization_member(
+            db.pool(),
+            owner,
+            org.id,
+            site,
+        )
+        .await
+        .unwrap(),
     );
     let mut seen = visible_repositories(db, site, 50).await;
     seen.sort();

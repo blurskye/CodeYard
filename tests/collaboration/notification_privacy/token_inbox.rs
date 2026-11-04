@@ -1,5 +1,6 @@
 //! Token and browser inboxes use the same native rows and transaction-scoped authority.
-use super::{db, ids, Fixture};
+use super::ids;
+use super::Fixture;
 use codeyard_db_repos::notifications::records::{
     NotificationCredential as Credential, NotificationFilter, NotificationInboxAction as Action,
 };

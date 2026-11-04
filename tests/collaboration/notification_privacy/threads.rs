@@ -1,4 +1,4 @@
-use super::{db, Fixture};
+use super::Fixture;
 use codeyard_db_repos::notifications::records::NotificationCredential;
 use codeyard_db_repos::notifications::records::NotificationInboxAction;
 use codeyard_db_repos::notifications::threads::ThreadAction;

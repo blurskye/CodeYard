@@ -5,8 +5,8 @@ use crate::support::database::Database;
 use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 
-use super::NewOrganization;
-use super::OrganizationProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
@@ -23,7 +23,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "foreign", "empty"] {
         orgs.push(applied(
-            super::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -34,9 +34,15 @@ async fn contract(pg: bool) {
     }
     for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
         applied(
-            super::add_organization_member(f.pool(), owner, orgs[0].id, user, role)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                f.pool(),
+                owner,
+                orgs[0].id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
@@ -328,9 +334,15 @@ async fn contract(pg: bool) {
     );
     let successor = f.actor("successor").await;
     applied(
-        super::add_organization_member(f.pool(), owner, orgs[0].id, successor, OrgRole::Owner)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            owner,
+            orgs[0].id,
+            successor,
+            OrgRole::Owner,
+        )
+        .await
+        .unwrap(),
     );
     f.execute(
         "UPDATE org_memberships SET role='member' WHERE org_id=$1 AND user_id=$2",

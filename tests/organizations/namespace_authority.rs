@@ -5,15 +5,15 @@
 
 use crate::support::production_ci;
 
-use super::create_organization;
-use super::NewOrganization;
-use super::OrganizationMetadata;
-use super::OrganizationProfile;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_identity::users::signup_requests::ReviewError;
 use codeyard_db_identity::users::transitions;
 use codeyard_db_identity::users::transitions::AccountAdmission;
 use codeyard_db_identity::users::transitions::SetupClaim;
+use codeyard_db_orgs::organizations::profiles::create_organization;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationMetadata;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use futures_util::FutureExt;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::{panic::AssertUnwindSafe, str::FromStr, time::Duration};

@@ -1785,7 +1785,7 @@ async fn postgres_ban_and_milestone_write_do_not_deadlock() {
         )
         .await
         .unwrap();
-        let organization = super::create_organization(
+        let organization = codeyard_db_orgs::organizations::profiles::create_organization(
             pool,
             owner.id,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -2610,7 +2610,7 @@ async fn check_repository_search_matches_owner_names(pool: &codeyard_db_core::Db
     let alice = codeyard_db_identity::users::accounts::create_user(pool, "alice", None)
         .await
         .unwrap();
-    let acme = match super::create_organization(
+    let acme = match codeyard_db_orgs::organizations::profiles::create_organization(
         pool,
         admin.id,
         &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -3435,16 +3435,17 @@ async fn check_list_display_projections(pool: &codeyard_db_core::DbPool) {
     let org = match organizations::profiles::create_organization(
         pool,
         owner.id,
-        &organizations::NewOrganization::new(
+        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
             "display-org",
-            organizations::OrganizationProfile::new(None, None).unwrap(),
+            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                .unwrap(),
         )
         .unwrap(),
     )
     .await
     .unwrap()
     {
-        organizations::OrganizationOutcome::Applied(org) => org,
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         other => panic!("organization creation failed: {other:?}"),
     };
     let org_repo = codeyard_db_repos::repositories::creation::insert_repository(
@@ -4618,7 +4619,7 @@ async fn postgres_identity_cleanup_uses_expiry_index_bounds() {
         .execute(raw).await.unwrap();
 
     // Explain the actual sweep statements, not copies that can drift from the operation.
-    let source = include_str!("../../src/backend/db/postgres/users/sessions.rs");
+    let source = include_str!("../../backend/db/identity/src/postgres/users/sessions.rs");
     let statements = source
         .split_once("const STATEMENTS: [&str; ")
         .unwrap()
@@ -4764,9 +4765,9 @@ async fn profile_after_update(
     pool: &codeyard_db_core::DbPool,
     actor: i64,
     organization: i64,
-    profile: super::OrganizationProfile,
+    profile: codeyard_db_orgs::organizations::profiles::OrganizationProfile,
 ) -> (Option<String>, Option<String>) {
-    match super::update_organization_profile(
+    match codeyard_db_orgs::organizations::profiles::update_organization_profile(
         pool,
         actor,
         &codeyard_db_core::queries::users::accounts::AccountCredential::Session(
@@ -4789,12 +4790,12 @@ async fn profile_after_update(
 /// runs. A description-only update must not restore a display name that another update
 /// changed after the request read the organization.
 async fn check_partial_profile_updates_keep_omitted_fields(pool: &codeyard_db_core::DbPool) {
-    use super::OrganizationProfile;
+    use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
     let owner = codeyard_db_identity::users::accounts::create_user(pool, "profile_owner", None)
         .await
         .unwrap();
-    let organization = match super::create_organization(
+    let organization = match codeyard_db_orgs::organizations::profiles::create_organization(
         pool,
         owner.id,
         &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -5032,10 +5033,10 @@ async fn check_activity_baselines_use_per_repository_lookups(pool: &codeyard_db_
     // Keep plan coverage tied to the SQL executed by the database function.
     let source = match pool {
         codeyard_db_core::DbPool::Postgres(_) => {
-            include_str!("../../src/backend/db/postgres/users/accounts.rs")
+            include_str!("../../backend/db/identity/src/postgres/users/accounts.rs")
         }
         codeyard_db_core::DbPool::Sqlite(_) => {
-            include_str!("../../src/backend/db/sqlite/users/accounts.rs")
+            include_str!("../../backend/db/identity/src/sqlite/users/accounts.rs")
         }
     };
     let sql = source

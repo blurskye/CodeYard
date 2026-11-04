@@ -1,6 +1,10 @@
-use super::{
-    applied, database::Database, db, denied, orgs, put, secrets, AccessLevel, SecretsError, NAME,
-};
+use super::applied;
+use super::database::Database;
+use super::denied;
+use super::put;
+use super::AccessLevel;
+use super::SecretsError;
+use super::NAME;
 use crate::support::database::wait_until_blocked;
 use std::{str::FromStr, time::Duration};
 
@@ -33,12 +37,13 @@ async fn postgres_secrets_wait_for_uncommitted_grant_revocation() {
     let owner = d.secret_actor("secret_wait_owner").await;
     let actor = d.secret_actor("secret_wait_admin").await;
     let org = applied(
-        orgs::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             d.pool(),
             owner,
-            &orgs::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "secret_wait_org",
-                orgs::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )

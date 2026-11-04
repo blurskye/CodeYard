@@ -5,11 +5,11 @@
 use crate::support::database::Database;
 use chrono::{Duration, Utc};
 
-use super::NewOrganization;
-use super::OrganizationProfile;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
 use codeyard_db_identity::users::transitions::BanChange;
 use codeyard_db_identity::users::transitions::RoleChange;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_orgs::organizations::OrganizationPage;
 
 use codeyard_db_core::models::OrgRole;
@@ -482,8 +482,8 @@ async fn session_list_shows_recorded_addresses(pg: bool) {
 }
 
 fn organization(
-    outcome: OrganizationOutcome<super::OrganizationMetadata>,
-) -> super::OrganizationMetadata {
+    outcome: OrganizationOutcome<codeyard_db_orgs::organizations::profiles::OrganizationMetadata>,
+) -> codeyard_db_orgs::organizations::profiles::OrganizationMetadata {
     match outcome {
         OrganizationOutcome::Applied(metadata) => metadata,
         _ => panic!("the owner creates the organization"),
@@ -497,7 +497,7 @@ async fn invitations(pg: bool) {
     let invitee = f.actor("invitee").await;
     let org_admin = f.actor("invite-admin").await;
     let org = organization(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             pool,
             owner,
             &NewOrganization::new("invite-org", OrganizationProfile::new(None, None).unwrap())
@@ -510,119 +510,178 @@ async fn invitations(pg: bool) {
 
     // The invitation is pending: the invitee is not a member until they accept.
     assert!(matches!(
-        super::invite_organization_member(pool, owner, org.id, invitee, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::invite_organization_member(
+            pool,
+            owner,
+            org.id,
+            invitee,
+            OrgRole::Member
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(_)
     ));
     assert!(matches!(
-        super::get_organization_role(pool, invitee, org.id)
+        codeyard_db_orgs::organizations::membership::get_organization_role(pool, invitee, org.id)
             .await
             .unwrap(),
         OrganizationOutcome::Denied
     ));
     // Someone already invited, and an existing member, are refused.
     assert!(matches!(
-        super::invite_organization_member(pool, owner, org.id, invitee, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::invite_organization_member(
+            pool,
+            owner,
+            org.id,
+            invitee,
+            OrgRole::Member
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Conflict
     ));
     assert!(matches!(
-        super::invite_organization_member(pool, owner, org.id, owner, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::invite_organization_member(
+            pool,
+            owner,
+            org.id,
+            owner,
+            OrgRole::Member
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Conflict
     ));
     // The owner sees the pending invitation; the invitee sees it on their own list.
-    match super::list_organization_invitations(pool, owner, org.id, page)
-        .await
-        .unwrap()
+    match codeyard_db_orgs::organizations::invitations::list_organization_invitations(
+        pool, owner, org.id, page,
+    )
+    .await
+    .unwrap()
     {
         OrganizationOutcome::Applied(rows) => assert_eq!(rows.len(), 1),
         _ => panic!("the owner lists invitations"),
     }
-    let received = super::list_received_organization_invitations(
-        pool,
-        invitee,
-        OrganizationPage::new(0, 100).unwrap(),
-    )
-    .await
-    .unwrap();
+    let received =
+        codeyard_db_orgs::organizations::invitations::list_received_organization_invitations(
+            pool,
+            invitee,
+            OrganizationPage::new(0, 100).unwrap(),
+        )
+        .await
+        .unwrap();
     assert_eq!(received.len(), 1);
     assert_eq!(received[0].org_name, "invite-org");
 
     // Declining removes it, and a second answer finds nothing.
     assert!(matches!(
-        super::decline_organization_invitation(pool, invitee, org.id, None)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::decline_organization_invitation(
+            pool, invitee, org.id, None
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert!(matches!(
-        super::decline_organization_invitation(pool, invitee, org.id, None)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::decline_organization_invitation(
+            pool, invitee, org.id, None
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     ));
 
     // Cancelling withdraws the offer; only an owner or admin can do it.
-    super::invite_organization_member(pool, owner, org.id, invitee, OrgRole::Member)
-        .await
-        .unwrap();
+    codeyard_db_orgs::organizations::invitations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        invitee,
+        OrgRole::Member,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
-        super::cancel_organization_invitation(pool, invitee, org.id, invitee)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::cancel_organization_invitation(
+            pool, invitee, org.id, invitee
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Denied
     ));
     assert!(matches!(
-        super::cancel_organization_invitation(pool, owner, org.id, invitee)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::cancel_organization_invitation(
+            pool, owner, org.id, invitee
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Applied(())
     ));
     assert!(matches!(
-        super::cancel_organization_invitation(pool, owner, org.id, invitee)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::cancel_organization_invitation(
+            pool, owner, org.id, invitee
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     ));
 
     // Accepting makes the member, once.
-    super::invite_organization_member(pool, owner, org.id, invitee, OrgRole::Member)
-        .await
-        .unwrap();
+    codeyard_db_orgs::organizations::invitations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        invitee,
+        OrgRole::Member,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
-        super::accept_organization_invitation(pool, invitee, org.id, None)
+        codeyard_db_orgs::organizations::invitations::accept_organization_invitation(pool, invitee, org.id, None)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(member) if member.role == "member"
     ));
     assert!(matches!(
-        super::get_organization_role(pool, invitee, org.id)
+        codeyard_db_orgs::organizations::membership::get_organization_role(pool, invitee, org.id)
             .await
             .unwrap(),
         OrganizationOutcome::Applied(OrgRole::Member)
     ));
     assert!(matches!(
-        super::accept_organization_invitation(pool, invitee, org.id, None)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::accept_organization_invitation(
+            pool, invitee, org.id, None
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Missing
     ));
 
     // An administrator may invite only plain members, not another administrator.
-    super::invite_organization_member(pool, owner, org.id, org_admin, OrgRole::Admin)
-        .await
-        .unwrap();
-    super::accept_organization_invitation(pool, org_admin, org.id, None)
-        .await
-        .unwrap();
+    codeyard_db_orgs::organizations::invitations::invite_organization_member(
+        pool,
+        owner,
+        org.id,
+        org_admin,
+        OrgRole::Admin,
+    )
+    .await
+    .unwrap();
+    codeyard_db_orgs::organizations::invitations::accept_organization_invitation(
+        pool, org_admin, org.id, None,
+    )
+    .await
+    .unwrap();
     assert!(matches!(
-        super::invite_organization_member(pool, org_admin, org.id, invitee, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::invite_organization_member(
+            pool,
+            org_admin,
+            org.id,
+            invitee,
+            OrgRole::Admin
+        )
+        .await
+        .unwrap(),
         OrganizationOutcome::Denied
     ));
 

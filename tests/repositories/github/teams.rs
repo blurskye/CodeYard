@@ -4,7 +4,6 @@ async fn teams_contract(pg: bool) {
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations::membership;
     use codeyard_db_orgs::organizations::profiles;
-    use codeyard_db_orgs::organizations::roles::teams;
     crate::support::fake_webui_bundle::install();
     let f = Database::new(pg).await;
     f.complete_setup().await;
@@ -52,27 +51,43 @@ async fn teams_contract(pg: bool) {
     .await;
     let id = repo["id"].as_i64().unwrap();
     for (slug, privacy, permission) in [
-        ("secret", teams::TeamPrivacy::Secret, 1),
-        ("core", teams::TeamPrivacy::Visible, 4),
+        (
+            "secret",
+            codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret,
+            1,
+        ),
+        (
+            "core",
+            codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
+            4,
+        ),
     ] {
-        let input =
-            teams::NewTeam::new(slug, teams::TeamProfile::new(slug, None, privacy).unwrap())
-                .unwrap();
+        let input = codeyard_db_orgs::organizations::teams::NewTeam::new(
+            slug,
+            codeyard_db_orgs::organizations::teams::TeamProfile::new(slug, None, privacy).unwrap(),
+        )
+        .unwrap();
         let OrganizationOutcome::Applied(team) =
-            teams::create_organization_team(f.pool(), alice, org.id, &input)
-                .await
-                .unwrap()
+            codeyard_db_orgs::organizations::teams::create_organization_team(
+                f.pool(),
+                alice,
+                org.id,
+                &input,
+            )
+            .await
+            .unwrap()
         else {
             panic!("team not created")
         };
         assert!(matches!(
-            teams::grant_organization_team_repository(
+            codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
                 f.pool(),
                 alice,
                 org.id,
                 team.id,
                 id,
-                teams::TeamRepositoryPermission::new(permission).unwrap()
+                codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(permission)
+                    .unwrap()
             )
             .await
             .unwrap(),

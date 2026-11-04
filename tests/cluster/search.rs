@@ -123,7 +123,8 @@ async fn remote_file_lists_and_commit_walks_keep_size_limits_and_deadlines() {
     )
     .await
     .unwrap();
-    let uuid = cluster::rpc::repository_uuid(&repository.disk_path).unwrap();
+    let uuid =
+        codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
     let path = storage.context.repos_path.join(format!("{uuid}.git"));
     let bare = git2::Repository::open_bare(&path).unwrap();
     let blob = bare.blob(b"small").unwrap();
@@ -333,7 +334,7 @@ async fn content_search_allows_transport_fallback_and_keeps_completed_repositori
             .await
             .unwrap()
             .unwrap();
-    let mut address: cluster::NodeAddress =
+    let mut address: codeyard_app::cluster::transport::NodeAddress =
         serde_json::from_str(node.addr_hint.as_deref().unwrap()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     address.tcp = vec![listener.local_addr().unwrap()];

@@ -137,12 +137,12 @@ async fn bounded_previews_and_current_targets(pg: bool) {
         assert_eq!(item["body"], body);
         assert_eq!(item["link"], "/alice/renamed/issues/7?page=3#comment-9");
     }
-    use super::NewOrganization;
-    use super::OrganizationProfile;
     use codeyard_db_core::queries::organizations::OrganizationOutcome;
     use codeyard_db_orgs::organizations;
+    use codeyard_db_orgs::organizations::profiles::NewOrganization;
+    use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
     assert!(matches!(
-        organizations::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             w.database.pool(),
             w.alice_id,
             &NewOrganization::new("moved_org", OrganizationProfile::new(None, None).unwrap())

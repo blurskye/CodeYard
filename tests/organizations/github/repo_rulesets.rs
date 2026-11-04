@@ -8,8 +8,8 @@ use axum::{
     Router,
 };
 
-use super::NewOrganization;
-use super::OrganizationProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
@@ -54,7 +54,7 @@ async fn contract(pg: bool) {
     let writer = f.actor("writer").await;
     let reader = f.actor("reader").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -63,9 +63,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_member(f.pool(), owner, org.id, admin, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            admin,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;

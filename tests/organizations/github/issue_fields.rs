@@ -6,8 +6,8 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use super::NewOrganization;
-use super::OrganizationProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
@@ -27,7 +27,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "other"] {
         orgs.push(applied(
-            super::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -38,9 +38,15 @@ async fn contract(pg: bool) {
     }
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            super::add_organization_member(f.pool(), owner, orgs[0].id, user, role)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                f.pool(),
+                owner,
+                orgs[0].id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();

@@ -56,23 +56,28 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     let definition = Definition::parse(&json!({"name":"Main policy","target":"branch","enforcement":"evaluate","conditions":{"ref_name":{"include":["refs/heads/main"],"exclude":[]}},"rules":[{"type":"creation"},{"type":"non_fast_forward"}]})).unwrap();
-    let OrganizationOutcome::Applied(ruleset) = rulesets::create_ruleset(
-        fixture.pool(),
-        owner,
-        Owner::Repository(repo.id),
-        &definition,
-    )
-    .await
-    .unwrap() else {
+    let OrganizationOutcome::Applied(ruleset) =
+        codeyard_db_repos::rulesets::operations::create_ruleset(
+            fixture.pool(),
+            owner,
+            Owner::Repository(repo.id),
+            &definition,
+        )
+        .await
+        .unwrap()
+    else {
         panic!("the evaluate ruleset was not saved");
     };
     // Active rules are not enforced yet, so they are still refused.
     let active = definition.merge(&json!({"enforcement":"active"})).unwrap();
-    assert!(
-        rulesets::create_ruleset(fixture.pool(), owner, Owner::Repository(repo.id), &active)
-            .await
-            .is_err()
-    );
+    assert!(codeyard_db_repos::rulesets::operations::create_ruleset(
+        fixture.pool(),
+        owner,
+        Owner::Repository(repo.id),
+        &active
+    )
+    .await
+    .is_err());
     let token = git_server::write_token(fixture.pool(), owner).await;
     let server = git_server::Server::start_with_master_key(
         root.path(),

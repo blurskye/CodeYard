@@ -391,7 +391,7 @@ async fn stack_target(pg: bool) {
     .await
     .unwrap();
     let ci = ci(&w);
-    pulls::queue_pull_request_ci(
+    codeyard_app::repositories::pull_requests::workflows::queue_pull_request_ci(
         w.database.pool(),
         &ci,
         &w.repository,
@@ -580,7 +580,7 @@ async fn target_specific_checks(pg: bool) {
         )
         .await;
     let ci = ci(&w);
-    pulls::queue_pull_request_ci(
+    codeyard_app::repositories::pull_requests::workflows::queue_pull_request_ci(
         w.database.pool(),
         &ci,
         &w.repository,
@@ -753,7 +753,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
         )
         .await;
     let ci = ci(&w);
-    pulls::refresh_open_pull_request(
+    codeyard_app::repositories::pull_requests::branches::refresh_open_pull_request(
         w.database.pool(),
         &w.repository,
         &ci,
@@ -775,7 +775,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].workflow_path, ".github/workflows/plain.yml");
     assert!(
-        pulls::queue_pull_request_ci(
+        codeyard_app::repositories::pull_requests::workflows::queue_pull_request_ci(
             w.database.pool(),
             &ci,
             &w.repository,
@@ -939,7 +939,7 @@ async fn deleted_head_takes_the_pull_ref(pg: bool) {
                 )
                 .await;
         }
-        pulls::refresh_open_pull_request(
+        codeyard_app::repositories::pull_requests::branches::refresh_open_pull_request(
             w.database.pool(),
             &w.repository,
             &ci,

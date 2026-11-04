@@ -330,7 +330,7 @@ async fn webhook_settings_reads_recheck_repository_and_organization_authority() 
             webhooks::insert_delivery(
                 f.pool(),
                 hook,
-                &webhooks::NewDelivery {
+                &codeyard_db_core::queries::webhooks::NewDelivery {
                     redelivery: false,
                     guid: uuid::Uuid::new_v4().to_string(),
                     event: "push".into(),

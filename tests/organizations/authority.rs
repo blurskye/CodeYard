@@ -9,7 +9,46 @@ use crate::support::production_ci;
 
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::models::Repository;
-use codeyard_db_orgs::organizations::*;
+use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::access::count_organization_profile_repositories;
+use codeyard_db_orgs::organizations::access::get_organization_repo_access;
+use codeyard_db_orgs::organizations::access::list_organization_profile_repositories;
+use codeyard_db_orgs::organizations::invitations::accept_organization_invitation;
+use codeyard_db_orgs::organizations::invitations::cancel_organization_invitation;
+use codeyard_db_orgs::organizations::invitations::decline_organization_invitation;
+use codeyard_db_orgs::organizations::invitations::invite_organization_member;
+use codeyard_db_orgs::organizations::membership::add_organization_member;
+use codeyard_db_orgs::organizations::membership::list_organization_members;
+use codeyard_db_orgs::organizations::membership::parse_organization_role;
+use codeyard_db_orgs::organizations::membership::remove_member_or_invitation_by_owner;
+use codeyard_db_orgs::organizations::membership::remove_organization_member;
+use codeyard_db_orgs::organizations::membership::update_organization_member_role;
+use codeyard_db_orgs::organizations::profiles::create_organization;
+use codeyard_db_orgs::organizations::profiles::get_organization_metadata;
+use codeyard_db_orgs::organizations::profiles::list_actor_organizations;
+use codeyard_db_orgs::organizations::profiles::set_organization_avatar;
+use codeyard_db_orgs::organizations::profiles::update_organization_profile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationMetadata;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
+use codeyard_db_orgs::organizations::recovery::recover_suspended_organization_owner;
+use codeyard_db_orgs::organizations::team_invitations::invite_team_member;
+use codeyard_db_orgs::organizations::teams::add_organization_team_member;
+use codeyard_db_orgs::organizations::teams::create_organization_team;
+use codeyard_db_orgs::organizations::teams::delete_organization_team;
+use codeyard_db_orgs::organizations::teams::grant_organization_team_repository;
+use codeyard_db_orgs::organizations::teams::list_organization_team_members;
+use codeyard_db_orgs::organizations::teams::list_organization_team_repositories;
+use codeyard_db_orgs::organizations::teams::list_organization_teams;
+use codeyard_db_orgs::organizations::teams::remove_organization_team_member;
+use codeyard_db_orgs::organizations::teams::revoke_organization_team_repository;
+use codeyard_db_orgs::organizations::teams::update_organization_team;
+use codeyard_db_orgs::organizations::teams::NewTeam;
+use codeyard_db_orgs::organizations::teams::TeamPrivacy;
+use codeyard_db_orgs::organizations::teams::TeamProfile;
+use codeyard_db_orgs::organizations::teams::TeamRepositoryPermission;
+use codeyard_db_orgs::organizations::teams::TeamRole;
+use codeyard_db_orgs::organizations::OrganizationPage;
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use std::{str::FromStr, time::Duration};
 use OrganizationOutcome::{Applied, Conflict, Denied, Missing};
@@ -809,9 +848,13 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
         .unwrap(),
     );
     assert_eq!(
-        super::get_organization_repo_access(&database.pool, member, &repo)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::access::get_organization_repo_access(
+            &database.pool,
+            member,
+            &repo
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::Write
     );
     for level in 1..=5 {
@@ -894,15 +937,23 @@ async fn same_org_teams_secret_visibility_and_permissions(database: &Database) {
             .unwrap(),
     );
     assert_eq!(
-        super::get_organization_repo_access(&database.pool, other, &repo)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::access::get_organization_repo_access(
+            &database.pool,
+            other,
+            &repo
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::None
     );
     assert_eq!(
-        super::get_organization_repo_access(&database.pool, owner, &repo)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::access::get_organization_repo_access(
+            &database.pool,
+            owner,
+            &repo
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::models::AccessLevel::Owner
     );
     assert!(matches!(

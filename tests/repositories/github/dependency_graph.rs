@@ -1,7 +1,12 @@
-use super::{
-    assert_github_schema, db, json, request, tokens, Client, Database, Router, StatusCode,
-    TokenInput, Value,
-};
+use super::assert_github_schema;
+use super::json;
+use super::request;
+use super::Client;
+use super::Database;
+use super::Router;
+use super::StatusCode;
+use super::TokenInput;
+use super::Value;
 use axum::{body::Body, http::Request};
 use tower::ServiceExt;
 
@@ -562,7 +567,8 @@ async fn vulnerability_contract(pg: bool) {
     .unwrap();
     let base = "/api/v3/repos/vuln-org/scan";
     let alerts = format!("{base}/dependabot/alerts");
-    let fixture = include_bytes!("../../../src/backend/vulnerabilities/fixtures/OSV-2026-1.json");
+    let fixture =
+        include_bytes!("../../../backend/app/src/vulnerabilities/fixtures/OSV-2026-1.json");
     // The mirror download path, served by a local fixture instead of osv.dev.
     let archive = {
         use std::io::Write;

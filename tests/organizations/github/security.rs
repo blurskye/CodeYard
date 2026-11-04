@@ -6,13 +6,13 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use super::NewOrganization;
-use super::NewTeam;
-use super::OrganizationProfile;
-use super::TeamPrivacy;
-use super::TeamProfile;
-use super::TeamRole;
 use codeyard_db_core::queries::organizations::roles::SECURITY_MANAGER_ROLE_ID;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
+use codeyard_db_orgs::organizations::teams::NewTeam;
+use codeyard_db_orgs::organizations::teams::TeamPrivacy;
+use codeyard_db_orgs::organizations::teams::TeamProfile;
+use codeyard_db_orgs::organizations::teams::TeamRole;
 
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::OrgRole;
@@ -32,7 +32,7 @@ async fn contract(pg: bool) {
     let mut orgs = vec![];
     for slug in ["acme", "foreign"] {
         orgs.push(applied(
-            super::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(slug, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -43,18 +43,30 @@ async fn contract(pg: bool) {
     }
     for (id, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            super::add_organization_member(f.pool(), owner, orgs[0].id, id, role)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                f.pool(),
+                owner,
+                orgs[0].id,
+                id,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     applied(
-        super::add_organization_member(f.pool(), owner, orgs[1].id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            owner,
+            orgs[1].id,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let parent = applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -68,7 +80,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let child = applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -85,7 +97,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let secret = applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             f.pool(),
             owner,
             orgs[0].id,
@@ -99,7 +111,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             f.pool(),
             owner,
             orgs[1].id,
@@ -113,7 +125,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -355,7 +367,7 @@ async fn contract(pg: bool) {
     );
     // A security-only team grants reads and security management, not Git writes or CI authority.
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -390,9 +402,15 @@ async fn contract(pg: bool) {
         AccessLevel::Read
     );
     applied(
-        super::remove_organization_team_member(f.pool(), owner, orgs[0].id, secret.id, member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::remove_organization_team_member(
+            f.pool(),
+            owner,
+            orgs[0].id,
+            secret.id,
+            member,
+        )
+        .await
+        .unwrap(),
     );
     assert!(
         !codeyard_db_orgs::organizations::roles::can_manage_security(f.pool(), member, orgs[0].id)
@@ -408,7 +426,7 @@ async fn contract(pg: bool) {
         1
     );
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             f.pool(),
             owner,
             orgs[0].id,
@@ -420,9 +438,14 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::delete_organization_team(f.pool(), owner, orgs[0].id, secret.id)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::delete_organization_team(
+            f.pool(),
+            owner,
+            orgs[0].id,
+            secret.id,
+        )
+        .await
+        .unwrap(),
     );
     assert!(
         !codeyard_db_orgs::organizations::roles::can_manage_security(f.pool(), member, orgs[0].id)

@@ -467,10 +467,12 @@ async fn private_forks_and_descendants_cannot_be_published_through_settings() {
     )
     .await
     .is_err());
-    let denied = repositories::insert_repository(
+    let denied = codeyard_db_repos::repositories::creation::insert_repository(
         pool,
-        repositories::NewRepository {
-            owner: repositories::RepositoryCreationOwner::personal(other.id),
+        codeyard_db_repos::repositories::creation::NewRepository {
+            owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(
+                other.id,
+            ),
             name: "unrelated-copy",
             description: None,
             is_private: false,
@@ -598,10 +600,10 @@ async fn duplicate_fork_loser_never_touches_winner() {
         let path = temp.path().join(operation.to_string());
         tokio::spawn(async move {
             barrier.wait().await;
-            let result = repositories::insert_repository(
+            let result = codeyard_db_repos::repositories::creation::insert_repository(
                 &pool,
-                repositories::NewRepository {
-                    owner: repositories::RepositoryCreationOwner::personal(reader_id),
+                codeyard_db_repos::repositories::creation::NewRepository {
+                    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(reader_id),
                     name: "source",
                     description: None,
                     is_private: false,
@@ -679,10 +681,10 @@ async fn simultaneous_forks_of_one_source_by_different_users_all_succeed() {
         tasks.push(tokio::spawn(async move {
             barrier.wait().await;
             let disk_path = format!("/fixture/fork-{index}");
-            repositories::insert_repository(
+            codeyard_db_repos::repositories::creation::insert_repository(
                 &pool,
-                repositories::NewRepository {
-                    owner: repositories::RepositoryCreationOwner::personal(forker.id),
+                codeyard_db_repos::repositories::creation::NewRepository {
+                    owner: codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(forker.id),
                     name: "fork",
                     description: None,
                     is_private: false,
@@ -750,7 +752,7 @@ async fn real_concurrent_fork_domain_preserves_winner_and_does_not_copy_hooks_or
             lifecycle::provision(
                 (&pool, None),
                 &root,
-                repositories::RepositoryCreationOwner::personal(actor),
+                codeyard_db_repos::repositories::creation::RepositoryCreationOwner::personal(actor),
                 "source",
                 None,
                 false,

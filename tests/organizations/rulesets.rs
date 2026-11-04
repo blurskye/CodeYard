@@ -1,9 +1,9 @@
 use crate::support::database::Database;
 use crate::support::organizations::applied;
 
-use super::NewOrganization;
-use super::OrganizationProfile;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_db_core::models::OrgRole;
 use codeyard_db_core::queries::rulesets::records::ListFilter;
@@ -20,7 +20,7 @@ async fn contract(pg: bool) {
     let member = f.actor("member").await;
     let outside = f.actor("outside").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -29,9 +29,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let scope = Owner::Organization(org.id);
     let input = Definition::parse(&json!({"name":"Release policy","enforcement":"active","bypass_actors":[{"actor_type":"OrganizationAdmin"}],"rules":[{"type":"non_fast_forward"}]})).unwrap();

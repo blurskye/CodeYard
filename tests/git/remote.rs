@@ -40,7 +40,7 @@ use crate::support::git_remote::tool;
 use crate::support::git_remote::Server;
 
 async fn refused_receive(
-    context: &cluster::NodeContext,
+    context: &codeyard_app::cluster::context::NodeContext,
     node: i64,
     repository: uuid::Uuid,
     credential: ReceiveCredential,
@@ -183,7 +183,8 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     .unwrap();
     assert_eq!(repository.storage_node_id, Some(storage.node_id));
     assert!(!Path::new(&repository.disk_path).exists());
-    let uuid = rpc::repository_uuid(&repository.disk_path).unwrap();
+    let uuid =
+        codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
     let storage_path = root
         .path()
         .join("storage/repos")
@@ -587,7 +588,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
     let error = refused_receive(
         &caller.context,
         storage.node_id,
-        rpc::repository_uuid(&elsewhere.disk_path).unwrap(),
+        codeyard_app::cluster::rpc::repository::repository_uuid(&elsewhere.disk_path).unwrap(),
         ReceiveCredential::Token(*write_id),
         &owner.username,
     )

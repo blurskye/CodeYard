@@ -4,8 +4,8 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use super::NewOrganization;
-use super::OrganizationProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::NewRepository;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
@@ -30,7 +30,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -39,7 +39,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let foreign = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -50,9 +50,15 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (admin, OrgRole::Admin)] {
         applied(
-            super::add_organization_member(f.pool(), owner, org.id, user, role)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                f.pool(),
+                owner,
+                org.id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
@@ -483,9 +489,15 @@ async fn contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        super::add_organization_member(f.pool(), owner, org.id, outsider, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            outsider,
+            OrgRole::Member
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::queries::organizations::OrganizationOutcome::Denied
     ));
     // Even grants retained by a future repository transfer cannot override the organization block.

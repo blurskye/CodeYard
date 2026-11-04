@@ -1,8 +1,12 @@
-use super::{applied, call, db, json, node_id, query, request};
+use super::applied;
+use super::call;
+use super::json;
+use super::node_id;
+use super::query;
+use super::request;
 use axum::{http::StatusCode, Router};
 use codeyard_app::app::AppState;
 use codeyard_app::repositories::lifecycle;
-use codeyard_model::node_id;
 pub(super) async fn exercise(
     state: &AppState,
     router: &Router,
@@ -73,15 +77,19 @@ pub(super) async fn exercise(
     )
     .await;
     assert_eq!(gone["data"]["node"], serde_json::Value::Null);
-    use codeyard_db_orgs::organizations::roles::teams;
     let team = applied(
-        teams::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             &state.pool,
             actor,
             org,
-            &teams::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "graphql-team",
-                teams::TeamProfile::new("GraphQL team", None, teams::TeamPrivacy::Visible).unwrap(),
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
+                    "GraphQL team",
+                    None,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
+                )
+                .unwrap(),
             )
             .unwrap(),
         )
@@ -103,13 +111,13 @@ pub(super) async fn exercise(
     .await
     .unwrap();
     applied(
-        teams::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             &state.pool,
             actor,
             org,
             team.id,
             repo.id,
-            teams::TeamRepositoryPermission::new(3).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(3).unwrap(),
         )
         .await
         .unwrap(),
@@ -145,7 +153,7 @@ pub(super) async fn exercise(
     .await;
     assert_eq!(status, StatusCode::OK, "{teams}");
     let id = teams[0]["node_id"].clone();
-    assert_eq!(id, node_id::encode("T", team.id));
+    assert_eq!(id, codeyard_model::node_id::encode("T", team.id));
     let view=query(router,alice,"query($id:ID!){node(id:$id){id __typename ...on Team{name slug privacy organization{login}}} organization(login:\"graphql-org\"){team(slug:\"graphql-team\"){id}}}",json!({"id":id})).await;
     assert_eq!(view["node"]["__typename"], "Team");
     assert_eq!(view["node"]["slug"], "graphql-team");

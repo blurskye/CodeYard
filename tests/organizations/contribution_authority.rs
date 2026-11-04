@@ -318,7 +318,7 @@ async fn contract(pg: bool) {
     d.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             d.pool(),
             owner,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -334,9 +334,15 @@ async fn contract(pg: bool) {
     .id;
     for (actor, role) in [(admin, OrgRole::Admin), (member, OrgRole::Member)] {
         applied(
-            super::add_organization_member(d.pool(), owner, org, actor, role)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                d.pool(),
+                owner,
+                org,
+                actor,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let public = d
@@ -779,7 +785,7 @@ async fn contract(pg: bool) {
     // Cross-tenant team facts never become grants for the current repo. Same-org
     // Read team contributions work, then current membership revocation wins.
     let team = applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             d.pool(),
             owner,
             org,
@@ -799,7 +805,7 @@ async fn contract(pg: bool) {
     )
     .id;
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             d.pool(),
             owner,
             org,
@@ -811,7 +817,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             d.pool(),
             owner,
             org,
@@ -825,13 +831,19 @@ async fn contract(pg: bool) {
     contributions(&d, private.id, member, issue.id, pr.id, true).await;
     review_denied(&d, private.id, member, issue.id, pr.id, review.id, writer).await;
     applied(
-        super::remove_organization_team_member(d.pool(), owner, org, team, member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::remove_organization_team_member(
+            d.pool(),
+            owner,
+            org,
+            team,
+            member,
+        )
+        .await
+        .unwrap(),
     );
     contributions(&d, private.id, member, issue.id, pr.id, false).await;
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             d.pool(),
             owner,
             org,
@@ -866,7 +878,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let foreign_org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             d.pool(),
             other,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -892,17 +904,29 @@ async fn contract(pg: bool) {
         .unwrap();
     contributions(&d, private.id, reader, issue.id, pr.id, false).await;
     applied(
-        super::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            d.pool(),
+            owner,
+            org,
+            admin,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     contributions(&d, private.id, admin, issue.id, pr.id, false).await;
     review_denied(&d, private.id, admin, issue.id, pr.id, review.id, writer).await;
     review_refused(&d, pr.id, admin).await;
     applied(
-        super::update_organization_member_role(d.pool(), owner, org, admin, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            d.pool(),
+            owner,
+            org,
+            admin,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     codeyard_db_repos::repositories::access::grant_repo_access(
         d.pool(),
@@ -1157,7 +1181,7 @@ async fn comment_resolution_contract(pg: bool) {
 
     // An author keeps the right to resolve only while the owning organization has a usable owner.
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             d.pool(),
             owner,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -1233,7 +1257,7 @@ async fn postgres_contributions_recheck_after_grant_revocation_before_parent_loc
     .unwrap()
     .id;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             &f.pool,
             f.owner.id,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -1525,7 +1549,7 @@ async fn postgres_team_contributions_wait_for_each_revoked_authority_row() {
             .unwrap()
             .id;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             &f.pool,
             f.owner.id,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(

@@ -118,20 +118,34 @@ async fn authority(pg: bool) {
         .await
         .unwrap()
         .unwrap();
-    assert!(!access::can_read(f.pool(), None, repo).await.unwrap());
-    assert!(!access::can_admin(f.pool(), &admin, repo).await.unwrap());
-    assert!(!access::user_access(f.pool(), &alice_user, repo)
-        .await
-        .unwrap()
-        .can_read());
-    assert!(access::user_git_access(f.pool(), &alice_user, repo)
-        .await
-        .unwrap()
-        .can_write());
-    assert!(!access::user_git_access(f.pool(), &admin, repo)
-        .await
-        .unwrap()
-        .can_write());
+    assert!(
+        !codeyard_identity::repository_access::can_read(f.pool(), None, repo)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !codeyard_identity::repository_access::can_admin(f.pool(), &admin, repo)
+            .await
+            .unwrap()
+    );
+    assert!(
+        !codeyard_identity::repository_access::user_access(f.pool(), &alice_user, repo)
+            .await
+            .unwrap()
+            .can_read()
+    );
+    assert!(
+        codeyard_identity::repository_access::user_git_access(f.pool(), &alice_user, repo)
+            .await
+            .unwrap()
+            .can_write()
+    );
+    assert!(
+        !codeyard_identity::repository_access::user_git_access(f.pool(), &admin, repo)
+            .await
+            .unwrap()
+            .can_write()
+    );
     assert!(
         gists::update(state.clone(), bob, cb.clone(), id.clone(), edit("Not mine"))
             .await

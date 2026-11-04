@@ -50,12 +50,13 @@ async fn contract(pg: bool) {
     let bob = f.actor("bob").await;
     let eve = f.actor("eve").await;
     let org = applied(
-        orgs::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
-            &orgs::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "review-org",
-                orgs::OrganizationProfile::new(None, None).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
             )
             .unwrap(),
         )
@@ -63,7 +64,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        orgs::add_organization_member(
+        codeyard_db_orgs::organizations::membership::add_organization_member(
             f.pool(),
             alice,
             org.id,

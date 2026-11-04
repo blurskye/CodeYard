@@ -1,6 +1,7 @@
 //! Original-scope contracts: a notification keeps the repository it was about,
 //! even after that repository is deleted, so private history stays hidden.
-use super::{agrees, db, Fixture};
+use super::agrees;
+use super::Fixture;
 
 async fn provenance(pg: bool) {
     let mut f = Fixture::new(pg).await;

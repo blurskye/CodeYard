@@ -1,4 +1,8 @@
-use super::{db, json, protection::call, request, Router, Value};
+use super::json;
+use super::protection::call;
+use super::request;
+use super::Router;
+use super::Value;
 use codeyard_app::repositories::store::repo_store;
 
 #[tokio::test]
@@ -13,7 +17,9 @@ async fn postgres_app_access_restrictions() {
 
 async fn app_contract(pg: bool) {
     crate::support::fake_webui_bundle::install();
-    use super::{tokens, Client, Database, TokenInput};
+    use super::Client;
+    use super::Database;
+    use super::TokenInput;
     use crate::support::organizations::applied;
     use axum::http::StatusCode;
     let f = Database::new(pg).await;

@@ -4,7 +4,6 @@ use super::{
     *,
 };
 use codeyard_db_repos::projects as store;
-use codeyard_model::node_id;
 
 macro_rules! document {
     ($name:literal) => {
@@ -232,7 +231,7 @@ async fn metadata_contract(pg: bool) {
                 .collect::<Vec<_>>(),
             expected
                 .iter()
-                .map(|id| node_id::encode("PVT", *id))
+                .map(|id| codeyard_model::node_id::encode("PVT", *id))
                 .collect::<Vec<_>>()
         );
         for n in nodes {
@@ -240,7 +239,7 @@ async fn metadata_contract(pg: bool) {
             let project = projects
                 .iter()
                 .chain(std::iter::once(&unlinked))
-                .find(|p| n["id"] == node_id::encode("PVT", p.id))
+                .find(|p| n["id"] == codeyard_model::node_id::encode("PVT", p.id))
                 .unwrap();
             let prefix = if project.owner_kind == "org" {
                 "/orgs/project-metadata-org/projects/"
@@ -271,7 +270,7 @@ async fn metadata_contract(pg: bool) {
         let second = send(&router, token, &small, next).await;
         assert_eq!(
             second[key]["projectsV2"]["nodes"][0]["id"],
-            node_id::encode("PVT", expected[1])
+            codeyard_model::node_id::encode("PVT", expected[1])
         );
     }
     // The named User field uses the same connection as viewer.
@@ -329,10 +328,10 @@ async fn metadata_contract(pg: bool) {
     .await
     .unwrap();
     let inputs = json!({
-        "input_000":{"projectId":node_id::encode("PVT",projects[0].id),"contentId":node_id::encode("I",issue.id)},
-        "input_001":{"projectId":node_id::encode("PVT",projects[4].id),"contentId":node_id::encode("PR",pull.id)},
-        "input_002":{"projectId":node_id::encode("PVT",projects[1].id),"itemId":node_id::encode("PVTI",old_issue.id)},
-        "input_003":{"projectId":node_id::encode("PVT",projects[5].id),"itemId":node_id::encode("PVTI",old_pull.id)},
+        "input_000":{"projectId":codeyard_model::node_id::encode("PVT",projects[0].id),"contentId":codeyard_model::node_id::encode("I",issue.id)},
+        "input_001":{"projectId":codeyard_model::node_id::encode("PVT",projects[4].id),"contentId":codeyard_model::node_id::encode("PR",pull.id)},
+        "input_002":{"projectId":codeyard_model::node_id::encode("PVT",projects[1].id),"itemId":codeyard_model::node_id::encode("PVTI",old_issue.id)},
+        "input_003":{"projectId":codeyard_model::node_id::encode("PVT",projects[5].id),"itemId":codeyard_model::node_id::encode("PVTI",old_pull.id)},
     });
     let updated = send(
         &router,
@@ -365,7 +364,7 @@ async fn metadata_contract(pg: bool) {
         let item = &items[0];
         assert_eq!(
             updated[alias]["item"]["id"],
-            node_id::encode("PVTI", item.id)
+            codeyard_model::node_id::encode("PVTI", item.id)
         );
         assert!(match content {
             store::Content::Issue(id) => item.issue_id == Some(id),
@@ -418,7 +417,7 @@ async fn metadata_contract(pg: bool) {
         assert_eq!(items["totalCount"], 1);
         assert_eq!(
             items["nodes"][0]["id"],
-            node_id::encode("PVTI", new_items[index].0)
+            codeyard_model::node_id::encode("PVTI", new_items[index].0)
         );
         assert_eq!(
             items["nodes"][0]["status"],
@@ -456,11 +455,14 @@ async fn metadata_contract(pg: bool) {
             .as_array()
             .unwrap()
             .iter()
-            .any(|n| n["id"] == node_id::encode("PVTI", unset.id) && n["status"].is_null()));
+            .any(
+                |n| n["id"] == codeyard_model::node_id::encode("PVTI", unset.id)
+                    && n["status"].is_null()
+            ));
     }
     let mut denied_inputs = inputs;
-    denied_inputs["input_002"] = json!({"projectId":node_id::encode("PVT",projects[0].id),"itemId":node_id::encode("PVTI",new_items[0].0)});
-    denied_inputs["input_003"] = json!({"projectId":node_id::encode("PVT",projects[4].id),"itemId":node_id::encode("PVTI",new_items[1].0)});
+    denied_inputs["input_002"] = json!({"projectId":codeyard_model::node_id::encode("PVT",projects[0].id),"itemId":codeyard_model::node_id::encode("PVTI",new_items[0].0)});
+    denied_inputs["input_003"] = json!({"projectId":codeyard_model::node_id::encode("PVT",projects[4].id),"itemId":codeyard_model::node_id::encode("PVTI",new_items[1].0)});
     for credential in [&credentials[1], &credentials[2]] {
         let (_, body) = call(
             &router,

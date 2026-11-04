@@ -9,8 +9,8 @@ use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 use codeyard_support::secrets::SecretEncryptor;
 
-use super::NewOrganization;
-use super::OrganizationProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
@@ -30,7 +30,7 @@ async fn contract(pg: bool) {
     f.execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("native_org", OrganizationProfile::new(None, None).unwrap())
@@ -40,7 +40,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let other = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("other_org", OrganizationProfile::new(None, None).unwrap())
@@ -50,9 +50,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_member(f.pool(), owner, org.id, manager, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            manager,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let mut repos = Vec::new();
@@ -626,9 +632,15 @@ async fn contract(pg: bool) {
         .await;
     assert_eq!(reply.status, StatusCode::SEE_OTHER, "{}", reply.text());
     applied(
-        super::update_organization_member_role(f.pool(), owner, org.id, manager, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            f.pool(),
+            owner,
+            org.id,
+            manager,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     request(
         &router,
@@ -683,7 +695,7 @@ async fn transfer_selections(pg: bool) {
     let mut organizations = Vec::new();
     for name in ["source", "target"] {
         organizations.push(applied(
-            super::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),

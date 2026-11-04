@@ -3906,7 +3906,7 @@ async fn fork_claims_receive_variables_but_no_repository_or_organization_secrets
         let (_root, repo, sha, blob) = secrets_repository(pool, owner.id, "fork-values").await;
         let encryptor = Arc::new(SecretEncryptor::new(&[7; 32]));
         let org = crate::support::organizations::applied(
-            super::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 pool,
                 owner.id,
                 &codeyard_db_orgs::organizations::profiles::NewOrganization::new(

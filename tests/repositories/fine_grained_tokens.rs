@@ -1,8 +1,6 @@
 //! Fine-grained personal access tokens on repositories: each repository selection, read and
 //! write grants, and the resource owner, through REST, GraphQL and Git over HTTP on both
 //! engines.
-use super::NewOrganization;
-use super::OrganizationProfile;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
 use crate::support::organizations::applied;
@@ -13,6 +11,8 @@ use axum::{
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use chrono::{Duration, Utc};
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_app::repositories::lifecycle;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;

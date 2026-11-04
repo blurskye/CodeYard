@@ -146,7 +146,7 @@ pub(super) async fn run(
         .unwrap()
         .unwrap();
     assert_eq!(
-        super::get_organization_repo_access(pool, charlie, &row)
+        codeyard_db_orgs::organizations::access::get_organization_repo_access(pool, charlie, &row)
             .await
             .unwrap(),
         AccessLevel::Write
@@ -166,11 +166,15 @@ pub(super) async fn run(
     .await
     .unwrap());
     assert!(
-        super::team_members_by_names(pool, org, &["team-org/platform".into()])
-            .await
-            .unwrap()
-            .iter()
-            .any(|(_, id)| *id == charlie)
+        codeyard_db_orgs::organizations::teams::team_members_by_names(
+            pool,
+            org,
+            &["team-org/platform".into()]
+        )
+        .await
+        .unwrap()
+        .iter()
+        .any(|(_, id)| *id == charlie)
     );
     assert!(
         codeyard_db_repos::assignees::list_assignable_usernames(pool, repo)
@@ -231,7 +235,7 @@ pub(super) async fn run(
         .await;
     }
     let foreign_org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             pool,
             alice,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -282,7 +286,7 @@ pub(super) async fn run(
     .await
     .unwrap();
     applied(
-        super::delete_organization(
+        codeyard_db_orgs::organizations::deletion::delete_organization(
             pool,
             (
                 alice,

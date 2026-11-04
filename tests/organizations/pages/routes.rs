@@ -255,7 +255,13 @@ fn tab_links(source: &str) -> Vec<&str> {
 pub async fn teams(f: &Fixture) {
     use super::{fixture::applied, profile::html};
 
-    use codeyard_db_orgs::organizations::*;
+    use codeyard_db_orgs::organizations::profiles::create_organization;
+    use codeyard_db_orgs::organizations::profiles::NewOrganization;
+    use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
+    use codeyard_db_orgs::organizations::teams::create_organization_team;
+    use codeyard_db_orgs::organizations::teams::NewTeam;
+    use codeyard_db_orgs::organizations::teams::TeamPrivacy;
+    use codeyard_db_orgs::organizations::teams::TeamProfile;
 
     let pool = f.database.pool();
     for slug in ["api", "admin", "search"] {

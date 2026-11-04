@@ -1,6 +1,10 @@
-use super::{
-    assert_github_schema, db, request, tokens, Client, Database, StatusCode, TokenInput, Value,
-};
+use super::assert_github_schema;
+use super::request;
+use super::Client;
+use super::Database;
+use super::StatusCode;
+use super::TokenInput;
+use super::Value;
 
 use codeyard_db_core::DbPool;
 use serde_json::json;
@@ -333,7 +337,7 @@ async fn contract(pg: bool) {
     use codeyard_db_orgs::organizations;
     use codeyard_db_orgs::organizations::profiles::NewOrganization;
     use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
-    let created = organizations::create_organization(
+    let created = codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         owner,
         &NewOrganization::new("alert-org", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -342,7 +346,7 @@ async fn contract(pg: bool) {
     .unwrap();
     assert!(matches!(
         created,
-        organizations::OrganizationOutcome::Applied(_)
+        codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     let (status, _, org_repo) = request(
         &router,

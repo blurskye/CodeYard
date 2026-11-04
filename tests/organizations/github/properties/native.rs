@@ -1,5 +1,6 @@
 use super::*;
 use axum::{http::StatusCode, Router};
+use codeyard_db_orgs::organizations::properties;
 
 pub(super) async fn contract(f: &Database, router: &Router, actors: [i64; 3], target: (i64, i64)) {
     let [owner, member, outside] = actors;

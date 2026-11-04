@@ -6,8 +6,8 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use chrono::{Duration, Utc};
 
-use super::NewOrganization;
-use super::OrganizationProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 
@@ -77,7 +77,7 @@ async fn contract(pg: bool) {
     let carol = f.actor("carol").await;
     let dave = f.actor("dave").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -88,9 +88,15 @@ async fn contract(pg: bool) {
     .id;
     for user in [carol, dave] {
         applied(
-            super::add_organization_member(f.pool(), alice, org, user, OrgRole::Member)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                f.pool(),
+                alice,
+                org,
+                user,
+                OrgRole::Member,
+            )
+            .await
+            .unwrap(),
         );
     }
     let root = tempfile::tempdir().unwrap();
@@ -283,9 +289,15 @@ async fn contract(pg: bool) {
     // A banned owner keeps the membership row but cannot review requests or set the policy.
     let erin = f.actor("erin").await;
     applied(
-        super::add_organization_member(f.pool(), alice, org, erin, OrgRole::Owner)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            alice,
+            org,
+            erin,
+            OrgRole::Owner,
+        )
+        .await
+        .unwrap(),
     );
     f.execute("UPDATE users SET is_banned=TRUE WHERE id=$1", &[erin])
         .await;
@@ -452,9 +464,14 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        super::remove_organization_member(f.pool(), alice, org, carol)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::remove_organization_member(
+            f.pool(),
+            alice,
+            org,
+            carol,
+        )
+        .await
+        .unwrap(),
     );
     request(
         &router,

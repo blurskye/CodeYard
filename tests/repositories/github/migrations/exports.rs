@@ -124,12 +124,16 @@ pub(super) async fn run(
     use crate::support::organizations::applied;
     use codeyard_db_orgs::organizations as orgs;
     let org = applied(
-        orgs::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
-            &orgs::NewOrganization::new(
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
                 "migration-org",
-                orgs::OrganizationProfile::new(None, Some("Migration metadata")).unwrap(),
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(
+                    None,
+                    Some("Migration metadata"),
+                )
+                .unwrap(),
             )
             .unwrap(),
         )
@@ -138,7 +142,7 @@ pub(super) async fn run(
     )
     .id;
     applied(
-        orgs::add_organization_member(
+        codeyard_db_orgs::organizations::membership::add_organization_member(
             f.pool(),
             alice,
             org,
@@ -164,13 +168,18 @@ pub(super) async fn run(
     .unwrap();
 
     let team = applied(
-        orgs::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             f.pool(),
             alice,
             org,
-            &orgs::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "export-team",
-                orgs::TeamProfile::new("Export team", None, orgs::TeamPrivacy::Visible).unwrap(),
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
+                    "Export team",
+                    None,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
+                )
+                .unwrap(),
             )
             .unwrap(),
         )
@@ -179,34 +188,45 @@ pub(super) async fn run(
     )
     .id;
     applied(
-        orgs::add_organization_team_member(f.pool(), alice, org, team, bob, orgs::TeamRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
+            f.pool(),
+            alice,
+            org,
+            team,
+            bob,
+            codeyard_db_orgs::organizations::teams::TeamRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     applied(
-        orgs::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             f.pool(),
             alice,
             org,
             team,
             organization.id,
-            orgs::TeamRepositoryPermission::new(1).unwrap(),
+            codeyard_db_orgs::organizations::teams::TeamRepositoryPermission::new(1).unwrap(),
         )
         .await
         .unwrap(),
     );
 
     let child = applied(
-        orgs::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             f.pool(),
             alice,
             org,
-            &orgs::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "export-child",
-                orgs::TeamProfile::new("Export child", None, orgs::TeamPrivacy::Visible)
-                    .unwrap()
-                    .with_parent(Some(Some(team)))
-                    .unwrap(),
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
+                    "Export child",
+                    None,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Visible,
+                )
+                .unwrap()
+                .with_parent(Some(Some(team)))
+                .unwrap(),
             )
             .unwrap()
             .with_members_and_repositories(vec![alice], vec![]),
@@ -215,44 +235,73 @@ pub(super) async fn run(
         .unwrap(),
     );
     applied(
-        orgs::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             f.pool(),
             alice,
             org,
-            &orgs::NewTeam::new(
+            &codeyard_db_orgs::organizations::teams::NewTeam::new(
                 "export-secret",
-                orgs::TeamProfile::new("Export secret", None, orgs::TeamPrivacy::Secret).unwrap(),
+                codeyard_db_orgs::organizations::teams::TeamProfile::new(
+                    "Export secret",
+                    None,
+                    codeyard_db_orgs::organizations::teams::TeamPrivacy::Secret,
+                )
+                .unwrap(),
             )
             .unwrap(),
         )
         .await
         .unwrap(),
     );
-    let page = orgs::OrganizationPage::new(0, 100).unwrap();
+    let page = codeyard_db_orgs::organizations::OrganizationPage::new(0, 100).unwrap();
     let parent_members = applied(
-        orgs::list_direct_organization_team_members(f.pool(), alice, org, team, page)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::list_direct_organization_team_members(
+            f.pool(),
+            alice,
+            org,
+            team,
+            page,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(parent_members.len(), 1);
     assert_eq!(parent_members[0].user_id, bob);
     let child_members = applied(
-        orgs::list_direct_organization_team_members(f.pool(), alice, org, child.id, page)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::list_direct_organization_team_members(
+            f.pool(),
+            alice,
+            org,
+            child.id,
+            page,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(child_members.len(), 1);
     assert_eq!(child_members[0].user_id, alice);
     let parent_repos = applied(
-        orgs::list_direct_organization_team_repositories(f.pool(), alice, org, team, page)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::list_direct_organization_team_repositories(
+            f.pool(),
+            alice,
+            org,
+            team,
+            page,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(parent_repos.len(), 1);
     let child_repos = applied(
-        orgs::list_direct_organization_team_repositories(f.pool(), alice, org, child.id, page)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::list_direct_organization_team_repositories(
+            f.pool(),
+            alice,
+            org,
+            child.id,
+            page,
+        )
+        .await
+        .unwrap(),
     );
     assert!(child_repos.is_empty());
     let mut projects = Vec::new();

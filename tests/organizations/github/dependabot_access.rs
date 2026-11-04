@@ -1,8 +1,12 @@
-use super::{
-    applied, organizations, request, tokens, Client, Database, NewOrganization, OrgRole,
-    OrganizationProfile, TokenInput,
-};
+use super::applied;
+use super::request;
+use super::Client;
+use super::Database;
+use super::OrgRole;
+use super::TokenInput;
 use axum::http::StatusCode;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use serde_json::{json, Value};
@@ -19,7 +23,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "second"] {
         orgs.push(applied(
-            organizations::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -30,9 +34,15 @@ async fn contract(pg: bool) {
     }
     let org = orgs[0].id;
     applied(
-        organizations::add_organization_member(f.pool(), owner, org, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            owner,
+            org,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let mut repositories = Vec::new();

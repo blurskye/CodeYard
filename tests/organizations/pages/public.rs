@@ -1,10 +1,10 @@
 //! The public organization page at /NAME: each viewer sees the repositories the store allows.
 use super::fixture::{Actor, Fixture, Reply};
-use super::TeamPrivacy;
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
 };
+use codeyard_db_orgs::organizations::teams::TeamPrivacy;
 use codeyard_webui::app::Page;
 use codeyard_webui::bootstrap;
 use codeyard_webui::pages::orgs::OrganizationProfile;

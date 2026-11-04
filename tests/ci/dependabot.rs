@@ -381,17 +381,19 @@ async fn organization_secrets(pg: bool) {
     let owner = f.actor("alice").await;
     let member = f.actor("bob").await;
     let outsider = f.actor("eve").await;
-    let OrganizationOutcome::Applied(org) = organizations::create_organization(
-        f.pool(),
-        owner,
-        &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
-    )
-    .await
-    .unwrap() else {
+    let OrganizationOutcome::Applied(org) =
+        codeyard_db_orgs::organizations::profiles::create_organization(
+            f.pool(),
+            owner,
+            &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
+        )
+        .await
+        .unwrap()
+    else {
         panic!("organization creation denied")
     };
     assert!(matches!(
-        organizations::add_organization_member(
+        codeyard_db_orgs::organizations::membership::add_organization_member(
             f.pool(),
             owner,
             org.id,

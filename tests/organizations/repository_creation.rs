@@ -28,7 +28,7 @@ async fn actor(database: &Database, name: &str) -> i64 {
 }
 async fn organization(database: &Database, actor: i64, slug: &str) -> i64 {
     applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             database.pool(),
             actor,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -45,9 +45,15 @@ async fn organization(database: &Database, actor: i64, slug: &str) -> i64 {
 }
 async fn member(database: &Database, actor: i64, org: i64, user: i64, role: OrgRole) {
     applied(
-        super::add_organization_member(database.pool(), actor, org, user, role)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            database.pool(),
+            actor,
+            org,
+            user,
+            role,
+        )
+        .await
+        .unwrap(),
     );
 }
 async fn create(
@@ -237,9 +243,15 @@ async fn creation_contract(mut database: Database) {
             .await;
     }
     applied(
-        super::update_organization_member_role(database.pool(), own, org, admin, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            database.pool(),
+            own,
+            org,
+            admin,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     denied(
         create(
@@ -253,9 +265,14 @@ async fn creation_contract(mut database: Database) {
         RepositoryStorageRefusal::Denied,
     );
     applied(
-        super::remove_organization_member(database.pool(), own, org, admin)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::remove_organization_member(
+            database.pool(),
+            own,
+            org,
+            admin,
+        )
+        .await
+        .unwrap(),
     );
     denied(
         create(

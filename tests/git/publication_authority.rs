@@ -264,7 +264,7 @@ async fn contract(pg: bool) {
         .unwrap();
 
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             fixture.pool(),
             owner,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -278,7 +278,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_member(
+        codeyard_db_orgs::organizations::membership::add_organization_member(
             fixture.pool(),
             owner,
             org.id,
@@ -289,7 +289,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let team = applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             fixture.pool(),
             owner,
             org.id,
@@ -308,7 +308,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             fixture.pool(),
             owner,
             org.id,
@@ -336,7 +336,7 @@ async fn contract(pg: bool) {
     .await
     .unwrap();
     applied(
-        super::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             fixture.pool(),
             owner,
             org.id,
@@ -371,9 +371,15 @@ async fn contract(pg: bool) {
         .await
         .unwrap();
     applied(
-        super::remove_organization_team_member(fixture.pool(), owner, org.id, team.id, writer)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::remove_organization_team_member(
+            fixture.pool(),
+            owner,
+            org.id,
+            team.id,
+            writer,
+        )
+        .await
+        .unwrap(),
     );
     assert!(org_store
         .publish_file_as(fixture.pool(), org_repo.id, writer, &team_prepared)

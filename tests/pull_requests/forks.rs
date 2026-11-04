@@ -329,7 +329,7 @@ async fn contract(pg: bool) {
         )
         .await
         .unwrap();
-    pull_requests::refresh_open_pull_requests(
+    codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
         f.pool(),
         &fork,
         None,
@@ -1177,16 +1177,18 @@ async fn private_fork_revocation_contract(pg: bool) {
         )
         .await
         .unwrap();
-    assert!(pull_requests::refresh_open_pull_requests(
-        f.pool(),
-        &base,
-        Some(&["main", "later"][..]),
-        &ci,
-        alice_id,
-        codeyard_db_core::models::AccessLevel::Owner
-    )
-    .await
-    .is_err());
+    assert!(
+        codeyard_app::repositories::pull_requests::branches::refresh_open_pull_requests(
+            f.pool(),
+            &base,
+            Some(&["main", "later"][..]),
+            &ci,
+            alice_id,
+            codeyard_db_core::models::AccessLevel::Owner
+        )
+        .await
+        .is_err()
+    );
     let stored = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(
         f.pool(),
         opened["id"].as_i64().unwrap(),

@@ -92,7 +92,7 @@ async fn contract(pg: bool) {
         .unwrap(),
         [repository.id]
     );
-    access::check_admin(f.pool(), repository.id, bob)
+    codeyard_identity::repository_access::check_admin(f.pool(), repository.id, bob)
         .await
         .unwrap();
     codeyard_db_repos::repositories::access::revoke_repo_access(f.pool(), bob, repository.id)

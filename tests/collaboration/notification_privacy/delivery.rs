@@ -1,5 +1,5 @@
 //! Original live-session and stale/forged wakeup projection contracts.
-use super::{db, Fixture};
+use super::Fixture;
 use crate::support::database::wait_until_blocked;
 use chrono::{Duration, Utc};
 use codeyard_notifications::current_event;

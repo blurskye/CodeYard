@@ -71,7 +71,7 @@ async fn contract(pg: bool) {
     let eve = f.actor("eve").await;
     let charlie = f.actor("charlie").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -85,14 +85,26 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_member(f.pool(), alice, org.id, bob, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            alice,
+            org.id,
+            bob,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     applied(
-        super::add_organization_member(f.pool(), alice, org.id, charlie, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            alice,
+            org.id,
+            charlie,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = create_router(AppState::new(
@@ -613,9 +625,13 @@ async fn contract(pg: bool) {
             .unwrap()
             .unwrap();
         assert_eq!(
-            super::get_organization_repo_access(f.pool(), bob, &row)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::access::get_organization_repo_access(
+                f.pool(),
+                bob,
+                &row
+            )
+            .await
+            .unwrap(),
             codeyard_db_core::models::AccessLevel::from(level)
         );
     }

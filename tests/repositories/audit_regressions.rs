@@ -270,10 +270,10 @@ async fn contract(pg: bool) {
     )
     .await;
     assert_eq!(
-        access::check_write(f.pool(), repository.id, bob)
+        codeyard_identity::repository_access::check_write(f.pool(), repository.id, bob)
             .await
             .unwrap_err(),
-        access::AccessError::NotFound
+        codeyard_identity::repository_access::AccessError::NotFound
     );
     outsider
         .expect(

@@ -1,5 +1,6 @@
 use super::*;
 use axum::{http::StatusCode, Router};
+use codeyard_db_orgs::organizations::settings as data;
 
 const KEY: &str =
     "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOMqqnkVzrm0SdG6UOoqKLsabgH5C9okWi0dh2l9GKJl";
@@ -8,7 +9,7 @@ pub(super) async fn contract(
     router: &Router,
     browser: &Client,
     owner: i64,
-    orgs: &[organizations::OrganizationMetadata],
+    orgs: &[codeyard_db_orgs::organizations::profiles::OrganizationMetadata],
     repositories: (
         &codeyard_db_core::models::Repository,
         &codeyard_db_core::models::Repository,

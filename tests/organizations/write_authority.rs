@@ -209,7 +209,7 @@ async fn authority_contract(pg: bool) {
         .execute("UPDATE users SET is_admin=TRUE WHERE id=$1", &[site])
         .await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             pool,
             owner,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -225,13 +225,15 @@ async fn authority_contract(pg: bool) {
     .id;
     for (actor, role) in [(admin, OrgRole::Admin), (member, OrgRole::Member)] {
         applied(
-            super::add_organization_member(pool, owner, org, actor, role)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                pool, owner, org, actor, role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let team = applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             pool,
             owner,
             org,
@@ -251,7 +253,7 @@ async fn authority_contract(pg: bool) {
     )
     .id;
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             pool,
             owner,
             org,
@@ -267,7 +269,7 @@ async fn authority_contract(pg: bool) {
         .await;
     let personal = database.private_repo(owner, None, "write_personal").await;
     applied(
-        super::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             pool,
             owner,
             org,
@@ -364,9 +366,11 @@ async fn authority_contract(pg: bool) {
         )
         .await;
     applied(
-        super::revoke_organization_team_repository(pool, owner, org, team, repo.id)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::revoke_organization_team_repository(
+            pool, owner, org, team, repo.id,
+        )
+        .await
+        .unwrap(),
     );
     let revoked = codeyard_db_actions::ci::get_ci_run_by_run_id(pool, valid.run_id)
         .await
@@ -394,7 +398,7 @@ async fn authority_contract(pg: bool) {
     .await
     .unwrap();
     applied(
-        super::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             pool,
             owner,
             org,
@@ -439,9 +443,11 @@ async fn authority_contract(pg: bool) {
         );
         // The explicit recovery DAO restores governance, not site-admin repo authority.
         applied(
-            super::recover_suspended_organization_owner(pool, site, org, admin)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::recovery::recover_suspended_organization_owner(
+                pool, site, org, admin,
+            )
+            .await
+            .unwrap(),
         );
         assert!(enqueue(pool, direct, repo.id, false, &[direct])
             .await
@@ -454,9 +460,15 @@ async fn authority_contract(pg: bool) {
             )
             .await;
         applied(
-            super::update_organization_member_role(pool, owner, org, admin, OrgRole::Admin)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::update_organization_member_role(
+                pool,
+                owner,
+                org,
+                admin,
+                OrgRole::Admin,
+            )
+            .await
+            .unwrap(),
         );
     }
     // Restricted actors fail even with team/direct Admin; private grants do not
@@ -518,9 +530,15 @@ async fn authority_contract(pg: bool) {
         )
         .await;
     applied(
-        super::update_organization_member_role(pool, owner, org, admin, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            pool,
+            owner,
+            org,
+            admin,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     database
         .execute(
@@ -585,7 +603,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
     let owner = database.actor("team_cancel_owner").await;
     let member = database.actor("team_cancel_member").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             pool,
             owner,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -600,14 +618,20 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
     )
     .id;
     applied(
-        super::add_organization_member(pool, owner, org, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            pool,
+            owner,
+            org,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let mut teams = Vec::new();
     for slug in ["team_cancel_a", "team_cancel_b"] {
         let team = applied(
-            super::create_organization_team(
+            codeyard_db_orgs::organizations::teams::create_organization_team(
                 pool,
                 owner,
                 org,
@@ -627,7 +651,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
         )
         .id;
         applied(
-            super::add_organization_team_member(
+            codeyard_db_orgs::organizations::teams::add_organization_team_member(
                 pool,
                 owner,
                 org,
@@ -640,7 +664,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
         );
         let repo = database.private_repo(owner, Some(org), slug).await;
         applied(
-            super::grant_organization_team_repository(
+            codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
                 pool,
                 owner,
                 org,
@@ -673,9 +697,11 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
         .await
         .unwrap();
     applied(
-        super::remove_organization_team_member(pool, owner, org, team_a, member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::remove_organization_team_member(
+            pool, owner, org, team_a, member,
+        )
+        .await
+        .unwrap(),
     );
     let running = codeyard_db_actions::ci::get_ci_run_by_run_id(pool, a_running.run_id)
         .await
@@ -696,7 +722,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
     );
 
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             pool,
             owner,
             org,
@@ -714,7 +740,7 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
         .await
         .unwrap();
     applied(
-        super::delete_organization_team(pool, owner, org, team_a)
+        codeyard_db_orgs::organizations::teams::delete_organization_team(pool, owner, org, team_a)
             .await
             .unwrap(),
     );
@@ -739,9 +765,11 @@ async fn team_cancellation_stays_with_its_repositories(pg: bool) {
     }
     // Removing the org membership, unlike removing a team, ends all org jobs.
     applied(
-        super::remove_organization_member(pool, owner, org, member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::remove_organization_member(
+            pool, owner, org, member,
+        )
+        .await
+        .unwrap(),
     );
     for run in [&b_queued, &b_other] {
         assert_eq!(

@@ -1,6 +1,9 @@
-use super::{call, db, json, node_id, query, request};
+use super::call;
+use super::json;
+use super::node_id;
+use super::query;
+use super::request;
 use axum::{http::StatusCode, Router};
-use codeyard_model::node_id;
 pub(super) async fn exercise(
     pool: &codeyard_db_core::DbPool,
     router: &Router,
@@ -71,9 +74,9 @@ pub(super) async fn exercise(
     .await
     .unwrap();
     let ids = [
-        node_id::encode("M", milestone.id),
-        node_id::encode("RE", release.id),
-        node_id::encode("RA", asset.id),
+        codeyard_model::node_id::encode("M", milestone.id),
+        codeyard_model::node_id::encode("RE", release.id),
+        codeyard_model::node_id::encode("RA", asset.id),
     ];
     for (id, path) in [
         (

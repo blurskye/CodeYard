@@ -977,18 +977,20 @@ async fn repository_creation_is_not_a_ref_event(pg: bool, url: &str) {
     database.complete_setup().await;
     let actor = database.actor("creator").await;
     let pool = database.pool();
-    let OrganizationOutcome::Applied(org) = super::create_organization(
-        pool,
-        actor,
-        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
-            "creation_org",
-            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
-                .unwrap(),
+    let OrganizationOutcome::Applied(org) =
+        codeyard_db_orgs::organizations::profiles::create_organization(
+            pool,
+            actor,
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
+                "creation_org",
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    )
-    .await
-    .unwrap() else {
+        .await
+        .unwrap()
+    else {
         panic!("organization creation failed");
     };
     let hook = codeyard_db_repos::webhooks::insert_webhook(
@@ -1106,32 +1108,46 @@ async fn hook_writes_check_authority_in_the_transaction(pg: bool) {
     )
     .await
     .unwrap();
-    let OrganizationOutcome::Applied(org) = super::create_organization(
-        pool,
-        owner,
-        &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
-            "hook_org",
-            codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
-                .unwrap(),
+    let OrganizationOutcome::Applied(org) =
+        codeyard_db_orgs::organizations::profiles::create_organization(
+            pool,
+            owner,
+            &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
+                "hook_org",
+                codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None)
+                    .unwrap(),
+            )
+            .unwrap(),
         )
-        .unwrap(),
-    )
-    .await
-    .unwrap() else {
+        .await
+        .unwrap()
+    else {
         panic!("the organization was not created");
     };
     let OrganizationOutcome::Applied(_) =
-        super::add_organization_member(pool, owner, org.id, second, OrgRole::Owner)
-            .await
-            .unwrap()
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            pool,
+            owner,
+            org.id,
+            second,
+            OrgRole::Owner,
+        )
+        .await
+        .unwrap()
     else {
         panic!("the second owner was not added");
     };
     // The first owner is demoted before any write of its own runs.
     let OrganizationOutcome::Applied(_) =
-        super::update_organization_member_role(pool, second, org.id, owner, OrgRole::Member)
-            .await
-            .unwrap()
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            pool,
+            second,
+            org.id,
+            owner,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap()
     else {
         panic!("the first owner was not demoted");
     };

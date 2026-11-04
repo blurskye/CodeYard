@@ -1411,9 +1411,12 @@ async fn term_directory_admission(pool: &DbPool) {
     let f = setup(pool, 2, "2").await;
     let root = tempfile::tempdir().unwrap();
     let key = replace_node_key(pool, f.primary).await;
-    let mut context = cluster::NodeContext {
+    let mut context = codeyard_app::cluster::context::NodeContext {
         pool: Some(pool.clone()),
-        iroh: cluster::IrohDialer::new(cluster::Relay::Off, key.clone()),
+        iroh: codeyard_app::cluster::transport::IrohDialer::new(
+            codeyard_app::cluster::transport::Relay::Off,
+            key.clone(),
+        ),
         key,
         node_id: f.primary,
         repos_path: root.path().to_owned(),
@@ -1425,7 +1428,8 @@ async fn term_directory_admission(pool: &DbPool) {
         .await
         .unwrap()
         .unwrap();
-    let uuid = cluster::rpc::repository_uuid(&repository.disk_path).unwrap();
+    let uuid =
+        codeyard_app::cluster::rpc::repository::repository_uuid(&repository.disk_path).unwrap();
     assert!(context
         .repository_path(f.repo, uuid, true, None)
         .await
@@ -1600,7 +1604,7 @@ async fn quorum_directory_recovery(pool: &DbPool) {
         .await
         .unwrap()
         .unwrap();
-    let uuid = cluster::rpc::repository_uuid(&row.disk_path).unwrap();
+    let uuid = codeyard_app::cluster::rpc::repository::repository_uuid(&row.disk_path).unwrap();
     let roots = [tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap()];
     for root in &roots {
         let path = term_path(root.path(), uuid, 1);

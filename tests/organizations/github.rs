@@ -30,8 +30,8 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 
-use super::NewOrganization;
-use super::OrganizationProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::OrgRole;
@@ -90,7 +90,7 @@ async fn contract(pg: bool) {
     let member = f.actor("member").await;
     let outsider = f.actor("outsider").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new(
@@ -103,17 +103,29 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_member(f.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     applied(
-        super::invite_organization_member(f.pool(), owner, org.id, outsider, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::invitations::invite_organization_member(
+            f.pool(),
+            owner,
+            org.id,
+            outsider,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let second = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("second", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -551,9 +563,15 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        super::update_organization_member_role(f.pool(), owner, org.id, member, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     request(
         &router,
@@ -576,9 +594,15 @@ async fn contract(pg: bool) {
     )
     .await;
     applied(
-        super::update_organization_member_role(f.pool(), owner, org.id, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            f.pool(),
+            owner,
+            org.id,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     request(
         &router,

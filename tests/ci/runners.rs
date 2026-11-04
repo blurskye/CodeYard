@@ -108,7 +108,7 @@ async fn contract(pg: bool) {
     let bob = f.actor("runner_member").await;
     let eve = f.actor("runner_outsider").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -122,9 +122,15 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     applied(
-        super::add_organization_member(f.pool(), alice, org.id, bob, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            alice,
+            org.id,
+            bob,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let key = NodeKey::generate();
@@ -1182,7 +1188,7 @@ async fn runner_settings_browser() {
     f.complete_setup().await;
     let alice = f.actor("browser_owner").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(

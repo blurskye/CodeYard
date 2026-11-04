@@ -1,4 +1,8 @@
-use super::{db, json, protection::call, Client, Router, Value};
+use super::json;
+use super::protection::call;
+use super::Client;
+use super::Router;
+use super::Value;
 use axum::{
     body::{to_bytes, Body},
     http::{header, Request, StatusCode},
@@ -16,7 +20,8 @@ async fn postgres_upstream_merge() {
 }
 
 async fn upstream_contract(pg: bool) {
-    use super::{tokens, Database, TokenInput};
+    use super::Database;
+    use super::TokenInput;
     let f = Database::new(pg).await;
     f.complete_setup().await;
     let alice = f.actor("alice").await;

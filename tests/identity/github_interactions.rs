@@ -409,9 +409,13 @@ async fn contract(pg: bool) {
         codeyard_db_orgs::organizations::profiles::OrganizationProfile::new(None, None).unwrap(),
     )
     .unwrap();
-    let organization = match super::create_organization(f.pool(), alice, &organization)
-        .await
-        .unwrap()
+    let organization = match codeyard_db_orgs::organizations::profiles::create_organization(
+        f.pool(),
+        alice,
+        &organization,
+    )
+    .await
+    .unwrap()
     {
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(org) => org,
         _ => panic!("organization creation refused"),

@@ -1,4 +1,5 @@
 use super::*;
+use codeyard_db_orgs::organizations::properties;
 fn definition(value: Value) -> properties::DefinitionInput {
     serde_json::from_value(value).unwrap()
 }
@@ -44,7 +45,10 @@ pub(super) async fn contract(
         properties::set_repository_value(f.pool(), owner, repos[0], race, &input)
     );
     assert_ne!(
-        matches!(updated, Ok(organizations::OrganizationOutcome::Applied(_))),
+        matches!(
+            updated,
+            Ok(codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_))
+        ),
         written.is_ok(),
         "a definition change and an incompatible value write cannot both commit"
     );

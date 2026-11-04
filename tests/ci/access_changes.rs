@@ -665,7 +665,7 @@ async fn team_writer_repository(
             .unwrap()
             .id;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             pool,
             owner,
             &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -680,12 +680,18 @@ async fn team_writer_repository(
     )
     .id;
     applied(
-        super::add_organization_member(pool, owner, org, member, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            pool,
+            owner,
+            org,
+            member,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let team = applied(
-        super::create_organization_team(
+        codeyard_db_orgs::organizations::teams::create_organization_team(
             pool,
             owner,
             org,
@@ -705,7 +711,7 @@ async fn team_writer_repository(
     )
     .id;
     applied(
-        super::add_organization_team_member(
+        codeyard_db_orgs::organizations::teams::add_organization_team_member(
             pool,
             owner,
             org,
@@ -736,7 +742,7 @@ async fn team_writer_repository(
     .await
     .unwrap();
     applied(
-        super::grant_organization_team_repository(
+        codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
             pool,
             owner,
             org,
@@ -790,7 +796,10 @@ async fn postgres_team_grant_revocation_and_claim_do_not_deadlock() {
         .unwrap();
     let pool = fixture.pool.clone();
     let revoking = tokio::spawn(async move {
-        super::revoke_organization_team_repository(&pool, owner, org, team, repo).await
+        codeyard_db_orgs::organizations::teams::revoke_organization_team_repository(
+            &pool, owner, org, team, repo,
+        )
+        .await
     });
     wait_until_blocked(raw, holder, 1).await;
     let pool = fixture.pool.clone();

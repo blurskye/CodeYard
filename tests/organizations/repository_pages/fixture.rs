@@ -120,9 +120,11 @@ impl Fixture {
             (&unknown, OrgRole::Member),
         ] {
             applied(
-                super::add_organization_member(pool, owner.id, org, actor.id, role)
-                    .await
-                    .unwrap(),
+                codeyard_db_orgs::organizations::membership::add_organization_member(
+                    pool, owner.id, org, actor.id, role,
+                )
+                .await
+                .unwrap(),
             );
         }
         // Fixture-owned malformed membership; production never repairs it implicitly.
@@ -194,7 +196,7 @@ impl Fixture {
     }
     pub async fn organization(pool: &codeyard_db_core::DbPool, actor: i64, slug: &str) -> i64 {
         applied(
-            super::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 pool,
                 actor,
                 &codeyard_db_orgs::organizations::profiles::NewOrganization::new(

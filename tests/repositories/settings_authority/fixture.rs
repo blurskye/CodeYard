@@ -1,4 +1,4 @@
-use super::{database::Database, db};
+use super::database::Database;
 use serde::Serialize;
 use std::{
     collections::BTreeMap,

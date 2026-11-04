@@ -261,9 +261,15 @@ async fn authority_contract(pg: bool) {
     .await;
     agrees(&f, recipient, &[account, team_notice]).await;
     assert!(matches!(
-        super::revoke_organization_team_repository(f.pool(), owner, org, team, tenant)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::revoke_organization_team_repository(
+            f.pool(),
+            owner,
+            org,
+            team,
+            tenant
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
@@ -273,9 +279,15 @@ async fn authority_contract(pg: bool) {
     )
     .await;
     assert!(matches!(
-        super::remove_organization_team_member(f.pool(), owner, org, team, recipient)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::remove_organization_team_member(
+            f.pool(),
+            owner,
+            org,
+            team,
+            recipient
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;
@@ -305,9 +317,14 @@ async fn authority_contract(pg: bool) {
     .unwrap();
     // Real member removal clears direct and team contributions, not notifications.
     assert!(matches!(
-        super::remove_organization_member(f.pool(), owner, org, recipient)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::remove_organization_member(
+            f.pool(),
+            owner,
+            org,
+            recipient
+        )
+        .await
+        .unwrap(),
         codeyard_db_core::queries::organizations::OrganizationOutcome::Applied(_)
     ));
     agrees(&f, recipient, &[account]).await;

@@ -1,5 +1,6 @@
 //! Original-session persisted inbox contracts on real native stores.
-use super::{db, ids, Fixture};
+use super::ids;
+use super::Fixture;
 use chrono::{Duration as ChronoDuration, Utc};
 use codeyard_db_repos::notifications::records::{
     NotificationFilter, NotificationInbox, NotificationInboxAction as Action,

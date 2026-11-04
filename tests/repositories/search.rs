@@ -11,8 +11,6 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_app::ci::config::CiConfig;
 
-use super::NewOrganization;
-use super::OrganizationProfile;
 use codeyard_app::repositories::lifecycle::provision;
 use codeyard_app::repositories::store::editor::FileWrite;
 use codeyard_app::repositories::store::repo_store;
@@ -21,6 +19,8 @@ use codeyard_app::storage::ObjectStore;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::queries::organizations::OrganizationOutcome;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;
 use codeyard_db_repos::repositories::creation::RepositoryTarget;
 use database::Database;
@@ -146,7 +146,7 @@ async fn visibility_contract(pg: bool) {
     )
     .await
     .unwrap();
-    let acme = match super::create_organization(
+    let acme = match codeyard_db_orgs::organizations::profiles::create_organization(
         f.pool(),
         alice,
         &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),

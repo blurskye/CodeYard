@@ -1,9 +1,13 @@
-use super::{
-    applied, organizations, request, tokens, Client, Database, NewOrganization, OrgRole,
-    OrganizationProfile, TokenInput,
-};
+use super::applied;
+use super::request;
+use super::Client;
+use super::Database;
+use super::OrgRole;
+use super::TokenInput;
 use axum::http::StatusCode;
 use base64::{engine::general_purpose::STANDARD, Engine};
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
@@ -34,7 +38,7 @@ async fn contract(pg: bool) {
     let mut orgs = Vec::new();
     for name in ["acme", "second"] {
         orgs.push(applied(
-            organizations::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 f.pool(),
                 owner,
                 &NewOrganization::new(name, OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -44,7 +48,7 @@ async fn contract(pg: bool) {
         ));
     }
     applied(
-        organizations::add_organization_member(
+        codeyard_db_orgs::organizations::membership::add_organization_member(
             f.pool(),
             owner,
             orgs[0].id,

@@ -1,7 +1,5 @@
 //! Fine-grained personal access tokens from the settings pages: the create form, the value
 //! shown once, regeneration, expiry and deletion, on both engines.
-use super::NewOrganization;
-use super::OrganizationProfile;
 use crate::support::database::Database;
 use crate::support::http_client::Client;
 use crate::support::organizations::applied;
@@ -10,6 +8,8 @@ use axum::{
     http::Request,
     Router,
 };
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_app::repositories::lifecycle;
 use codeyard_db_repos::repositories::creation::RepositoryCreationOwner;

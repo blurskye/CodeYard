@@ -1,6 +1,4 @@
 //! Organization cache ceilings constrain existing objects and stale runtime preflights.
-use super::NewOrganization;
-use super::OrganizationProfile;
 use super::{
     actions_objects::{artifact, pat},
     results,
@@ -16,6 +14,8 @@ use axum::{
     http::{Request, StatusCode},
     Router,
 };
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_app::ci;
 use codeyard_db_actions::action_objects as objects;

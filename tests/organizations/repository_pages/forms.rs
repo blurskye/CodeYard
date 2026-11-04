@@ -353,7 +353,7 @@ pub async fn revocation(f: &Fixture) {
         f.org
     );
     applied(
-        super::update_organization_member_role(
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
             pool,
             f.owner.id,
             f.org,
@@ -365,9 +365,15 @@ pub async fn revocation(f: &Fixture) {
     );
     stale_refusal(f, &f.admin, "after_demotion").await;
     applied(
-        super::update_organization_member_role(pool, f.owner.id, f.org, f.admin.id, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::update_organization_member_role(
+            pool,
+            f.owner.id,
+            f.org,
+            f.admin.id,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     assert_eq!(
         f.get(&f.admin, "/new", true)
@@ -379,15 +385,23 @@ pub async fn revocation(f: &Fixture) {
         f.org
     );
     applied(
-        super::remove_organization_member(pool, f.owner.id, f.org, f.admin.id)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::remove_organization_member(
+            pool, f.owner.id, f.org, f.admin.id,
+        )
+        .await
+        .unwrap(),
     );
     stale_refusal(f, &f.admin, "after_removal").await;
     applied(
-        super::add_organization_member(pool, f.owner.id, f.org, f.admin.id, OrgRole::Admin)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            pool,
+            f.owner.id,
+            f.org,
+            f.admin.id,
+            OrgRole::Admin,
+        )
+        .await
+        .unwrap(),
     );
     for column in ["is_banned", "must_change_password"] {
         assert_eq!(

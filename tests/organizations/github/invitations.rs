@@ -4,11 +4,11 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use axum::http::StatusCode;
 
-use super::NewOrganization;
-use super::NewTeam;
-use super::OrganizationProfile;
-use super::TeamPrivacy;
-use super::TeamProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
+use codeyard_db_orgs::organizations::teams::NewTeam;
+use codeyard_db_orgs::organizations::teams::TeamPrivacy;
+use codeyard_db_orgs::organizations::teams::TeamProfile;
 
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::tokens::TokenInput;
@@ -29,7 +29,7 @@ async fn contract(pg: bool) {
     )
     .await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -38,7 +38,7 @@ async fn contract(pg: bool) {
         .unwrap(),
     );
     let foreign = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             owner,
             &NewOrganization::new("foreign", OrganizationProfile::new(None, None).unwrap())
@@ -49,9 +49,15 @@ async fn contract(pg: bool) {
     );
     for (user, role) in [(member, OrgRole::Member), (delegated, OrgRole::Admin)] {
         applied(
-            super::add_organization_member(f.pool(), owner, org.id, user, role)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                f.pool(),
+                owner,
+                org.id,
+                user,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
     let mut teams = Vec::new();
@@ -62,7 +68,7 @@ async fn contract(pg: bool) {
     ] {
         teams.push(
             applied(
-                super::create_organization_team(
+                codeyard_db_orgs::organizations::teams::create_organization_team(
                     f.pool(),
                     owner,
                     org,

@@ -6,8 +6,8 @@ use crate::support::http_client::Client;
 use crate::support::organizations::applied;
 use chrono::{Duration, Utc};
 
-use super::NewOrganization;
-use super::OrganizationProfile;
+use codeyard_db_orgs::organizations::profiles::NewOrganization;
+use codeyard_db_orgs::organizations::profiles::OrganizationProfile;
 
 use codeyard_db_core::models::OrgRole;
 use codeyard_identity::fine_grained::Access;
@@ -20,7 +20,7 @@ async fn contract(pg: bool) {
     let alice = f.actor("alice").await;
     let carol = f.actor("carol").await;
     let org = applied(
-        super::create_organization(
+        codeyard_db_orgs::organizations::profiles::create_organization(
             f.pool(),
             alice,
             &NewOrganization::new("acme", OrganizationProfile::new(None, None).unwrap()).unwrap(),
@@ -30,9 +30,15 @@ async fn contract(pg: bool) {
     )
     .id;
     applied(
-        super::add_organization_member(f.pool(), alice, org, carol, OrgRole::Member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::add_organization_member(
+            f.pool(),
+            alice,
+            org,
+            carol,
+            OrgRole::Member,
+        )
+        .await
+        .unwrap(),
     );
     let root = tempfile::tempdir().unwrap();
     let router = f.router(root.path()).await;

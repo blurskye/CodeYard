@@ -12,7 +12,7 @@ use codeyard_db_core::models::OrgRole;
 impl Database {
     async fn org(&self, owner: i64, name: &str) -> i64 {
         applied(
-            super::create_organization(
+            codeyard_db_orgs::organizations::profiles::create_organization(
                 self.pool(),
                 owner,
                 &codeyard_db_orgs::organizations::profiles::NewOrganization::new(
@@ -29,14 +29,26 @@ impl Database {
     }
     async fn member(&self, owner: i64, org: i64, actor: i64, role: OrgRole) {
         applied(
-            super::add_organization_member(self.pool(), owner, org, actor, role)
-                .await
-                .unwrap(),
+            codeyard_db_orgs::organizations::membership::add_organization_member(
+                self.pool(),
+                owner,
+                org,
+                actor,
+                role,
+            )
+            .await
+            .unwrap(),
         );
     }
-    async fn team(&self, owner: i64, org: i64, slug: &str, privacy: super::TeamPrivacy) -> i64 {
+    async fn team(
+        &self,
+        owner: i64,
+        org: i64,
+        slug: &str,
+        privacy: codeyard_db_orgs::organizations::teams::TeamPrivacy,
+    ) -> i64 {
         applied(
-            super::create_organization_team(
+            codeyard_db_orgs::organizations::teams::create_organization_team(
                 self.pool(),
                 owner,
                 org,
@@ -58,7 +70,7 @@ impl Database {
     }
     async fn team_member(&self, owner: i64, org: i64, team: i64, actor: i64) {
         applied(
-            super::add_organization_team_member(
+            codeyard_db_orgs::organizations::teams::add_organization_team_member(
                 self.pool(),
                 owner,
                 org,
@@ -72,7 +84,7 @@ impl Database {
     }
     async fn grant_team(&self, owner: i64, org: i64, team: i64, repo: i64, level: i16) {
         applied(
-            super::grant_organization_team_repository(
+            codeyard_db_orgs::organizations::teams::grant_organization_team_repository(
                 self.pool(),
                 owner,
                 org,
@@ -198,15 +210,19 @@ async fn canonical_access_contract(database: &Database) {
     database.grant_team(owner, org, visible, private, 5).await;
     database.expect(member, private, Admin).await;
     applied(
-        super::revoke_organization_team_repository(pool, owner, org, visible, private)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::revoke_organization_team_repository(
+            pool, owner, org, visible, private,
+        )
+        .await
+        .unwrap(),
     );
     database.expect(member, private, Write).await;
     applied(
-        super::remove_organization_team_member(pool, owner, org, secret, member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::teams::remove_organization_team_member(
+            pool, owner, org, secret, member,
+        )
+        .await
+        .unwrap(),
     );
     database.expect(member, private, NoAccess).await;
     database.team_member(owner, org, secret, member).await;
@@ -438,9 +454,11 @@ async fn canonical_access_contract(database: &Database) {
         .await
         .unwrap();
     applied(
-        super::remove_organization_member(pool, owner, org, member)
-            .await
-            .unwrap(),
+        codeyard_db_orgs::organizations::membership::remove_organization_member(
+            pool, owner, org, member,
+        )
+        .await
+        .unwrap(),
     );
     database.expect(member, private, NoAccess).await;
     database.expect(member, public, Read).await;

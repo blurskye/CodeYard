@@ -1,4 +1,4 @@
-use super::{database::Database, db};
+use super::database::Database;
 
 // Test-only raw persistence snapshot, never an application/HTTP projection.
 #[derive(Debug, PartialEq, sqlx::FromRow)]
