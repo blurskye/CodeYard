@@ -41,7 +41,6 @@ pub fn router() -> Router<Arc<AppState>> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use axum::http::StatusCode;
     use axum::Json;
     use codeyard_api_http::shared::ci::admission_error;

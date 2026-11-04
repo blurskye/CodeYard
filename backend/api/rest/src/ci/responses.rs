@@ -67,7 +67,6 @@ pub fn map_workflow_info(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use codeyard_api_http::shared::ci::responses::bound_log_projection;
     use codeyard_api_http::shared::ci::responses::workflow_view;
     use codeyard_webui::pages::ci as view;

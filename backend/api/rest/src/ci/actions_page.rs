@@ -15,7 +15,6 @@ pub(crate) async fn global_actions(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use codeyard_api_http::shared::ci::actions_page::run_matches_repository;
     #[test]
     fn selected_run_cannot_cross_repository_scope() {
