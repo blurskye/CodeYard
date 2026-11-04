@@ -98,7 +98,7 @@ async fn create_value(
         codeyard_db_repos::repositories::records::get_repository(&state.pool, head_owner, head_name)
             .await
     } else {
-        codeyard_repos_core::repositories::pull_requests::branches::owner_head_repository(
+        codeyard_ci_engine::pull_requests::branches::owner_head_repository(
             &state.pool,
             &repo,
             head_owner,

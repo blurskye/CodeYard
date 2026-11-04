@@ -84,7 +84,7 @@ pub async fn create_branch(
     Json(req): Json<CreateBranchRequest>,
 ) -> Result<Json<CreateBranchResponse>, (StatusCode, Json<ApiError>)> {
     let actor = codeyard_api_http::session::get_current_user(&state.pool, &headers).await?;
-    let sha = codeyard_repos_core::repositories::refs::create_branch(
+    let sha = codeyard_ci_engine::refs::create_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,
@@ -111,7 +111,7 @@ pub async fn delete_branch(
     Path((owner, repo, branch)): Path<(String, String, String)>,
 ) -> Result<StatusCode, (StatusCode, Json<ApiError>)> {
     let actor = codeyard_api_http::session::get_current_user(&state.pool, &headers).await?;
-    codeyard_repos_core::repositories::refs::delete_branch(
+    codeyard_ci_engine::refs::delete_branch(
         &state.pool,
         state.cluster.as_ref(),
         &state.ci_runs,

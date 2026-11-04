@@ -13,7 +13,7 @@ use codeyard_api_rest::create_router;
 use codeyard_app::app::AppState;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_repos_core::ci::runner_credentials::JitConfig;
+use codeyard_ci_engine::runner_credentials::JitConfig;
 
 use codeyard_cluster_core::transport::Listen;
 use codeyard_cluster_core::transport::NodeAddress;
@@ -992,7 +992,7 @@ async fn contract(pg: bool) {
                 String::from_utf8_lossy(&output.stderr)
             );
             assert_eq!(
-                codeyard_repos_core::ci::runner_credentials::work_root(&state).unwrap(),
+                codeyard_ci_engine::runner_credentials::work_root(&state).unwrap(),
                 state.join("runner-workspaces/jit-work")
             );
             let node = codeyard_db_cluster::cluster::get_node_by_name(f.pool(), &config.node_name)

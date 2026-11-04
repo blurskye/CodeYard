@@ -4,8 +4,8 @@ use super::quorum_sql::{replace_node_key, set_timeout, setup_with_refs, Fixture}
 use crate::support::native_database as native;
 use base64::Engine;
 use codeyard_ci::config::CiConfig;
-use codeyard_repos_core::ci::queue::RunQueue;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::queue::RunQueue;
+use codeyard_ci_engine::runs::CiRuns;
 
 use codeyard_repos_core::context::term_path;
 

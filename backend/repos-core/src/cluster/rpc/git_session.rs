@@ -1,4 +1,4 @@
-use crate::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use crate::cluster::rpc::client::attempt_deadline;
 use crate::cluster::rpc::client::cannot_serve;
 use crate::cluster::rpc::client::log_failover;

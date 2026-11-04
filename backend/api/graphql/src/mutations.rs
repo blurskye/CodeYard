@@ -354,7 +354,7 @@ pub(super) async fn resolve(
                     request.authorize(id, "metadata", false).await?;
                     Some(id)
                 } else if let Some(owner) = head_owner {
-                    let head = codeyard_repos_core::repositories::pull_requests::branches::owner_head_repository(pool, &repo, owner)
+                    let head = codeyard_ci_engine::pull_requests::branches::owner_head_repository(pool, &repo, owner)
                         .await
                         .map_err(unavailable)?
                         .ok_or_else(missing)?;

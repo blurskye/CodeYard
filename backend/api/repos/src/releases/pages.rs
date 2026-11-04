@@ -22,7 +22,7 @@ use codeyard_db_core::models::ReleaseRow;
 use codeyard_db_repos::releases::ReleaseFields;
 use codeyard_git::error::ErrorKind;
 use codeyard_identity::repository_access::AccessError;
-use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::ref_errors::RefError;
 use codeyard_repos_core::repositories::releases::ReleaseError;
 use codeyard_repos_pulls::repositories::releases::ReleaseInput;
 use codeyard_storage::files::downloads::DownloadError;

@@ -260,12 +260,12 @@ async fn document(
         pull_requests,
     );
     let mut workflow_name =
-        codeyard_repos_core::ci::workflows::workflow_name_from_path(&run.workflow_path);
+        codeyard_repos_core::workflows::workflow_name_from_path(&run.workflow_path);
     if let Some(sha) = &run.head_sha {
         if !documents.workflows.contains_key(sha) {
             // Discovery owns bounded background parsing and its immutable cross-request cache.
             // Git enrichment is optional; durable execution history remains readable offline.
-            let definitions = codeyard_repos_core::ci::workflows::list_workflows_for_ref(
+            let definitions = codeyard_repos_core::workflows::list_workflows_for_ref(
                 &repo_store(repo, state.cluster.as_ref()),
                 sha,
             )

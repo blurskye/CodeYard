@@ -8,7 +8,7 @@ use codeyard_db_core::DbPool;
 use codeyard_db_identity::users::ssh_keys::get_user_by_key_fingerprint;
 use codeyard_db_repos::repositories::records::get_git_repository;
 use codeyard_git::repository::process as git_process;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::git_sessions::GitTasks;
 use codeyard_repos_core::repositories::git_sessions::ReceiveCredential;
 use codeyard_repos_core::repositories::store::repo_store;

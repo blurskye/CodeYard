@@ -7,8 +7,8 @@ use crate::support::rpc_operations;
 
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiExecutionMode;
-use codeyard_repos_core::ci::queue::RunQueue;
-use codeyard_repos_core::ci::workers::CiWorkers;
+use codeyard_ci_engine::queue::RunQueue;
+use codeyard_ci_engine::workers::CiWorkers;
 
 use codeyard_repos_core::context::NodeContext;
 use codeyard_support::secrets::SecretEncryptor;
@@ -2005,7 +2005,7 @@ async fn full_pipeline_tests_gate_deployment_and_report_the_workers_mode() {
             );
         }
         let deduplicated = ci
-            .trigger_run(codeyard_repos_core::ci::runs::CiRunRequest {
+            .trigger_run(codeyard_repos_core::receive_ci::CiRunRequest {
                 repo_id: repo.id,
                 repo_owner: owner.username.clone(),
                 repo_name: repo.name.clone(),
@@ -2090,7 +2090,7 @@ async fn automatic_deployments_use_yaml_environments_and_explicit_targets_still_
         )
         .await
         .unwrap();
-        codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci(
+        codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci(
             pool,
             &ci,
             &repo,
@@ -2535,7 +2535,7 @@ async fn actions_history_survives_a_stalled_git_preflight() {
 
 #[tokio::test]
 async fn stalled_repository_reads_do_not_occupy_workflow_parsing_slots() {
-    use codeyard_repos_core::ci::workflows::list_workflows_for_ref;
+    use codeyard_repos_core::workflows::list_workflows_for_ref;
     let fixture = ci_fixture().await;
     let endpoint = iroh::Endpoint::builder(iroh::endpoint::presets::Minimal)
         .relay_mode(iroh::RelayMode::Disabled)
@@ -3462,7 +3462,7 @@ async fn discovery_allows_stalled_tcp_to_fall_back_to_iroh() {
     });
     let workflows = tokio::time::timeout(
         Duration::from_secs(25),
-        codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, "main"),
+        codeyard_repos_core::workflows::list_workflows_for_ref(&store, "main"),
     )
     .await
     .unwrap()
@@ -4898,7 +4898,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
     )
     .await
     .unwrap();
-    let ci = codeyard_repos_core::ci::runs::CiRuns::new(
+    let ci = codeyard_ci_engine::runs::CiRuns::new(
         pool.clone(),
         Arc::new(CiConfig {
             trusted_actor_ids: BTreeSet::from([fixture.owner]),
@@ -4908,7 +4908,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         None,
         Arc::new(NotificationBroadcaster::new(pool)),
     );
-    codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci(
+    codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci(
         pool,
         &ci,
         &repo,
@@ -4959,7 +4959,7 @@ async fn a_remote_pull_request_run_keeps_its_enqueued_event_after_the_base_moves
         )
         .await
         .unwrap();
-    codeyard_repos_core::repositories::pull_requests::branches::branches_moved(
+    codeyard_ci_engine::pull_requests::branches::branches_moved(
         pool,
         &repo,
         &ci,

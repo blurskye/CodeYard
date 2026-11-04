@@ -1,9 +1,10 @@
 //! Open pull requests follow their branches. Fork heads are retained in the base
 //! repository so deleting a fork does not remove the commits being reviewed.
+use codeyard_repos_core::receive_ci::RefreshError;
 
-use crate::ci::runs::CiRuns;
-use crate::repositories::store::repo_store;
-use crate::repositories::store::RepoStore;
+use crate::runs::CiRuns;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_db_core::models::Repository;
 use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
@@ -20,18 +21,6 @@ pub enum HeadError {
     OutsideFork,
     #[error("Head repository lookup is unavailable")]
     Unavailable,
-}
-
-#[derive(Debug, thiserror::Error)]
-pub enum RefreshError {
-    #[error("Pull request records are unavailable")]
-    Database,
-    #[error("Pull request repository storage is unavailable")]
-    Storage,
-    #[error("Base repository not found")]
-    MissingBase,
-    #[error("Pull request revisions kept changing during refresh")]
-    Conflict,
 }
 
 /// Only this repository and its direct forks are valid heads.
@@ -65,11 +54,11 @@ pub async fn owner_head_repository(
         }
     }
 
-    match crate::repositories::lifecycle::transfer_target(pool, owner).await {
+    match codeyard_repos_core::repositories::lifecycle::transfer_target(pool, owner).await {
         Ok((owner, _)) => {
             codeyard_db_repos::repositories::discovery::get_owner_fork(pool, owner, base.id).await
         }
-        Err(error) if error.kind == crate::repositories::lifecycle::LifecycleFailure::Invalid => {
+        Err(error) if error.kind == codeyard_repos_core::repositories::lifecycle::LifecycleFailure::Invalid => {
             Ok(None)
         }
         Err(error) => Err(error.into()),
@@ -180,7 +169,7 @@ async fn move_head(
         .await
         .map_err(|_| RefreshError::Database)?;
     if let Some(current) = current {
-        crate::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        crate::pull_requests::code_owners::request_code_owner_reviews(
             pool, ci, base, &current, actor_id,
         )
         .await;
@@ -191,14 +180,14 @@ async fn move_head(
         let (author_id, repository) = (current.author_id, base.clone());
         let before = from.to_owned();
         let store = repo_store(base, ci.cluster.as_ref());
-        let payload = crate::webhooks::emit(
+        let payload = codeyard_repos_core::webhooks::emit(
             pool,
             base,
             codeyard_model::webhook_events::PULL_REQUEST,
             vec![author_id, actor_id],
             move |owner, people| {
                 let (author, sender) = (people.get(author_id), people.get(actor_id));
-                let mut payload = crate::repositories::pull_requests::webhook_payload(
+                let mut payload = codeyard_repos_core::repositories::pull_requests::webhook_payload(
                     "synchronize",
                     &current,
                     &author,
@@ -216,7 +205,7 @@ async fn move_head(
         )
         .await;
         if let Some(access) = ci_access {
-            crate::repositories::pull_requests::workflows::queue_pull_request_event_ci(
+            crate::pull_requests::workflows::queue_pull_request_event_ci(
                 pool,
                 ci,
                 base,
@@ -308,7 +297,7 @@ pub async fn refresh_one(
                 .await
                 .map_err(|_| RefreshError::Database)?;
                 if let Some(current) = current {
-                    crate::repositories::pull_requests::code_owners::request_code_owner_reviews(
+                    crate::pull_requests::code_owners::request_code_owner_reviews(
                         pool, ci, &base, &current, actor_id,
                     )
                     .await;

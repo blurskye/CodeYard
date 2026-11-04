@@ -1,7 +1,7 @@
 use super::*;
-use crate::ci::push::RefUpdate;
-use crate::ci::workflows::parse_workflow_definition;
-use crate::ci::workflows::WorkflowDefinition;
+use crate::push_workflows::RefUpdate;
+use crate::workflows::parse_workflow_definition;
+use crate::workflows::WorkflowDefinition;
 
 fn revision(paths: usize) -> (tempfile::TempDir, RepoStore, String) {
     let root = tempfile::tempdir().unwrap();

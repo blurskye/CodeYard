@@ -18,7 +18,7 @@ use codeyard_db_repos::repositories::dependencies::Update;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_repos::editor::UploadFile;
 use codeyard_repos::editor::UploadWrite;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::store::repo_store;
 use sha2::Sha256;
 

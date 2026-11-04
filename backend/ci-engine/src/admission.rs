@@ -1,7 +1,8 @@
-use crate::ci::runs::CiRunRequest;
-use crate::ci::workflows::infer_pipeline_from_workflow_path;
-use crate::ci::workflows::workflow_definition_from_yaml;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::workflows::{is_safe_ref, is_safe_workflow_path};
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use codeyard_repos_core::workflows::infer_pipeline_from_workflow_path;
+use codeyard_repos_core::workflows::workflow_definition_from_yaml;
+use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Result;
 use codeyard_actions::workflow::dispatch_inputs;
 use codeyard_ci::config::CiConfig;
@@ -14,7 +15,7 @@ use std::collections::BTreeSet;
 pub fn is_safe_owner(value: &str) -> bool {
     codeyard_model::account_input::validate_namespace(value, 3).is_ok()
         // Also accept the names the repository rules allow, such as short or dotted namespaces.
-        || crate::repositories::lifecycle::validate_name(value).is_ok()
+        || codeyard_repos_core::repositories::lifecycle::validate_name(value).is_ok()
 }
 
 pub(super) struct AdmittedRevision {
@@ -29,7 +30,7 @@ pub fn is_supported_event(event: &str) -> bool {
     matches!(
         event,
         "push" | "pull_request" | "pull_request_target" | "workflow_dispatch" | "schedule"
-    ) || crate::ci::events::is_repository_event(event)
+    ) || crate::events::is_repository_event(event)
 }
 
 /// An instance admin acts as the owner of personal repositories only, not of organization ones.
@@ -97,7 +98,7 @@ pub(crate) async fn fork_approval_required(
 pub(super) async fn resolve(
     pool: &codeyard_db_core::DbPool,
     config: &CiConfig,
-    context: Option<&crate::context::NodeContext>,
+    context: Option<&codeyard_repos_core::context::NodeContext>,
     mut request: CiRunRequest,
     rerun: bool,
     event_payload: Option<&serde_json::Value>,
@@ -249,7 +250,7 @@ pub(super) async fn resolve(
         false
     };
     let accepted_event = event_payload.is_some()
-        && crate::ci::events::is_repository_event(&request.event)
+        && crate::events::is_repository_event(&request.event)
         && request.head_sha.is_some();
     let configured_cd = config.workflow_cd.clone();
     if pr_revision && request.head_sha.is_none() {
@@ -280,9 +281,9 @@ pub(super) async fn resolve(
     let mut blobs = BTreeMap::new();
     // A rerun replays the called commits its source admitted instead of resolving moving references.
     let pinned = source_blobs
-        .map(crate::ci::reusable::pinned_commits)
+        .map(crate::reusable::pinned_commits)
         .unwrap_or_default();
-    let mut called = crate::ci::reusable::Resolver::new(
+    let mut called = crate::reusable::Resolver::new(
         pool,
         context,
         &repo,
@@ -349,7 +350,7 @@ pub(super) async fn resolve(
             } else {
                 None
             };
-            let variables = crate::ci::queue::run_variables(pool, repo.id)
+            let variables = crate::queue::run_variables(pool, repo.id)
                 .await
                 .map_err(|_| AdmissionError::Unavailable)?;
             let reference = pull.as_ref().filter(|_| pr_revision).map_or_else(
@@ -559,7 +560,7 @@ pub(super) fn merge_scheduling(
 }
 
 pub(super) struct ParsedWorkflow {
-    pub definition: crate::ci::workflows::WorkflowDefinition,
+    pub definition: codeyard_repos_core::workflows::WorkflowDefinition,
     pub environment: Option<String>,
     pub scheduling: codeyard_db_actions::runners::Scheduling,
     pub(super) concurrency: Option<serde_yaml::Value>,
@@ -645,21 +646,6 @@ pub(super) async fn parse_admission_workflow(
     })
     .await
     .map_err(|_| AdmissionError::Unavailable)?
-}
-
-pub fn is_safe_ref(value: &str) -> bool {
-    let reference = if value.starts_with("refs/") {
-        value.to_owned()
-    } else {
-        format!("refs/heads/{value}")
-    };
-    !value.starts_with('-') && codeyard_git::ref_names::is_canonical_ref(&reference)
-}
-
-pub fn is_safe_workflow_path(value: &str) -> bool {
-    value
-        .strip_prefix(".github/workflows/")
-        .is_some_and(codeyard_git::ci::is_ci_workflow_filename)
 }
 
 #[cfg(test)]

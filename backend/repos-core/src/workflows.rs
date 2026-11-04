@@ -391,9 +391,9 @@ fn parse_workflow_yaml(content: &str) -> Result<Value> {
     parse_yaml(content.as_bytes())
 }
 
-pub(crate) fn parse_workflow_definition(path: &str, content: &str) -> Result<WorkflowDefinition> {
+pub fn parse_workflow_definition(path: &str, content: &str) -> Result<WorkflowDefinition> {
     ensure!(
-        crate::ci::admission::is_safe_workflow_path(path),
+        crate::workflows::is_safe_workflow_path(path),
         "invalid CI workflow path"
     );
     let yaml = parse_workflow_yaml(content)
@@ -402,14 +402,14 @@ pub(crate) fn parse_workflow_definition(path: &str, content: &str) -> Result<Wor
     workflow_definition_from_yaml(path, &yaml)
 }
 
-pub(super) fn workflow_definition_from_yaml(
+pub fn workflow_definition_from_yaml(
     path: &str,
     yaml: &Value,
 ) -> Result<WorkflowDefinition> {
     let name = workflow_name(yaml, path)?;
     let triggers = codeyard_actions::workflow::events::parse(yaml.get("on"))?;
     for cron in &triggers.schedules {
-        crate::ci::schedule::parse(cron)?;
+        crate::workflow_schedule::parse(cron)?;
     }
 
     Ok(WorkflowDefinition {
@@ -845,12 +845,12 @@ mod tests {
             ".github/workflows/build linux.yml",
             ".github/workflows/雪.yaml",
         ] {
-            assert!(crate::ci::admission::is_safe_workflow_path(path));
+            assert!(crate::workflows::is_safe_workflow_path(path));
             assert!(parse_workflow_definition(path, "on: workflow_dispatch").is_ok());
             assert!(parse_workflow_definition(path, "on: push").is_ok());
         }
         let path = format!(".github/workflows/{}.yml", "x".repeat(238));
-        assert!(!crate::ci::admission::is_safe_workflow_path(&path));
+        assert!(!crate::workflows::is_safe_workflow_path(&path));
         assert!(parse_workflow_definition(&path, "on: workflow_dispatch").is_err());
         assert!(parse_workflow_definition(&path, "on: push").is_err());
         let path = format!(".github/workflows/{}.yml", "x".repeat(233));
@@ -1572,3 +1572,19 @@ mod push_parser_tests {
         .is_err());
     }
 }
+
+pub fn is_safe_ref(value: &str) -> bool {
+    let reference = if value.starts_with("refs/") {
+        value.to_owned()
+    } else {
+        format!("refs/heads/{value}")
+    };
+    !value.starts_with('-') && codeyard_git::ref_names::is_canonical_ref(&reference)
+}
+
+pub fn is_safe_workflow_path(value: &str) -> bool {
+    value
+        .strip_prefix(".github/workflows/")
+        .is_some_and(codeyard_git::ci::is_ci_workflow_filename)
+}
+

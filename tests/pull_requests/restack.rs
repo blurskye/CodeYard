@@ -1139,14 +1139,14 @@ async fn slow_ci_admission_contract(restack: bool) {
             .await
             .unwrap()
             .unwrap();
-            let ci = codeyard_repos_core::ci::runs::CiRuns::new(
+            let ci = codeyard_ci_engine::runs::CiRuns::new(
                 f.pool().clone(),
                 Arc::new(CiConfig::default()),
                 Arc::new(tokio::sync::Notify::new()),
                 None,
                 Arc::new(codeyard_notifications::broadcast::NotificationBroadcaster::new(f.pool())),
             );
-            codeyard_repos_core::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+            codeyard_ci_engine::pull_requests::workflows::queue_moved_pull_requests_ci(
                 f.pool(),
                 &ci,
                 &app.repository,

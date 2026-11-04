@@ -59,7 +59,7 @@ pub async fn create(
                 code: "not_found",
                 message: "Repository not found".into(),
             })?;
-    let created = codeyard_repos_core::repositories::refs::create_branch(
+    let created = codeyard_ci_engine::refs::create_branch(
         state.pool(),
         state.cluster(),
         state.ci_runs(),
@@ -77,23 +77,23 @@ pub async fn create(
     match created {
         // The branch exists; only refreshing open pull requests after it failed, so the
         // issue still gets its link.
-        Ok(_) | Err(codeyard_repos_core::repositories::refs::RefError::AppliedFollowupFailed) => {}
+        Ok(_) | Err(codeyard_repos_core::ref_errors::RefError::AppliedFollowupFailed) => {}
         Err(
-            codeyard_repos_core::repositories::refs::RefError::Invalid(message)
-            | codeyard_repos_core::repositories::refs::RefError::Protected(message),
+            codeyard_repos_core::ref_errors::RefError::Invalid(message)
+            | codeyard_repos_core::ref_errors::RefError::Protected(message),
         ) => {
             return Err(OperationError::Invalid {
                 code: "invalid_branch",
                 message: message.into(),
             })
         }
-        Err(codeyard_repos_core::repositories::refs::RefError::Access(_)) => {
+        Err(codeyard_repos_core::ref_errors::RefError::Access(_)) => {
             return Err(OperationError::Denied {
                 code: "forbidden",
                 message: "Write access is required".into(),
             })
         }
-        Err(codeyard_repos_core::repositories::refs::RefError::Git(error)) => match error.kind {
+        Err(codeyard_repos_core::ref_errors::RefError::Git(error)) => match error.kind {
             ErrorKind::Invalid | ErrorKind::NotFound | ErrorKind::MissingPath => {
                 return Err(OperationError::Invalid {
                     code: "invalid_branch",
@@ -117,7 +117,7 @@ pub async fn create(
             }
             ErrorKind::Unavailable => return Err(unconfirmed()),
         },
-        Err(codeyard_repos_core::repositories::refs::RefError::Unavailable) => {
+        Err(codeyard_repos_core::ref_errors::RefError::Unavailable) => {
             return Err(unconfirmed())
         }
     }

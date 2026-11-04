@@ -211,7 +211,7 @@ pub(super) async fn reference_field(
     let head = crate::arg(args, "headRef")?;
     let (source, head) = if let Some((owner, branch)) = head.split_once(':') {
         let source =
-            codeyard_repos_core::repositories::pull_requests::branches::owner_head_repository(
+            codeyard_ci_engine::pull_requests::branches::owner_head_repository(
                 &request.state.pool,
                 &repo,
                 owner,

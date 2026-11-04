@@ -753,7 +753,7 @@ async fn dispatch(
     let auth = auth.ok_or_else(codeyard_identity::github_auth::required)?;
     let actor = auth.workflow_actor(&state, repo.id).await?;
     let Json(input) = input.map_err(codeyard_model::github_error::json_error)?;
-    if !codeyard_repos_core::ci::events::valid_dispatch(&input.event_type, &input.client_payload) {
+    if !codeyard_ci_engine::events::valid_dispatch(&input.event_type, &input.client_payload) {
         return Err(Error::invalid("Invalid repository dispatch"));
     }
     let access =

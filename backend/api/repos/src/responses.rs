@@ -266,9 +266,9 @@ pub(crate) fn lifecycle_error(
 }
 
 pub(crate) fn ref_error(
-    error: codeyard_repos_core::repositories::refs::RefError,
+    error: codeyard_repos_core::ref_errors::RefError,
 ) -> (StatusCode, Json<ApiError>) {
-    use codeyard_repos_core::repositories::refs::RefError;
+    use codeyard_repos_core::ref_errors::RefError;
     let (status, code, message) = match error {
         RefError::Access(error) => return codeyard_api_http::shared::repos::access::access_error(error),
         RefError::Git(error) => return repo_store_error(error, StatusCode::BAD_REQUEST),
@@ -337,7 +337,7 @@ mod error_tests {
 
     #[test]
     fn unreachable_storage_is_503_and_only_refused_refs_are_400() {
-        use codeyard_repos_core::repositories::refs::RefError;
+        use codeyard_repos_core::ref_errors::RefError;
         let (status, _) = ref_error(RefError::Git(RepoError::authority_unavailable()));
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         let (status, _) = ref_error(RefError::Git(RepoError::new(

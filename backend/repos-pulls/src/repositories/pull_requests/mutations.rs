@@ -8,9 +8,9 @@ use codeyard_notifications::mentions::MentionSource;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::pull_requests::database_error;
-use codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci;
+use codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
@@ -133,7 +133,7 @@ pub(crate) async fn repair_open_pull(
         )
         .await
         .map_err(|error| head_publish_error(number, error))?;
-    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
+    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
         pool,
         repository,
         ci,
@@ -160,7 +160,7 @@ pub(crate) async fn repair_open_pull(
         )
         .await;
     }
-    codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+    codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
         pool, ci, repository, &current, actor_id,
     )
     .await;
@@ -237,21 +237,21 @@ pub async fn create_pull_request(
     for branch in [&req.head_branch, &req.base_branch] {
         check_branch_name(branch)?;
     }
-    let head_repository = codeyard_repos_core::repositories::pull_requests::branches::head_repository(
+    let head_repository = codeyard_ci_engine::pull_requests::branches::head_repository(
         pool,
         &repository,
         req.head_repo_id.unwrap_or(repository.id),
     )
     .await
     .map_err(|error| match error {
-        codeyard_repos_core::repositories::pull_requests::branches::HeadError::Unavailable => {
+        codeyard_ci_engine::pull_requests::branches::HeadError::Unavailable => {
             OperationError::Unavailable {
                 code: "database_error",
                 message: "Head repository lookup is unavailable".into(),
             }
         }
-        codeyard_repos_core::repositories::pull_requests::branches::HeadError::Missing
-        | codeyard_repos_core::repositories::pull_requests::branches::HeadError::OutsideFork => {
+        codeyard_ci_engine::pull_requests::branches::HeadError::Missing
+        | codeyard_ci_engine::pull_requests::branches::HeadError::OutsideFork => {
             OperationError::Invalid {
                 code: "invalid_head",
                 message: "Head must be this repository or one of its forks".into(),
@@ -465,7 +465,7 @@ pub async fn create_pull_request(
             .map_err(|error| head_publish_error(pull_request.number, error))?;
     }
 
-    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
+    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
         pool,
         &repository,
         ci,
@@ -562,7 +562,7 @@ pub async fn create_pull_request(
     )
     .await;
 
-    codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+    codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
         pool,
         ci,
         &repository,
@@ -582,7 +582,7 @@ pub async fn create_pull_request(
     )
     .await;
     if !req.suppress_ci {
-        codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_event_ci(
+        codeyard_ci_engine::pull_requests::workflows::queue_pull_request_event_ci(
             pool,
             ci,
             &repository,
@@ -798,7 +798,7 @@ pub async fn update_pull_request(
     // Branches may have moved while the pull request was closed. Catch up now that
     // it is open again, and answer with what it is after that.
     let pull_request = if requested_state == Some("open") || base_changed {
-        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
+        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
             pool,
             &repository,
             ci,
@@ -816,7 +816,7 @@ pub async fn update_pull_request(
         pull_request
     };
     if base_changed {
-        codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
             pool,
             ci,
             &repository,
@@ -826,7 +826,7 @@ pub async fn update_pull_request(
         .await;
         // A new base can make workflows eligible that the old one did not, so queue them for it.
         // The `edited` event below does not start default pull request workflows.
-        codeyard_repos_core::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+        codeyard_ci_engine::pull_requests::workflows::queue_moved_pull_requests_ci(
             pool,
             ci,
             &repository,
@@ -858,7 +858,7 @@ pub async fn update_pull_request(
         extra,
     )
     .await;
-    codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_event_ci(
+    codeyard_ci_engine::pull_requests::workflows::queue_pull_request_event_ci(
         pool,
         ci,
         &repository,
@@ -1040,7 +1040,7 @@ pub async fn unstack_pull_request(
             open.push(pull);
         }
     }
-    codeyard_repos_core::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+    codeyard_ci_engine::pull_requests::workflows::queue_moved_pull_requests_ci(
         pool,
         ci,
         &repository,
@@ -1049,7 +1049,7 @@ pub async fn unstack_pull_request(
     )
     .await;
     for pull in &open {
-        codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
             pool,
             ci,
             &repository,
@@ -1108,7 +1108,7 @@ pub async fn unstack_named_stack(
             open.push(pull);
         }
     }
-    codeyard_repos_core::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+    codeyard_ci_engine::pull_requests::workflows::queue_moved_pull_requests_ci(
         pool,
         ci,
         &repository,
@@ -1117,7 +1117,7 @@ pub async fn unstack_named_stack(
     )
     .await;
     for pull in &open {
-        codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
             pool,
             ci,
             &repository,
@@ -1179,7 +1179,7 @@ pub async fn join_stack_batch(
                 code: "database_error",
                 message: "Saved stack member could not be loaded".into(),
             })?;
-        codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
             pool,
             ci,
             &repository,
@@ -1187,7 +1187,7 @@ pub async fn join_stack_batch(
             user.id,
         )
         .await;
-        codeyard_repos_core::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+        codeyard_ci_engine::pull_requests::workflows::queue_moved_pull_requests_ci(
             pool,
             ci,
             &repository,
@@ -1229,7 +1229,7 @@ pub async fn join_stack(
             code: "not_found",
             message: "Pull request not found".to_owned(),
         })?;
-    codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+    codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
         pool,
         ci,
         &repository,
@@ -1238,7 +1238,7 @@ pub async fn join_stack(
     )
     .await;
     // The layer now merges into its stack's trunk, so workflows for that trunk may now apply.
-    codeyard_repos_core::repositories::pull_requests::workflows::queue_moved_pull_requests_ci(
+    codeyard_ci_engine::pull_requests::workflows::queue_moved_pull_requests_ci(
         pool,
         ci,
         &repository,
@@ -1391,7 +1391,7 @@ pub async fn set_pull_request_draft(
             serde_json::Map::new(),
         )
         .await;
-        codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_event_ci(
+        codeyard_ci_engine::pull_requests::workflows::queue_pull_request_event_ci(
             pool,
             ci,
             &repository,
@@ -1408,7 +1408,7 @@ pub async fn set_pull_request_draft(
     // the event and its workflows go out even when the catch-up fails, and the failure is
     // reported after them.
     let refreshed =
-        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
+        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
             pool,
             &repository,
             ci,
@@ -1427,7 +1427,7 @@ pub async fn set_pull_request_draft(
             .flatten();
     let complete = refreshed.is_ok() && current.is_some();
     let pull_request = current.unwrap_or(pull_request);
-    codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+    codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
         pool,
         ci,
         &repository,
@@ -1446,7 +1446,7 @@ pub async fn set_pull_request_draft(
         serde_json::Map::new(),
     )
     .await;
-    codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_event_ci(
+    codeyard_ci_engine::pull_requests::workflows::queue_pull_request_event_ci(
         pool,
         ci,
         &repository,

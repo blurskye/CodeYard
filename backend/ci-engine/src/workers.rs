@@ -1,5 +1,5 @@
 //! Worker execution and shutdown for this node.
-use crate::ci::queue::RunQueue;
+use crate::queue::RunQueue;
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_ci::config::CiConfig;
@@ -61,7 +61,7 @@ impl CiWorkers {
         state_dir: &Path,
     ) -> Self {
         let (work_root, configuration_error) =
-            match crate::ci::runner_credentials::work_root(state_dir) {
+            match crate::runner_credentials::work_root(state_dir) {
                 Ok(root) => (root, None),
                 Err(error) => (state_dir.to_owned(), Some(error.to_string())),
             };
@@ -97,7 +97,7 @@ impl CiWorkers {
             // listeners. Records the pass does not reach stay on disk for the background pass.
             match tokio::time::timeout(
                 STARTUP_RECOVERY_WAIT,
-                crate::ci::worker::reconcile_containers(&self.cleanup_dir),
+                crate::worker::reconcile_containers(&self.cleanup_dir),
             )
             .await
             {
@@ -124,13 +124,13 @@ impl CiWorkers {
         let node = codeyard_cluster_core::pairing::normalize_name(&node)?;
         let mut tasks = workers.tasks.lock().unwrap_or_else(|e| e.into_inner());
         if let RunQueue::Database { .. } = &self.queue {
-            tasks.spawn(crate::ci::worker::fail_stale_runs(
+            tasks.spawn(crate::worker::fail_stale_runs(
                 self.queue.clone(),
                 workers.stop.subscribe(),
             ));
         }
         if recover {
-            tasks.spawn(crate::ci::worker::recover_containers(
+            tasks.spawn(crate::worker::recover_containers(
                 self.cleanup_dir.clone(),
                 workers.stop.subscribe(),
             ));
@@ -149,7 +149,7 @@ impl CiWorkers {
         };
         for slot in 0..self.config.max_active_runs {
             let id = format!("{owner}{node}/{}/{slot}", Uuid::new_v4().simple());
-            tasks.spawn(crate::ci::worker::run(
+            tasks.spawn(crate::worker::run(
                 self.clone(),
                 id,
                 workers.stop.subscribe(),

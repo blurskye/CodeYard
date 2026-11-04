@@ -14,8 +14,8 @@ use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
 use codeyard_repos::protection::ANY_TIP;
-use codeyard_repos_core::ci::push::RefUpdate;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::push_workflows::RefUpdate;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::repositories::store::RepoStore;
@@ -693,7 +693,7 @@ async fn publish_commit(
     // The branch moved: pull requests that use it follow, and push workflows run.
     let current = codeyard_identity::repository_access::current_repository_with_owner(pool, repository.id).await;
     let followup_repository = current.as_ref().map(|(repo, _)| repo).unwrap_or(repository);
-    let refreshed = codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
+    let refreshed = codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
         pool,
         followup_repository,
         Some(&[branch][..]),

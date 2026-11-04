@@ -26,7 +26,7 @@ use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
 use codeyard_model::urls::repo_url;
 use codeyard_repos_core::api_shared::github::contents::store_error;
-use codeyard_repos_core::ci::runs::DispatchRequest;
+use codeyard_ci_engine::runs::DispatchRequest;
 use codeyard_repos_core::repositories::store::repo_store;
 use serde::Deserialize;
 use serde_json::json;
@@ -42,7 +42,7 @@ pub(super) async fn discover(
     if store.refs().await.map_err(store_error)?.is_empty() {
         return Ok(Vec::new());
     }
-    let definitions = codeyard_repos_core::ci::workflows::list_workflows_for_ref(
+    let definitions = codeyard_repos_core::workflows::list_workflows_for_ref(
         &store,
         &format!("refs/heads/{}", repo.default_branch),
     )

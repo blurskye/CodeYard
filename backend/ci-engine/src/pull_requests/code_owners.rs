@@ -1,12 +1,12 @@
 //! Code owners on pull requests: the review requests a pull request gets when it opens or its head
 //! moves, and the approvals that a branch rule with `require_code_owner_review` waits for.
 
-use crate::ci::runs::CiRuns;
-use crate::repositories::code_owners::load_rules;
-use crate::repositories::code_owners::resolve_owners;
-use crate::repositories::pull_requests::reviewers::emit_reviewer_event;
-use crate::repositories::pull_requests::reviewers::notify_review_request;
-use crate::repositories::store::repo_store;
+use crate::runs::CiRuns;
+use codeyard_repos_core::repositories::code_owners::load_rules;
+use codeyard_repos_core::repositories::code_owners::resolve_owners;
+use codeyard_repos_core::repositories::pull_requests::reviewers::emit_reviewer_event;
+use codeyard_repos_core::repositories::pull_requests::reviewers::notify_review_request;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 
@@ -144,7 +144,7 @@ pub async fn request_code_owner_reviews(
             }
         }
     }
-    crate::repositories::pull_requests::team_reviewers::notify(
+    codeyard_repos_core::repositories::pull_requests::team_reviewers::notify(
         pool,
         ci.notifications(),
         &requester,
@@ -153,7 +153,7 @@ pub async fn request_code_owner_reviews(
         &requested,
     )
     .await;
-    crate::repositories::pull_requests::team_reviewers::emit_events(
+    codeyard_repos_core::repositories::pull_requests::team_reviewers::emit_events(
         pool,
         ci.cluster.as_ref(),
         repository,

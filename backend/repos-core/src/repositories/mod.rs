@@ -6,7 +6,6 @@ pub mod languages;
 pub mod lifecycle;
 pub mod pull_requests;
 pub mod reads;
-pub mod refs;
 pub mod releases;
 pub mod rule_suites;
 pub mod store;

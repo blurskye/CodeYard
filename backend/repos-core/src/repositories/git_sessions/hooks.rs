@@ -1,5 +1,5 @@
 //! Receive authorization and follow-up after Git accepts immutable updates.
-use crate::ci::runs::CiRunRequest;
+use crate::receive_ci::CiRunRequest;
 use crate::repositories::git_sessions::broker::Gateway;
 use crate::repositories::git_sessions::broker::Operation;
 use crate::repositories::git_sessions::ReceiveCredential;
@@ -215,7 +215,7 @@ impl Gateway {
                     .authorize(&self.pool, &repo, true)
                     .await?;
                 ensure!(actor.id == operation.actor_id, "identity changed");
-                let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+                let cluster = self.ci.cluster().context("cluster unavailable")?;
                 let primary = cluster.node_id;
                 let repository = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
                 let view = journal::recovery_view(&self.pool, repo.id).await?;
@@ -335,7 +335,7 @@ impl Gateway {
                     let (repo, _) = self.operation_repository(operation).await?;
                     let repository =
                         crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
-                    let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+                    let cluster = self.ci.cluster().context("cluster unavailable")?;
                     let lease = operation
                         .publication_lease
                         .as_ref()
@@ -359,7 +359,7 @@ impl Gateway {
                     let (repo, _) = self.operation_repository(operation).await?;
                     let repository =
                         crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
-                    let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+                    let cluster = self.ci.cluster().context("cluster unavailable")?;
                     let lease = operation
                         .publication_lease
                         .as_ref()
@@ -439,7 +439,7 @@ impl Gateway {
         let path = if let Some(term) = committed_term {
             // This admitted child must publish before its voter can be marked current.
             // It may finish only in its original serving term, never in a successor's path.
-            let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+            let cluster = self.ci.cluster().context("cluster unavailable")?;
             let view =
                 codeyard_db_cluster::cluster::writes::recovery_view(&self.pool, repo.id).await?;
             ensure!(
@@ -698,7 +698,7 @@ impl Gateway {
         })
         .await??;
         if !publications.is_empty() {
-            let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+            let cluster = self.ci.cluster().context("cluster unavailable")?;
             let uuid = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
             let term = codeyard_db_cluster::cluster::writes::recovery_view(&self.pool, repo.id)
                 .await?
@@ -794,7 +794,7 @@ impl Gateway {
             .map_err(|_| anyhow::anyhow!("operation state unavailable"))?
             .secret_bypasses
             .clone();
-        let store = repo_store(&repo, self.ci.cluster.as_ref());
+        let store = repo_store(&repo, self.ci.cluster());
         let mut consumed = std::collections::HashSet::new();
         for bypass in bypasses {
             let mut accepted = false;
@@ -931,11 +931,10 @@ impl Gateway {
             .filter_map(|update| update.reference.strip_prefix("refs/heads/"))
             .collect();
         if !branches.is_empty()
-            && crate::repositories::pull_requests::branches::refresh_open_pull_requests(
+            && self.ci.refresh_open_pull_requests(
                 &self.pool,
                 &repo,
                 Some(branches.as_slice()),
-                &self.ci,
                 actor_id,
                 ci_access,
             )
@@ -1004,7 +1003,7 @@ impl Gateway {
             );
         }
         // Remember every accepted commit, even when trust, skip messages or filters prevent CI.
-        let store = repo_store(&repo, self.ci.cluster.as_ref());
+        let store = repo_store(&repo, self.ci.cluster());
         for update in updates.iter().filter(|update| update.new != ZERO_SHA) {
             match store.commit(&update.new).await {
                 Ok(commit) => {
@@ -1082,15 +1081,15 @@ impl Gateway {
                 }
             };
             let workflows =
-                match crate::ci::workflows::list_workflows_for_ref(&store, &commit_sha).await {
+                match crate::workflows::list_workflows_for_ref(&store, &commit_sha).await {
                     Ok(workflows) => workflows,
                     Err(_) => {
                         failed = true;
                         continue;
                     }
                 };
-            let message = match crate::ci::workflows::commit_message_for_ref(
-                &repo_store(&repo, self.ci.cluster.as_ref()),
+            let message = match crate::workflows::commit_message_for_ref(
+                &repo_store(&repo, self.ci.cluster()),
                 &commit_sha,
             )
             .await
@@ -1101,14 +1100,14 @@ impl Gateway {
                     continue;
                 }
             };
-            let ref_update = crate::ci::push::RefUpdate {
+            let ref_update = crate::push_workflows::RefUpdate {
                 reference: update.reference.clone(),
                 old: (update.old != ZERO_SHA).then(|| update.old.clone()),
                 new: update.new.clone(),
                 changed_paths: None,
             };
-            let matched = crate::ci::push::matching_push_workflows(
-                &repo_store(&repo, self.ci.cluster.as_ref()),
+            let matched = crate::push_workflows::matching_push_workflows(
+                &repo_store(&repo, self.ci.cluster()),
                 &ref_update,
                 workflows,
                 Some(&message),
@@ -1127,9 +1126,9 @@ impl Gateway {
                 continue;
             }
             // A run's github.event is the push document the webhook sends.
-            let event = match crate::ci::push::push_document(
+            let event = match crate::push_workflows::push_document(
                 &self.pool,
-                &repo_store(&repo, self.ci.cluster.as_ref()),
+                &repo_store(&repo, self.ci.cluster()),
                 &repo,
                 &operation.owner,
                 actor_id,
@@ -1146,7 +1145,7 @@ impl Gateway {
             };
             for workflow in matched {
                 let pipeline =
-                    crate::ci::workflows::infer_pipeline_from_workflow_path(&workflow.path);
+                    crate::workflows::infer_pipeline_from_workflow_path(&workflow.path);
                 // Recheck live identity/access for each dispatch, in particular
                 // CD/full. Neither event=push nor the prior pre-hook is a bypass.
                 let fresh_repo = codeyard_db_repos::repositories::records::get_repository_by_id(
@@ -1280,7 +1279,7 @@ impl Gateway {
             if let Some(change) =
                 head_change.filter(|change| change.old_target != change.new_target)
             {
-                let cluster = self.ci.cluster.as_ref().context("cluster unavailable")?;
+                let cluster = self.ci.cluster().context("cluster unavailable")?;
                 let view = codeyard_db_cluster::cluster::writes::recovery_view(&self.pool, repo.id)
                     .await?;
                 let uuid = crate::cluster::rpc::repository::repository_uuid(&repo.disk_path)?;
@@ -1305,7 +1304,7 @@ impl Gateway {
             )
             .await?;
         }
-        repo_store(repo, self.ci.cluster.as_ref()).refresh_storage_size(self.pool.clone(), repo.id);
+        repo_store(repo, self.ci.cluster()).refresh_storage_size(self.pool.clone(), repo.id);
         Ok(())
     }
 }

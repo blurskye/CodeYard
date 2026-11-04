@@ -1,4 +1,5 @@
 //! Admission, enqueue and cancellation of durable CI runs.
+use codeyard_repos_core::receive_ci::CiRunRequest;
 use anyhow::Result;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
@@ -34,26 +35,6 @@ pub struct DispatchRequest {
     pub repo_id: Option<i64>,
 }
 
-#[derive(Debug, Clone)]
-pub struct CiRunRequest {
-    pub repo_id: i64,
-    pub repo_owner: String,
-    pub repo_name: String,
-    pub branch: String,
-    pub head_sha: Option<String>,
-    pub event: String,
-    pub pull_request_id: Option<i64>,
-    pub pipeline: CiPipelineKind,
-    pub workflow_paths: Vec<String>,
-    pub environment: Option<String>,
-    /// Submitted `workflow_dispatch` inputs. Admission checks them and replaces them with the
-    /// complete set the run gets, defaults included.
-    pub inputs: Option<BTreeMap<String, String>>,
-    pub triggered_by_id: i64,
-    /// Whether a person asked for the run (see `NewCiRun::manual`).
-    pub manual: bool,
-}
-
 /// A form or API value as the text GitHub shows it in `event.inputs`.
 fn input_text(value: serde_json::Value) -> Result<String, AdmissionError> {
     match value {
@@ -69,7 +50,7 @@ fn input_text(value: serde_json::Value) -> Result<String, AdmissionError> {
 #[derive(Clone)]
 pub struct CiRuns {
     pub pool: DbPool,
-    pub cluster: Option<crate::context::NodeContext>,
+    pub cluster: Option<codeyard_repos_core::context::NodeContext>,
     pub config: Arc<CiConfig>,
     pub queued: Arc<Notify>,
     notifications: Arc<NotificationBroadcaster>,
@@ -86,7 +67,7 @@ impl CiRuns {
         pool: DbPool,
         config: Arc<CiConfig>,
         queued: Arc<Notify>,
-        cluster: Option<crate::context::NodeContext>,
+        cluster: Option<codeyard_repos_core::context::NodeContext>,
         notifications: Arc<NotificationBroadcaster>,
     ) -> Self {
         Self {
@@ -105,12 +86,12 @@ impl CiRuns {
         request: DispatchRequest,
         credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
-        use crate::ci::admission::is_safe_owner;
-        use crate::ci::admission::is_safe_ref;
-        use crate::ci::admission::is_safe_workflow_path;
+        use crate::admission::is_safe_owner;
+        use codeyard_repos_core::workflows::is_safe_ref;
+        use codeyard_repos_core::workflows::is_safe_workflow_path;
         use codeyard_git::is_full_commit_id;
         if !is_safe_owner(&request.repo_owner)
-            || crate::repositories::lifecycle::validate_name(&request.repo_name).is_err()
+            || codeyard_repos_core::repositories::lifecycle::validate_name(&request.repo_name).is_err()
         {
             return Err(AdmissionError::InvalidRequest(
                 "repo_owner and repo_name must use safe repository characters",
@@ -176,7 +157,7 @@ impl CiRuns {
                     "workflow_path must be under .github/workflows and end with .yml or .yaml",
                 ));
             }
-            pipeline = crate::ci::workflows::infer_pipeline_from_workflow_path(&path);
+            pipeline = codeyard_repos_core::workflows::infer_pipeline_from_workflow_path(&path);
             vec![path]
         } else {
             self.config.workflow_paths(pipeline)
@@ -403,7 +384,7 @@ impl CiRuns {
             repository.id,
         )
         .await?;
-        Ok(crate::ci::admission::check_actor(&self.config, &actor, &repository, access).is_ok())
+        Ok(crate::admission::check_actor(&self.config, &actor, &repository, access).is_ok())
     }
 
     pub fn config(&self) -> &CiConfig {
@@ -462,7 +443,7 @@ impl CiRuns {
         source_blobs: Option<serde_json::Value>,
         credential: Option<codeyard_db_core::queries::ci::CiCredential>,
     ) -> Result<codeyard_db_core::models::CiRun, AdmissionError> {
-        let revision = crate::ci::admission::resolve(
+        let revision = crate::admission::resolve(
             &self.pool,
             &self.config,
             self.cluster.as_ref(),
@@ -509,7 +490,7 @@ impl CiRuns {
             attempt.definition = match revision
                 .blobs
                 .get(path)
-                .and_then(crate::ci::reusable::content)
+                .and_then(crate::reusable::content)
             {
                 Some(content) => Some(content.to_owned()),
                 None => revision.definitions.get(path).cloned(),
@@ -518,7 +499,7 @@ impl CiRuns {
         // YAML environments and configured workflow names can promote CI to deployment.
         if request.pipeline.includes_cd()
             && !access.can_admin()
-            && !crate::ci::admission::fork_approval_required(&self.pool, &request).await?
+            && !crate::admission::fork_approval_required(&self.pool, &request).await?
         {
             return Err(AdmissionError::Denied("CI deployment permission denied"));
         }

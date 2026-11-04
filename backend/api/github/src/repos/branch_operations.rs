@@ -38,7 +38,7 @@ async fn rename(
         .rename_branch_as(&state.pool, repo.id, authority, &branch, &input.new_name)
         .await
         .map_err(store_error)?;
-    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
+    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
         &state.pool,
         &repo,
         Some(&[&branch, &input.new_name]),
@@ -152,7 +152,7 @@ async fn complete_upstream(
                 &repo,
                 &owner,
                 actor.id,
-                codeyard_repos_core::ci::push::RefUpdate {
+                codeyard_repos_core::push_workflows::RefUpdate {
                     reference: format!("refs/heads/{}", input.branch),
                     old: Some(merged.old.clone()),
                     new: merged.sha.clone(),
@@ -161,7 +161,7 @@ async fn complete_upstream(
             )
             .await;
     }
-    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
+    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
         &state.pool,
         &repo,
         Some(&[&input.branch]),

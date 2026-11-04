@@ -4622,7 +4622,7 @@ impl LocalStore {
         session: crate::store_types::GitSession,
         receive: Option<(
             codeyard_db_core::DbPool,
-            std::sync::Arc<crate::ci::runs::CiRuns>,
+            std::sync::Arc<dyn crate::receive_ci::ReceiveCi>,
         )>,
         streams: crate::store_types::GitStreams<'_>,
     ) -> anyhow::Result<std::process::ExitStatus> {

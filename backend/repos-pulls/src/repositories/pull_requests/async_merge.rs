@@ -1,7 +1,7 @@
 //! Durable asynchronous requests, executed by the server's bounded, shutdown-drained Git tasks.
 use crate::services::RepositoryServices;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::pull_requests::database_error;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use serde_json::json;

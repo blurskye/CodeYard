@@ -1,8 +1,5 @@
-pub mod branches;
-pub mod code_owners;
 pub mod reviewers;
 pub mod team_reviewers;
-pub mod workflows;
 
 /// The `pull_request` webhook payload with the diff and commit counts, which the pull request row
 /// does not keep. It runs in a webhook builder, which is a blocking task.

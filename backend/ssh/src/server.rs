@@ -5,7 +5,7 @@ use crate::rate_limit::RateLimiter;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use rand::rngs::OsRng;
 use rand::RngCore;
 use russh::keys::ssh_key::private::Ed25519Keypair;

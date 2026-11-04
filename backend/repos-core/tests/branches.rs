@@ -6,10 +6,10 @@ use codeyard_ci::config::CiConfig;
 use codeyard_db_core::models::PullRequest;
 use codeyard_db_core::models::Repository;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::ci::runs::CiRuns;
-use codeyard_repos_core::repositories::pull_requests::branches::refresh_one;
-use codeyard_repos_core::repositories::pull_requests::branches::revisions;
-use codeyard_repos_core::repositories::pull_requests::branches::ListedRefs;
+use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci_engine::pull_requests::branches::refresh_one;
+use codeyard_ci_engine::pull_requests::branches::revisions;
+use codeyard_ci_engine::pull_requests::branches::ListedRefs;
 use codeyard_repos_core::repositories::store::repo_store;
 use std::sync::Arc;
 use tokio::sync::Notify;
@@ -390,7 +390,7 @@ async fn existing_owner_requests_do_not_take_a_write_lock() {
     let lock = pool.begin_with("BEGIN IMMEDIATE").await.unwrap();
     tokio::time::timeout(
         std::time::Duration::from_secs(1),
-        codeyard_repos_core::repositories::pull_requests::code_owners::request_code_owner_reviews(
+        codeyard_ci_engine::pull_requests::code_owners::request_code_owner_reviews(
             &forks.pool,
             &forks.ci,
             &forks.base,

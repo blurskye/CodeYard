@@ -20,7 +20,8 @@ backend/
   db/
     core/                      DbPool, connection, migrations, models, native_operation!
     identity/ orgs/ repos/ actions/ security/ cluster/     queries by domain
-  repos-core/                  repository store, CI engine and repository RPC runtime
+  repos-core/                  repository store, Git sessions and repository RPC runtime
+  ci-engine/                   CI admission, queue, workers and pull-request refresh
   repos-pulls/                 pull mutations, repository operations and security workers
   repos/                       repository policy, imports, traffic, templates, Git editor
   ci/                          configuration, credentials, logs, environment values
@@ -119,9 +120,9 @@ and results stay the same. A stage can be the last one.
    subscriptions and delivery live in `backend/webhooks/`. `identity`, `notifications`
    and `ssh` are extracted. Repository authority, identity mail links and delivery
    helpers have one lower owner.
-   `backend/repos-core/` now owns the concrete store, Git sessions, CI engine,
-   repository RPC, publication checks and pull-request refresh. The store, CI and
-   local RPC fallback still call each other and stay in one crate. Cluster startup,
+   `backend/repos-core/` owns the concrete store, Git sessions, repository RPC,
+   publication checks and workflow readers. `backend/ci-engine/` owns admission,
+   queues, workers and pull-request refresh. Receive hooks use a lower resource trait. Cluster startup,
    replica maintenance and CI request handling live in `backend/cluster/`; transport
    and quorum primitives live in `backend/cluster/core/`. Document readers
    use resource-access traits implemented by `AppState`. Token authentication lives
@@ -134,6 +135,7 @@ and results stay the same. A stage can be the last one.
 8. **`app`.** Source layout complete. `backend/app/src` is the app library;
    `backend/repos-pulls/` owns pull mutations, repository operations, issues and
    security workers. Their resource trait is implemented by `AppState`.
+   App state supplies the CI implementation to receive hooks.
    Vulnerability synchronization stays in app; advisory lookup lives in DB security.
    `backend/app/wiring` contains the existing binary package's entry points, CLI
    and node startup. Backups live in the app library. Storage and file operations

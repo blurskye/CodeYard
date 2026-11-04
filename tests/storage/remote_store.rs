@@ -19,7 +19,7 @@ use codeyard_git::MAX_WORKFLOW_DIRECTORY_ENTRIES;
 use codeyard_repos::editor::FileWrite;
 use codeyard_repos::editor::PreparedFile;
 use codeyard_repos::editor::MAX_EDITOR_BYTES;
-use codeyard_repos_core::ci::workflows::list_workflows_for_ref;
+use codeyard_repos_core::workflows::list_workflows_for_ref;
 use codeyard_repos_core::cluster;
 use codeyard_repos_core::context::NodeContext;
 use codeyard_repos_core::repositories::store::repo_store;

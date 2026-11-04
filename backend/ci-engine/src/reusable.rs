@@ -1,7 +1,7 @@
 //! Admission snapshots called workflows so workers never fetch a moving ref or another repository.
-use crate::ci::admission::is_safe_ref;
-use crate::ci::admission::is_safe_workflow_path;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::workflows::is_safe_ref;
+use codeyard_repos_core::workflows::is_safe_workflow_path;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_git::error::ErrorKind;
 use serde_yaml::Value;
@@ -50,7 +50,7 @@ pub(super) async fn authorize(
 
 pub(super) struct Resolver<'a> {
     pub pool: &'a codeyard_db_core::DbPool,
-    pub context: Option<&'a crate::context::NodeContext>,
+    pub context: Option<&'a codeyard_repos_core::context::NodeContext>,
     pub caller: &'a codeyard_db_core::models::Repository,
     pub actor: i64,
     pub files: BTreeMap<String, serde_json::Value>,
@@ -99,7 +99,7 @@ pub(super) fn pinned_commits(
 impl<'a> Resolver<'a> {
     pub fn new(
         pool: &'a codeyard_db_core::DbPool,
-        context: Option<&'a crate::context::NodeContext>,
+        context: Option<&'a codeyard_repos_core::context::NodeContext>,
         caller: &'a codeyard_db_core::models::Repository,
         actor: i64,
         environment: Option<String>,
@@ -168,7 +168,7 @@ impl<'a> Resolver<'a> {
             let mut yaml = if let Some(yaml) = yaml {
                 yaml
             } else {
-                let parsed = crate::ci::admission::parse_admission_workflow(
+                let parsed = crate::admission::parse_admission_workflow(
                     path.clone(),
                     content,
                     self.environment.clone(),
@@ -177,7 +177,7 @@ impl<'a> Resolver<'a> {
                 codeyard_actions::workflow::validate_called_concurrency(&parsed.yaml).map_err(
                     |_| AdmissionError::Invalid("Called workflow concurrency is unsupported"),
                 )?;
-                crate::ci::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
+                crate::admission::merge_scheduling(&mut self.scheduling, parsed.scheduling)?;
                 self.environment = parsed.environment;
                 parsed.yaml
             };
@@ -223,8 +223,8 @@ impl<'a> Resolver<'a> {
                     let owner = parts.next().unwrap_or("");
                     let name = parts.next().unwrap_or("");
                     let path = parts.next().unwrap_or("");
-                    if !crate::ci::admission::is_safe_owner(owner)
-                        || crate::repositories::lifecycle::validate_name(name).is_err()
+                    if !crate::admission::is_safe_owner(owner)
+                        || codeyard_repos_core::repositories::lifecycle::validate_name(name).is_err()
                         || !is_safe_workflow_path(path)
                         || !(is_safe_ref(reference) || codeyard_git::is_full_commit_id(reference))
                     {

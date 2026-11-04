@@ -1,6 +1,6 @@
 use super::*;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::store::repo_store;
 
 const WORKFLOW: &str = "on: [pull_request, push]\njobs:\n  test:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo ok\n";
@@ -390,7 +390,7 @@ async fn stack_target(pg: bool) {
     .await
     .unwrap();
     let ci = ci(&w);
-    codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci(
+    codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci(
         w.database.pool(),
         &ci,
         &w.repository,
@@ -579,7 +579,7 @@ async fn target_specific_checks(pg: bool) {
         )
         .await;
     let ci = ci(&w);
-    codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci(
+    codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci(
         w.database.pool(),
         &ci,
         &w.repository,
@@ -680,7 +680,7 @@ async fn refs_prefixed_base(pg: bool) {
         ci(&w)
             .dispatch_run(
                 w.alice_id,
-                codeyard_repos_core::ci::runs::DispatchRequest {
+                codeyard_ci_engine::runs::DispatchRequest {
                     repo_owner: "alice".into(),
                     repo_name: "proj".into(),
                     branch: branch.into(),
@@ -752,7 +752,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
         )
         .await;
     let ci = ci(&w);
-    codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
+    codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
         w.database.pool(),
         &w.repository,
         &ci,
@@ -774,7 +774,7 @@ async fn path_failure_keeps_unfiltered(pg: bool) {
     assert_eq!(runs.len(), 1);
     assert_eq!(runs[0].workflow_path, ".github/workflows/plain.yml");
     assert!(
-        codeyard_repos_core::repositories::pull_requests::workflows::queue_pull_request_ci(
+        codeyard_ci_engine::pull_requests::workflows::queue_pull_request_ci(
             w.database.pool(),
             &ci,
             &w.repository,
@@ -938,7 +938,7 @@ async fn deleted_head_takes_the_pull_ref(pg: bool) {
                 )
                 .await;
         }
-        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
+        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
             w.database.pool(),
             &w.repository,
             &ci,

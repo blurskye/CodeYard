@@ -92,7 +92,7 @@ async fn start(
     }
     let (_, mut pull) = target(&state, &headers, &owner, &name, number).await?;
     if pull.state == "open" {
-        codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_request(
+        codeyard_ci_engine::pull_requests::branches::refresh_open_pull_request(
             &state.pool,
             &repo,
             &state.ci_runs,

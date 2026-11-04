@@ -539,7 +539,7 @@ async fn mutate(
         }
         "registration-token" | "jit" => {
             native::authorize_scope(pool, actor, scope).await?;
-            let ticket = codeyard_repos_core::ci::runner_credentials::ticket(
+            let ticket = codeyard_ci_engine::runner_credentials::ticket(
                 pool,
                 ctx.state.cluster.as_ref(),
             )
@@ -549,7 +549,7 @@ async fn mutate(
             let work_folder = field(form, "work_folder");
             if jit {
                 anyhow::ensure!(
-                    codeyard_repos_core::ci::runner_credentials::valid_work_folder(work_folder),
+                    codeyard_ci_engine::runner_credentials::valid_work_folder(work_folder),
                     Refusal::Invalid("work_folder")
                 );
             }
@@ -577,7 +577,7 @@ async fn mutate(
             )
             .await?;
             if let Some(row) = row {
-                let config = codeyard_repos_core::ci::runner_credentials::JitConfig {
+                let config = codeyard_ci_engine::runner_credentials::JitConfig {
                     ticket: ticket.encode(),
                     node_name: native::jit_node_name(row.id, &ticket.secret_hash()),
                     work_folder: work_folder.to_owned(),
@@ -589,13 +589,13 @@ async fn mutate(
             return Ok(Some(json!({"token":ticket.encode(),"expires_at":expires})));
         }
         "remove-token" => {
-            let token = codeyard_repos_core::ci::runner_credentials::new_remove_token();
+            let token = codeyard_ci_engine::runner_credentials::new_remove_token();
             let expires = chrono::Utc::now() + chrono::Duration::hours(1);
             native::remove_token(
                 pool,
                 actor,
                 scope,
-                &codeyard_repos_core::ci::runner_credentials::remove_hash(&token),
+                &codeyard_ci_engine::runner_credentials::remove_hash(&token),
                 expires,
             )
             .await?;
@@ -617,7 +617,7 @@ async fn remove(
     match native::remove_with_token(
         &s.pool,
         id,
-        &codeyard_repos_core::ci::runner_credentials::remove_hash(&input.token),
+        &codeyard_ci_engine::runner_credentials::remove_hash(&input.token),
     )
     .await
     {

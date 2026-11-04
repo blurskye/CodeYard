@@ -15,7 +15,7 @@ use codeyard_cluster_core::transport::Relay;
 use codeyard_cluster_core::transport::ALPN_EVENTS;
 use codeyard_cluster_core::transport::ALPN_PAIR;
 use codeyard_cluster_core::transport::ALPN_RPC;
-use codeyard_repos_core::ci::queue::RunQueue;
+use codeyard_ci_engine::queue::RunQueue;
 use codeyard_support::node_identity::NodeKey;
 use std::{net::SocketAddr, path::Path, sync::Arc, time::Duration};
 use tokio::{

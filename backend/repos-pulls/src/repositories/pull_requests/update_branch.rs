@@ -2,8 +2,8 @@
 use codeyard_db_core::DbPool;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_repos_core::ci::push::RefUpdate;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::push_workflows::RefUpdate;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::pull_requests::database_error;
 use codeyard_repos_core::repositories::pull_requests::OperationError;
 use codeyard_repos_core::repositories::store::repo_store;
@@ -70,7 +70,7 @@ pub async fn update_branch(
             "Only open pull requests can update their head branch",
         ));
     }
-    let head = codeyard_repos_core::repositories::pull_requests::branches::head_repository(
+    let head = codeyard_ci_engine::pull_requests::branches::head_repository(
         pool,
         &base,
         pull.head_repo_id
@@ -78,7 +78,7 @@ pub async fn update_branch(
     )
     .await
     .map_err(|error| match error {
-        codeyard_repos_core::repositories::pull_requests::branches::HeadError::Unavailable => {
+        codeyard_ci_engine::pull_requests::branches::HeadError::Unavailable => {
             database_error(())
         }
         _ => invalid("Head branch is unavailable"),
@@ -143,19 +143,19 @@ pub async fn update_branch(
     };
     // A head writer's own update is published with their authority; the wider refresh follows.
     if let Err(error) =
-        codeyard_repos_core::repositories::pull_requests::branches::refresh_updated_head(
+        codeyard_ci_engine::pull_requests::branches::refresh_updated_head(
             pool, &base, &head, ci, actor.id, pull.id,
         )
         .await
     {
         tracing::warn!(pull_request_id = pull.id, %error, "could not refresh the updated pull request");
     }
-    codeyard_repos_core::repositories::pull_requests::branches::branches_moved(
+    codeyard_ci_engine::pull_requests::branches::branches_moved(
         pool, &base, ci, actor.id,
     )
     .await;
     if head.id != base.id {
-        codeyard_repos_core::repositories::pull_requests::branches::branches_moved(
+        codeyard_ci_engine::pull_requests::branches::branches_moved(
             pool, &head, ci, actor.id,
         )
         .await;

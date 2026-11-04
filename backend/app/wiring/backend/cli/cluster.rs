@@ -161,7 +161,7 @@ pub async fn run_offline(
             );
             let ticket = JoinTicket::decode(ticket)?;
             let relay = Relay::parse(std::env::var("IROH_RELAY").ok().as_deref())?;
-            let jit = codeyard_repos_core::ci::runner_credentials::jit_from_env()?;
+            let jit = codeyard_ci_engine::runner_credentials::jit_from_env()?;
             let name = match (name, &jit) {
                 (Some(name), _) => name.clone(),
                 (None, Some(config)) => config.node_name.clone(),
@@ -171,7 +171,7 @@ pub async fn run_offline(
             let membership = join(&ticket, &key, &relay, &name, None).await?;
             codeyard_cluster::worker::save_core(state_dir, &ticket)?;
             if let Some(config) = jit {
-                codeyard_repos_core::ci::runner_credentials::save_work_folder(
+                codeyard_ci_engine::runner_credentials::save_work_folder(
                     state_dir,
                     &config.work_folder,
                 )?;

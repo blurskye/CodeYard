@@ -2631,7 +2631,7 @@ impl RepoStore {
         session: GitSession,
         receive: Option<(
             codeyard_db_core::DbPool,
-            std::sync::Arc<crate::ci::runs::CiRuns>,
+            std::sync::Arc<dyn crate::receive_ci::ReceiveCi>,
         )>,
         streams: GitStreams<'_>,
     ) -> anyhow::Result<std::process::ExitStatus> {

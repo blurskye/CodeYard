@@ -289,8 +289,8 @@ pub async fn serve_worker(state_dir: &std::path::Path) -> Result<()> {
         result = codeyard_cluster::worker::worker_context(state_dir, settings) => result?,
     };
     let config = std::sync::Arc::new(codeyard_ci::config::CiConfig::from_env()?);
-    let workers = codeyard_repos_core::ci::workers::CiWorkers::new(
-        codeyard_repos_core::ci::queue::RunQueue::Remote {
+    let workers = codeyard_ci_engine::workers::CiWorkers::new(
+        codeyard_ci_engine::queue::RunQueue::Remote {
             preferred: Default::default(),
             context: context.clone(),
             peers,
@@ -420,8 +420,8 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     let ci_runs = state.ci_runs.clone();
     let notifications = state.notification_broadcaster.clone();
     let git_tasks = state.git_tasks.clone();
-    let workers = codeyard_repos_core::ci::workers::CiWorkers::with_wakeup(
-        codeyard_repos_core::ci::queue::RunQueue::Database {
+    let workers = codeyard_ci_engine::workers::CiWorkers::with_wakeup(
+        codeyard_ci_engine::queue::RunQueue::Database {
             pool: pool.clone(),
             config: ci_runs.config.clone(),
             secrets: state.secret_encryptor.clone(),
@@ -480,7 +480,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
     });
     let (stop_schedules, schedules_stop) = tokio::sync::watch::channel(false);
     let schedules = config.roles.contains(NodeRole::Web).then(|| {
-        tokio::spawn(codeyard_repos_core::ci::schedule::run(
+        tokio::spawn(codeyard_ci_engine::schedule::run(
             ci_runs.clone(),
             schedules_stop,
         ))
@@ -753,7 +753,7 @@ mod tests {
     fn shutdown_phases_fit_inside_the_stop_grace() {
         // The withdrawal runs twice: before the drain, and again in `Cluster::shutdown`.
         let phases = SHUTDOWN_GRACE
-            + codeyard_repos_core::ci::workers::SHUTDOWN_GRACE
+            + codeyard_ci_engine::workers::SHUTDOWN_GRACE
             + codeyard_cluster_core::settings::WITHDRAW_TIMEOUT * 2;
         assert!(
             phases < MAX_SHUTDOWN,

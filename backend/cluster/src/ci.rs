@@ -2,11 +2,11 @@
 use anyhow::ensure;
 use anyhow::Result;
 use codeyard_cluster_core::link::Link;
-use codeyard_repos_core::ci::queue::Operation;
-use codeyard_repos_core::ci::queue::Reply;
-use codeyard_repos_core::ci::queue::Request;
-use codeyard_repos_core::ci::queue::RunQueue;
-use codeyard_repos_core::ci::queue::CORE_UNAVAILABLE;
+use codeyard_ci_engine::queue::Operation;
+use codeyard_ci_engine::queue::Reply;
+use codeyard_ci_engine::queue::Request;
+use codeyard_ci_engine::queue::RunQueue;
+use codeyard_ci_engine::queue::CORE_UNAVAILABLE;
 use codeyard_repos_core::context::NodeContext;
 use iroh::endpoint::Connection;
 use iroh::protocol::AcceptError;

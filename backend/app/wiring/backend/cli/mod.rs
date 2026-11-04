@@ -52,7 +52,7 @@ fn database_url_from_env() -> Result<Option<String>> {
 }
 
 fn cluster_join_ticket_from_env() -> Result<String> {
-    if let Some(config) = codeyard_repos_core::ci::runner_credentials::jit_from_env()? {
+    if let Some(config) = codeyard_ci_engine::runner_credentials::jit_from_env()? {
         anyhow::ensure!(
             std::env::var("CLUSTER_JOIN_TOKEN")
                 .ok()

@@ -1,7 +1,7 @@
 //! One CI queue, reached through the database or a paired core node.
-use crate::context::NodeContext;
-use crate::repositories::store::repo_store;
-use crate::repositories::store::RepoStore;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
+use codeyard_repos_core::repositories::store::RepoStore;
 use anyhow::ensure;
 use anyhow::Context;
 use anyhow::Result;
@@ -187,7 +187,7 @@ pub const CORE_UNAVAILABLE: &str = "core node unavailable";
 
 impl RunQueue {
     /// The service a database queue sends workflow webhooks through.
-    pub fn events(&self) -> Option<crate::ci::runs::CiRuns> {
+    pub fn events(&self) -> Option<crate::runs::CiRuns> {
         let Self::Database {
             pool,
             config,
@@ -198,7 +198,7 @@ impl RunQueue {
         else {
             return None;
         };
-        Some(crate::ci::runs::CiRuns::new(
+        Some(crate::runs::CiRuns::new(
             pool.clone(),
             config.clone(),
             Arc::new(tokio::sync::Notify::new()),
@@ -589,7 +589,7 @@ impl RunQueue {
                         .as_object()
                         .context("the run has no workflow files")?
                     {
-                        let bytes = if let Some(content) = crate::ci::reusable::content(sha) {
+                        let bytes = if let Some(content) = crate::reusable::content(sha) {
                             let called_id = sha
                                 .get("repository_id")
                                 .and_then(serde_json::Value::as_i64)
@@ -600,7 +600,7 @@ impl RunQueue {
                                 )
                                 .await?
                                 .context("called workflow repository unavailable")?;
-                            crate::ci::reusable::authorize(
+                            crate::reusable::authorize(
                                 pool,
                                 &repository,
                                 run.triggered_by_id.context("run has no actor")?,
@@ -1023,7 +1023,7 @@ impl RunQueue {
                 continue;
             };
             let result = tokio::time::timeout(std::time::Duration::from_secs(100), async {
-                crate::wire::write_frame(
+                codeyard_repos_core::wire::write_frame(
                     &mut link.writer,
                     &header,
                     codeyard_db_core::limits::MAX_JSON + 64 * 1024,
@@ -1031,7 +1031,7 @@ impl RunQueue {
                 .await?;
                 link.finish().await?;
                 let reply: Reply = serde_json::from_slice(
-                    &crate::wire::read_frame(&mut link.reader, codeyard_db_core::limits::MAX_JSON)
+                    &codeyard_repos_core::wire::read_frame(&mut link.reader, codeyard_db_core::limits::MAX_JSON)
                         .await?,
                 )?;
                 Ok::<_, anyhow::Error>(reply)

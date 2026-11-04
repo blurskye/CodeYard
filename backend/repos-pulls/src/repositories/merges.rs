@@ -4,11 +4,11 @@ use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
 use codeyard_git::CommitInfo;
-use codeyard_repos_core::ci::push::RefUpdate;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::push_workflows::RefUpdate;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::refs::publication_error;
-use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::ref_errors::publication_error;
+use codeyard_repos_core::ref_errors::RefError;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::store_types::BranchMergePublication;
 use codeyard_repos_core::store_types::MergeMethod;
@@ -157,7 +157,7 @@ pub async fn merge_branch(
             Err(error) => return Err(error),
         };
         let refreshed =
-            codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
+            codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
                 &pool,
                 &repository,
                 Some(&[base_name.as_str()]),

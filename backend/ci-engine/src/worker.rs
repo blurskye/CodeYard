@@ -1,9 +1,9 @@
 //! A CI worker: claims queued runs and executes their workflows with `act`.
-use crate::ci::process::Stopped;
-use crate::ci::queue::ClaimedRun;
-use crate::ci::queue::CoreRefusal;
-use crate::ci::queue::RunQueue;
-use crate::ci::workers::CiWorkers;
+use crate::process::Stopped;
+use crate::queue::ClaimedRun;
+use crate::queue::CoreRefusal;
+use crate::queue::RunQueue;
+use crate::workers::CiWorkers;
 use anyhow::bail;
 use anyhow::ensure;
 use anyhow::Context;
@@ -330,7 +330,7 @@ async fn execute(
             // A delayed claim must renew its live authority before any workflow process starts.
             tokio::select! {
                 biased;
-                _ = crate::ci::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+                _ = crate::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
                 _ = ready.wait_for(|ready| *ready) => {}
             }
             run_workflows(
@@ -518,7 +518,7 @@ async fn run_workflows(
         .join(format!("{}.workspace", run.run_id));
     let workspace = tokio::select! {
         prepared = Workspace::prepare(&service.queue, claim, &workspace_directory, service.cleanups.clone(), cleaned) => prepared?,
-        _ = crate::ci::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+        _ = crate::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
         _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => {
             return Err(Stopped::TimedOut.into());
         }
@@ -568,7 +568,7 @@ async fn run_workflows(
         };
         let labels = tokio::select! {
             prepared = preparing => prepared?,
-            _ = crate::ci::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+            _ = crate::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
             _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => return Err(Stopped::TimedOut.into()),
         };
         all_labels.extend(labels);
@@ -665,19 +665,19 @@ async fn run_workflows(
                 }
             };
             let grace = if native {
-                crate::ci::process::Grace {
+                crate::process::Grace {
                     interrupt: Duration::ZERO,
                     terminate: codeyard_actions::runner::SHUTDOWN_GRACE,
                 }
             } else {
                 // act cancels its job on SIGINT and runs the steps that clean up after it, as the
                 // native runner does on SIGTERM. SIGTERM makes act stop at once.
-                crate::ci::process::Grace {
+                crate::process::Grace {
                     interrupt: codeyard_actions::runner::CLEANUP_GRACE,
                     terminate: Duration::from_secs(3),
                 }
             };
-            let output = crate::ci::process::run_with_grace(
+            let output = crate::process::run_with_grace(
                 command,
                 remaining,
                 grace,
@@ -797,7 +797,7 @@ async fn run_workflows(
                     }
                     tokio::select! {
                         result = deliver(|| service.queue.job_state(worker, run.id, &generation, workflow, &state)) => result?,
-                        _ = crate::ci::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
+                        _ = crate::process::cancelled(cancel.clone()) => return Err(Stopped::Cancelled.into()),
                         _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => return Err(Stopped::TimedOut.into()),
                     }
                 }
@@ -813,7 +813,7 @@ async fn run_workflows(
             tokio::select! {
                 sent = &mut batches => sent,
                 _ = output_end => tokio::time::timeout(LOG_FLUSH_GRACE, &mut batches).await.context("CI final log flush timed out")?,
-                _ = crate::ci::process::cancelled(cancel.clone()) => Err(Stopped::Cancelled.into()),
+                _ = crate::process::cancelled(cancel.clone()) => Err(Stopped::Cancelled.into()),
                 _ = tokio::time::sleep(deadline.saturating_duration_since(Instant::now())) => Err(Stopped::TimedOut.into()),
             }
         };
@@ -961,7 +961,7 @@ fn act_command(
     let run = &claim.run;
     let native = run.engine.as_deref() == Some("codeyard-actions");
     let home = workspace.root().join("home");
-    let mut command = crate::ci::process::command(if native {
+    let mut command = crate::process::command(if native {
         &config.actions_binary
     } else {
         &config.act_binary
@@ -1925,7 +1925,7 @@ impl Workspace {
         for workflow in called {
             ensure!(
                 workflow.starts_with(".github/workflows/codeyard-call-")
-                    && crate::ci::admission::is_safe_workflow_path(workflow),
+                    && codeyard_repos_core::workflows::is_safe_workflow_path(workflow),
                 "Invalid called workflow path"
             );
             let target = checkout.join(workflow);
@@ -1974,9 +1974,9 @@ impl Workspace {
             .context("the run has no workflow files")?;
         let mut definitions = BTreeMap::new();
         for (path, id) in blobs {
-            let content = if let Some(content) = crate::ci::reusable::content(id) {
+            let content = if let Some(content) = crate::reusable::content(id) {
                 ensure!(
-                    crate::ci::admission::is_safe_workflow_path(path),
+                    codeyard_repos_core::workflows::is_safe_workflow_path(path),
                     "invalid workflow path"
                 );
                 content.as_bytes().to_vec()
@@ -2305,7 +2305,7 @@ fn file_name(workflow: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::repositories::store::RepoStore;
+    use codeyard_repos_core::repositories::store::RepoStore;
     use codeyard_ci::config::CiConfig;
 
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -2857,7 +2857,7 @@ mod tests {
         .unwrap();
         let home = workspace.root().join("home");
         std::fs::create_dir_all(&home).unwrap();
-        let mut command = crate::ci::process::command(act);
+        let mut command = crate::process::command(act);
         command
             .arg("push")
             .arg("-W")
@@ -2879,7 +2879,7 @@ mod tests {
         let lines = Arc::new(Mutex::new(Vec::new()));
         let captured = lines.clone();
         let (_stop_tx, stop) = watch::channel(false);
-        let status = crate::ci::process::tests::run(
+        let status = crate::process::tests::run(
             command,
             Duration::from_secs(30),
             stop,
@@ -3628,7 +3628,7 @@ jobs:
             variables: Vec::new(),
             environment_values: Default::default(),
             github_tokens: Default::default(),
-            pull_request: Some(crate::ci::queue::PullRequestEvent {
+            pull_request: Some(crate::queue::PullRequestEvent {
                 number: 7,
                 title: "Add a feature".to_owned(),
                 head_ref: "feature".to_owned(),

@@ -18,9 +18,9 @@ use codeyard_notifications::broadcast::NotificationBroadcaster;
 use codeyard_notifications::watchers::notify_watchers;
 use codeyard_notifications::watchers::WatchEvent;
 use codeyard_notifications::watchers::WatchedItem;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::context::NodeContext;
-use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::ref_errors::RefError;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_storage::files::uploads::UploadDeclaration;
 use codeyard_storage::ObjectStore;
@@ -379,7 +379,7 @@ pub async fn create(
                     AccessError::WriteDenied,
                 )));
             }
-            codeyard_repos_core::repositories::refs::create_tag(
+            codeyard_ci_engine::refs::create_tag(
                 pool,
                 cluster,
                 ci,
@@ -561,7 +561,7 @@ pub async fn update(
                         AccessError::WriteDenied,
                     )));
                 }
-                codeyard_repos_core::repositories::refs::create_tag(
+                codeyard_ci_engine::refs::create_tag(
                     pool,
                     cluster,
                     ci,

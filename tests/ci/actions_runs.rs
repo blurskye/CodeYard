@@ -328,7 +328,7 @@ async fn contract(pg: bool) {
     );
     let aggregate = native
         .ci_runs
-        .trigger_run(codeyard_repos_core::ci::runs::CiRunRequest {
+        .trigger_run(codeyard_repos_core::receive_ci::CiRunRequest {
             repo_id: repo.id,
             repo_owner: "alice".into(),
             repo_name: "project".into(),

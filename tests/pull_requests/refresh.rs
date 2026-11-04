@@ -744,7 +744,7 @@ async fn concurrent_refresh_converges(pg: bool) {
         let repository = repository.clone();
         let ci = ci.clone();
         tokio::spawn(async move {
-            codeyard_repos_core::repositories::pull_requests::branches::refresh_open_pull_requests(
+            codeyard_ci_engine::pull_requests::branches::refresh_open_pull_requests(
                 &pool,
                 &repository,
                 Some(&["main", "topic"][..]),

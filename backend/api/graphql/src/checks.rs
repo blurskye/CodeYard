@@ -223,7 +223,7 @@ pub(super) async fn resolve(
             .await
             .map_err(unavailable)?;
             request.authorize(repo, "actions", false).await?;
-            Ok(row.map_or(Value::Null, |(event,path,name)| json!({"__typename":"WorkflowRun","_repo":repo,"_scope":"actions","event":event,"workflow":{"__typename":"Workflow","_repo":repo,"_scope":"actions","name":name.unwrap_or_else(|| codeyard_repos_core::ci::workflows::workflow_name_from_path(&path))}})))
+            Ok(row.map_or(Value::Null, |(event,path,name)| json!({"__typename":"WorkflowRun","_repo":repo,"_scope":"actions","event":event,"workflow":{"__typename":"Workflow","_repo":repo,"_scope":"actions","name":name.unwrap_or_else(|| codeyard_repos_core::workflows::workflow_name_from_path(&path))}})))
         }
         _ => Err(codeyard_model::graphql_error::error(
             format!("Codeyard does not support {ty}.{field} yet"),

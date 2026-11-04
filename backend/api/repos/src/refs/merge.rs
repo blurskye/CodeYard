@@ -20,7 +20,7 @@ use codeyard_api_http::shared::repos::forms::authorize_post;
 use codeyard_api_http::shared::repos::forms::field;
 use codeyard_api_http::shared::repos::forms::with_status;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::ref_errors::RefError;
 use codeyard_repos_pulls::repositories::merges::BranchMerge;
 use codeyard_webui::components::SelectOption;
 use codeyard_webui::pages::repos::merge::MergeForm;

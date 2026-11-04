@@ -1,4 +1,4 @@
-use crate::repositories::refs::RefError;
+use crate::ref_errors::RefError;
 use codeyard_db_repos::releases::ReleaseFields;
 use codeyard_git as git;
 use codeyard_git::error::RepoError;

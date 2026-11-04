@@ -3,6 +3,7 @@
 #[cfg(test)]
 mod fixture {
     use super::super::*;
+    use codeyard_ci_engine::runs::CiRuns;
     use base64::Engine;
     use codeyard_repos::validation::ZERO_SHA;
 

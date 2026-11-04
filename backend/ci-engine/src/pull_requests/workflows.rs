@@ -1,11 +1,11 @@
-use crate::ci::runs::CiRunRequest;
-use crate::ci::runs::CiRuns;
-use crate::ci::workflows::commit_message_for_ref;
-use crate::ci::workflows::infer_pipeline_from_workflow_path;
-use crate::ci::workflows::list_workflows_for_ref;
-use crate::ci::workflows::should_skip_run_from_message;
-use crate::repositories::pull_requests::OperationError;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use crate::runs::CiRuns;
+use codeyard_repos_core::workflows::commit_message_for_ref;
+use codeyard_repos_core::workflows::infer_pipeline_from_workflow_path;
+use codeyard_repos_core::workflows::list_workflows_for_ref;
+use codeyard_repos_core::workflows::should_skip_run_from_message;
+use codeyard_repos_core::repositories::pull_requests::OperationError;
+use codeyard_repos_core::repositories::store::repo_store;
 use anyhow::Context;
 use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_db_core::models::PullRequest;
@@ -379,8 +379,8 @@ pub async fn run_pull_request_workflows(
     request: RunWorkflowsRequest,
 ) -> Result<PullRequest, OperationError> {
     // The caller resolved and authorized this repository; a rename must not switch it.
-    let user = crate::repositories::pull_requests::actor(pool, actor_id).await?;
-    crate::repositories::pull_requests::require_write(pool, &user, repository).await?;
+    let user = codeyard_repos_core::repositories::pull_requests::actor(pool, actor_id).await?;
+    codeyard_repos_core::repositories::pull_requests::require_write(pool, &user, repository).await?;
     // Only trusted actors can queue these workflows, so no one else may record an
     // approval for them.
     if !user.is_admin && !ci.config.trusted_actor_ids.contains(&user.id) {
@@ -392,12 +392,12 @@ pub async fn run_pull_request_workflows(
     let pull =
         codeyard_db_repos::pull_requests::records::get_pull_request(pool, repository.id, number)
             .await
-            .map_err(crate::repositories::pull_requests::write_error)?
+            .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
             .ok_or_else(|| OperationError::Missing {
                 code: "not_found",
                 message: "Pull request not found".to_owned(),
             })?;
-    crate::repositories::pull_requests::branches::refresh_open_pull_request(
+    crate::pull_requests::branches::refresh_open_pull_request(
         pool, repository, ci, user.id, pull.id, None,
     )
     .await
@@ -408,7 +408,7 @@ pub async fn run_pull_request_workflows(
     })?;
     let pull = codeyard_db_repos::pull_requests::records::get_pull_request_by_id(pool, pull.id)
         .await
-        .map_err(crate::repositories::pull_requests::write_error)?
+        .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
         .ok_or_else(|| OperationError::Missing {
             code: "not_found",
             message: "Pull request not found".to_owned(),
@@ -420,7 +420,7 @@ pub async fn run_pull_request_workflows(
         &request.expected_head,
     )
     .await
-    .map_err(crate::repositories::pull_requests::write_error)?
+    .map_err(codeyard_repos_core::repositories::pull_requests::write_error)?
     {
         return Err(OperationError::Conflict {
             code: "revision_conflict",

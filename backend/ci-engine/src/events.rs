@@ -1,7 +1,7 @@
 //! Repository events use the default branch's workflow and the webhook's unchanged document.
-use crate::ci::runs::CiRunRequest;
-use crate::ci::runs::CiRuns;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use crate::runs::CiRuns;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_db_core::ci_admission::AdmissionError;
 use codeyard_db_core::models::AccessLevel;
 use codeyard_db_core::models::Repository;
@@ -40,7 +40,7 @@ impl CiRuns {
                 "Repository was archived so is read-only",
             ));
         }
-        let payload = crate::webhooks::emit_repository_dispatch(
+        let payload = codeyard_repos_core::webhooks::emit_repository_dispatch(
             &self.pool,
             repo,
             actor,
@@ -230,7 +230,7 @@ impl CiRuns {
         document["triggering_actor"] = codeyard_webhooks::payloads::user(&sender);
         let snapshot = repo.clone();
         let action = action.to_owned();
-        let payload = crate::webhooks::emit(
+        let payload = codeyard_repos_core::webhooks::emit(
             &self.pool,
             &repo,
             "workflow_run",
@@ -293,7 +293,7 @@ impl CiRuns {
         };
         let steps = codeyard_db_actions::action_jobs::steps(&self.pool, repo.id, job_id).await?;
         let snapshot = repo.clone();
-        crate::webhooks::emit(
+        codeyard_repos_core::webhooks::emit(
             &self.pool,
             &repo,
             "workflow_job",
@@ -344,7 +344,7 @@ impl CiRuns {
             Err(error) if error.kind == codeyard_git::error::ErrorKind::NotFound => return Ok(()),
             Err(error) => return Err(error.into()),
         };
-        let definitions = crate::ci::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
+        let definitions = codeyard_repos_core::workflows::list_workflows_for_ref(&store, &commit.sha).await?;
         let mut budget = WorkflowMatchBudget::new();
         let mut matched = Vec::new();
         let branch = if event == "workflow_run" {
@@ -377,7 +377,7 @@ impl CiRuns {
                         head_sha: Some(commit.sha.clone()),
                         event: event.to_owned(),
                         pull_request_id: None,
-                        pipeline: crate::ci::workflows::infer_pipeline_from_workflow_path(
+                        pipeline: codeyard_repos_core::workflows::infer_pipeline_from_workflow_path(
                             &definition.path,
                         ),
                         workflow_paths: vec![definition.path],

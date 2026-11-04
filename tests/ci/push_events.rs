@@ -4,10 +4,10 @@ use crate::support::database::Database;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::ci::push::RefUpdate;
-use codeyard_repos_core::ci::runs::CiRunRequest;
-use codeyard_repos_core::ci::runs::CiRuns;
-use codeyard_repos_core::ci::runs::DispatchRequest;
+use codeyard_repos_core::push_workflows::RefUpdate;
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use codeyard_ci_engine::runs::CiRuns;
+use codeyard_ci_engine::runs::DispatchRequest;
 use codeyard_repos_core::repositories::lifecycle;
 use codeyard_repos_core::repositories::store::repo_store;
 use std::{collections::BTreeSet, sync::Arc};
@@ -276,7 +276,7 @@ async fn contract(pg: bool) {
     assert_eq!(deleted.branch, "new");
     assert_eq!(deleted.head_sha.as_deref(), Some(new.as_str()));
 
-    let discovered = codeyard_repos_core::ci::workflows::list_workflows_for_ref(&store, "main")
+    let discovered = codeyard_repos_core::workflows::list_workflows_for_ref(&store, "main")
         .await
         .unwrap();
     let path = ".github/workflows/unit-test.yml";

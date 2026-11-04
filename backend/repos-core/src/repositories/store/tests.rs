@@ -239,7 +239,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
     )
     .await
     .unwrap());
-    let ci = crate::ci::runs::CiRuns::new(
+    let ci = codeyard_ci_engine::runs::CiRuns::new(
         a.pool.clone(),
         std::sync::Arc::new(codeyard_ci::config::CiConfig {
             trusted_actor_ids: [a.actor].into(),
@@ -252,7 +252,7 @@ async fn web_publication_updates_storage_and_keeps_deleted_branch_runs_admissibl
         ),
     );
     let run = ci
-        .trigger_run(crate::ci::runs::CiRunRequest {
+        .trigger_run(crate::receive_ci::CiRunRequest {
             repo_id: a.repo_id,
             repo_owner: "store_actor".into(),
             repo_name: row.name,
@@ -3554,9 +3554,9 @@ async fn a_repository_past_the_ref_limit_stays_readable_and_repairable() {
     assert_eq!(error.message, FULL);
 
     // The API path checks the default branch before it deletes, so it runs here too.
-    use crate::ci::runs::CiRuns;
+    use codeyard_ci_engine::runs::CiRuns;
     use crate::repositories::refs::delete_branch;
-    use crate::repositories::refs::RefError;
+    use crate::ref_errors::RefError;
     use codeyard_notifications::broadcast::NotificationBroadcaster;
     use std::sync::Arc;
     let ci = CiRuns::new(

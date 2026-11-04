@@ -1,5 +1,5 @@
 //! Shared Git sessions and live receive-hook authority for every transport.
-use crate::ci::runs::CiRuns;
+use crate::receive_ci::ReceiveCi;
 use anyhow::Result;
 use codeyard_db_core::DbPool;
 use std::future::Future;
@@ -26,7 +26,7 @@ pub async fn run_gateway(
     socket: PathBuf,
     repos_root: PathBuf,
     pool: DbPool,
-    ci: Arc<CiRuns>,
+    ci: Arc<dyn ReceiveCi>,
     git_user: String,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
@@ -293,7 +293,7 @@ pub struct ReceiveSession<'a> {
 
 pub async fn receive_session(
     pool: DbPool,
-    ci: Arc<CiRuns>,
+    ci: Arc<dyn ReceiveCi>,
     receive: ReceiveSession<'_>,
     streams: crate::store_types::GitStreams<'_>,
 ) -> Result<std::process::ExitStatus> {

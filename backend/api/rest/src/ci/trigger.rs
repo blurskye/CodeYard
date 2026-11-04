@@ -8,7 +8,7 @@ use axum::Json;
 use codeyard_api_http::error::ApiError;
 use codeyard_api_http::session::get_current_user;
 use codeyard_app::app::AppState;
-use codeyard_repos_core::ci::runs::DispatchRequest;
+use codeyard_ci_engine::runs::DispatchRequest;
 use serde::Deserialize;
 use serde::Serialize;
 use std::collections::HashMap;
@@ -72,7 +72,7 @@ mod tests {
     fn dispatch_form_offers_only_events_the_server_accepts() {
         for event in view_actions::TRIGGER_EVENTS {
             assert!(
-                codeyard_repos_core::ci::admission::is_supported_event(event),
+                codeyard_ci_engine::admission::is_supported_event(event),
                 "{event}"
             );
         }

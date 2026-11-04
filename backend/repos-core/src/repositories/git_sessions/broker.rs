@@ -1,4 +1,4 @@
-use crate::ci::runs::CiRuns;
+use crate::receive_ci::ReceiveCi;
 use crate::repositories::git_sessions::protocol::Request;
 use crate::repositories::git_sessions::protocol::CHUNK;
 use crate::repositories::git_sessions::protocol::EOF;
@@ -49,7 +49,7 @@ pub struct Gateway {
     pub executable: PathBuf,
     pub git: PathBuf,
     pub pool: DbPool,
-    pub ci: Arc<CiRuns>,
+    pub ci: Arc<dyn ReceiveCi>,
     pub git_user: String,
     pub uid: u32,
     pub sessions: Arc<Semaphore>,
@@ -106,7 +106,7 @@ pub async fn run(
     socket: PathBuf,
     repos_root: PathBuf,
     pool: DbPool,
-    ci: Arc<CiRuns>,
+    ci: Arc<dyn ReceiveCi>,
     git_user: String,
     stop: tokio::sync::watch::Receiver<bool>,
 ) -> Result<()> {
@@ -148,7 +148,7 @@ pub async fn run(
 /// per-receive socket, without a persistent second listener or copied policy.
 pub(super) async fn receive_session(
     pool: DbPool,
-    ci: Arc<CiRuns>,
+    ci: Arc<dyn ReceiveCi>,
     receive: crate::repositories::git_sessions::ReceiveSession<'_>,
     streams: GitStreams<'_>,
 ) -> Result<std::process::ExitStatus> {
@@ -762,7 +762,7 @@ impl Gateway {
             .filter(|_| repo.storage_node_id.is_some())
         {
             Some(context) => context.repository_store(repo, true).await?,
-            None => repo_store(repo, self.ci.cluster.as_ref()),
+            None => repo_store(repo, self.ci.cluster()),
         };
         let path = store.local_path_for_spawning_git()?.to_owned();
         tokio::task::spawn_blocking(move || {
@@ -940,7 +940,7 @@ impl Gateway {
             gateway.make_hooks(credential.id(), repo_id, write)
         })
         .await??;
-        let quorum = if write && self.ci.cluster.is_some() {
+        let quorum = if write && self.ci.cluster().is_some() {
             timeout(
                 Duration::from_secs(5),
                 codeyard_db_cluster::cluster::writes::write_settings(&self.pool),

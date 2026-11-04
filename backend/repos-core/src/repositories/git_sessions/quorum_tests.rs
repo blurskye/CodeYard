@@ -1,5 +1,5 @@
 use super::*;
-use crate::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use crate::context::NodeContext;
 use crate::repositories::git_sessions::private_files;
 use crate::repositories::git_sessions::protocol::TransactionPhase;

@@ -1,12 +1,12 @@
 //! Branch and tag mutations shared by JSON and native forms.
-use crate::ci::push::RefUpdate;
-use crate::ci::runs::CiRuns;
-use crate::context::NodeContext;
-use crate::repositories::store::repo_store;
+use codeyard_repos_core::ref_errors::{RefError, publication_error};
+use codeyard_repos_core::push_workflows::RefUpdate;
+use crate::runs::CiRuns;
+use codeyard_repos_core::context::NodeContext;
+use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_git as git;
 use codeyard_git::error::ErrorKind;
 use codeyard_git::error::RepoError;
-use codeyard_git::error::MERGE_COMMIT_BLOCKED;
 use codeyard_git::TagInfo;
 use codeyard_repos::protection::check_branch_write;
 use codeyard_repos::protection::BranchWrite;
@@ -14,17 +14,6 @@ use codeyard_repos::protection::History;
 use codeyard_repos::protection::Refusal;
 use codeyard_repos::protection::WriteVia;
 use codeyard_repos::protection::ANY_TIP;
-
-#[derive(Debug)]
-pub enum RefError {
-    Access(codeyard_identity::repository_access::AccessError),
-    Invalid(&'static str),
-    /// A rule of the branch refuses the change; the text says which.
-    Protected(&'static str),
-    Unavailable,
-    Git(RepoError),
-    AppliedFollowupFailed,
-}
 
 async fn writable(
     pool: &codeyard_db_core::DbPool,
@@ -41,26 +30,10 @@ async fn writable(
         codeyard_identity::repository_access::check_write(pool, repo_id, actor.user_id)
             .await
             .map_err(RefError::Access)?;
-    crate::repositories::access::check_publication_actor(pool, actor, &repository)
+    codeyard_repos_core::repositories::access::check_publication_actor(pool, actor, &repository)
         .await
         .map_err(|error| publication_error(RepoError::from(error)))?;
     Ok((repository, user))
-}
-
-pub fn publication_error(error: RepoError) -> RefError {
-    if error.is_applied_followup_failed() {
-        RefError::AppliedFollowupFailed
-    } else if error.is_protected_branch() {
-        RefError::Protected("This branch is protected")
-    } else if error.message == crate::repositories::releases::immutable::TAG_PROTECTED {
-        RefError::Protected(crate::repositories::releases::immutable::TAG_PROTECTED)
-    } else if error.is_merge_commit_blocked() {
-        RefError::Protected(MERGE_COMMIT_BLOCKED)
-    } else if error.is_write_denied() {
-        RefError::Access(codeyard_identity::repository_access::AccessError::WriteDenied)
-    } else {
-        RefError::Git(error)
-    }
 }
 
 fn invalid_ref(kind: &str) -> RefError {
@@ -117,7 +90,7 @@ pub async fn create_branch(
         .create_branch_as(pool, repository.id, authority, branch, source)
         .await
         .map_err(publication_error)?;
-    let refreshed = crate::repositories::pull_requests::branches::refresh_open_pull_requests(
+    let refreshed = crate::pull_requests::branches::refresh_open_pull_requests(
         pool,
         &repository,
         Some(&[branch][..]),
@@ -171,7 +144,7 @@ pub async fn update_reference(
         return Ok(sha);
     }
     let refreshed = if let Some(branch) = reference.strip_prefix("refs/heads/") {
-        crate::repositories::pull_requests::branches::refresh_open_pull_requests(
+        crate::pull_requests::branches::refresh_open_pull_requests(
             pool,
             &repository,
             Some(&[branch][..]),
@@ -256,7 +229,7 @@ pub async fn delete_branch(
         .delete_branch_as(pool, repository.id, authority, branch)
         .await
         .map_err(publication_error)?;
-    crate::repositories::pull_requests::branches::refresh_open_pull_requests(
+    crate::pull_requests::branches::refresh_open_pull_requests(
         pool,
         &repository,
         Some(&[branch][..]),

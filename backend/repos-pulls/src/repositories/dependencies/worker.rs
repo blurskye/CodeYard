@@ -10,7 +10,7 @@ use codeyard_db_repos::repositories::dependencies::Job;
 use codeyard_db_repos::repositories::dependencies::Refusal;
 use codeyard_git::error::ErrorKind;
 use codeyard_notifications::broadcast::NotificationBroadcaster;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_ci_engine::runs::CiRuns;
 use codeyard_repos_core::repositories::store::repo_store;
 use codeyard_repos_core::repositories::store::RepoStore;
 use codeyard_storage::range::ByteRange as BlobRange;

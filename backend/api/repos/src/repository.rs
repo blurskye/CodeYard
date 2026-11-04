@@ -1657,7 +1657,7 @@ async fn mutate(
             Ok(codeyard_webui::repository_path(&actor.username, &fork.name))
         }
         "create-branch" => {
-            codeyard_repos_core::repositories::refs::create_branch(
+            codeyard_ci_engine::refs::create_branch(
                 pool,
                 cluster,
                 ci,
@@ -1675,7 +1675,7 @@ async fn mutate(
             codeyard_identity::repository_access::check_admin(pool, repository.id, actor.id)
                 .await
                 .map_err(access_error)?;
-            codeyard_repos_core::repositories::refs::set_default_branch(
+            codeyard_ci_engine::refs::set_default_branch(
                 pool,
                 cluster,
                 authority(),
@@ -1687,7 +1687,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "delete-branch" => {
-            codeyard_repos_core::repositories::refs::delete_branch(
+            codeyard_ci_engine::refs::delete_branch(
                 pool,
                 cluster,
                 ci,
@@ -1701,7 +1701,7 @@ async fn mutate(
         }
         "create-tag" => {
             let message = field(form, "message");
-            codeyard_repos_core::repositories::refs::create_tag(
+            codeyard_ci_engine::refs::create_tag(
                 pool,
                 cluster,
                 ci,
@@ -1717,7 +1717,7 @@ async fn mutate(
             Ok(format!("{base}/tags"))
         }
         "delete-tag" => {
-            codeyard_repos_core::repositories::refs::delete_tag(
+            codeyard_ci_engine::refs::delete_tag(
                 pool,
                 cluster,
                 authority(),

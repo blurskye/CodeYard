@@ -8,8 +8,8 @@ use crate::support::native_database as native;
 use crate::support::production_ci as production;
 use codeyard_ci::config::CiConfig;
 use codeyard_ci::config::CiPipelineKind;
-use codeyard_repos_core::ci::runs::CiRunRequest;
-use codeyard_repos_core::ci::runs::CiRuns;
+use codeyard_repos_core::receive_ci::CiRunRequest;
+use codeyard_ci_engine::runs::CiRuns;
 
 use std::collections::BTreeSet;
 
@@ -549,7 +549,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let dispatched = service
         .dispatch_run(
             f.owner.id,
-            codeyard_repos_core::ci::runs::DispatchRequest {
+            codeyard_ci_engine::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "refs/heads/main".to_owned(),
@@ -572,7 +572,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let refused = service
         .dispatch_run(
             f.owner.id,
-            codeyard_repos_core::ci::runs::DispatchRequest {
+            codeyard_ci_engine::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "../private".to_owned(),
@@ -620,7 +620,7 @@ async fn queued_runs_use_short_branch_names_and_tags_stay_distinct() {
     let rerun = service
         .dispatch_run(
             f.owner.id,
-            codeyard_repos_core::ci::runs::DispatchRequest {
+            codeyard_ci_engine::runs::DispatchRequest {
                 repo_owner: f.owner.username.clone(),
                 repo_name: f.repo.name.clone(),
                 branch: "main".to_owned(),

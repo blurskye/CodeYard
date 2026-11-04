@@ -1,5 +1,5 @@
 //! Runner credentials use cluster pairing unchanged; removal has its own hash domain.
-use crate::context::NodeContext;
+use codeyard_repos_core::context::NodeContext;
 use anyhow::Context;
 use anyhow::Result;
 use codeyard_cluster_core::pairing::JoinTicket;

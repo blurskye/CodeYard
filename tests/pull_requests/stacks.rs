@@ -29,7 +29,7 @@ struct Runs {
     router: axum::Router,
     alice: i64,
     bob: i64,
-    ci: Arc<codeyard_repos_core::ci::runs::CiRuns>,
+    ci: Arc<codeyard_ci_engine::runs::CiRuns>,
     broadcaster: Arc<codeyard_notifications::broadcast::NotificationBroadcaster>,
 }
 

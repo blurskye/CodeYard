@@ -17,7 +17,7 @@ use codeyard_git::error::ErrorKind;
 use codeyard_identity::repository_access::AccessError;
 use codeyard_model::github_error::Error;
 use codeyard_model::github_error::Result;
-use codeyard_repos_core::repositories::refs::RefError;
+use codeyard_repos_core::ref_errors::RefError;
 use codeyard_repos_pulls::repositories::merges::BranchMerge;
 use serde::Deserialize;
 use std::sync::Arc;

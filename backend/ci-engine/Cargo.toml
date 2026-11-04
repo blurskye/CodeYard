@@ -1,0 +1,78 @@
+[package]
+name = "codeyard-ci-engine"
+version.workspace = true
+edition.workspace = true
+license = "LGPL-3.0-or-later"
+
+[dependencies]
+codeyard-repos-core.workspace = true
+codeyard-webhooks.workspace = true
+codeyard-cluster-core.workspace = true
+codeyard-ci.workspace = true
+codeyard-repos.workspace = true
+codeyard-storage.workspace = true
+anyhow.workspace = true
+aws-credential-types.workspace = true
+aws-sdk-s3.workspace = true
+aws-smithy-types.workspace = true
+axum.workspace = true
+base64.workspace = true
+bytes.workspace = true
+chrono.workspace = true
+clap.workspace = true
+codeyard-actions.workspace = true
+codeyard-db-actions.workspace = true
+codeyard-db-cluster.workspace = true
+codeyard-db-core.workspace = true
+codeyard-db-identity.workspace = true
+codeyard-db-orgs.workspace = true
+codeyard-db-repos.workspace = true
+codeyard-db-security.workspace = true
+codeyard-git.workspace = true
+codeyard-identity.workspace = true
+codeyard-model.workspace = true
+codeyard-notifications.workspace = true
+codeyard-support.workspace = true
+codeyard-webui.workspace = true
+croner.workspace = true
+flate2.workspace = true
+futures-util.workspace = true
+git2.workspace = true
+hex.workspace = true
+hmac.workspace = true
+iroh.workspace = true
+libc.workspace = true
+pulldown-cmark.workspace = true
+quick-xml.workspace = true
+rand.workspace = true
+regex.workspace = true
+reqwest.workspace = true
+rsa.workspace = true
+russh.workspace = true
+semver.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+sha1.workspace = true
+sha2.workspace = true
+socket2.workspace = true
+sqlx.workspace = true
+ssh-key.workspace = true
+tar.workspace = true
+tempfile.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-util.workspace = true
+toml.workspace = true
+tracing.workspace = true
+url.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+zip.workspace = true
+
+[lints]
+workspace = true
+
+[dev-dependencies.tokio]
+workspace = true
+features = ["test-util"]
