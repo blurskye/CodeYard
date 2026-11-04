@@ -1,10 +1,8 @@
 use super::*;
 use crate::arguments::Arguments;
 use crate::connection::Page;
-use crate::issue::mutation;
 use crate::issue::object;
 use crate::issue::pull_object;
-use crate::issue::resolve;
 use crate::missing;
 use crate::mutations::issue_error as operation;
 use crate::unavailable;
@@ -42,7 +40,7 @@ async fn linked_target(
 ) -> Result<Option<String>> {
     if !snapshots.contains_key(&branch.repo_id) {
         snapshots.insert(branch.repo_id, None);
-        if repository::optional_authority(branch.repo_id, "contents", request).await? {
+        if crate::repository::optional_authority(branch.repo_id, "contents", request).await? {
             if let Some(repo) = codeyard_db_repos::repositories::records::get_repository_by_id(
                 &request.state.pool,
                 branch.repo_id,
@@ -110,12 +108,12 @@ pub(super) async fn resolve(
         .iter()
         .any(|issue| issue.id == id))),
         "closedByPullRequestsReferences" => {
-            connection::validate(ctx)?;
+            crate::connection::validate(ctx)?;
             let issue = codeyard_db_repos::issues::get_issue_by_id(&request.state.pool, id)
                 .await
                 .map_err(unavailable)?
                 .ok_or_else(missing)?;
-            let owner = repository::owner(repo, request).await?;
+            let owner = crate::repository::owner(repo, request).await?;
             let mut pulls = codeyard_app::issues::closing::references(
                 &request.state.pool,
                 Some(&request.auth.user),
@@ -144,10 +142,10 @@ pub(super) async fn resolve(
                     .authorize(pull.repo_id, "pull-requests", false)
                     .await?;
             }
-            connection::slice(ctx, pulls.iter().map(pull_object).collect())
+            crate::connection::slice(ctx, pulls.iter().map(pull_object).collect())
         }
         "linkedBranches" => {
-            connection::validate(ctx)?;
+            crate::connection::validate(ctx)?;
             let mut branches = Vec::new();
             let mut snapshots = LinkedSnapshots::new();
             for branch in
@@ -163,7 +161,7 @@ pub(super) async fn resolve(
                     branches.push(branch);
                 }
             }
-            let page = connection::Page::new(ctx, branches.len() as i64)?;
+            let page = crate::connection::Page::new(ctx, branches.len() as i64)?;
             let mut nodes = Vec::new();
             for branch in branches
                 .into_iter()
@@ -214,7 +212,7 @@ pub(super) async fn mutation(
             codeyard_db_repos::issues::management::delete(pool, actor, repo.id, id)
                 .await
                 .map_err(error)?;
-            payload["repository"] = repository::object(repo);
+            payload["repository"] = crate::repository::object(repo);
         }
         "transferIssue" => {
             if input["createLabelsIfMissing"] == true {
@@ -223,7 +221,7 @@ pub(super) async fn mutation(
                 ));
             }
             let destination = crate::issue::mutations::id(input, "repositoryId", "R")?;
-            let target = repository::by_id(destination, request).await?;
+            let target = crate::repository::by_id(destination, request).await?;
             request.authorize(target.id, "issues", true).await?;
             payload["issue"] = object(
                 &codeyard_db_repos::issues::management::transfer(
@@ -247,7 +245,7 @@ pub(super) async fn mutation(
             } else {
                 crate::issue::mutations::id(input, "repositoryId", "R")?
             };
-            let target = repository::by_id(destination, request).await?;
+            let target = crate::repository::by_id(destination, request).await?;
             request.authorize(target.id, "contents", true).await?;
             request.require_oauth_scope("workflow")?;
             let name = input["name"]

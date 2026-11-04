@@ -1,10 +1,8 @@
 use super::*;
 use crate::arguments::Arguments;
 use crate::connection::Page;
-use crate::issue::list;
 use crate::issue::object;
 use crate::issue::pull_object;
-use crate::issue::resolve;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -36,7 +34,7 @@ pub(crate) async fn type_node(id: i64, request: &RequestContext) -> Result<Value
         let done = repositories.len() < 100;
         for repo in repositories {
             after = repo;
-            if !repository::optional_authority(repo, "issues", request).await? {
+            if !crate::repository::optional_authority(repo, "issues", request).await? {
                 continue;
             }
             if let Some(item) = codeyard_db_repos::issue_attributes::catalog(
@@ -84,7 +82,7 @@ pub(super) async fn resolve(
                 .await
                 .map_err(unavailable)?
             {
-                if repository::optional_authority(counts.repo_id, "issues", request).await? {
+                if crate::repository::optional_authority(counts.repo_id, "issues", request).await? {
                     total += counts.total;
                     completed += counts.completed;
                 }
@@ -101,7 +99,7 @@ pub(super) async fn resolve(
                 _ => Kind::Blocking,
             };
             if field != "parent" {
-                connection::validate(ctx)?;
+                crate::connection::validate(ctx)?;
             }
             let (mut order, mut descending) = (Order::Position, false);
             if let Some(value) = ctx.args.get("orderBy").filter(|value| !value.is_null()) {
@@ -120,7 +118,7 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?
             {
-                if repository::optional_authority(repo_id, "issues", request).await? {
+                if crate::repository::optional_authority(repo_id, "issues", request).await? {
                     total += count;
                     visible.push(repo_id);
                 }
@@ -158,7 +156,7 @@ pub(super) async fn resolve(
                     .await
                     .map_err(unavailable)?
                     .ok_or_else(missing)?;
-                repository::by_id(issue.repo_id, request).await?;
+                crate::repository::by_id(issue.repo_id, request).await?;
                 request.authorize(issue.repo_id, "issues", false).await?;
                 request.charge(
                     issue
@@ -183,7 +181,7 @@ pub(crate) async fn repository(
     request: &RequestContext,
     repo: &codeyard_db_core::models::Repository,
 ) -> Result<Value> {
-    connection::validate(ctx)?;
+    crate::connection::validate(ctx)?;
     let rows = codeyard_db_repos::issue_attributes::catalog(
         &request.state.pool,
         repo.id,
@@ -192,7 +190,7 @@ pub(crate) async fn repository(
     )
     .await
     .map_err(unavailable)?;
-    connection::slice(
+    crate::connection::slice(
         ctx,
         rows.iter()
             .filter(|s| s.is_enabled)
@@ -207,12 +205,12 @@ pub(super) async fn list(
     request: &RequestContext,
     repo_id: i64,
 ) -> Result<Value> {
-    let repo = repository::by_id(repo_id, request).await?;
+    let repo = crate::repository::by_id(repo_id, request).await?;
     let mut query = format!(
         "repo:{} is:{}",
         serde_json::to_string(&format!(
             "{}/{}",
-            repository::owner(&repo, request).await?,
+            crate::repository::owner(&repo, request).await?,
             repo.name
         ))
         .map_err(unavailable)?,
@@ -227,7 +225,7 @@ pub(super) async fn list(
         if let Some(value) = args.args.get(arg).filter(|v| !v.is_null()) {
             // `gh pr status` outside a clone asks for the head branch "", which no pull has.
             if value.string()?.is_empty() {
-                return connection::slice(args, Vec::new());
+                return crate::connection::slice(args, Vec::new());
             }
             add(key, value.string()?)?;
         }
@@ -269,7 +267,7 @@ pub(super) async fn list(
                     .await
                     .map_err(unavailable)?
                     else {
-                        return connection::slice(args, Vec::new());
+                        return crate::connection::slice(args, Vec::new());
                     };
                     add(key, &milestone.milestone.number.to_string())?;
                 } else {
@@ -362,7 +360,7 @@ async fn results(
     request: &RequestContext,
     cap: Option<i64>,
 ) -> Result<Value> {
-    connection::validate(args)?;
+    crate::connection::validate(args)?;
     let pool = &request.state.pool;
     let viewer = Some(request.auth.user.id);
     let total =
@@ -390,7 +388,7 @@ async fn results(
         .await
         .map_err(unavailable)?;
         for (id, repo, pull, _) in rows.items {
-            repository::by_id(repo, request).await?;
+            crate::repository::by_id(repo, request).await?;
             request
                 .authorize(repo, if pull { "pull-requests" } else { "issues" }, false)
                 .await?;

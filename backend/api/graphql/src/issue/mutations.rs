@@ -2,7 +2,6 @@ use super::*;
 use crate::arguments::Arguments;
 use crate::issue::mutation;
 use crate::issue::object;
-use crate::issue::resolve;
 use crate::missing;
 use crate::unavailable;
 use crate::RequestContext;
@@ -27,7 +26,7 @@ pub(super) async fn resolve(
         .await
         .map_err(unavailable)?
         .ok_or_else(missing)?;
-    let repo = repository::by_id(issue.repo_id, request).await?;
+    let repo = crate::repository::by_id(issue.repo_id, request).await?;
     request.authorize(repo.id, "issues", true).await?;
     if matches!(
         field,

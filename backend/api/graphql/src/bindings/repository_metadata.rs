@@ -1,6 +1,5 @@
 //! Fields exported by gh's repository JSON selection.
 use super::*;
-use crate::bindings::fields;
 use crate::bindings::Object;
 use crate::node;
 

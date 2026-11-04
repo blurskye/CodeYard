@@ -336,7 +336,13 @@ pub(super) async fn load_choices(
     limit: i64,
 ) -> Result<RepositoryCreationChoices, StatusCode> {
     let page = OrganizationPage::new(after, limit).map_err(|_| StatusCode::BAD_REQUEST)?;
-    match orgs::list_repository_creation_organizations(&ctx.state.pool, actor, page).await {
+    match codeyard_db_orgs::organizations::profiles::list_repository_creation_organizations(
+        &ctx.state.pool,
+        actor,
+        page,
+    )
+    .await
+    {
         Ok(OrganizationOutcome::Applied(rows)) => {
             let next_after = if rows.len() == limit as usize {
                 rows.last().map(|org| org.id)

@@ -1,8 +1,5 @@
 //! Issue/PR collaboration fields used by api/query_builder.go in cli/cli.
 use super::*;
-use crate::bindings::connection;
-use crate::bindings::fields;
-use crate::bindings::issue_fields;
 use crate::bindings::Object;
 use async_graphql::ID;
 

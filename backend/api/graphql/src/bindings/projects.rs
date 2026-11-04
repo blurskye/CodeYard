@@ -1,11 +1,5 @@
 //! Project bindings kept separate from the shared GraphQL lane.
 use super::*;
-use crate::bindings::abstract_types;
-use crate::bindings::connection;
-use crate::bindings::enums;
-use crate::bindings::fields;
-use crate::bindings::objects;
-use crate::bindings::scalars;
 use crate::bindings::Object;
 use async_graphql::ID;
 use classic_fields;

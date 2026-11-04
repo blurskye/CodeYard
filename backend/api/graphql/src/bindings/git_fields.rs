@@ -1,7 +1,5 @@
 //! Typed Git and status fields selected by the upstream CLI query builder.
 use super::*;
-use crate::bindings::connection;
-use crate::bindings::fields;
 use crate::bindings::Object;
 use crate::node;
 use async_graphql::ID;

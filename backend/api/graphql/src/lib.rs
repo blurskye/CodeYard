@@ -6,6 +6,7 @@
 //! GitHub's compile-time GraphQL schema and domain-backed resolver families.
 use crate::arguments::Arguments;
 use async_graphql::Error;
+use async_graphql::ErrorExtensions;
 use axum::extract::State;
 use axum::http::header;
 use axum::http::HeaderMap;
@@ -415,7 +416,7 @@ async fn node(id: &str, request: &RequestContext) -> Result<Value> {
             Ok(crate::issue::pull_object(&pull))
         }
         "CRU" | "CSU" => crate::checks::node(kind, id, request).await,
-        "IT" => super::type_node(id, request).await,
+        "IT" => crate::issue::metadata::type_node(id, request).await,
         "LB" => crate::issue::linked_branch_node(id, request).await,
         "RRS" => crate::rulesets::node(id, request).await,
         "L" => {

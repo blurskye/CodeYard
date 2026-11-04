@@ -41,6 +41,7 @@ use codeyard_app::repositories::pull_requests::reviews::CreatePullRequestReviewR
 use codeyard_app::repositories::pull_requests::reviews::DismissPullRequestReviewRequest;
 use codeyard_app::repositories::pull_requests::reviews::RequestReviewerRequest;
 use codeyard_app::repositories::store::repo_store;
+use codeyard_db_repos::discussions::comment_revision;
 use codeyard_db_repos::pull_requests::reviews::PullRequestCommentEntry;
 use codeyard_db_repos::pull_requests::reviews::PullRequestReviewEntry;
 use codeyard_webui::pages::repos::issues as view;

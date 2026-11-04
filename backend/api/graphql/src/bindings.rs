@@ -576,7 +576,7 @@ impl Object {
                     "DISCUSSION" => {
                         boxed(|| crate::discussions::search(arguments, request)).await?
                     }
-                    _ => boxed(|| super::search(arguments, request)).await?,
+                    _ => boxed(|| crate::issue::metadata::search(arguments, request)).await?,
                 };
                 for key in [
                     "codeCount",

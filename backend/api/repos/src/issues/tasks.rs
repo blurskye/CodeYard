@@ -1,6 +1,7 @@
 //! Ticking a task box in an issue or pull request body, or in a comment. The box flips in the
 //! stored text and the text is saved through the same update the edit forms use. An author or writer
 //! may tick a box in the body, a comment author may tick one in it, and a stale page is refused.
+use codeyard_db_repos::discussions::comment_revision;
 
 use crate::discussion::author;
 use crate::discussion::expected;

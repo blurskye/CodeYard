@@ -1,6 +1,4 @@
 use super::*;
-use crate::bindings::connection;
-use crate::bindings::fields;
 use crate::bindings::Object;
 use async_graphql::ID;
 

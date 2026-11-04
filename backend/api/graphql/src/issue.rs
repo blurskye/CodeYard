@@ -77,7 +77,8 @@ pub(super) async fn resolve(
         "issueType" | "parent" | "subIssues" | "subIssuesSummary" | "blockedBy" | "blocking"
             if ty == "Issue" =>
         {
-            boxed(|| super::resolve(ty, field, ctx, request, parent, &repo, id)).await
+            boxed(|| crate::issue::metadata::resolve(ty, field, ctx, request, parent, &repo, id))
+                .await
         }
         "author" => {
             crate::user::retained_author(parent["_author"].as_i64().ok_or_else(missing)?, request)

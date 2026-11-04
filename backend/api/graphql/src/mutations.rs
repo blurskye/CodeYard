@@ -6,6 +6,7 @@ use crate::unavailable;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
+use async_graphql::ErrorExtensions;
 use codeyard_app::repositories::store::types::MergeMethod;
 use codeyard_model::node_id;
 use serde_json::json;

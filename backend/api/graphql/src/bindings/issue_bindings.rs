@@ -1,8 +1,5 @@
 //! Bindings for issue management and relationship mutations.
 use super::*;
-use crate::bindings::connection;
-use crate::bindings::fields;
-use crate::bindings::issue_payload;
 use crate::bindings::Object;
 use async_graphql::ID;
 

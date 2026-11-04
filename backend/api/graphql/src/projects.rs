@@ -8,6 +8,7 @@ use crate::url;
 use crate::RequestContext;
 use crate::Result;
 use async_graphql::Error;
+use async_graphql::ErrorExtensions;
 use chrono::Datelike;
 use codeyard_model::node_id;
 use serde_json::json;
