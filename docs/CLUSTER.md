@@ -337,8 +337,8 @@ provenance and retained Git-data refs use the same two-voter journal. Branch ren
 journal the old and new refs, provenance and default HEAD together. Default-branch
 settings changes, automatic HEAD selection and imported HEAD changes are journaled.
 Repository initialization and copy remain unavailable: the ref journal requires an
-existing serving term and directories
-on both voters. Creation is refused before reserving a repository row.
+existing serving term and directories on both voters. Creation is refused before
+reserving a repository row.
 
 ## Runners
 

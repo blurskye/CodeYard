@@ -701,11 +701,15 @@ impl NodeContext {
             Ok::<_, anyhow::Error>(())
         })
         .await??;
+        // The deleted name may now traverse a ref file rather than a directory.
+        // Syncing the new name and packed-refs covers the namespace replacement.
+        let renamed = branch_namespace_rename(&current.changes).map(|(old, _)| old.name.as_str());
         sync_refs(
             path,
             current
                 .changes
                 .iter()
+                .filter(|change| renamed != Some(change.name.as_str()))
                 .map(|change| change.name.clone())
                 .collect(),
         )
