@@ -81,7 +81,7 @@ async fn toggle(
     }
 }
 fn failure(error: &anyhow::Error) -> (StatusCode, &str) {
-    if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return (
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required.",

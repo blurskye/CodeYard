@@ -193,8 +193,8 @@ async fn is_pull_request_commit(
     commit: &str,
 ) -> Result<bool, OperationError> {
     let store = repo_store(repository, cluster);
-    let unavailable = |error: crate::backend::repositories::store::RepoError| {
-        if error.kind == crate::backend::repositories::store::ErrorKind::Unavailable {
+    let unavailable = |error: crate::backend::git::error::RepoError| {
+        if error.kind == crate::backend::git::error::ErrorKind::Unavailable {
             Err(OperationError::Unavailable {
                 code: "git_unavailable",
                 message: "The pull request commits are temporarily unavailable".to_owned(),

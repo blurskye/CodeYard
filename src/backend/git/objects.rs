@@ -1,7 +1,7 @@
 //! Git database objects are written without publishing a reference.
 use super::repository::process;
 use super::repository::{MAX_COMMIT_EMAIL_BYTES, MAX_COMMIT_NAME_BYTES};
-use crate::backend::repositories::store::{ErrorKind, RepoError};
+use crate::backend::git::error::{ErrorKind, RepoError};
 use anyhow::{ensure, Context, Result};
 use git2::{ObjectType, Oid, Repository};
 use serde::{Deserialize, Serialize};

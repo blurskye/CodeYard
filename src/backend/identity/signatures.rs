@@ -228,7 +228,7 @@ async fn owner_address(
     let matches: Vec<bool> = addresses
         .iter()
         // Generated addresses name a username, which account lookup matches exactly.
-        .filter(|(address, _)| super::credentials::email_matches(address, email))
+        .filter(|(address, _)| codeyard_support::credentials::email_matches(address, email))
         .map(|(_, verified)| *verified)
         .collect();
     // A verified match wins even when an unverified entry with the same text comes first.

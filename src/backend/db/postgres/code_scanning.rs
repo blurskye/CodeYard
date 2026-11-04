@@ -302,7 +302,7 @@ pub async fn dismiss(
     super::credentials::require_account(&mut tx, &credential)
         .await
         .map_err(|error| {
-            if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+            if error.is::<codeyard_support::credentials::AccountRestricted>() {
                 anyhow::Error::new(Refusal::Denied)
             } else {
                 error

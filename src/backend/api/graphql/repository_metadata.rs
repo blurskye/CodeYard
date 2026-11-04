@@ -33,7 +33,7 @@ async fn texts(store: &RepoStore, branch: &str, paths: &[&str]) -> Result<Vec<(S
 fn yaml(text: &str) -> Result<serde_yaml::Value> {
     crate::backend::ci::workflows::parse_yaml_with_limit(
         text.as_bytes(),
-        4 * issue_templates::MAX_TEMPLATE_BYTES as usize,
+        4 * codeyard_support::git_limits::MAX_TEMPLATE_BYTES as usize,
     )
     .map_err(unavailable)
 }

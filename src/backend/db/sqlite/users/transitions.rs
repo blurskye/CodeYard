@@ -99,7 +99,7 @@ async fn require_account_with_mode(
     credential: &crate::backend::db::users::accounts::AccountCredential<'_>,
     write: bool,
 ) -> Result<()> {
-    use crate::backend::db::users::accounts::AccountRestricted;
+    use codeyard_support::credentials::AccountRestricted;
     anyhow::ensure!(active_account(tx, actor).await?, AccountRestricted);
     anyhow::ensure!(
         credential_live(tx, actor, credential, write).await?,

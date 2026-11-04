@@ -21,9 +21,9 @@ use codeyard::backend::{
         models::{NodeReplicaCounts, ReplicaSetting, Repository},
         DbPool,
     },
+    git::error::{ErrorKind, RepoError},
     repositories::store::{
-        begin_ref_change, repo_store, ErrorKind, FileWrite, GitService, GitSession, GitStreams,
-        RepoError, RepoStore,
+        begin_ref_change, repo_store, FileWrite, GitService, GitSession, GitStreams, RepoStore,
     },
     storage::ObjectStore,
 };

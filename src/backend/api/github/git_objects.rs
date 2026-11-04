@@ -162,12 +162,12 @@ async fn create_blob(
         .into_response())
 }
 
-fn write_error(error: crate::backend::repositories::store::RepoError) -> Error {
+fn write_error(error: crate::backend::git::error::RepoError) -> Error {
     if !error.is_write_denied()
         && matches!(
             error.kind,
-            crate::backend::repositories::store::ErrorKind::NotFound
-                | crate::backend::repositories::store::ErrorKind::Invalid
+            crate::backend::git::error::ErrorKind::NotFound
+                | crate::backend::git::error::ErrorKind::Invalid
         )
     {
         return Error::invalid("Invalid Git object");

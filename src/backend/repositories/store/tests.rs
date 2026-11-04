@@ -1,5 +1,6 @@
 //! The store against real bare repositories in temporary directories.
 use super::*;
+use crate::backend::git::error::RepoErrorReason;
 use serde::{de::DeserializeOwned, Serialize};
 
 /// Sends a value through JSON and back, the way a remote store would carry it.

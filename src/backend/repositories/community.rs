@@ -1,9 +1,10 @@
 //! Community standards are derived from real files at a pinned default-branch commit.
 use super::{
     access,
-    store::{repo_store, BlobRange, ErrorKind, RepoError, RepoStore},
+    store::{repo_store, BlobRange, RepoStore},
     templates,
 };
+use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     cluster::NodeContext,
     db::{self, models::Repository},

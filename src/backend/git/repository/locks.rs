@@ -11,9 +11,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock};
 use tokio::sync::{OwnedMutexGuard, OwnedRwLockReadGuard, OwnedRwLockWriteGuard};
 
-static LOCKS: LazyLock<crate::backend::locks::KeyedMutex<PathBuf>> =
+static LOCKS: LazyLock<codeyard_support::locks::KeyedMutex<PathBuf>> =
     LazyLock::new(Default::default);
-static READERS: LazyLock<crate::backend::locks::KeyedRwLock<PathBuf>> =
+static READERS: LazyLock<codeyard_support::locks::KeyedRwLock<PathBuf>> =
     LazyLock::new(Default::default);
 
 /// Receive sessions use canonical paths; API writes may retain a symlink alias. Resolve the

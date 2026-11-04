@@ -2366,7 +2366,7 @@ pub fn secret_scanning_alert(
         "resolution": alert.resolution, "resolution_comment": alert.resolution_comment,
         "resolved_at": alert.resolved_at, "resolved_by": resolved_by.map(user),
         "secret_type": alert.secret_type,
-        "provider_slug": crate::backend::repositories::secret_scanning::provider(&alert.secret_type), "secret_type_display_name": alert.display_name,
+        "provider_slug": crate::backend::git::secret_detection::provider(&alert.secret_type), "secret_type_display_name": alert.display_name,
         "secret": secret, "validity": alert.validity.as_deref().unwrap_or("unknown"), "push_protection_bypassed": bypass.is_some(),
         "push_protection_bypassed_by": bypassed_by.map(user), "push_protection_bypassed_at": bypass.and_then(|bypass|bypass.used_at),
         "publicly_leaked": null, "multi_repo": null, "is_base64_encoded": false
@@ -2374,7 +2374,7 @@ pub fn secret_scanning_alert(
 }
 
 pub fn secret_scanning_location(
-    location: &crate::backend::db::secret_scanning::Location,
+    location: &crate::backend::git::secret_scanning::Location,
     owner: &str,
     repo: &str,
 ) -> Value {

@@ -2,10 +2,8 @@ use super::chrome;
 use crate::backend::{
     api::http::context::PageContext,
     app::AppState,
-    repositories::{
-        dependency_graph as graph,
-        store::{ErrorKind, RepoError},
-    },
+    git::error::{ErrorKind, RepoError},
+    repositories::dependency_graph as graph,
 };
 use axum::{
     extract::{Path, State},

@@ -187,7 +187,7 @@ pub async fn respond(
         super::super::users::transitions::require_account(&mut tx, actor, &credential)
             .await
             .map_err(|error| {
-                if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+                if error.is::<codeyard_support::credentials::AccountRestricted>() {
                     Refusal::Denied.into()
                 } else {
                     error

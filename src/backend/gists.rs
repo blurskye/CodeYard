@@ -8,12 +8,13 @@ use crate::backend::{
         models::Repository,
         repositories::creation::{RepositoryCreationOwner, RepositoryTarget},
     },
+    git::{
+        error::RepoError,
+        gist_types::{GistEdit, GistFileChange, GistSnapshot, MAX_GIST_FILES},
+    },
     repositories::{
         lifecycle,
-        store::{
-            repo_store, GistCredential, GistEdit, GistFileChange, GistSnapshot, RepoError,
-            MAX_GIST_FILES,
-        },
+        store::{repo_store, GistCredential},
     },
 };
 use anyhow::{ensure, Result};

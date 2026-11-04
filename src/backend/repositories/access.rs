@@ -12,7 +12,8 @@ pub(crate) async fn credential_user(
     actor: &db::credentials::Actor,
     write: bool,
 ) -> Result<User> {
-    use db::users::accounts::{AccountRestricted, OwnedAccountCredential};
+    use codeyard_support::credentials::AccountRestricted;
+    use db::users::accounts::OwnedAccountCredential;
     let user = match &actor.credential {
         None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
         Some(OwnedAccountCredential::Session(session)) => {
@@ -39,7 +40,7 @@ pub(crate) async fn check_publication_actor(
     use db::users::accounts::OwnedAccountCredential;
     let repository = db::repositories::records::get_repository_by_id(pool, repository.id)
         .await?
-        .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
+        .ok_or_else(|| anyhow::anyhow!(codeyard_support::credentials::AccountRestricted))?;
     let user = match &actor.credential {
         None => db::users::accounts::get_user_by_id(pool, actor.user_id).await?,
         Some(OwnedAccountCredential::Session(session)) => {
@@ -52,10 +53,10 @@ pub(crate) async fn check_publication_actor(
                 .0,
         ),
     }
-    .ok_or_else(|| anyhow::anyhow!(db::users::accounts::AccountRestricted))?;
+    .ok_or_else(|| anyhow::anyhow!(codeyard_support::credentials::AccountRestricted))?;
     anyhow::ensure!(
         user.id == actor.user_id && can_write(pool, &user, &repository).await?,
-        db::users::accounts::AccountRestricted
+        codeyard_support::credentials::AccountRestricted
     );
     Ok(())
 }
@@ -367,7 +368,7 @@ pub async fn change_collaborator(
     )
     .await
     .map_err(|error| {
-        if error.is::<db::users::accounts::AccountRestricted>() {
+        if error.is::<codeyard_support::credentials::AccountRestricted>() {
             AccessError::NotFound
         } else {
             AccessError::Unavailable

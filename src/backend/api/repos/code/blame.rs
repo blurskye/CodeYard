@@ -4,7 +4,7 @@ use crate::backend::api::repos::chrome::{
     date, is_branch, load, ref_names_under, resolve, store_error, Loaded,
 };
 use crate::backend::app::AppState;
-use crate::backend::repositories::store::{repo_store, ErrorKind};
+use crate::backend::{git::error::ErrorKind, repositories::store::repo_store};
 use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode};
 use axum::response::Response;

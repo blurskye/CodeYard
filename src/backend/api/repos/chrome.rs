@@ -4,7 +4,10 @@ use crate::backend::api::repos::responses::rfc3339;
 use crate::backend::db;
 use crate::backend::repositories::access;
 use crate::backend::repositories::lifecycle;
-use crate::backend::repositories::store::{repo_store, CommitInfo, ErrorKind, RepoError};
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::{repo_store, CommitInfo},
+};
 use axum::http::StatusCode;
 use axum::response::Response;
 use codeyard_webui::pages::repos as view;

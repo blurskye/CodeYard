@@ -6,12 +6,9 @@
 //! instead of a Markdown body. `config.yml` in the directory can switch blank issues off. The
 //! pull request template is the first of a few fixed paths that exists.
 
-use super::store::{ErrorKind, RepoError, RepoStore};
-
-/// Larger template files are ignored.
-pub const MAX_TEMPLATE_BYTES: u64 = 64 * 1024;
-/// The chooser lists at most this many templates, in path order.
-pub const MAX_TEMPLATES: usize = 20;
+use super::store::RepoStore;
+use crate::backend::git::error::{ErrorKind, RepoError};
+use codeyard_support::git_limits::{MAX_TEMPLATES, MAX_TEMPLATE_BYTES};
 
 const ISSUE_TEMPLATE_DIRECTORY: &str = ".github/ISSUE_TEMPLATE";
 const ISSUE_TEMPLATE_FILE: &str = ".github/ISSUE_TEMPLATE.md";

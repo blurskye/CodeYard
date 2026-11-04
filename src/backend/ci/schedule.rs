@@ -132,9 +132,7 @@ impl CiRuns {
         let reference = format!("refs/heads/{}", repo.default_branch);
         let commit = match store.commit_from_primary(&reference).await {
             Ok(commit) => commit,
-            Err(error)
-                if error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
-            {
+            Err(error) if error.kind == crate::backend::git::error::ErrorKind::NotFound => {
                 return Ok(())
             }
             Err(error) => return Err(error.into()),

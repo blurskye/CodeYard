@@ -15,12 +15,13 @@ use codeyard::backend::{
         rpc::{self, Failure, Operation, Reply, Request},
         NodeContext,
     },
-    db, git,
+    db,
+    git::{self, error::ErrorKind},
     repositories::store::{
-        repo_store, BlobRange, ErrorKind, FileWrite, GitService, GitSession, GitStreams,
-        MergeMethod, MergeRequest, PreparedFile, RepoStore, MAX_ARCHIVE_RESPONSE_BYTES,
-        MAX_BLOB_RESPONSE_BYTES, MAX_CI_WORKFLOW_BYTES, MAX_DIFF_FILE_PATCH_BYTES,
-        MAX_EDITOR_BYTES, MAX_TREE_ENTRIES, MAX_WORKFLOW_DIRECTORY_ENTRIES,
+        repo_store, BlobRange, FileWrite, GitService, GitSession, GitStreams, MergeMethod,
+        MergeRequest, PreparedFile, RepoStore, MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
+        MAX_CI_WORKFLOW_BYTES, MAX_DIFF_FILE_PATCH_BYTES, MAX_EDITOR_BYTES, MAX_TREE_ENTRIES,
+        MAX_WORKFLOW_DIRECTORY_ENTRIES,
     },
     storage::ObjectStore,
 };
@@ -559,7 +560,7 @@ async fn rpc_reply(recv: &mut iroh::endpoint::RecvStream) -> Reply {
     reply
 }
 
-fn repository_error(reply: Reply) -> codeyard::backend::repositories::store::RepoError {
+fn repository_error(reply: Reply) -> codeyard::backend::git::error::RepoError {
     match reply.result {
         Err(Failure::Repository(error)) => error,
         result => panic!("expected repository refusal, got {result:?}"),
@@ -570,7 +571,7 @@ async fn body_refusal_without_payload(
     caller: &cluster::Cluster,
     storage: &cluster::Cluster,
     request: &Request,
-) -> codeyard::backend::repositories::store::RepoError {
+) -> codeyard::backend::git::error::RepoError {
     let connection = caller
         .endpoint()
         .unwrap()

@@ -54,7 +54,7 @@ async fn begin_write<'a>(
         super::users::transitions::require_account(&mut tx, authority.user_id, &credential)
             .await
             .map_err(|error| {
-                if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+                if error.is::<codeyard_support::credentials::AccountRestricted>() {
                     AssignmentRefusal::Denied.into()
                 } else {
                     error

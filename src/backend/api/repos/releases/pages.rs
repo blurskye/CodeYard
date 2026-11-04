@@ -11,12 +11,12 @@ use crate::backend::db::{
     models::{ReleaseAsset, ReleaseRow},
 };
 use crate::backend::files::{DownloadError, UploadError};
+use crate::backend::git::error::ErrorKind;
 use crate::backend::repositories::access::AccessError;
 use crate::backend::repositories::refs::RefError;
 use crate::backend::repositories::releases::{
     self as releases, ReleaseError, ReleaseFields, ReleaseInput,
 };
-use crate::backend::repositories::store::ErrorKind;
 use axum::extract::multipart::MultipartError;
 use axum::extract::{Form, Multipart, Path, State};
 use axum::http::{HeaderMap, StatusCode, Uri};

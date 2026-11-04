@@ -9,7 +9,7 @@ use crate::backend::{
         self,
         interactions::InteractionScope,
         pull_caps::{CapUpdate, PullCap, PullCapRefusal, PullCapScope},
-        users::accounts::{AccountCredential, AccountRestricted},
+        users::accounts::AccountCredential,
     },
     webhooks::payloads,
 };
@@ -19,6 +19,7 @@ use axum::{
     routing::{delete, get, patch, put, MethodRouter},
     Json,
 };
+use codeyard_support::credentials::AccountRestricted;
 use serde::Deserialize;
 use serde_json::Value;
 use std::sync::Arc;

@@ -10,10 +10,10 @@ use crate::backend::{
         self,
         repositories::dependencies::{self as records, AlertState, Feature, Refusal},
     },
+    git::error::ErrorKind,
     repositories::{
         access::AccessError,
         dependencies::{self, DependencyError},
-        store::ErrorKind,
     },
 };
 use axum::{
@@ -48,7 +48,7 @@ fn failure(error: &anyhow::Error) -> (StatusCode, String) {
     {
         return (StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return (
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required".into(),

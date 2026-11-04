@@ -5,7 +5,7 @@ use crate::backend::{
     db::{
         self,
         interactions::{InteractionRefusal, InteractionScope, NewRestriction},
-        users::accounts::{AccountCredential, AccountRestricted},
+        users::accounts::AccountCredential,
     },
 };
 use axum::{
@@ -13,6 +13,7 @@ use axum::{
     http::{HeaderMap, StatusCode, Uri},
     response::Response,
 };
+use codeyard_support::credentials::AccountRestricted;
 use codeyard_webui::components::interactions::{
     InteractionPanel, InteractionRestriction, PullCapForm,
 };

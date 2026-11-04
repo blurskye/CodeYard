@@ -6,9 +6,10 @@ use crate::backend::{
     },
     app::AppState,
     db, gists as domain,
+    git::error::{ErrorKind, RepoError},
     repositories::{
         lifecycle::{LifecycleFailure, StorageError},
-        store::{repo_store, ErrorKind, GistCredential, RepoError},
+        store::{repo_store, GistCredential},
     },
 };
 use axum::{
@@ -63,7 +64,7 @@ fn refusal(error: &anyhow::Error) -> (StatusCode, String) {
             error.to_string(),
         );
     }
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return (
             StatusCode::FORBIDDEN,
             "Your session no longer permits this change. Sign in again.".into(),

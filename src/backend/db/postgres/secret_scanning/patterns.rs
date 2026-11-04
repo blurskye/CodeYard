@@ -1,6 +1,6 @@
 use crate::backend::{
     db::secret_scanning::{ConfigUpdate, PatternConfig, Refusal},
-    repositories::secret_scanning::{
+    git::secret_detection::{
         patterns::{Create, Delete, Owner, Pattern, Update},
         secret_types,
     },
@@ -91,7 +91,7 @@ pub async fn create(
         Refusal::Denied
     );
     admission.commit().await?;
-    crate::backend::repositories::secret_scanning::patterns::validate_batch(input)
+    crate::backend::git::secret_detection::patterns::validate_batch(input)
         .await
         .map_err(|_| Refusal::Invalid)?;
     let mut tx = pool.begin().await?;

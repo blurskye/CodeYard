@@ -2,15 +2,16 @@
 use crate::backend::{
     ci::{CiRuns, RefUpdate},
     cluster::NodeContext,
-    db, git,
+    db,
+    git::{
+        self,
+        error::{ErrorKind, RepoError, MERGE_COMMIT_BLOCKED},
+    },
     repositories::{
         access,
-        protection::{
-            check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP,
-            MERGE_COMMIT_BLOCKED,
-        },
+        protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
         pull_requests,
-        store::{repo_store, ErrorKind, RepoError, TagInfo},
+        store::{repo_store, TagInfo},
     },
 };
 

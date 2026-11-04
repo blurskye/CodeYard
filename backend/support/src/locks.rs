@@ -9,7 +9,7 @@ use std::{
     sync::{Arc, Mutex},
 };
 
-pub(crate) fn exclusive_file(path: &Path) -> Result<File> {
+pub fn exclusive_file(path: &Path) -> Result<File> {
     use std::os::unix::fs::OpenOptionsExt;
     let file = std::fs::OpenOptions::new()
         .create(true)
@@ -33,10 +33,10 @@ pub(crate) fn exclusive_file(path: &Path) -> Result<File> {
 }
 
 /// One process lock per key; a key's entry is dropped once no guard or waiter holds it.
-pub(crate) struct Keyed<K, L>(Mutex<HashMap<K, Arc<L>>>);
+pub struct Keyed<K, L>(Mutex<HashMap<K, Arc<L>>>);
 
-pub(crate) type KeyedMutex<K> = Keyed<K, tokio::sync::Mutex<()>>;
-pub(crate) type KeyedRwLock<K> = Keyed<K, tokio::sync::RwLock<()>>;
+pub type KeyedMutex<K> = Keyed<K, tokio::sync::Mutex<()>>;
+pub type KeyedRwLock<K> = Keyed<K, tokio::sync::RwLock<()>>;
 
 impl<K, L> Default for Keyed<K, L> {
     fn default() -> Self {

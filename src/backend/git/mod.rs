@@ -27,3 +27,8 @@ pub(crate) use ref_names::{
 };
 pub use repository::*;
 pub use stats::*;
+
+pub(crate) mod error;
+pub(crate) mod gist_types;
+
+pub(crate) mod secret_detection;

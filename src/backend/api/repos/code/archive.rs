@@ -5,7 +5,10 @@ use crate::backend::api::repos::responses::repo_store_error;
 use crate::backend::app::AppState;
 use crate::backend::db;
 use crate::backend::git::ArchiveFormat;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::repo_store,
+};
 use axum::extract::{Path, Query, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::response::IntoResponse;

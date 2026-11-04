@@ -2,13 +2,14 @@
 use crate::backend::db::{
     self,
     users::{
-        accounts::{AccountCredential, AccountRestricted},
+        accounts::AccountCredential,
         gpg_keys::{GpgKey, GpgKeyRefusal, GpgMaterial, NewGpgKey},
     },
     DbPool,
 };
 use base64::Engine;
 use chrono::{DateTime, Utc};
+use codeyard_support::credentials::AccountRestricted;
 use pgp::{
     composed::{Deserializable, SignedPublicKey, SignedPublicSubKey},
     packet::{Packet, PacketParser, PacketTrait, Signature, SignatureType, SubpacketData},

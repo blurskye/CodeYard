@@ -55,5 +55,5 @@ fn create_durable(path: &Path, builder: &std::fs::DirBuilder) -> std::io::Result
 /// The same lock protects serving and persistent runner work-folder changes.
 pub(crate) fn lock_state_dir(path: &Path) -> anyhow::Result<std::fs::File> {
     private_dir(path)?;
-    crate::backend::locks::exclusive_file(&path.join("serve.lock"))
+    codeyard_support::locks::exclusive_file(&path.join("serve.lock"))
 }

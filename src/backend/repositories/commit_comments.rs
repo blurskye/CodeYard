@@ -8,15 +8,13 @@ use crate::backend::{
             self as records, CommentCreate, CommentEdit, CommentRefusal,
         },
     },
+    git::error::{ErrorKind, RepoError},
     notifications::{
         create::{create_and_broadcast_notification, NotificationRequest},
         mentions::{notify_mentions, MentionComment, MentionSource},
         NotificationBroadcaster,
     },
-    repositories::{
-        access,
-        store::{repo_store, ErrorKind, RepoError},
-    },
+    repositories::{access, store::repo_store},
     webhooks::{
         self, events,
         payloads::{self, Person, Scope},

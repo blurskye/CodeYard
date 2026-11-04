@@ -34,7 +34,7 @@ pub(super) fn failure(error: anyhow::Error) -> Error {
     {
         return Error::new(StatusCode::UNPROCESSABLE_ENTITY, graph.to_string());
     }
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return Error::new(
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required",

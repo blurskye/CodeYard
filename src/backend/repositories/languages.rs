@@ -1,8 +1,12 @@
 //! Stored default-branch languages, including successfully computed empty results.
 use crate::backend::{
     db::{self, repository_stats::LanguageSource, DbPool},
-    git::{self, LanguageStat},
-    repositories::store::{ErrorKind, RepoError, RepoStore},
+    git::{
+        self,
+        error::{ErrorKind, RepoError},
+        LanguageStat,
+    },
+    repositories::store::RepoStore,
 };
 use anyhow::Result;
 use std::{

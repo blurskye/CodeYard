@@ -188,7 +188,7 @@ async fn require_account_with_mode(
     write: bool,
     exclusive_actor: bool,
 ) -> Result<()> {
-    use crate::backend::db::users::accounts::AccountRestricted;
+    use codeyard_support::credentials::AccountRestricted;
     // Repository/org authority already holds a shared actor lock. Upgrading it
     // after acquiring resource locks deadlocks concurrent requests by one actor.
     // Shared is sufficient to prevent account restrictions through commit.

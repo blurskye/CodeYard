@@ -370,7 +370,7 @@ fn template_metadata(
     revision: &str,
     paths: &[String],
 ) -> Result<Vec<Option<(String, u64)>>> {
-    use crate::backend::repositories::issue_templates::{MAX_TEMPLATES, MAX_TEMPLATE_BYTES};
+    use codeyard_support::git_limits::{MAX_TEMPLATES, MAX_TEMPLATE_BYTES};
     ensure!(
         paths.len() <= MAX_TEMPLATES + 2
             && paths.iter().all(|path| path.len() <= MAX_TREE_PATH_BYTES),
@@ -578,9 +578,11 @@ impl CommitFilter {
         }
         if !self.author_emails.is_empty() {
             let email = decode_commit_text(commit, commit.author().email_bytes());
-            if !self.author_emails.iter().any(|address| {
-                crate::backend::identity::credentials::email_matches(address, &email)
-            }) {
+            if !self
+                .author_emails
+                .iter()
+                .any(|address| codeyard_support::credentials::email_matches(address, &email))
+            {
                 return false;
             }
         }

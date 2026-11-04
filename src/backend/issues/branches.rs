@@ -2,10 +2,8 @@
 use super::{db, OperationError};
 use crate::backend::{
     app::AppState,
-    repositories::{
-        access, refs,
-        store::{repo_store, ErrorKind},
-    },
+    git::error::ErrorKind,
+    repositories::{access, refs, store::repo_store},
 };
 
 pub fn default_name(issue: &db::models::Issue) -> String {

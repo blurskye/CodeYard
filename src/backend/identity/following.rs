@@ -54,7 +54,9 @@ pub async fn status(
 }
 
 fn mutation_error(error: anyhow::Error) -> FollowError {
-    if error.is::<following::FollowRestricted>() || error.is::<accounts::AccountRestricted>() {
+    if error.is::<following::FollowRestricted>()
+        || error.is::<codeyard_support::credentials::AccountRestricted>()
+    {
         FollowError::Restricted
     } else {
         FollowError::Unavailable

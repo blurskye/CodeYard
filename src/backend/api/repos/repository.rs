@@ -480,7 +480,7 @@ pub(super) async fn settings_model(
             .map_err(|_| unavailable(ctx))?;
         settings.secret_scanning = security.enabled;
         settings.push_protection = security.push_protection;
-        use crate::backend::repositories::secret_scanning::patterns::Owner;
+        use crate::backend::git::secret_detection::patterns::Owner;
         let mut scopes = vec![(Owner::Repository(loaded.repository.id), false)];
         if let Some(org) = loaded.repository.owner_org_id {
             scopes.push((Owner::Organization(org), true));
@@ -1742,7 +1742,7 @@ async fn mutate(
             Ok(settings_section_url(&base, action))
         }
         "secret-pattern-publish" => {
-            use crate::backend::repositories::secret_scanning::patterns::Owner;
+            use crate::backend::git::secret_detection::patterns::Owner;
             let id = field(form, "pattern_id").parse().map_err(|_| {
                 ApiError::failure(
                     StatusCode::UNPROCESSABLE_ENTITY,
@@ -1770,11 +1770,13 @@ async fn mutate(
             .await
             .map_err(|error| {
                 match error.downcast_ref::<db::secret_scanning::Refusal>() {
-                    _ if error.is::<db::users::accounts::AccountRestricted>() => ApiError::failure(
-                        StatusCode::FORBIDDEN,
-                        "forbidden",
-                        "A live unrestricted credential is required.",
-                    ),
+                    _ if error.is::<codeyard_support::credentials::AccountRestricted>() => {
+                        ApiError::failure(
+                            StatusCode::FORBIDDEN,
+                            "forbidden",
+                            "A live unrestricted credential is required.",
+                        )
+                    }
                     Some(db::secret_scanning::Refusal::Denied) => ApiError::failure(
                         StatusCode::FORBIDDEN,
                         "forbidden",

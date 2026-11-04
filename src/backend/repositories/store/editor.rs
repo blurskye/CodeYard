@@ -1,11 +1,12 @@
 //! Single-file commits for the web editor and the file API: write the blob and
 //! trees, create the commit, then move the branch only if it still points where the
 //! editor started.
-use super::{ErrorKind, RepoError};
+use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::git::{
     objects::Signature,
     repository::{process, CommitInfo},
 };
+use codeyard_support::git_paths::is_git_dir_name;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashSet},
@@ -196,13 +197,6 @@ fn validate_path(path: &str) -> Result<(), RepoError> {
         ));
     }
     Ok(())
-}
-
-/// `.git` in any case, with the trailing spaces and dots and the short name `git~1` that
-/// Windows file systems treat as the same directory.
-pub(super) fn is_git_dir_name(part: &str) -> bool {
-    let name = part.trim_end_matches([' ', '.']);
-    name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1")
 }
 
 fn validate_target(branch: &str, expected_revision: &str) -> Result<(), RepoError> {

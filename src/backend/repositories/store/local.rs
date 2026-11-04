@@ -5,21 +5,21 @@ mod branches;
 mod gists;
 use super::{
     allowed_merge_methods, editor, AsyncMergePublication, BlobBytes, BlobPreviewMetadata,
-    BlobRange, ErrorKind, FileWrite, GitService, MergeMethod, MergeRequest, RepoError, RestackMove,
+    BlobRange, FileWrite, GitService, MergeMethod, MergeRequest, RestackMove,
     MAX_ARCHIVE_RESPONSE_BYTES, MAX_BLOB_RESPONSE_BYTES,
 };
+use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     db,
     git::{
-        self, repository::process, BlobContent, BranchStatus, CiCommit, CiWorkflowFile,
-        CiWorkflowSource, CommitComparison, CommitFilter, CommitInfo, ContributorInfo, DiffInfo,
-        FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry, WeekChanges,
+        self, error::MERGE_COMMIT_BLOCKED, repository::process, BlobContent, BranchStatus,
+        CiCommit, CiWorkflowFile, CiWorkflowSource, CommitComparison, CommitFilter, CommitInfo,
+        ContributorInfo, DiffInfo, FileBlame, FileList, LanguageStat, RepoInfo, TagInfo, TreeEntry,
+        WeekChanges,
     },
     repositories::{
         access, languages,
-        protection::{
-            check_branch_write, BranchWrite, History, Refusal, WriteVia, MERGE_COMMIT_BLOCKED,
-        },
+        protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia},
     },
 };
 use std::{
@@ -903,7 +903,7 @@ impl LocalStore {
             .map(|write| {
                 Ok(git::PublicationUpdate {
                     reference: git::branch_ref(write.branch)
-                        .ok_or_else(|| super::invalid_ref("branch"))?,
+                        .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?,
                     old: write.old.map(str::to_owned),
                     new: write.new.map(str::to_owned),
                 })
@@ -2126,7 +2126,8 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
+        let reference = git::branch_ref(name)
+            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
         self.ensure_room_for_ref(&reference).await?;
         let (owned_name, owned_sha) = (name.to_owned(), sha.to_owned());
         let target = self
@@ -2402,7 +2403,8 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
+        let reference = git::branch_ref(name)
+            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
         let _change = self
             .begin_branch_change(pool, repo_id, actor, &[&write], &publication, None)
             .await?;
@@ -2459,7 +2461,8 @@ impl LocalStore {
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
-        let reference = git::tag_ref(name).ok_or_else(|| super::invalid_ref("tag"))?;
+        let reference =
+            git::tag_ref(name).ok_or_else(|| crate::backend::git::error::invalid_ref("tag"))?;
         self.ensure_room_for_ref(&reference).await?;
         let (owned_name, owned_sha, owned_message) =
             (name.to_owned(), sha.to_owned(), message.map(str::to_owned));
@@ -2578,7 +2581,8 @@ impl LocalStore {
             self.node_id,
         )
         .await?;
-        let reference = git::tag_ref(name).ok_or_else(|| super::invalid_ref("tag"))?;
+        let reference =
+            git::tag_ref(name).ok_or_else(|| crate::backend::git::error::invalid_ref("tag"))?;
         crate::backend::repositories::releases::immutable::check_current_tag_updates(
             pool,
             &repository,
@@ -3143,7 +3147,7 @@ impl LocalStore {
         let _change = Arc::new(self.begin_publisher_change(pool, repo_id).await?);
         let updates = vec![git::PublicationUpdate {
             reference: git::branch_ref(&request.branch)
-                .ok_or_else(|| super::invalid_ref("branch"))?,
+                .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?,
             old: Some(request.head.clone()),
             new: Some(prepared.head().to_owned()),
         }];
@@ -4200,7 +4204,8 @@ impl LocalStore {
             let mut target = String::new();
             let mut tag_oid = String::new();
             if reads_tag {
-                let reference = git::tag_ref(&tag).ok_or_else(|| super::invalid_ref("tag"))?;
+                let reference = git::tag_ref(&tag)
+                    .ok_or_else(|| crate::backend::git::error::invalid_ref("tag"))?;
                 let draft_target = match &mutation {
                     Mutation::Create {
                         fields,
@@ -4372,7 +4377,8 @@ impl LocalStore {
         } else {
             None
         };
-        let reference = git::branch_ref(name).ok_or_else(|| super::invalid_ref("branch"))?;
+        let reference = git::branch_ref(name)
+            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
         let (status, _) = self
             .git(&["show-ref", "--verify", "--quiet", &reference])
             .await?;
@@ -4416,7 +4422,7 @@ impl LocalStore {
                 // back when the database already names the requested default.
                 use db::repositories::records::RepositorySettingsRefusal;
                 let must_restore = if error.downcast_ref::<RepositorySettingsRefusal>().is_some()
-                    || error.is::<db::users::accounts::AccountRestricted>()
+                    || error.is::<codeyard_support::credentials::AccountRestricted>()
                     || previous.default_branch == name
                 {
                     true
@@ -4447,7 +4453,7 @@ impl LocalStore {
                         return Err(unavailable("Repository update failed and HEAD could not be restored; reconciliation is required"));
                     }
                 }
-                if error.is::<db::users::accounts::AccountRestricted>() {
+                if error.is::<codeyard_support::credentials::AccountRestricted>() {
                     return Err(RepoError::write_denied());
                 }
                 return Err(match error.downcast_ref::<RepositorySettingsRefusal>() {

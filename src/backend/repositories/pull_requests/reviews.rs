@@ -5,8 +5,8 @@ use crate::backend::notifications::create::create_and_broadcast_notification;
 use crate::backend::notifications::create::NotificationRequest;
 use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::NotificationBroadcaster;
-use crate::backend::repositories::store::{repo_store, ErrorKind};
 use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
+use crate::backend::{git::error::ErrorKind, repositories::store::repo_store};
 use serde::Deserialize;
 use serde_json::json;
 #[derive(Deserialize)]

@@ -8,12 +8,8 @@
 //! host OpenSSH gateway.
 mod editor;
 mod gists;
-pub(crate) use gists::PreparedGist;
-pub use gists::{
-    valid_gist_filename, GistCredential, GistEdit, GistFileChange, GistRevision, GistSnapshot,
-    MAX_GIST_BYTES, MAX_GIST_FILENAME_BYTES, MAX_GIST_FILES, MAX_GIST_REQUEST_BYTES,
-};
-mod error;
+use crate::backend::git::gist_types::{GistEdit, GistRevision, GistSnapshot};
+pub use gists::GistCredential;
 mod local;
 mod remote;
 pub(crate) mod source;
@@ -30,6 +26,8 @@ use crate::backend::{
 };
 use std::{collections::HashMap, path::Path, time::Instant};
 
+use crate::backend::git::error::invalid_ref;
+use crate::backend::git::error::{ErrorKind, RepoError};
 pub(crate) use crate::backend::git::validate_merge_revision;
 pub use crate::backend::git::{
     BlameHunk, BlobContent, BranchStatus, CiCommit, CiWorkflowFile, CiWorkflowSource,
@@ -42,8 +40,6 @@ pub use editor::{
     CommitIdentities, FileWrite, PreparedFile, UploadFile, UploadWrite, MAX_EDITOR_BYTES,
     MAX_UPLOAD_FILES, MAX_UPLOAD_FILE_BYTES, MAX_UPLOAD_TOTAL_BYTES,
 };
-use error::invalid_ref;
-pub use error::{ErrorKind, RepoError, RepoErrorReason, MERGE_METHOD_NOT_ALLOWED, REPLICA_BUSY};
 pub(crate) use local::begin_coordinated_ref_change;
 pub(crate) use local::ensure_ref_room;
 pub use local::{begin_ref_change, RefChange};

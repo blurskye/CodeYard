@@ -11,10 +11,11 @@ use crate::backend::{
         models::{Repository, User},
         repositories::immutable_releases::{self as records, Refusal},
     },
+    git::error::{ErrorKind, RepoError},
     repositories::{
         access,
         git_sessions::validation::{RefUpdate, ZERO_SHA},
-        store::{repo_store, ErrorKind, RepoError},
+        store::repo_store,
     },
 };
 use anyhow::{ensure, Result};

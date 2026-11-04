@@ -177,23 +177,21 @@ async fn submit(
                 Some(pages::Refusal::Denied) => StatusCode::FORBIDDEN,
                 Some(pages::Refusal::Missing) => StatusCode::NOT_FOUND,
                 Some(_) => StatusCode::UNPROCESSABLE_ENTITY,
-                None if error.is::<crate::backend::db::users::accounts::AccountRestricted>() => {
+                None if error.is::<codeyard_support::credentials::AccountRestricted>() => {
                     StatusCode::FORBIDDEN
                 }
-                None => {
-                    match error.downcast_ref::<crate::backend::repositories::store::RepoError>() {
-                        Some(error)
-                            if matches!(
-                                error.kind,
-                                crate::backend::repositories::store::ErrorKind::NotFound
-                                    | crate::backend::repositories::store::ErrorKind::Invalid
-                            ) =>
-                        {
-                            StatusCode::UNPROCESSABLE_ENTITY
-                        }
-                        _ => StatusCode::SERVICE_UNAVAILABLE,
+                None => match error.downcast_ref::<crate::backend::git::error::RepoError>() {
+                    Some(error)
+                        if matches!(
+                            error.kind,
+                            crate::backend::git::error::ErrorKind::NotFound
+                                | crate::backend::git::error::ErrorKind::Invalid
+                        ) =>
+                    {
+                        StatusCode::UNPROCESSABLE_ENTITY
                     }
-                }
+                    _ => StatusCode::SERVICE_UNAVAILABLE,
+                },
             };
             render(
                 &ctx,

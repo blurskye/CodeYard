@@ -11,8 +11,9 @@ use crate::backend::app::AppState;
 use crate::backend::git::repository::{PREVIEW_BYTES, PREVIEW_LINES};
 use crate::backend::git::{MAX_BLAME_FILE_BYTES, MAX_BLAME_LINES};
 use crate::backend::repositories::files;
-use crate::backend::repositories::store::{
-    repo_store, BlobBytes, BlobRange, RepoError, RepoStore, MAX_EDITOR_BYTES,
+use crate::backend::{
+    git::error::RepoError,
+    repositories::store::{repo_store, BlobBytes, BlobRange, RepoStore, MAX_EDITOR_BYTES},
 };
 use axum::extract::{Path, Query, State};
 use axum::http::{HeaderMap, StatusCode};
@@ -261,7 +262,7 @@ async fn preview_at(
         .map(|metadata| metadata.first_line)
         .ok_or_else(|| {
             RepoError::new(
-                crate::backend::repositories::store::ErrorKind::Unavailable,
+                crate::backend::git::error::ErrorKind::Unavailable,
                 "Preview metadata is unavailable",
             )
         })?;
@@ -293,7 +294,7 @@ async fn blob_page(ctx: &PageContext, loaded: &Loaded, tail: &str) -> Result<Res
     .await
     .unwrap_or_else(|_| {
         Err(RepoError::new(
-            crate::backend::repositories::store::ErrorKind::Unavailable,
+            crate::backend::git::error::ErrorKind::Unavailable,
             "File preview timed out",
         ))
     });

@@ -5,7 +5,7 @@ use crate::backend::{
         self,
         interactions::{InteractionRefusal, InteractionScope, NewRestriction},
         models::User,
-        users::accounts::{AccountCredential, AccountRestricted},
+        users::accounts::AccountCredential,
     },
     repositories::access,
 };
@@ -16,6 +16,7 @@ use axum::{
     routing::{delete, get, put, MethodRouter},
     Json,
 };
+use codeyard_support::credentials::AccountRestricted;
 use serde_json::json;
 use std::sync::Arc;
 

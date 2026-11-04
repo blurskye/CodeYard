@@ -1,11 +1,12 @@
 use crate::backend::db::{
     self,
     users::{
-        accounts::{AccountCredential, AccountRestricted},
+        accounts::AccountCredential,
         blocks::{BlockTargetMissing, InvalidBlock},
     },
     DbPool,
 };
+use codeyard_support::credentials::AccountRestricted;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum BlockError {

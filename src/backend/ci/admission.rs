@@ -3,7 +3,10 @@ use super::dispatch_inputs;
 use super::runs::CiRunRequest;
 use super::workflows::{infer_pipeline_from_workflow_path, workflow_definition_from_yaml};
 use crate::backend::db;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::repo_store,
+};
 use anyhow::Result;
 use std::collections::{BTreeMap, BTreeSet};
 

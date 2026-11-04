@@ -20,7 +20,7 @@ use serde_json::{json, Value};
 use std::{collections::HashMap, sync::Arc};
 type Params = HashMap<String, String>;
 fn failure(error: anyhow::Error) -> Error {
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return Error::new(StatusCode::FORBIDDEN, "Pages administration denied");
     }
     match error.downcast_ref::<pages::Refusal>() {
@@ -110,7 +110,7 @@ async fn mutate(
             .commit(&format!("refs/heads/{}", source.branch))
             .await
             .map_err(|error| {
-                if error.kind == crate::backend::repositories::store::ErrorKind::NotFound {
+                if error.kind == crate::backend::git::error::ErrorKind::NotFound {
                     Error::validation("Pages", "source", "invalid")
                 } else {
                     store_error(error)

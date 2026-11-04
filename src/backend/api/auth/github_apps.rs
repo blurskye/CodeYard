@@ -279,7 +279,7 @@ async fn regenerate(
             page(&ctx, model)
         }
         Ok(None) => ctx.error(StatusCode::NOT_FOUND, "App not found"),
-        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => {
+        Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
             ctx.error(StatusCode::FORBIDDEN, "Account unavailable")
         }
         Err(_) => ctx.error(

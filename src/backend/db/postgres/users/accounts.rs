@@ -299,10 +299,8 @@ pub async fn update_user_profile(
     location: Option<&str>,
     website: Option<&str>,
 ) -> Result<Option<User>> {
-    use crate::backend::db::users::{
-        accounts::{AccountCredential, AccountRestricted},
-        profiles::ProfilePatch,
-    };
+    use crate::backend::db::users::{accounts::AccountCredential, profiles::ProfilePatch};
+    use codeyard_support::credentials::AccountRestricted;
     match super::profiles::save_profile(
         pool,
         user_id,
@@ -355,7 +353,7 @@ pub async fn admin_users_page(
     super::transitions::lock_accounts_shared(&mut tx, &[administrator.user_id]).await?;
     anyhow::ensure!(
         super::transitions::active_admin_session(&mut tx, administrator).await?,
-        crate::backend::db::users::accounts::AccountRestricted
+        codeyard_support::credentials::AccountRestricted
     );
     let counts = count_matching_users(&mut *tx, text).await?;
     let total = match role {

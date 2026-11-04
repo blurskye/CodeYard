@@ -281,7 +281,7 @@ pub async fn admin_node_page(
     super::users::transitions::lock_accounts_shared(&mut tx, &[administrator.user_id]).await?;
     anyhow::ensure!(
         super::users::transitions::active_admin_session(&mut tx, administrator).await?,
-        crate::backend::db::users::accounts::AccountRestricted
+        codeyard_support::credentials::AccountRestricted
     );
     let rows = sqlx::query_as("SELECT *,clock_timestamp() AS observed_at FROM nodes WHERE name>$1 ORDER BY name LIMIT 101")
         .bind(after).fetch_all(&mut *tx).await?;

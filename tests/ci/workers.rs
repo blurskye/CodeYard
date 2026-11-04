@@ -13,8 +13,9 @@ use codeyard::backend::{
     cluster::{self, rpc, NodeContext},
     crypto::SecretEncryptor,
     db,
+    git::error::ErrorKind,
     notifications::{current_event, NotificationBroadcaster, NotificationEvent},
-    repositories::store::{ErrorKind, GitService, GitSession, RepoStore},
+    repositories::store::{GitService, GitSession, RepoStore},
 };
 use iroh::protocol::ProtocolHandler;
 use serde_json::json;

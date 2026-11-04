@@ -2,11 +2,11 @@
 use super::{commits, repository, Error, Result};
 use crate::backend::{
     app::AppState,
+    git::error::ErrorKind,
     repositories::{
         access::AccessError,
         merges::{self, BranchMerge},
         refs::RefError,
-        store::ErrorKind,
     },
 };
 use axum::{

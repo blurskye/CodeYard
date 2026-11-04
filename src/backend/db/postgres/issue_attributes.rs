@@ -1,9 +1,10 @@
+use crate::backend::db::credentials::Actor;
 use crate::backend::db::issue_attributes::{
     AssignedType, Attribute, Definition, FieldChanges, FieldValue, Refusal, SelectOption,
     ValueInput,
 };
-use crate::backend::db::{credentials::Actor, users::accounts::AccountRestricted};
 use anyhow::Result;
+use codeyard_support::credentials::AccountRestricted;
 use serde_json::{json, Value};
 use sqlx::{PgConnection, PgPool, Postgres, Transaction};
 pub(crate) async fn catalog_connection(

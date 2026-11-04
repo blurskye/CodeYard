@@ -9,6 +9,7 @@ use crate::backend::ci::workflows::WorkflowMatchBudget;
 use crate::backend::db;
 use crate::backend::db::models::{BranchProtectionRule, Repository, User};
 use crate::backend::git;
+use crate::backend::git::error::MERGE_COMMIT_BLOCKED;
 use crate::backend::repositories::access;
 use anyhow::Result;
 use std::path::Path;
@@ -21,9 +22,6 @@ pub const FORCE_PUSH_BLOCKED: &str = "Force pushes to this protected branch are 
 pub const BRANCH_LOCKED: &str = "This branch is locked and cannot be changed.";
 pub const SIGNATURE_REQUIRED: &str =
     "Commits must have verified signatures on this protected branch.";
-pub const MERGE_COMMIT_BLOCKED: &str =
-    "Merge commits are not allowed on this protected branch, which requires a linear history.";
-
 /// Stands in for a tip whose sha the caller has not read or built yet, such as the editor's
 /// commit before it is prepared. The rules only ask whether a tip is there.
 pub const ANY_TIP: &str = "any-tip";

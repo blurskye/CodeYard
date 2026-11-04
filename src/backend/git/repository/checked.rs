@@ -398,8 +398,8 @@ fn check_commit_text(message: &str, people: &[&Person<'_>]) -> Result<()> {
         crate::backend::git::objects::validate_identity(person.name, person.email)?;
     }
     if message.is_empty() || message.contains('\0') || message.len() > MAX_MERGE_MESSAGE_BYTES {
-        return Err(crate::backend::repositories::store::RepoError::new(
-            crate::backend::repositories::store::ErrorKind::Invalid,
+        return Err(crate::backend::git::error::RepoError::new(
+            crate::backend::git::error::ErrorKind::Invalid,
             "Invalid merge commit identity or message",
         )
         .into());

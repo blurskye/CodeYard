@@ -488,7 +488,7 @@ pub async fn add_issue_comment(
     super::discussions::lock_issue_contribution(&mut tx, author_id, repo_id, issue_id).await?;
     anyhow::ensure!(
         super::users::transitions::credential_live(&mut tx, author_id, credential, true).await?,
-        crate::backend::db::users::accounts::AccountRestricted
+        codeyard_support::credentials::AccountRestricted
     );
     let comment = sqlx::query_as::<_, IssueComment>(
         r#"
@@ -703,7 +703,7 @@ pub async fn edit_issue_comment(
     }
     anyhow::ensure!(
         super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
-        crate::backend::db::users::accounts::AccountRestricted
+        codeyard_support::credentials::AccountRestricted
     );
     let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
     let author: Option<i64> = sqlx::query_scalar(
@@ -752,7 +752,7 @@ pub async fn delete_issue_comment(
     }
     anyhow::ensure!(
         super::users::transitions::credential_live(&mut tx, actor_id, credential, true).await?,
-        crate::backend::db::users::accounts::AccountRestricted
+        codeyard_support::credentials::AccountRestricted
     );
     let writer = super::discussions::lock_write_authority(&mut tx, actor_id, repo_id).await?;
     let author: Option<i64> = sqlx::query_scalar(

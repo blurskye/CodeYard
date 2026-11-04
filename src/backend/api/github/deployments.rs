@@ -146,8 +146,8 @@ async fn create(
         .map_err(|error| {
             if matches!(
                 error.kind,
-                crate::backend::repositories::store::ErrorKind::NotFound
-                    | crate::backend::repositories::store::ErrorKind::Invalid
+                crate::backend::git::error::ErrorKind::NotFound
+                    | crate::backend::git::error::ErrorKind::Invalid
             ) {
                 Error::validation("Deployment", "ref", "invalid")
             } else {

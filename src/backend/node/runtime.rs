@@ -363,7 +363,7 @@ pub async fn serve(pool: DbPool, config: ServeConfig) -> Result<()> {
         );
     }
     let _repository_lock = if member.is_none() && config.roles.contains(NodeRole::Storage) {
-        Some(crate::backend::locks::exclusive_file(
+        Some(codeyard_support::locks::exclusive_file(
             &repos_path.join("storage.lock"),
         )?)
     } else {

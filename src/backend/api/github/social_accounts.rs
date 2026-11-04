@@ -1,10 +1,7 @@
 use super::{auth, pagination::Pagination, Error, Result};
 use crate::backend::{
     app::AppState,
-    db::users::{
-        accounts::{AccountCredential, AccountRestricted},
-        social_accounts,
-    },
+    db::users::{accounts::AccountCredential, social_accounts},
     identity::profiles,
 };
 use axum::{
@@ -14,6 +11,7 @@ use axum::{
     routing::{delete, get, post, MethodRouter},
     Json,
 };
+use codeyard_support::credentials::AccountRestricted;
 use serde::Deserialize;
 use serde_json::json;
 use std::sync::Arc;

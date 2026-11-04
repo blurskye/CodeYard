@@ -4,10 +4,11 @@ use super::{private_files, ReceiveCredential};
 use crate::backend::ci::CiRuns;
 use crate::backend::db::{self, models::Repository, DbPool};
 use crate::backend::git::repository::process as git_process;
-use crate::backend::repositories::store::{
-    repo_store, ErrorKind, GitService, GitSession, GitStreams, RepoError,
-};
 use crate::backend::repositories::traffic;
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::{repo_store, GitService, GitSession, GitStreams},
+};
 use anyhow::{ensure, Context, Result};
 use std::collections::HashMap;
 use std::fs::OpenOptions;

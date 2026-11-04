@@ -43,10 +43,6 @@ impl From<&String> for OwnedAccountCredential {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
-#[error("A live unrestricted account credential is required")]
-pub struct AccountRestricted;
-
 pub struct AdminUserPage {
     pub counts: (i64, i64, i64),
     pub page: usize,

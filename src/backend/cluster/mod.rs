@@ -451,7 +451,7 @@ pub async fn start(
         std::path::absolute(repos_path)?
     };
     let repository_lock = if storage {
-        Some(crate::backend::locks::exclusive_file(
+        Some(codeyard_support::locks::exclusive_file(
             &repos_path.join("storage.lock"),
         )?)
     } else {
@@ -569,7 +569,7 @@ pub async fn client_context(
     };
     require_postgres(pool)?;
     crate::backend::fs::durable_dir(state_dir)?;
-    let identity_lock = crate::backend::locks::exclusive_file(&state_dir.join("serve.lock"))?;
+    let identity_lock = codeyard_support::locks::exclusive_file(&state_dir.join("serve.lock"))?;
     let key = load_existing(state_dir)?
         .ok_or_else(|| anyhow!("this node has not joined the cluster; start serve first"))?;
     let node = db::cluster::get_node_by_public_key(pool, &key.public_hex())

@@ -19,7 +19,7 @@ pub enum EngagementError {
 
 fn mutation_error(error: anyhow::Error) -> EngagementError {
     if error.is::<db::users::blocks::InteractionBlocked>()
-        || error.is::<db::users::accounts::AccountRestricted>()
+        || error.is::<codeyard_support::credentials::AccountRestricted>()
     {
         EngagementError::Access(access::AccessError::WriteDenied)
     } else {

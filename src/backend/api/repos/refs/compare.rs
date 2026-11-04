@@ -7,10 +7,8 @@ use crate::backend::{
     },
     app::AppState,
     db,
-    repositories::{
-        reads::same_fork_network,
-        store::{repo_store, ErrorKind},
-    },
+    git::error::ErrorKind,
+    repositories::{reads::same_fork_network, store::repo_store},
 };
 use axum::{
     extract::{Path, State},

@@ -6,7 +6,7 @@ use crate::backend::{
         self,
         models::{ClusterNode, Repository},
     },
-    repositories::store::RepoError,
+    git::error::RepoError,
 };
 
 pub async fn storage_node(

@@ -292,7 +292,7 @@ pub(crate) async fn issue_selected(
                 key.clone(),
                 format!(
                     "{}{}",
-                    crate::backend::identity::tokens::ACTIONS_PREFIX,
+                    codeyard_support::tokens::ACTIONS_PREFIX,
                     super::runtime::secret()
                 ),
             )

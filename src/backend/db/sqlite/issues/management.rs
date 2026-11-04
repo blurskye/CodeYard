@@ -3,9 +3,9 @@ use crate::backend::db::{
     credentials::Actor,
     issues::management::{LinkedBranch, Refusal},
     models::Issue,
-    users::accounts::AccountRestricted,
 };
 use anyhow::{ensure, Result};
+use codeyard_support::credentials::AccountRestricted;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 /// Pull requests the viewer can read whose body may close issue `number` of `repo`: same-repository

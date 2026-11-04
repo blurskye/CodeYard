@@ -1,7 +1,7 @@
 use super::*;
-use crate::backend::repositories::{
-    files::native_text,
-    store::{GistEdit, GistFileChange},
+use crate::backend::{
+    git::gist_types::{GistEdit, GistFileChange},
+    repositories::files::native_text,
 };
 use std::collections::{btree_map::Entry, BTreeMap};
 

@@ -3,10 +3,8 @@ pub(crate) mod versions;
 use crate::backend::{
     app::AppState,
     db,
-    repositories::{
-        dependency_graph::{self, Package},
-        store::ErrorKind,
-    },
+    git::error::ErrorKind,
+    repositories::dependency_graph::{self, Package},
 };
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};

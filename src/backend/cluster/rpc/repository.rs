@@ -2,14 +2,15 @@ use super::{wire::*, RpcHandler};
 use crate::backend::{
     cluster::replicas::{copy_path, moving, MOVE_WAIT},
     db,
+    git::error::RepoError,
     repositories::{
         access,
         protection::{
             check_branch_write, matching_rules, BranchWrite, History, Refusal, WriteVia, ANY_TIP,
         },
         store::{
-            BlobMetadata, GitService, RepoError, RepoStore, WorkflowPayloadEntry,
-            MAX_CI_WORKFLOW_BYTES, MAX_WORKFLOW_PAYLOAD_BYTES,
+            BlobMetadata, GitService, RepoStore, WorkflowPayloadEntry, MAX_CI_WORKFLOW_BYTES,
+            MAX_WORKFLOW_PAYLOAD_BYTES,
         },
     },
 };
@@ -503,7 +504,7 @@ impl RpcHandler {
                     .await
                     .map_err(|_| {
                         RepoError::new(
-                            crate::backend::repositories::store::ErrorKind::Unavailable,
+                            crate::backend::git::error::ErrorKind::Unavailable,
                             "Git credential or repository access denied",
                         )
                     })?;

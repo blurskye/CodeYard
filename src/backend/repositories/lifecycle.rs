@@ -3,8 +3,9 @@ use crate::backend::webhooks::{self, events, payloads};
 use crate::backend::{
     cluster::{placement, NodeContext},
     db::{self, models::Repository, repositories::creation as repo_lifecycle},
+    git::error::{ErrorKind, RepoError},
     repositories::{
-        store::{repo_store, ErrorKind, RepoError, UploadFile, UploadWrite},
+        store::{repo_store, UploadFile, UploadWrite},
         templates::{self, Template},
     },
 };
@@ -39,7 +40,7 @@ impl std::fmt::Display for StorageError {
 impl std::error::Error for StorageError {}
 
 pub(crate) fn storage_error(error: anyhow::Error) -> StorageError {
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return StorageError {
             kind: LifecycleFailure::Denied,
             message: "A live unrestricted account credential is required.",
@@ -1191,7 +1192,9 @@ async fn live_creation_actor(
 ) -> Result<(), StorageError> {
     if let Some(authority) = authority {
         if authority.user_id != actor {
-            return Err(storage_error(db::users::accounts::AccountRestricted.into()));
+            return Err(storage_error(
+                codeyard_support::credentials::AccountRestricted.into(),
+            ));
         }
         super::access::credential_user(pool, authority, true)
             .await

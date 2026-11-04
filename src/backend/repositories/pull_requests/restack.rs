@@ -9,8 +9,9 @@ use crate::backend::ci::{CiRuns, RefUpdate};
 use crate::backend::db;
 use crate::backend::db::models::PullRequest;
 use crate::backend::db::pull_requests::records::MAX_STACK_LAYERS;
-use crate::backend::repositories::store::{
-    repo_store, ErrorKind, RepoError, RepoStore, RestackMove,
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::{repo_store, RepoStore, RestackMove},
 };
 use serde::Serialize;
 use std::collections::HashMap;

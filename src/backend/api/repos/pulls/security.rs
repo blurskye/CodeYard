@@ -54,8 +54,8 @@ pub(super) async fn checks(
             Err(error)
                 if matches!(
                     error.kind,
-                    crate::backend::repositories::store::ErrorKind::NotFound
-                        | crate::backend::repositories::store::ErrorKind::Invalid
+                    crate::backend::git::error::ErrorKind::NotFound
+                        | crate::backend::git::error::ErrorKind::Invalid
                 ) => {}
             Err(_) => more = true,
         }

@@ -2,7 +2,7 @@
 //! bypass for that exact secret. Receive hooks and file saves both run it on the commits they add.
 
 use crate::backend::db;
-use crate::backend::repositories::store::{ErrorKind, RepoError};
+use crate::backend::git::error::{ErrorKind, RepoError};
 use std::path::Path;
 
 #[derive(Clone, Debug)]

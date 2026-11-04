@@ -77,7 +77,7 @@ pub async fn delete(
 }
 
 fn signing_error(error: anyhow::Error) -> KeyError {
-    if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return KeyError::AccountRestricted;
     }
     match error.downcast_ref::<ssh_keys::SshKeyWriteRefusal>() {

@@ -1,8 +1,9 @@
 //! Associations are derived from published Git ancestry, not commit-message references.
 use super::{
     access,
-    store::{repo_store, CommitInfo, ErrorKind, RepoError, RepoStore},
+    store::{repo_store, CommitInfo, RepoStore},
 };
+use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     cluster::NodeContext,
     db::{

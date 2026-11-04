@@ -4,13 +4,7 @@ use crate::backend::db::{models::PersonalAccessToken, users::tokens, DbPool};
 use chrono::{DateTime, Utc};
 use sha2::{Digest, Sha256};
 
-pub(crate) const TOKEN_BYTES: usize = 32;
-pub(crate) const HEX_TOKEN_CHARS: usize = TOKEN_BYTES * 2;
-pub(crate) const URL_TOKEN_CHARS: usize = (TOKEN_BYTES * 8).div_ceil(6);
-pub(crate) const PAT_PREFIX: &str = "cy_pat_";
-pub(crate) const FGPAT_PREFIX: &str = "cy_fgpat_";
-pub(crate) const ACTIONS_PREFIX: &str = "ghs_";
-pub(crate) const INSTALLATION_PREFIX: &str = "ghs_";
+use codeyard_support::tokens::{INSTALLATION_PREFIX, PAT_PREFIX};
 
 pub struct TokenInput<'a> {
     pub name: &'a str,

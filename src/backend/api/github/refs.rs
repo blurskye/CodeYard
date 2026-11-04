@@ -101,8 +101,8 @@ pub(super) fn ref_error(error: refs::RefError) -> Error {
         RefError::Git(error)
             if matches!(
                 error.kind,
-                crate::backend::repositories::store::ErrorKind::Conflict
-                    | crate::backend::repositories::store::ErrorKind::NotFound
+                crate::backend::git::error::ErrorKind::Conflict
+                    | crate::backend::git::error::ErrorKind::NotFound
             ) =>
         {
             Error::invalid("Invalid reference target or reference already exists")

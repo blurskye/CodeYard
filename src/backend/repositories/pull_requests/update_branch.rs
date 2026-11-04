@@ -3,7 +3,8 @@ use super::{database_error, OperationError};
 use crate::backend::{
     ci::{CiRuns, RefUpdate},
     db::{self, DbPool},
-    repositories::store::{repo_store, ErrorKind, PullBranchUpdate, RepoError},
+    git::error::{ErrorKind, RepoError},
+    repositories::store::{repo_store, PullBranchUpdate},
 };
 
 fn invalid(message: &str) -> OperationError {

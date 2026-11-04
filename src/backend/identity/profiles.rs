@@ -181,7 +181,7 @@ pub async fn save(
     crate::backend::db::users::profiles::save_profile(pool, actor, credential, &patch)
         .await
         .map_err(|error| {
-            if error.is::<accounts::AccountRestricted>() {
+            if error.is::<codeyard_support::credentials::AccountRestricted>() {
                 ProfileError::Denied
             } else if error.is::<crate::backend::db::users::profiles::InvalidPublicEmail>() {
                 ProfileError::Email

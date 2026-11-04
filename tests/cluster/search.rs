@@ -7,9 +7,10 @@ use crate::support::native_database as native;
 use codeyard::backend::{
     cluster,
     db::{self, repositories::creation::RepositoryCreationOwner},
+    git::error::ErrorKind,
     repositories::{
         lifecycle::provision,
-        store::{repo_store, ErrorKind, FileWrite},
+        store::{repo_store, FileWrite},
     },
 };
 use std::path::Path;

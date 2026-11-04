@@ -289,7 +289,7 @@ async fn submit(
         ))
         .into_response(),
         Err(error) => {
-            let status = if error.is::<db::users::accounts::AccountRestricted>() {
+            let status = if error.is::<codeyard_support::credentials::AccountRestricted>() {
                 StatusCode::FORBIDDEN
             } else {
                 match error.downcast_ref::<advisories::Refusal>() {

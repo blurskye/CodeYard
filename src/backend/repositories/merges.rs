@@ -2,11 +2,9 @@
 use super::{
     access, pull_requests,
     refs::{publication_error, RefError},
-    store::{
-        repo_store, BranchMergePublication, CommitInfo, ErrorKind, MergeMethod, MergeRequest,
-        RepoError,
-    },
+    store::{repo_store, BranchMergePublication, CommitInfo, MergeMethod, MergeRequest},
 };
+use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     ci::{CiRuns, RefUpdate},
     cluster::NodeContext,

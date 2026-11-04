@@ -50,11 +50,7 @@ pub(crate) async fn push_document(
     let previous = match update.old.as_deref().filter(|old| !is_zero_oid(old)) {
         Some(old) if update.reference.starts_with("refs/tags/") => match store.commit(old).await {
             Ok(commit) => Some(commit.sha),
-            Err(error)
-                if error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
-            {
-                None
-            }
+            Err(error) if error.kind == crate::backend::git::error::ErrorKind::NotFound => None,
             Err(error) => return Err(error.into()),
         },
         old => old.map(str::to_owned),
@@ -245,7 +241,7 @@ async fn push_asks_to_skip(
             .any(|commit| should_skip_run_from_message(&commit.message))),
         Err(error)
             if update.reference.starts_with("refs/tags/")
-                && error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
+                && error.kind == crate::backend::git::error::ErrorKind::NotFound =>
         {
             Ok(false)
         }

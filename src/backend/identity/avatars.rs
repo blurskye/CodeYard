@@ -12,12 +12,13 @@ use crate::backend::{
         self,
         models::{FileReason, FileVisibility, User},
         organizations::{self, OrganizationOutcome},
-        users::accounts::{AccountCredential, AccountRestricted, UserAvatarOutcome},
+        users::accounts::{AccountCredential, UserAvatarOutcome},
         DbPool,
     },
     files::{self, UploadDeclaration, UploadError},
     storage::{media_signature_matches, ObjectStore},
 };
+use codeyard_support::credentials::AccountRestricted;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 

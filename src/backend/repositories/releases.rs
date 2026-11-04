@@ -9,9 +9,12 @@ use crate::backend::webhooks::{self, events, payloads, payloads::Scope};
 use crate::backend::{
     ci::CiRuns,
     cluster::NodeContext,
-    db::{self, models::Release, models::ReleaseAsset, models::ReleaseRow, models::Repository},
+    db::{
+        self,
+        models::{Release, ReleaseAsset, ReleaseRow, Repository},
+    },
     files::{self, DownloadError, UploadDeclaration, UploadError},
-    git,
+    git::{self, error::RepoError},
     notifications::{
         watchers::{notify_watchers, WatchEvent, WatchedItem},
         NotificationBroadcaster,
@@ -19,7 +22,7 @@ use crate::backend::{
     repositories::{
         access::{self, AccessError},
         refs::{self, RefError},
-        store::{repo_store, RepoError},
+        store::repo_store,
     },
     storage::ObjectStore,
 };
@@ -171,7 +174,7 @@ fn unavailable<E>(_: E) -> ReleaseError {
 
 /// Maps a refusal the database raised inside a write to the error the caller shows.
 fn write_error(error: Error) -> ReleaseError {
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return ReleaseError::Access(AccessError::WriteDenied);
     }
     match error.downcast_ref::<ReleaseRefusal>() {
@@ -197,15 +200,15 @@ fn mutation_error(error: RepoError) -> ReleaseError {
     if error.is_write_denied() {
         return ReleaseError::Access(AccessError::WriteDenied);
     }
-    if error.kind == crate::backend::repositories::store::ErrorKind::NotFound {
+    if error.kind == crate::backend::git::error::ErrorKind::NotFound {
         return ReleaseError::NotFound;
     }
-    if error.kind == crate::backend::repositories::store::ErrorKind::Conflict
+    if error.kind == crate::backend::git::error::ErrorKind::Conflict
         && error.message == ReleaseRefusal::Conflict.to_string()
     {
         return ReleaseError::Conflict;
     }
-    if error.kind == crate::backend::repositories::store::ErrorKind::Invalid
+    if error.kind == crate::backend::git::error::ErrorKind::Invalid
         && error.message == ReleaseRefusal::TagTaken.to_string()
     {
         return ReleaseError::TagTaken;
@@ -874,7 +877,7 @@ pub async fn upload_asset(
 }
 
 fn validate_asset_fields(filename: &str, label: Option<&str>) -> Result<(), ReleaseError> {
-    if !crate::backend::storage::valid_basename(filename, 255) {
+    if !codeyard_support::file_names::valid_basename(filename, 255) {
         return Err(ReleaseError::Invalid("Asset file name is not valid"));
     }
     if label.is_some_and(|label| label.contains('\0')) {

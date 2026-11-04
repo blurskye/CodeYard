@@ -1,4 +1,4 @@
-use codeyard::backend::repositories::secret_scanning::{
+use codeyard::backend::git::secret_detection::{
     patterns::Create, scan, scan_with_patterns, MAX_BLOB_BYTES,
 };
 

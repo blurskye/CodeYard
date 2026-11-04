@@ -197,7 +197,7 @@ pub(in crate::backend::api::github) async fn upload(
     let filename = query
         .name
         .ok_or_else(|| Error::validation("CodeqlDatabase", "name", "missing_field"))?;
-    if !crate::backend::storage::valid_basename(&filename, 255) {
+    if !codeyard_support::file_names::valid_basename(&filename, 255) {
         return Err(Error::validation("CodeqlDatabase", "name", "invalid"));
     }
     if headers

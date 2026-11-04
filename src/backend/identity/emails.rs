@@ -2,14 +2,12 @@
 use crate::backend::{
     db::{
         self,
-        users::{
-            accounts::{AccountCredential, AccountRestricted},
-            emails::EmailRefusal,
-        },
+        users::{accounts::AccountCredential, emails::EmailRefusal},
         DbPool,
     },
     email::links,
 };
+use codeyard_support::credentials::AccountRestricted;
 
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
 pub enum EmailError {

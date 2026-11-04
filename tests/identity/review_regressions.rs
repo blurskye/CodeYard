@@ -216,7 +216,7 @@ async fn profile_and_follow(pg: bool) {
         )
         .await
         .unwrap_err()
-        .is::<db::users::accounts::AccountRestricted>());
+        .is::<codeyard_support::credentials::AccountRestricted>());
         f.execute(
             &format!("UPDATE users SET {restriction}=FALSE WHERE id=$1"),
             &[actor],

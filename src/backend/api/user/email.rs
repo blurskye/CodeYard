@@ -240,7 +240,7 @@ pub(crate) async fn notifications_post(
     let credential = db::users::accounts::AccountCredential::Session(&session);
     match db::email::set_email_notifications(&ctx.state.pool, user.id, &credential, wanted).await {
         Ok(()) => ctx.redirect("/settings?tab=email&saved=email-notifications"),
-        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => ctx.error(
+        Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => ctx.error(
             StatusCode::FORBIDDEN,
             "A live unrestricted account session is required.",
         ),

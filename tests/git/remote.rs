@@ -21,8 +21,11 @@ use codeyard::backend::{
         rpc::{self, Operation, Request},
     },
     db::{self, repositories::BranchProtectionRuleUpsert, users::tokens},
-    repositories::git_sessions::ReceiveCredential,
-    repositories::store::{GitService, GitSession, GitStreams, RepoError},
+    git::error::RepoError,
+    repositories::{
+        git_sessions::ReceiveCredential,
+        store::{GitService, GitSession, GitStreams},
+    },
 };
 use reqwest::{Client, StatusCode};
 use serde_json::json;
@@ -540,7 +543,7 @@ async fn remote_http_and_builtin_ssh_push_clone_fetch_and_receive_hooks() {
         .await;
         assert_eq!(
             error.kind,
-            codeyard::backend::repositories::store::ErrorKind::Unavailable
+            codeyard::backend::git::error::ErrorKind::Unavailable
         );
     }
     let raw = &database.raw;

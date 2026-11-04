@@ -1465,6 +1465,10 @@ dependencies = [
 name = "codeyard-support"
 version = "0.1.5"
 dependencies = [
+ "anyhow",
+ "libc",
+ "thiserror 2.0.21",
+ "tokio",
  "url",
 ]
 

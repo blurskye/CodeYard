@@ -657,7 +657,7 @@ impl russh::server::Handler for GitSshHandler {
                         warn!(%error, "Git channel failed or was denied");
                         let message = if error.is::<git_process::SessionsBusy>()
                             || error
-                                .downcast_ref::<crate::backend::repositories::store::RepoError>()
+                                .downcast_ref::<crate::backend::git::error::RepoError>()
                                 .is_some_and(|error| error.is_sessions_busy())
                         {
                             "Git sessions busy\n"
@@ -666,7 +666,7 @@ impl russh::server::Handler for GitSshHandler {
                         ) {
                             "ERR Git writes were accepted; post-push bookkeeping or CI dispatch failed.\n"
                         } else if error
-                            .downcast_ref::<crate::backend::repositories::store::RepoError>()
+                            .downcast_ref::<crate::backend::git::error::RepoError>()
                             .is_some_and(|error| error.is_storage_node_unavailable())
                         {
                             "ERR storage node unavailable\n"

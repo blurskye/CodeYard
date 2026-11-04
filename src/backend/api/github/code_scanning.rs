@@ -181,9 +181,9 @@ async fn upload(
         .commit_from_primary(&input.commit_sha)
         .await
         .map_err(|error| match error.kind {
-            crate::backend::repositories::store::ErrorKind::NotFound
-            | crate::backend::repositories::store::ErrorKind::MissingPath
-            | crate::backend::repositories::store::ErrorKind::Invalid => {
+            crate::backend::git::error::ErrorKind::NotFound
+            | crate::backend::git::error::ErrorKind::MissingPath
+            | crate::backend::git::error::ErrorKind::Invalid => {
                 Error::validation("Sarif", "commit_sha", "invalid")
             }
             _ => super::contents::store_error(error),

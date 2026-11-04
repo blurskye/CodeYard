@@ -1,10 +1,11 @@
 //! Flat, bounded gist trees and immutable revision reads, shared by API saves and receive hooks.
-use crate::backend::{
-    git::objects::TreeObjectEntry,
-    repositories::store::{
-        valid_gist_filename, ErrorKind, GistEdit, GistRevision, GistSnapshot, PreparedGist,
-        RepoError, MAX_GIST_BYTES, MAX_GIST_FILENAME_BYTES, MAX_GIST_FILES,
+use crate::backend::git::{
+    error::{ErrorKind, RepoError},
+    gist_types::{
+        valid_gist_filename, GistEdit, GistRevision, GistSnapshot, PreparedGist, MAX_GIST_BYTES,
+        MAX_GIST_FILENAME_BYTES, MAX_GIST_FILES,
     },
+    objects::TreeObjectEntry,
 };
 use anyhow::{ensure, Result};
 use git2::{Commit, ObjectType, Oid, Repository};

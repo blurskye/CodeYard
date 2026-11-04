@@ -1,6 +1,9 @@
 //! Immutable Git node lookup and refs use RepoStore, including remote repositories.
 use super::{db, git, missing, node_id, repository, unavailable, RequestContext, Result, Value};
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::repo_store,
+};
 use base64::{
     engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
     Engine,

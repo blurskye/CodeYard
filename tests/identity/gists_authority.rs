@@ -7,10 +7,11 @@ use codeyard::backend::{
     ci::CiConfig,
     db::{self, users::accounts::AccountCredential},
     gists::{self, CreateGist},
+    git::gist_types::{GistEdit, GistFileChange, MAX_GIST_BYTES},
     identity::tokens::{self, TokenInput},
     repositories::{
         access, lifecycle,
-        store::{repo_store, GistCredential, GistEdit, GistFileChange, MAX_GIST_BYTES},
+        store::{repo_store, GistCredential},
     },
     storage::ObjectStore,
 };

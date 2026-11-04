@@ -70,7 +70,7 @@ pub struct ObjectStore {
     backend: Backend,
     io: Arc<Semaphore>,
     downloads: Arc<Semaphore>,
-    file_locks: crate::backend::locks::KeyedMutex<String>,
+    file_locks: codeyard_support::locks::KeyedMutex<String>,
 }
 
 impl ObjectStore {
@@ -346,14 +346,6 @@ impl ObjectStore {
             Backend::S3(_) => Ok(0),
         }
     }
-}
-
-pub(crate) fn valid_basename(name: &str, limit: usize) -> bool {
-    !name.is_empty()
-        && name.len() <= limit
-        && !matches!(name, "." | "..")
-        && !name.contains(['/', '\\'])
-        && !name.chars().any(char::is_control)
 }
 
 pub(crate) fn attachment_disposition(filename: &str) -> String {

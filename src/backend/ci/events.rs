@@ -315,9 +315,7 @@ impl CiRuns {
         // An empty repository has no default branch commit and so no workflows.
         let commit = match store.commit(&reference).await {
             Ok(commit) => commit,
-            Err(error)
-                if error.kind == crate::backend::repositories::store::ErrorKind::NotFound =>
-            {
+            Err(error) if error.kind == crate::backend::git::error::ErrorKind::NotFound => {
                 return Ok(())
             }
             Err(error) => return Err(error.into()),

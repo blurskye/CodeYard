@@ -2,9 +2,10 @@
 use super::{auth, repo_url, repository, Error, Result};
 use crate::backend::{
     app::AppState,
+    git::error::{ErrorKind, RepoError, RepoErrorReason},
     repositories::{
         files,
-        store::{repo_store, ErrorKind, FileWrite, RepoError, RepoErrorReason, MAX_EDITOR_BYTES},
+        store::{repo_store, FileWrite, MAX_EDITOR_BYTES},
     },
 };
 use axum::{

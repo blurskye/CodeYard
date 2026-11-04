@@ -2,11 +2,8 @@
 use super::repository::{
     open_quarantined, peel_revision, process, quarantined_command, walk_commits,
 };
-use crate::backend::{
-    db::secret_scanning::Location,
-    repositories::secret_scanning::{
-        patterns::Pattern, scan_with_patterns_until, Detection, MAX_BLOB_BYTES,
-    },
+use super::secret_detection::{
+    patterns::Pattern, scan_with_patterns_until, Detection, MAX_BLOB_BYTES,
 };
 use anyhow::{ensure, Context, Result};
 use git2::{ObjectType, Oid};
@@ -218,4 +215,15 @@ fn scan(
         }
     }
     Ok(found)
+}
+
+#[derive(Clone, sqlx::FromRow)]
+pub struct Location {
+    pub commit_sha: String,
+    pub blob_sha: String,
+    pub path: String,
+    pub start_line: i64,
+    pub end_line: i64,
+    pub start_column: i64,
+    pub end_column: i64,
 }

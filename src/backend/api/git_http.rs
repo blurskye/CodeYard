@@ -2,12 +2,13 @@
 use crate::backend::api::http::session;
 use crate::backend::db::models::Repository;
 use crate::backend::identity::tokens::token_hash;
-use crate::backend::repositories::store::{
-    repo_store, GitService, GitSession, GitStreams, RepoError,
-};
 use crate::backend::repositories::{git_sessions::ReceiveCredential, traffic};
 use crate::backend::{
     app::AppState, db, git::repository::process as git_process, identity::admission,
+};
+use crate::backend::{
+    git::error::RepoError,
+    repositories::store::{repo_store, GitService, GitSession, GitStreams},
 };
 use axum::{
     body::{to_bytes, Body},
@@ -45,7 +46,7 @@ fn unavailable() -> Response {
 }
 
 fn store_unavailable(error: &RepoError) -> Response {
-    if error.reason == Some(crate::backend::repositories::store::RepoErrorReason::SessionsBusy) {
+    if error.reason == Some(crate::backend::git::error::RepoErrorReason::SessionsBusy) {
         return (StatusCode::SERVICE_UNAVAILABLE, "Git sessions busy").into_response();
     }
     if error.is_storage_node_unavailable() {

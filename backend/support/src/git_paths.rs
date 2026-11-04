@@ -87,3 +87,10 @@ pub fn from_url(path: &str) -> Option<String> {
     }
     Some(from_bytes(&raw))
 }
+
+/// `.git` in any case, with the trailing spaces and dots and the short name `git~1` that
+/// Windows file systems treat as the same directory.
+pub fn is_git_dir_name(part: &str) -> bool {
+    let name = part.trim_end_matches([' ', '.']);
+    name.eq_ignore_ascii_case(".git") || name.eq_ignore_ascii_case("git~1")
+}

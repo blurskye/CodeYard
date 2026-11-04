@@ -12,7 +12,7 @@ pub struct ApiError {
 pub(crate) fn protection_write_error(
     error: anyhow::Error,
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
@@ -65,7 +65,7 @@ pub(crate) fn repository_settings_error(
 ) -> (axum::http::StatusCode, axum::Json<ApiError>) {
     use crate::backend::db::repositories::RepositorySettingsRefusal as Refusal;
     use axum::{http::StatusCode, Json};
-    if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return ApiError::failure(
             StatusCode::FORBIDDEN,
             "forbidden",
@@ -256,7 +256,7 @@ mod discussion_errors {
 
     #[test]
     fn repository_store_errors_do_not_expose_paths_or_credentials() {
-        use crate::backend::repositories::store::{ErrorKind, RepoError};
+        use crate::backend::git::error::{ErrorKind, RepoError};
         let (status, Json(body)) = repo_store_error(
             RepoError::new(
                 ErrorKind::Unavailable,

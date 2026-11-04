@@ -2,7 +2,7 @@ use super::{auth, error as alert_error, repository, Error, Result};
 use crate::backend::{
     app::AppState,
     db::secret_scanning as records,
-    repositories::secret_scanning::patterns::{Create, Delete, Owner, Update},
+    git::secret_detection::patterns::{Create, Delete, Owner, Update},
 };
 use axum::{
     extract::{OriginalUri, Path, Query, State},

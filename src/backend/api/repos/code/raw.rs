@@ -3,7 +3,10 @@ use crate::backend::api::http::error::ApiError;
 use crate::backend::api::repos::access::{check_repo_read_access, readable_repository};
 use crate::backend::api::repos::chrome::{load, resolve};
 use crate::backend::app::AppState;
-use crate::backend::repositories::store::{repo_store, BlobBytes, BlobRange, RepoError};
+use crate::backend::{
+    git::error::RepoError,
+    repositories::store::{repo_store, BlobBytes, BlobRange},
+};
 use axum::extract::{OriginalUri, Path, State};
 use axum::http::{header, HeaderMap, Method, StatusCode};
 use axum::response::{IntoResponse, Response};

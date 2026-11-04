@@ -1,7 +1,10 @@
-use crate::backend::repositories::store::{
-    AsyncMergePublication, BlobRange, CommitFilter, ErrorKind, FileWrite, GitService, GitSession,
-    MergeFailure, MergeMethod, MergeRequest, PreparedFile, PullBranchUpdate, RepoError,
-    RestackMove, UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_TOTAL_BYTES,
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::{
+        AsyncMergePublication, BlobRange, CommitFilter, FileWrite, GitService, GitSession,
+        MergeFailure, MergeMethod, MergeRequest, PreparedFile, PullBranchUpdate, RestackMove,
+        UploadWrite, MAX_EDITOR_BYTES, MAX_UPLOAD_TOTAL_BYTES,
+    },
 };
 use anyhow::{ensure, Result};
 use serde::{Deserialize, Serialize};
@@ -735,7 +738,7 @@ pub(super) fn operation_body_limit(operation: &Operation) -> usize {
             ..
         } => crate::backend::git::objects::MAX_BLOB_WRITE_BYTES,
         Operation::PrepareUpload { .. } => MAX_UPLOAD_TOTAL_BYTES,
-        Operation::GistWrite { .. } => crate::backend::repositories::store::MAX_GIST_REQUEST_BYTES,
+        Operation::GistWrite { .. } => crate::backend::git::gist_types::MAX_GIST_REQUEST_BYTES,
         Operation::ImportGit { .. } => crate::backend::repositories::imports::MAX_IMPORT_PACK_BYTES,
         _ => 0,
     }

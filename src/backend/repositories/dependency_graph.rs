@@ -1,8 +1,6 @@
 //! Dependency inventories pin Git before reading either file and never execute package managers.
-use super::{
-    dependencies::npm::Lockfile,
-    store::{repo_store, ErrorKind, RepoError},
-};
+use super::{dependencies::npm::Lockfile, store::repo_store};
+use crate::backend::git::error::{ErrorKind, RepoError};
 use crate::backend::{
     app::AppState,
     db::{self, dependency_graph::Reader, models::Repository},

@@ -1,13 +1,14 @@
 //! Forward repository operations to their owning storage node.
 use super::{
     local::LocalStore, BlobBytes, BlobContent, BlobMetadata, BlobRange, CiWorkflowSource,
-    RepoError, RepoStore, WorkflowPayloadEntry, MAX_BLOB_RESPONSE_BYTES, MAX_CI_WORKFLOW_BYTES,
+    RepoStore, WorkflowPayloadEntry, MAX_BLOB_RESPONSE_BYTES, MAX_CI_WORKFLOW_BYTES,
     MAX_WORKFLOW_DIRECTORY_ENTRIES, MAX_WORKFLOW_FILE_NAME_BYTES, MAX_WORKFLOW_PAYLOAD_BYTES,
 };
 use crate::backend::cluster::{
     rpc::{self, Failure, Operation, Request},
     NodeContext,
 };
+use crate::backend::git::error::RepoError;
 use serde::de::DeserializeOwned;
 use std::path::Path;
 

@@ -1,11 +1,10 @@
 use super::*;
 use crate::backend::{
-    db::{
-        gists::{self, Admission, GistRefusal},
-        users::accounts::AccountRestricted,
-    },
-    repositories::store::{GistCredential, GistEdit, GistRevision, GistSnapshot},
+    db::gists::{self, Admission, GistRefusal},
+    git::gist_types::{GistEdit, GistRevision, GistSnapshot},
+    repositories::store::GistCredential,
 };
+use codeyard_support::credentials::AccountRestricted;
 
 fn failure(error: anyhow::Error) -> RepoError {
     match error.downcast_ref::<GistRefusal>() {

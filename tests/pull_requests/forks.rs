@@ -871,11 +871,11 @@ async fn private_preview_contract(pg: bool) {
     }
     assert_eq!(
         base_store.commit(&private_sha).await.unwrap_err().kind,
-        codeyard::backend::repositories::store::ErrorKind::NotFound
+        codeyard::backend::git::error::ErrorKind::NotFound
     );
     assert_eq!(
         fork_store.commit(&public_sha).await.unwrap_err().kind,
-        codeyard::backend::repositories::store::ErrorKind::NotFound
+        codeyard::backend::git::error::ErrorKind::NotFound
     );
     // The diff waits for the compare marker, so the page is asked to compare.
     let uri =
@@ -934,11 +934,11 @@ async fn private_preview_contract(pg: bool) {
     }
     assert_eq!(
         base_store.commit(&private_sha).await.unwrap_err().kind,
-        codeyard::backend::repositories::store::ErrorKind::NotFound
+        codeyard::backend::git::error::ErrorKind::NotFound
     );
     assert_eq!(
         fork_store.commit(&public_sha).await.unwrap_err().kind,
-        codeyard::backend::repositories::store::ErrorKind::NotFound
+        codeyard::backend::git::error::ErrorKind::NotFound
     );
     assert_eq!(base_store.refs().await.unwrap(), base_refs);
     assert_eq!(fork_store.refs().await.unwrap(), fork_refs);

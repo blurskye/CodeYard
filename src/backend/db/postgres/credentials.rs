@@ -1,7 +1,8 @@
 use crate::backend::db::ci::CiCredential;
 use crate::backend::db::credentials::Actor;
-use crate::backend::db::users::accounts::{AccountRestricted, OwnedAccountCredential};
+use crate::backend::db::users::accounts::OwnedAccountCredential;
 use anyhow::Result;
+use codeyard_support::credentials::AccountRestricted;
 use sqlx::{Postgres, Transaction};
 
 /// The caller retains account/repository authority before retaining its credential.

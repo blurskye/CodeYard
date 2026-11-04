@@ -1,7 +1,7 @@
 use super::{identity::NodeKey, rpc::unavailable, CorePeer, IrohDialer};
 use crate::backend::{
     db::{self, DbPool},
-    repositories::store::RepoError,
+    git::error::RepoError,
 };
 use std::{
     collections::HashMap,

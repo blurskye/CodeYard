@@ -3,7 +3,7 @@ use super::RpcHandler;
 use crate::backend::{
     cluster::{link::Link, transport, NodeAddress, NodeContext},
     db,
-    repositories::store::{ErrorKind, RepoError},
+    git::error::{ErrorKind, RepoError},
 };
 use anyhow::Result;
 use tokio::io::AsyncWriteExt;

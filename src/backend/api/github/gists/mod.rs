@@ -6,12 +6,13 @@ use crate::backend::{
         gists::{GistList, GistRefusal, ListScope},
     },
     gists as domain,
+    git::{
+        error::{ErrorKind, RepoError},
+        gist_types::{GistEdit, GistFileChange, MAX_GIST_REQUEST_BYTES},
+    },
     repositories::{
         lifecycle::{LifecycleFailure, StorageError},
-        store::{
-            repo_store, ErrorKind, GistCredential, GistEdit, GistFileChange, RepoError,
-            MAX_GIST_REQUEST_BYTES,
-        },
+        store::{repo_store, GistCredential},
     },
 };
 use axum::{
@@ -92,7 +93,7 @@ pub(crate) fn failure(error: anyhow::Error) -> Error {
             GistRefusal::Invalid => Error::validation("Gist", "files", "invalid"),
         };
     }
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return Error::new(StatusCode::FORBIDDEN, "Account cannot change gists");
     }
     if let Some(error) = error.downcast_ref::<StorageError>() {

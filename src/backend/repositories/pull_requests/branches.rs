@@ -5,8 +5,11 @@ use crate::backend::ci::CiRuns;
 use crate::backend::db;
 use crate::backend::db::models::Repository;
 use crate::backend::db::DbPool;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError, RepoStore};
 use crate::backend::webhooks::{self, events, payloads::Scope};
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::{repo_store, RepoStore},
+};
 use std::collections::HashMap;
 use std::time::Duration;
 

@@ -1,5 +1,4 @@
 //! The error every store call returns, and the reasons that travel with it between nodes.
-use crate::backend::repositories::protection::MERGE_COMMIT_BLOCKED;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
@@ -251,7 +250,7 @@ impl fmt::Display for RepoError {
 
 impl std::error::Error for RepoError {}
 
-pub(super) fn invalid_ref(kind: &str) -> RepoError {
+pub(crate) fn invalid_ref(kind: &str) -> RepoError {
     RepoError::new(ErrorKind::Invalid, format!("Invalid {kind} name"))
 }
 
@@ -262,7 +261,7 @@ impl From<anyhow::Error> for RepoError {
         if let Some(error) = error.downcast_ref::<RepoError>() {
             return error.clone();
         }
-        if error.is::<crate::backend::db::users::accounts::AccountRestricted>() {
+        if error.is::<codeyard_support::credentials::AccountRestricted>() {
             return Self::write_denied();
         }
         if error.is::<crate::backend::git::repository::process::SessionsBusy>() {
@@ -341,3 +340,6 @@ impl From<anyhow::Error> for RepoError {
         Self::new(kind, message)
     }
 }
+
+pub const MERGE_COMMIT_BLOCKED: &str =
+    "Merge commits are not allowed on this protected branch, which requires a linear history.";

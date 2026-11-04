@@ -1,8 +1,7 @@
 //! Stored alerts and durable scan work. Alert reads require live repository administration.
 use super::{users::accounts::AccountCredential, DbPool};
-use crate::backend::repositories::secret_scanning::patterns::{
-    Create, Delete, Owner, Pattern, Update,
-};
+use crate::backend::git::secret_detection::patterns::{Create, Delete, Owner, Pattern, Update};
+use crate::backend::git::secret_scanning::Location;
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -83,17 +82,6 @@ pub struct Alert {
     pub resolved_at: Option<DateTime<Utc>>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
-}
-
-#[derive(Clone, sqlx::FromRow)]
-pub struct Location {
-    pub commit_sha: String,
-    pub blob_sha: String,
-    pub path: String,
-    pub start_line: i64,
-    pub end_line: i64,
-    pub start_column: i64,
-    pub end_column: i64,
 }
 
 #[derive(Default)]

@@ -7,7 +7,10 @@ use crate::backend::notifications::mentions::{notify_mentions, MentionSource};
 use crate::backend::notifications::watchers::{notify_watchers, WatchEvent, WatchedItem};
 use crate::backend::notifications::NotificationBroadcaster;
 use crate::backend::repositories::pull_requests::queue_pull_request_ci;
-use crate::backend::repositories::store::{repo_store, ErrorKind, RepoError};
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::repo_store,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;

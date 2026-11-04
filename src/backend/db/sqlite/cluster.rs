@@ -274,7 +274,7 @@ pub async fn admin_node_page(
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     anyhow::ensure!(
         super::users::transitions::active_admin_session(&mut tx, administrator).await?,
-        crate::backend::db::users::accounts::AccountRestricted
+        codeyard_support::credentials::AccountRestricted
     );
     let rows = sqlx::query_as(&format!(
         "SELECT *,{NOW} AS observed_at FROM nodes WHERE name>?1 ORDER BY name LIMIT 101"

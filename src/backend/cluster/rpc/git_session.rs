@@ -7,8 +7,8 @@ use crate::backend::db::{self, cluster::writes as journal, models::WriteRecord};
 use crate::backend::{
     ci::{CiConfig, CiRuns},
     cluster::{link::Link, transport, NodeContext},
-    git::repository::process as git_process,
-    repositories::store::{GitService, GitStreams, RepoError, RepoStore},
+    git::{error::RepoError, repository::process as git_process},
+    repositories::store::{GitService, GitStreams, RepoStore},
 };
 use anyhow::{ensure, Context, Result};
 use serde_json::Value;

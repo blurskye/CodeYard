@@ -1,5 +1,8 @@
 use super::config::CiPipelineKind;
-use crate::backend::repositories::store::{ErrorKind, RepoError, RepoStore, MAX_CI_WORKFLOW_BYTES};
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::{RepoStore, MAX_CI_WORKFLOW_BYTES},
+};
 use anyhow::{ensure, Context, Result};
 pub use codeyard_actions::workflow::events::{WorkflowEventFilter, WorkflowTriggers};
 #[cfg(test)]

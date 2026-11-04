@@ -61,10 +61,7 @@ fn token() -> String {
     )
 }
 use codeyard::backend::{
-    api::create_router,
-    app::AppState,
-    db,
-    repositories::store::{RepoError, RepoStore},
+    api::create_router, app::AppState, db, git::error::RepoError, repositories::store::RepoStore,
     storage::ObjectStore,
 };
 use tower::ServiceExt;

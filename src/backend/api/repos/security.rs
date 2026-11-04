@@ -195,8 +195,8 @@ async fn model(
                 Err(error)
                     if matches!(
                         error.kind,
-                        crate::backend::repositories::store::ErrorKind::NotFound
-                            | crate::backend::repositories::store::ErrorKind::MissingPath
+                        crate::backend::git::error::ErrorKind::NotFound
+                            | crate::backend::git::error::ErrorKind::MissingPath
                     ) =>
                 {
                     None

@@ -8,8 +8,7 @@ use crate::backend::{
         gists::{Comment, Gist},
         models::User,
     },
-    git::objects::TreeObjectEntry,
-    repositories::store::{GistRevision, RepoError},
+    git::{error::RepoError, gist_types::GistRevision, objects::TreeObjectEntry},
 };
 use base64::{engine::general_purpose::STANDARD, Engine};
 use serde_json::{json, Value};

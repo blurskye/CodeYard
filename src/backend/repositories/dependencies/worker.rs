@@ -7,8 +7,9 @@ use crate::backend::{
         models::Repository,
         repositories::dependencies::{self as records, Feature, Job, Refusal},
     },
+    git::error::ErrorKind,
     notifications::NotificationBroadcaster,
-    repositories::store::{repo_store, BlobRange, ErrorKind, RepoStore},
+    repositories::store::{repo_store, BlobRange, RepoStore},
 };
 use anyhow::{ensure, Context, Result};
 use std::time::Duration;

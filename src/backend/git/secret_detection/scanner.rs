@@ -196,7 +196,7 @@ impl Scanner {
             toml::from_str(include_str!("../../../../spec/gitleaks/gitleaks.toml"))?;
         // Personal tokens issued before prefixes were introduced remain valid, but cannot be
         // distinguished reliably from arbitrary hexadecimal values in source code.
-        use crate::backend::identity::tokens::{
+        use codeyard_support::tokens::{
             ACTIONS_PREFIX, FGPAT_PREFIX, HEX_TOKEN_CHARS, INSTALLATION_PREFIX, PAT_PREFIX,
             URL_TOKEN_CHARS,
         };
@@ -475,7 +475,7 @@ pub fn secret_types() -> Result<Vec<(String, String)>> {
     Ok(types)
 }
 
-pub(super) fn cache_across_commits() -> Result<bool> {
+pub(crate) fn cache_across_commits() -> Result<bool> {
     let scanner = configured()?;
     Ok(scanner.global.commits.is_empty()
         && scanner.rules.iter().all(|rule| {

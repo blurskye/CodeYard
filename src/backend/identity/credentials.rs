@@ -45,15 +45,6 @@ pub(crate) fn validate_account(input: &PasswordAccount<'_>) -> Result<(), Accoun
     Ok(())
 }
 
-/// Generated noreply identities contain case-sensitive account names.
-pub(crate) fn email_matches(address: &str, candidate: &str) -> bool {
-    if address.ends_with("@users.noreply") {
-        address == candidate
-    } else {
-        address.eq_ignore_ascii_case(candidate)
-    }
-}
-
 /// The one rule for a bare email address that is stored or mailed: at most 255 bytes, no
 /// whitespace or control characters, and an address mail can be sent to.
 pub(crate) fn validate_email(email: &str) -> Result<(), AccountInputError> {

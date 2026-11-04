@@ -10,14 +10,17 @@ use crate::backend::{
         self,
         models::{AccessLevel, Repository, User},
     },
-    git::{published_refs_in_use, ref_listing_bytes, RefsInUse},
+    git::{
+        error::{ErrorKind, RepoError},
+        published_refs_in_use, ref_listing_bytes, RefsInUse,
+    },
     repositories::{
         languages,
         protection::{
             check_branch_write_with, load_rules, BranchWrite, History, Refusal, WriteVia,
         },
         pull_requests, reads,
-        store::{ensure_ref_room, repo_store, ErrorKind, RepoError},
+        store::{ensure_ref_room, repo_store},
     },
 };
 use anyhow::{ensure, Context, Result};

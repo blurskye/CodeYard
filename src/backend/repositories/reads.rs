@@ -1,8 +1,6 @@
 //! Repository read selection shared by browser and JSON adapters.
 use crate::backend::{
-    cluster::NodeContext,
-    db,
-    repositories::store::{repo_store, RepoError},
+    cluster::NodeContext, db, git::error::RepoError, repositories::store::repo_store,
 };
 use std::collections::HashMap;
 

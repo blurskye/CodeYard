@@ -30,7 +30,7 @@ impl LocalStore {
                 || !git2::Reference::is_valid_name(name)
                 || !git::is_full_commit_id(sha)
             {
-                return Err(super::super::invalid_ref("import"));
+                return Err(crate::backend::git::error::invalid_ref("import"));
             }
         }
         let publication = Arc::new(

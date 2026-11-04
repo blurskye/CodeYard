@@ -4,13 +4,14 @@ use crate::backend::{
     ci::{CiRuns, RefUpdate},
     cluster::NodeContext,
     db,
+    git::error::{ErrorKind, RepoError},
     repositories::{
         access,
         protection::{check_branch_write, BranchWrite, History, Refusal, WriteVia, ANY_TIP},
         pull_requests,
         store::{
-            repo_store, CommitIdentities, CommitInfo, ErrorKind, FileWrite, PreparedFile,
-            RepoError, RepoStore, UploadWrite, MAX_EDITOR_BYTES,
+            repo_store, CommitIdentities, CommitInfo, FileWrite, PreparedFile, RepoStore,
+            UploadWrite, MAX_EDITOR_BYTES,
         },
     },
 };

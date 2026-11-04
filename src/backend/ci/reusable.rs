@@ -1,9 +1,6 @@
 //! Admission snapshots called workflows so workers never fetch a moving ref or another repository.
 use super::admission::{is_safe_ref, is_safe_workflow_path, AdmissionError};
-use crate::backend::{
-    db,
-    repositories::store::{repo_store, ErrorKind},
-};
+use crate::backend::{db, git::error::ErrorKind, repositories::store::repo_store};
 use serde_yaml::Value;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};

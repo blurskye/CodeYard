@@ -17,8 +17,8 @@ use crate::backend::db::{
     models::{HeldReplica, ReplicaSetting},
     DbPool,
 };
+use crate::backend::git::error::RepoError;
 use crate::backend::git::{locks, maintenance, mirror};
-use crate::backend::repositories::store::RepoError;
 use crate::backend::storage::local::{remove_stale_temporaries, STALE_AFTER};
 use anyhow::{Context, Result};
 use std::{

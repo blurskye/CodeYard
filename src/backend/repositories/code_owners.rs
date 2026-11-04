@@ -5,7 +5,10 @@ use crate::backend::ci::workflows::{code_owner_glob_matches_bounded, WorkflowMat
 use crate::backend::cluster::NodeContext;
 use crate::backend::db;
 use crate::backend::db::models::Repository;
-use crate::backend::repositories::store::{repo_store, BlobRange, ErrorKind, RepoError};
+use crate::backend::{
+    git::error::{ErrorKind, RepoError},
+    repositories::store::{repo_store, BlobRange},
+};
 use std::collections::{HashMap, HashSet};
 
 mod diagnostics;

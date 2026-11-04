@@ -212,7 +212,7 @@ pub async fn list_tokens(
     let mut tx = pool.begin().await?;
     anyhow::ensure!(
         super::transitions::active_session_read(&mut tx, user_id, session_id).await?,
-        crate::backend::db::users::accounts::AccountRestricted
+        codeyard_support::credentials::AccountRestricted
     );
     let tokens = sqlx::query_as("SELECT id,user_id,name,scope,expires_at,created_at,last_used_at,last_used_ip FROM personal_access_tokens WHERE user_id=$1 AND ($2<=0 OR id<$2) AND NOT EXISTS(SELECT 1 FROM fine_grained_tokens f WHERE f.token_id=personal_access_tokens.id) ORDER BY id DESC LIMIT 100")
         .bind(user_id).bind(before).fetch_all(&mut *tx).await?;

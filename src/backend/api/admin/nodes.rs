@@ -40,7 +40,7 @@ async fn render(ctx: &PageContext, status: StatusCode, message: Option<String>) 
     let after = ctx.query.get("after").map(String::as_str).unwrap_or("");
     let mut nodes = match db::cluster::admin_node_page(&ctx.state.pool, &authority, after).await {
         Ok(nodes) => nodes,
-        Err(error) if error.is::<db::users::accounts::AccountRestricted>() => {
+        Err(error) if error.is::<codeyard_support::credentials::AccountRestricted>() => {
             return ctx.error(StatusCode::FORBIDDEN, "Administrator access is required.");
         }
         Err(_) => {

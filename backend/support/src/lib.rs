@@ -7,3 +7,9 @@ pub mod git_paths;
 pub mod media;
 pub mod repository_names;
 pub mod website;
+
+pub mod credentials;
+pub mod file_names;
+#[cfg(not(target_arch = "wasm32"))]
+pub mod locks;
+pub mod tokens;

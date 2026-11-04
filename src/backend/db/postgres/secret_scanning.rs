@@ -1,5 +1,6 @@
 pub(crate) mod patterns;
 use crate::backend::db::secret_scanning::*;
+use crate::backend::git::secret_scanning::Location;
 use anyhow::{ensure, Result};
 use sqlx::{PgPool, Postgres, Transaction};
 

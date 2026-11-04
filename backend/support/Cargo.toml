@@ -6,7 +6,13 @@ description = "Codeyard pure helpers shared by the server and browser"
 license = "LGPL-3.0-or-later"
 
 [dependencies]
+thiserror.workspace = true
 url.workspace = true
 
 [lints]
 workspace = true
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+anyhow.workspace = true
+libc.workspace = true
+tokio.workspace = true

@@ -37,7 +37,7 @@ pub(in crate::backend::api) fn lifecycle_error(error: lifecycle::StorageError) -
 
 pub(in crate::backend::api) fn settings_error(error: anyhow::Error) -> Error {
     use records::RepositorySettingsRefusal::*;
-    if error.is::<db::users::accounts::AccountRestricted>() {
+    if error.is::<codeyard_support::credentials::AccountRestricted>() {
         return Error::new(
             StatusCode::FORBIDDEN,
             "A live unrestricted credential is required",

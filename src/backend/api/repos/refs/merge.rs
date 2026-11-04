@@ -73,9 +73,7 @@ pub(super) async fn merge_json(
 
 fn merge_error(error: RefError) -> (StatusCode, Json<ApiError>) {
     match error {
-        RefError::Git(error)
-            if error.kind == crate::backend::repositories::store::ErrorKind::Conflict =>
-        {
+        RefError::Git(error) if error.kind == crate::backend::git::error::ErrorKind::Conflict => {
             responses::repo_store_error(error, StatusCode::CONFLICT)
         }
         error => responses::ref_error(error),
@@ -208,12 +206,10 @@ async fn submit(
     };
     let outcome = async {
         if field(&values, "repository_id").parse::<i64>().ok() != Some(loaded.repository.id) {
-            return Err(RefError::Git(
-                crate::backend::repositories::store::RepoError::new(
-                    crate::backend::repositories::store::ErrorKind::Conflict,
-                    "Repository identity changed",
-                ),
-            ));
+            return Err(RefError::Git(crate::backend::git::error::RepoError::new(
+                crate::backend::git::error::ErrorKind::Conflict,
+                "Repository identity changed",
+            )));
         }
         let (base, expected_base) =
             selected(values.get("base").map(String::as_str).unwrap_or_default())?;

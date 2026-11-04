@@ -35,8 +35,10 @@ impl LocalStore {
         new: &str,
     ) -> Result<String, RepoError> {
         let actor = authority.user_id;
-        let old_ref = git::branch_ref(old).ok_or_else(|| super::super::invalid_ref("branch"))?;
-        let new_ref = git::branch_ref(new).ok_or_else(|| super::super::invalid_ref("branch"))?;
+        let old_ref = git::branch_ref(old)
+            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
+        let new_ref = git::branch_ref(new)
+            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
         let publication = git::locks::publication(self.path())
             .await
             .map_err(RepoError::from)?;
@@ -206,8 +208,8 @@ impl LocalStore {
         use super::super::{UpstreamMerge, UpstreamMergeType};
         self.admitted_path(false).await?;
         source.1.admitted_path(true).await?;
-        let reference =
-            git::branch_ref(branch).ok_or_else(|| super::super::invalid_ref("branch"))?;
+        let reference = git::branch_ref(branch)
+            .ok_or_else(|| crate::backend::git::error::invalid_ref("branch"))?;
         self.upstream_authority(pool, repo, actor, source, token)
             .await?;
         let target = git::repository::current_branch_head(source.1.path(), branch)

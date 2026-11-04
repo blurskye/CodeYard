@@ -228,7 +228,7 @@ pub(super) async fn contract(
         .unwrap_err();
     assert_eq!(
         error.kind,
-        codeyard::backend::repositories::store::ErrorKind::Invalid
+        codeyard::backend::git::error::ErrorKind::Invalid
     );
     assert!(error.message.contains("Signed-off-by"));
     assert_eq!(store.commit("refs/heads/main").await.unwrap().sha, head.sha);

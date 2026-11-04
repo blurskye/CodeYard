@@ -25,10 +25,7 @@ pub use wire::{
 
 /// Answers a request with a refusal and ends the stream. A peer that does not read cannot
 /// hold the caller's slot past the timeout.
-async fn refuse(
-    link: &mut Link,
-    error: crate::backend::repositories::store::RepoError,
-) -> Result<()> {
+async fn refuse(link: &mut Link, error: crate::backend::git::error::RepoError) -> Result<()> {
     tokio::time::timeout(TIMEOUT, async {
         write_frame(
             &mut link.writer,

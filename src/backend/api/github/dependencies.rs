@@ -3,10 +3,10 @@ use super::{auth, repository, Error, Result};
 use crate::backend::{
     app::AppState,
     db::repositories::dependencies::Feature,
+    git::error::ErrorKind,
     repositories::{
         access::AccessError,
         dependencies::{self, DependencyError, Status},
-        store::ErrorKind,
     },
 };
 use axum::{

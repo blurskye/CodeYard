@@ -6,9 +6,11 @@ use super::{owner_name, search::RESULTS_PER_PAGE, DiscoveryReadError};
 use crate::backend::{
     app::AppState,
     db,
-    git::CommitFilter,
-    repositories::access::{self, AccessError},
-    repositories::store::{repo_store, RepoError, RepoStore, MAX_COMMIT_OFFSET},
+    git::{error::RepoError, CommitFilter},
+    repositories::{
+        access::{self, AccessError},
+        store::{repo_store, RepoStore, MAX_COMMIT_OFFSET},
+    },
 };
 use codeyard_webui::pages::discovery::{CodeHit, CommitHit, SearchScan};
 use futures_util::{stream, StreamExt};

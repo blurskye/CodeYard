@@ -202,9 +202,9 @@ async fn document(
                 Err(error)
                     if matches!(
                         error.kind,
-                        crate::backend::repositories::store::ErrorKind::NotFound
-                            | crate::backend::repositories::store::ErrorKind::MissingPath
-                            | crate::backend::repositories::store::ErrorKind::Unavailable
+                        crate::backend::git::error::ErrorKind::NotFound
+                            | crate::backend::git::error::ErrorKind::MissingPath
+                            | crate::backend::git::error::ErrorKind::Unavailable
                     ) => {}
                 Err(error) => {
                     return Err(crate::backend::api::github::contents::store_error(error))
